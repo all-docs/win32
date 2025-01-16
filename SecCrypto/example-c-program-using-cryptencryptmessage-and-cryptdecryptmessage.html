@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Using CryptEncryptMessage and CryptDecryptMessage</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Shows the relationship between those function parameters that point to structures or arrays and their initialized data, with a code example.
+ms.assetid: b1ad0f13-fb4d-421f-b054-a99c8ad9c83a
+title: 'Example C Program: Using CryptEncryptMessage and CryptDecryptMessage'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Using CryptEncryptMessage and CryptDecryptMessage</h1>
+<p><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptencryptmessage"><strong>CryptEncryptMessage</strong></a> is the only function call necessary to accomplish all of the tasks listed in <a href="../secauthn/encrypting-a-message.html">Encrypting a Message</a>. Initialization of data structures is necessary. The following illustration shows the relationship between those function parameters that point to structures or arrays and their initialized data. This example also decrypts the message using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptdecryptmessage"><strong>CryptDecryptMessage</strong></a>.</p>
+<p><img src="images/crypenc.png" alt="initialization map for a call to cryptencryptmessage" /></p>
+<p><strong>To encrypt data</strong></p>
+<ol>
+<li>Get a pointer to the content to be encrypted.</li>
+<li>Determine the size of the content to be encrypted.</li>
+<li>Acquire a handle to a cryptographic provider.</li>
+<li>Open a <a href="../secgloss/c-gly.html"><em>certificate store</em></a>.</li>
+<li>Get the recipient certificate.</li>
+<li>Create the recipient certificate array.</li>
+<li>Initialize the <a href="/windows/desktop/api/Wincrypt/ns-wincrypt-crypt_algorithm_identifier"><strong>CRYPT_ALGORITHM_IDENTIFIER</strong></a> structure.</li>
+<li>Initialize the <a href="/windows/desktop/api/Wincrypt/ns-wincrypt-crypt_encrypt_message_para"><strong>CRYPT_ENCRYPT_MESSAGE_PARA</strong></a> structure.</li>
+<li>Call <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptencryptmessage"><strong>CryptEncryptMessage</strong></a> to encrypt the content and create a digitally enveloped message.</li>
+</ol>
+<p>The following example implements this procedure.</p>
+<p>Comments relate code fragments to each step in the procedure. For more information about the function, see <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptencryptmessage"><strong>CryptEncryptMessage</strong></a>. For more information about the data structures, see <a href="/windows/desktop/api/Wincrypt/ns-wincrypt-crypt_algorithm_identifier"><strong>CRYPT_ALGORITHM_IDENTIFIER</strong></a> and <a href="/windows/desktop/api/Wincrypt/ns-wincrypt-crypt_encrypt_message_para"><strong>CRYPT_ENCRYPT_MESSAGE_PARA</strong></a>.</p>
+<p>This example uses the functions <a href="myhandleerror.html"><strong>MyHandleError</strong></a> and <a href="bytetostr.html"><strong>ByteToStr</strong></a>. The code for this function is included with the sample. Code for this and other auxiliary functions is also listed under <a href="general-purpose-functions.html">General Purpose Functions</a>.</p>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+// Example of encrypting data and creating an enveloped 
+// message using CryptEncryptMessage.
+#pragma comment(lib, &quot;crypt32.lib&quot;)
+
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Wincrypt.h&gt;
+#define MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+void MyHandleError(char *s);
+//-------------------------------------------------------------------
+// This program uses the function GetRecipientCert, declared here and
+// defined after main.
+
+PCCERT_CONTEXT GetRecipientCert(
+     HCERTSTORE hCertStore);
+
+//-------------------------------------------------------------------
+// This program uses the function ByteToStr, declared here and
+// defined after main. Code for ByteToStr can also be found as one
+// of the general purpose functions.
+
+void ByteToStr(
+     DWORD cb, 
+     void* pv, 
+     LPSTR sz);
+
+//-------------------------------------------------------------------
+// This program uses the function DecryptMessage, declared here and
+// defined after main.
+
+BOOL DecryptMessage( 
+       BYTE *pbEncryptedBlob, 
+       DWORD cbEncryptedBlob,
+       HCRYPTPROV hCryptProv,
+       HCERTSTORE hStoreHandle);
+
+void main()
+{
+//-------------------------------------------------------------------
+// Declare and initialize variables. This includes getting a pointer 
+// to the message to be encrypted. This code creates a message
+// and gets a pointer to it. In reality, the message content 
+// usually exists somewhere and a pointer to the message is 
+// passed to the application. 
+
+BYTE* pbContent = (BYTE*) &quot;Security is our business.&quot;;
+                                            // The message
+DWORD cbContent = strlen((char *)pbContent)+1;
+                                            // Size of message
+HCRYPTPROV hCryptProv;                      // CSP handle
+HCERTSTORE hStoreHandle;
+PCCERT_CONTEXT pRecipientCert;
+PCCERT_CONTEXT RecipientCertArray[1];
+DWORD EncryptAlgSize;
+CRYPT_ALGORITHM_IDENTIFIER EncryptAlgorithm;
+CRYPT_ENCRYPT_MESSAGE_PARA EncryptParams;
+DWORD EncryptParamsSize;
+BYTE*    pbEncryptedBlob;
+DWORD    cbEncryptedBlob;
+
+//-------------------------------------------------------------------
+//  Begin processing.
+
+printf(&quot;About to begin with the message %s.\n&quot;,pbContent);
+printf(&quot;The message length is %d bytes. \n&quot;, cbContent);
+
+//-------------------------------------------------------------------
+// Get a handle to a cryptographic provider.
+
+if(CryptAcquireContext(
+            &amp;hCryptProv,        // Address for handle to be returned.
+            NULL,               // Use the current user's logon name.
+            NULL,               // Use the default provider.
+            PROV_RSA_FULL,      // Need to both encrypt and sign.
+            NULL))              // No flags needed.
+{
+    printf(&quot;A CSP has been acquired. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Cryptographic context could not be acquired.&quot;);
+}
+//-------------------------------------------------------------------
+// Open a system certificate store.
+
+if(hStoreHandle = CertOpenSystemStore(
+     hCryptProv, 
+     &quot;MY&quot;))
+{
+    printf(&quot;The MY store is open. \n&quot;);
+}
+else
+{
+    MyHandleError( &quot;Error getting store handle.&quot;);
+}
+//-------------------------------------------------------------------
+// Get a pointer to the recipient's certificate.
+// by calling GetRecipientCert. 
+
+if(pRecipientCert = GetRecipientCert(
+     hStoreHandle))
+{
+    printf(&quot;A recipient's certificate has been acquired. \n&quot;);
+}
+else
+{
+    printf(&quot;No certificate with a CERT_KEY_CONTEXT_PROP_ID \n&quot;);
+    printf(&quot;property and an AT_KEYEXCHANGE private key &quot;
+        &quot;available. \n&quot;);
+    printf(&quot;While the message could be encrypted, in this case, \n&quot;);
+    printf(&quot;it could not be decrypted in this program. \n&quot;);
+    printf(&quot;For more information, see the documentation for \n&quot;);
+    printf(&quot;CryptEncryptMessage and CryptDecryptMessage.\n\n&quot;);
+    MyHandleError( &quot;No Certificate with AT_KEYEXCHANGE &quot;
+        &quot;key in store.&quot;);
+}
+//-------------------------------------------------------------------
+// Create a RecipientCertArray.
+
+RecipientCertArray[0] = pRecipientCert;
+
+//-------------------------------------------------------------------
+// Initialize the algorithm identifier structure.
+
+EncryptAlgSize = sizeof(EncryptAlgorithm);
+
+//-------------------------------------------------------------------
+// Initialize the structure to zero.
+
+memset(&amp;EncryptAlgorithm, 0, EncryptAlgSize);
+
+//-------------------------------------------------------------------
+// Set the necessary member.
+
+EncryptAlgorithm.pszObjId = szOID_RSA_RC4;  
+
+//-------------------------------------------------------------------
+// Initialize the CRYPT_ENCRYPT_MESSAGE_PARA structure. 
+
+EncryptParamsSize = sizeof(EncryptParams);
+memset(&amp;EncryptParams, 0, EncryptParamsSize);
+EncryptParams.cbSize =  EncryptParamsSize;
+EncryptParams.dwMsgEncodingType = MY_ENCODING_TYPE;
+EncryptParams.hCryptProv = hCryptProv;
+EncryptParams.ContentEncryptionAlgorithm = EncryptAlgorithm;
+
+//-------------------------------------------------------------------
+// Call CryptEncryptMessage.
+
+if(CryptEncryptMessage(
+          &amp;EncryptParams,
+          1,
+          RecipientCertArray,
+          pbContent,
+          cbContent,
+          NULL,
+          &amp;cbEncryptedBlob))
+{
+    printf(&quot;The encrypted message is %d bytes. \n&quot;,cbEncryptedBlob);
+}
+else
+{
+    MyHandleError( &quot;Getting EncryptedBlob size failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Allocate memory for the returned BLOB.
+
+if(pbEncryptedBlob = (BYTE*)malloc(cbEncryptedBlob))
+{
+    printf(&quot;Memory has been allocated for the encrypted BLOB. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Memory allocation error while encrypting.&quot;);
+}
+//-------------------------------------------------------------------
+// Call CryptEncryptMessage again to encrypt the content.
+
+if(CryptEncryptMessage(
+          &amp;EncryptParams,
+          1,
+          RecipientCertArray,
+          pbContent,
+          cbContent,
+          pbEncryptedBlob,
+          &amp;cbEncryptedBlob))
+{
+    printf( &quot;Encryption succeeded. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Encryption failed.&quot;);
+}
+
+//-------------------------------------------------------------------
+// Call the function DecryptMessage, whose code follows main,
+// to decrypt the message.
+
+if(DecryptMessage( 
+     pbEncryptedBlob, 
+     cbEncryptedBlob,
+     hCryptProv,
+     hStoreHandle))
+{
+   printf(&quot;Decryption succeeded. \n&quot;);
+}
+else
+{
+   printf(&quot;Decryption failed. \n&quot;);
+}
+//-------------------------------------------------------------------
+// Clean up memory.
+
+CertFreeCertificateContext(pRecipientCert);
+if(CertCloseStore(
+          hStoreHandle, 
+          CERT_CLOSE_STORE_CHECK_FLAG))
+{
+    printf(&quot;The MY store was closed without incident. \n&quot;);
+}
+else
+{
+   printf(&quot;Store closed after encryption -- \n&quot;
+      &quot;but not all certificates or CRLs were freed. \n&quot;);
+}
+if(hCryptProv)
+{
+    CryptReleaseContext(hCryptProv,0);
+    printf(&quot;The CSP has been released. \n&quot;);
+}
+else
+{
+    printf(&quot;CSP was NULL. \n&quot;);
+}
+} // End of main
+
+//-------------------------------------------------------------------
+//  Define the function DecryptMessage.
+
+BOOL DecryptMessage( 
+     BYTE *pbEncryptedBlob, 
+     DWORD cbEncryptedBlob,
+     HCRYPTPROV hCryptProv,
+     HCERTSTORE hStoreHandle)
+
+//-------------------------------------------------------------------
+// Example function for decrypting an encrypted message using
+// CryptDecryptMessage. Its parameters are pbEncryptedBlob,
+// an encrypted message; cbEncryptedBlob, the length of that
+// message; hCryptProv, a CSP; and hStoreHandle, the handle
+// of an open certificate store.
+
+{
+//-------------------------------------------------------------------
+// Declare and initialize local variables.
+
+DWORD cbDecryptedMessage;
+char* EncryptedString = new char[(cbEncryptedBlob * 2) +1];
+HCERTSTORE CertStoreArray[] = {hStoreHandle};
+CRYPT_DECRYPT_MESSAGE_PARA  DecryptParams;
+DWORD  DecryptParamsSize = sizeof(DecryptParams);
+BYTE*  pbDecryptedMessage;
+LPSTR  DecryptedString;
+BOOL   fReturn = TRUE;
+
+//-------------------------------------------------------------------
+// Get a pointer to the encrypted message, pbEncryptedBlob,
+// and its length, cbEncryptedBlob. In this example, these are
+// passed as parameters along with a CSP and an open store handle.
+
+//-------------------------------------------------------------------
+// View the encrypted BLOB.
+// Call a function, ByteToStr, to convert the byte BLOB to ASCII
+// hexadecimal format. 
+
+ByteToStr(
+    cbEncryptedBlob, 
+    pbEncryptedBlob, 
+    EncryptedString);
+
+//-------------------------------------------------------------------
+// Print the converted string.
+
+printf(&quot;The encrypted string is: \n%s\n&quot;,EncryptedString);
+
+//-------------------------------------------------------------------
+//   In this example, the handle to the MY store was passed in as a 
+//   parameter. 
+
+//-------------------------------------------------------------------
+//   Create a &quot;CertStoreArray.&quot;
+//   In this example, this step was done in the declaration
+//   and initialization of local variables because the store handle 
+//   was passed into the function as a parameter.
+
+//-------------------------------------------------------------------
+//   Initialize the CRYPT_DECRYPT_MESSAGE_PARA structure.
+
+memset(&amp;DecryptParams, 0, DecryptParamsSize);
+DecryptParams.cbSize = DecryptParamsSize;
+DecryptParams.dwMsgAndCertEncodingType = MY_ENCODING_TYPE;
+DecryptParams.cCertStore = 1;
+DecryptParams.rghCertStore = CertStoreArray;
+
+//-------------------------------------------------------------------
+//  Decrypt the message data.
+//  Call CryptDecryptMessage to get the returned data size.
+
+if(CryptDecryptMessage(
+          &amp;DecryptParams,
+          pbEncryptedBlob,
+          cbEncryptedBlob,
+          NULL,
+          &amp;cbDecryptedMessage,
+          NULL))
+{
+    printf(&quot;The size for the decrypted message is: %d.\n&quot;,
+        cbDecryptedMessage);
+}
+else
+{
+    MyHandleError( &quot;Error getting decrypted message size&quot;);
+}
+//-------------------------------------------------------------------
+// Allocate memory for the returned decrypted data.
+
+if(pbDecryptedMessage = (BYTE*)malloc(
+       cbDecryptedMessage))
+{
+    printf(&quot;Memory has been allocated for the decrypted message. &quot;
+        &quot;\n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Memory allocation error while decrypting&quot;);
+}
+//-------------------------------------------------------------------
+// Call CryptDecryptMessage to decrypt the data.
+
+if(CryptDecryptMessage(
+          &amp;DecryptParams,
+          pbEncryptedBlob,
+          cbEncryptedBlob,
+          pbDecryptedMessage,
+          &amp;cbDecryptedMessage,
+          NULL))
+{
+    DecryptedString = (LPSTR) pbDecryptedMessage;
+    printf(&quot;Message Decrypted Successfully. \n&quot;);
+    printf(&quot;The decrypted string is: %s\n&quot;,DecryptedString);
+}
+else
+{
+    printf(&quot;Error decrypting the message \n&quot;);
+    printf(&quot;Error code %x \n&quot;,GetLastError());
+    fReturn = FALSE;
+}
+
+//-------------------------------------------------------------------
+// Clean up memory.
+
+free(pbEncryptedBlob);
+free(pbDecryptedMessage);
+return fReturn;
+}  // End of DecryptMessage
+
+//-------------------------------------------------------------------
+// Define the function ByteToStr.
+
+void ByteToStr(
+     DWORD cb, 
+     void* pv, 
+     LPSTR sz)
+//-------------------------------------------------------------------
+// Parameters passed are:
+//    pv is the array of BYTEs to be converted.
+//    cb is the number of BYTEs in the array.
+//    sz is a pointer to the string to be returned.
+
+{
+//-------------------------------------------------------------------
+//  Declare and initialize local variables.
+
+BYTE* pb = (BYTE*) pv; // Local pointer to a BYTE in the BYTE array
+DWORD i;               // Local loop counter
+int b;                 // Local variable
+
+//-------------------------------------------------------------------
+//  Begin processing loop.
+
+for (i = 0; i&lt;cb; i++)
+{
+   b = (*pb &amp; 0xF0) &gt;&gt; 4;
+   *sz++ = (b &lt;= 9) ? b + '0' : (b - 10) + 'A';
+   b = *pb &amp; 0x0F;
+   *sz++ = (b &lt;= 9) ? b + '0' : (b - 10) + 'A';
+   pb++;
+}
+*sz++ = 0;
+} // End of ByteToStr
+
+//-------------------------------------------------------------------
+//  This example uses the function MyHandleError, a simple error
+//  handling function, to print an error message to the  
+//  standard error (stderr) file and exit the program. 
+//  For most applications, replace this function with one 
+//  that does more extensive error reporting.
+
+void MyHandleError(char *s)
+{
+    fprintf(stderr,&quot;An error occurred in running the program. \n&quot;);
+    fprintf(stderr,&quot;%s\n&quot;,s);
+    fprintf(stderr, &quot;Error number %x.\n&quot;, GetLastError());
+    fprintf(stderr, &quot;Program terminating. \n&quot;);
+    exit(1);
+} // End of MyHandleError
+
+//-------------------------------------------------------------------
+// GetRecipientCert enumerates the certificates in a store and finds
+// the first certificate that has an AT_EXCHANGE key. If a  
+// certificate is found, a pointer to that certificate is returned.  
+
+PCCERT_CONTEXT GetRecipientCert( 
+    HCERTSTORE hCertStore) 
+//------------------------------------------------------------------- 
+// Parameter passed in: 
+// hCertStore, the handle of the store to be searched. 
+{ 
+//------------------------------------------------------------------- 
+// Declare and initialize local variables. 
+
+PCCERT_CONTEXT pCertContext = NULL; 
+BOOL fMore = TRUE; 
+DWORD dwSize = NULL; 
+CRYPT_KEY_PROV_INFO* pKeyInfo = NULL; 
+DWORD PropId = CERT_KEY_PROV_INFO_PROP_ID; 
+
+//--------------------------------------------------------------------
+// Find certificates in the store until the end of the store 
+// is reached or a certificate with an AT_KEYEXCHANGE key is found. 
+
+while(fMore &amp;&amp; (pCertContext= CertFindCertificateInStore( 
+   hCertStore, // Handle of the store to be searched. 
+   0,          // Encoding type. Not used for this search. 
+   0,          // dwFindFlags. Special find criteria. 
+               // Not used in this search. 
+   CERT_FIND_PROPERTY, 
+               // Find type. Determines the kind of search 
+               // to be done. In this case, search for 
+               // certificates that have a specific 
+               // extended property. 
+   &amp;PropId,    // pvFindPara. Gives the specific 
+               // value searched for, here the identifier 
+               // of an extended property. 
+   pCertContext))) 
+               // pCertContext is NULL for the  
+               // first call to the function. 
+               // If the function were being called 
+               // in a loop, after the first call 
+               // pCertContext would be the pointer 
+               // returned by the previous call. 
+{ 
+//------------------------------------------------------------------- 
+// For simplicity, this code only searches 
+// for the first occurrence of an AT_KEYEXCHANGE key. 
+// In many situations, a search would also look for a 
+// specific subject name as well as the key type. 
+
+//-------------------------------------------------------------------
+// Call CertGetCertificateContextProperty once to get the 
+// returned structure size. 
+
+if(!(CertGetCertificateContextProperty( 
+     pCertContext, 
+     CERT_KEY_PROV_INFO_PROP_ID, 
+     NULL, &amp;dwSize))) 
+{ 
+     MyHandleError(&quot;Error getting key property.&quot;); 
+} 
+
+//------------------------------------------------------------------- 
+// Allocate memory for the returned structure. 
+
+if(pKeyInfo) 
+    free(pKeyInfo); 
+if(!(pKeyInfo = (CRYPT_KEY_PROV_INFO*)malloc(dwSize))) 
+{ 
+     MyHandleError(&quot;Error allocating memory for pKeyInfo.&quot;); 
+} 
+
+//------------------------------------------------------------------- 
+// Get the key information structure. 
+
+if(!(CertGetCertificateContextProperty( 
+   pCertContext, 
+   CERT_KEY_PROV_INFO_PROP_ID, 
+   pKeyInfo, 
+   &amp;dwSize))) 
+{ 
+    MyHandleError(&quot;The second call to the function failed.&quot;); 
+} 
+
+//------------------------------------------------------------------- 
+// Check the dwKeySpec member for an exchange key. 
+
+if(pKeyInfo-&gt;dwKeySpec == AT_KEYEXCHANGE) 
+{ 
+    fMore = FALSE; } 
+}    // End of while loop 
+
+if(pKeyInfo) 
+      free(pKeyInfo); 
+return (pCertContext); 
+} // End of GetRecipientCert
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

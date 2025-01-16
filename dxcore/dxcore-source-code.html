@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Minimal DXCore application</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Minimal DXCore application
+description: The full source code listing for a minimal DXCore application.
+ms.custom: 19H1
+ms.topic: article
+ms.date: 08/17/2023</h2>
+<h1>Minimal DXCore application</h1>
+<p>This topic presents the full source code listing for a minimal DXCore application (written in <a href="/windows/uwp/cpp-and-winrt-apis">C++/WinRT</a>). Most of the code shown below is explained in the topic <a href="dxcore-enum-adapters.html">Using DXCore to enumerate adapters</a>.</p>
+<h2>Full source code listing of a minimal DXCore application</h2>
+<p>If you want to build and run this source code example then first, in Visual Studio, create a new <strong>Windows Console Application (C++/WinRT)</strong> project. Then edit <code>pch.h</code> and <code>main.cpp</code> to look like the listings below.</p>
+<p>The code example below uses <a href="/windows/uwp/cpp-and-winrt-apis">C++/WinRT</a>. However, in order to keep the use of the APIs is transparent, it doesn't use the <a href="/uwp/cpp-ref-for-winrt/com-ptr#com_ptrcapture-function">winrt::com_ptr::capture function</a>.</p>
+<pre lang="cppwinrt"><code>// pch.h
+#pragma once
+#include &lt;algorithm&gt;
+#include &lt;functional&gt;
+
+#include &lt;unknwn.h&gt;
+#include &lt;winrt/base.h&gt;
+#include &lt;initguid.h&gt;
+#include &lt;dxcore.h&gt;
+</code></pre>
+<pre lang="cppwinrt"><code>// main.cpp
+#include &quot;pch.h&quot;
+
+//
+// Example 1 : TryFindComputeAdapter
+//
+// Shows how to enumerate adapters of a specific type, and select one based on its properties.
+//
+
+winrt::com_ptr&lt;IDXCoreAdapter&gt; TryFindComputeAdapter()
+{
+    // You begin DXCore adapter enumeration by creating an adapter factory.
+    winrt::com_ptr&lt;IDXCoreAdapterFactory&gt; adapterFactory;
+    winrt::check_hresult(::DXCoreCreateAdapterFactory(adapterFactory.put()));
+
+    // From the factory, retrieve a list of all the Direct3D 12 Core Compute adapters.
+    winrt::com_ptr&lt;IDXCoreAdapterList&gt; d3D12CoreComputeAdapters;
+    GUID attributes[]{ DXCORE_ADAPTER_ATTRIBUTE_D3D12_CORE_COMPUTE };
+    winrt::check_hresult(
+        adapterFactory-&gt;CreateAdapterList(_countof(attributes),
+            attributes,
+            d3D12CoreComputeAdapters.put()));
+
+    // If there are any hardware adapters, then choose the first.
+    // Otherwise, choose the first sofware adapter.
+    winrt::com_ptr&lt;IDXCoreAdapter&gt; preferredAdapter;
+
+    const uint32_t count{ d3D12CoreComputeAdapters-&gt;GetAdapterCount() };
+
+    for (uint32_t i = 0; i &lt; count; ++i)
+    {
+        winrt::com_ptr&lt;IDXCoreAdapter&gt; candidateAdapter;
+        winrt::check_hresult(
+            d3D12CoreComputeAdapters-&gt;GetAdapter(i, candidateAdapter.put()));
+
+        bool isHardware{ false };
+        winrt::check_hresult(candidateAdapter-&gt;GetProperty(
+            DXCoreAdapterProperty::IsHardware,
+            &amp;isHardware));
+
+        if (isHardware)
+        {
+            // Choose the first hardware adapter, and stop looping.
+            preferredAdapter = candidateAdapter;
+            break;
+        }
+
+        // Otherwise, ensure that (as long as there are *any* adapters) we'll
+        // at least choose one.
+        if (!preferredAdapter)
+        {
+            preferredAdapter = candidateAdapter;
+        }
+    }
+
+    return preferredAdapter;
+}
+
+//
+// Example 2 : TryFindHardwareHighPerformanceGraphicsAdapter
+//
+// Shows how to select the preferred adapter by sorting an adapter list.
+//
+
+winrt::com_ptr&lt;IDXCoreAdapter&gt; TryFindHardwareHighPerformanceGraphicsAdapter()
+{
+    // You begin DXCore adapter enumeration by creating an adapter factory.
+    winrt::com_ptr&lt;IDXCoreAdapterFactory&gt; adapterFactory;
+    winrt::check_hresult(::DXCoreCreateAdapterFactory(adapterFactory.put()));
+
+    // From the factory, retrieve a list of all the Direct3D 12 Graphics adapters.
+    winrt::com_ptr&lt;IDXCoreAdapterList&gt; d3D12GraphicsAdapters;
+    GUID attributes[]{ DXCORE_ADAPTER_ATTRIBUTE_D3D12_GRAPHICS };
+    winrt::check_hresult(
+        adapterFactory-&gt;CreateAdapterList(_countof(attributes),
+            attributes,
+            d3D12GraphicsAdapters.put()));
+
+    DXCoreAdapterPreference sortPreferences[]{
+        DXCoreAdapterPreference::Hardware, DXCoreAdapterPreference::HighPerformance };
+
+    // Ask the OS to sort for the highest performance hardware adapter.
+    winrt::check_hresult(d3D12GraphicsAdapters-&gt;Sort(_countof(sortPreferences), sortPreferences));
+
+    winrt::com_ptr&lt;IDXCoreAdapter&gt; preferredAdapter;
+
+    if (d3D12GraphicsAdapters-&gt;GetAdapterCount() &gt; 0)
+    {
+        winrt::check_hresult(d3D12GraphicsAdapters-&gt;GetAdapter(0, preferredAdapter.put()));
+    }
+
+    return preferredAdapter;
+}
+
+//
+// Example 3 : SetDesiredMemoryReservation
+//
+// Shows how to get and set properties on an adapter. In this case, we
+// set the desired memory reservation (in bytes) for node 0's local segment group.
+//
+
+void SetDesiredMemoryReservation(winrt::com_ptr&lt;IDXCoreAdapter&gt; const&amp; adapter, uint64_t reservation)
+{
+    DXCoreAdapterMemoryBudgetNodeSegmentGroup nodeSegmentGroup{};
+    nodeSegmentGroup.nodeIndex = 0;
+    nodeSegmentGroup.segmentGroup = DXCoreSegmentGroup::Local;
+
+    DXCoreAdapterMemoryBudget memoryBudget{};
+    winrt::check_hresult(adapter-&gt;QueryState(
+        DXCoreAdapterState::AdapterMemoryBudget,
+        &amp;nodeSegmentGroup,
+        &amp;memoryBudget));
+
+    // Clamp the reservation to what's available.
+    reservation = std::min&lt;uint64_t&gt;(reservation, memoryBudget.availableForReservation);
+
+    winrt::check_hresult(adapter-&gt;SetState(
+        DXCoreAdapterState::AdapterMemoryBudget,
+        &amp;nodeSegmentGroup,
+        &amp;reservation));
+}
+
+//
+// Example 4: WatchedAdapterList
+//
+// Shows how to register for, and handle, notifications; in this case, the
+// notification that the adapter list has become stale.
+//
+
+class WatchedAdapterList
+{
+    winrt::com_ptr&lt;IDXCoreAdapterList&gt; m_adapters;
+    std::function&lt;void()&gt; m_callback;
+
+    uint32_t m_eventCookie = 0;
+
+public:
+    WatchedAdapterList() = default;
+
+    ~WatchedAdapterList()
+    {
+        Close();
+    }
+
+    // Watches the given adapter list. When it goes stale, the callback is
+    // called from an arbitrary thread.
+    void Watch(
+        winrt::com_ptr&lt;IDXCoreAdapterList&gt; adapters,
+        std::function&lt;void()&gt; callback)
+    {
+        Close();
+
+        m_adapters = adapters;
+        m_callback = callback;
+        m_adapters = std::move(adapters);
+        m_callback = std::move(callback);
+
+        winrt::com_ptr&lt;IDXCoreAdapterFactory&gt; factory;
+        winrt::check_hresult(m_adapters-&gt;GetFactory(factory.put()));
+
+        winrt::check_hresult(factory-&gt;RegisterEventNotification(
+            m_adapters.get(),
+            DXCoreNotificationType::AdapterListStale,
+            OnAdapterListStale,
+            this,
+            &amp;m_eventCookie));
+    }
+
+    void Close()
+    {
+        if (!m_adapters)
+        {
+            assert(m_eventCookie == 0);
+            return;
+        }
+
+        winrt::com_ptr&lt;IDXCoreAdapterFactory&gt; factory;
+        winrt::check_hresult(m_adapters-&gt;GetFactory(factory.put()));
+
+        HRESULT hr = factory-&gt;UnregisterEventNotification(m_eventCookie);
+
+        m_eventCookie = 0;
+        m_callback = nullptr;
+        m_adapters = nullptr;
+
+        winrt::check_hresult(hr);
+    }
+
+    explicit operator bool() const
+    {
+        return static_cast&lt;bool&gt;(m_adapters);
+    }
+
+private:
+    static void WINAPI OnAdapterListStale(
+        DXCoreNotificationType notificationType,
+        IUnknown* staleObject,
+        void* context)
+    {
+        WatchedAdapterList* self = static_cast&lt;WatchedAdapterList*&gt;(context);
+        if (self-&gt;m_callback)
+            self-&gt;m_callback();
+    }
+};
+
+static void AdapterListIsStaleCallback()
+{
+    // Respond to the `d3D12CoreComputeAdapters` adapter list becoming stale.
+}
+
+int main()
+{
+    winrt::init_apartment();
+
+    // Example 1.
+    winrt::com_ptr&lt;IDXCoreAdapter&gt; computeAdapter{ TryFindComputeAdapter() };
+
+    // Example 2.
+    winrt::com_ptr&lt;IDXCoreAdapter&gt; graphicsAdapter{ TryFindHardwareHighPerformanceGraphicsAdapter() };
+
+    if (computeAdapter)
+    {
+        // Example 3.
+        SetDesiredMemoryReservation(computeAdapter, 0x40000000);
+    }
+
+    winrt::com_ptr&lt;IDXCoreAdapterFactory&gt; adapterFactory;
+    winrt::check_hresult(::DXCoreCreateAdapterFactory(adapterFactory.put()));
+    winrt::com_ptr&lt;IDXCoreAdapterList&gt; d3D12CoreComputeAdapters;
+    GUID attributes[]{ DXCORE_ADAPTER_ATTRIBUTE_D3D12_CORE_COMPUTE };
+    winrt::check_hresult(
+        adapterFactory-&gt;CreateAdapterList(_countof(attributes),
+            attributes,
+            d3D12CoreComputeAdapters.put()));
+
+    // Example 4.
+    WatchedAdapterList watchedAdapterList;
+    watchedAdapterList.Watch(d3D12CoreComputeAdapters, AdapterListIsStaleCallback);
+}
+</code></pre>
+<h2>Related topics</h2>
+<ul>
+<li><a href="dxcore-enum-adapters.html">Using DXCore to enumerate adapters</a></li>
+<li><a href="./dxcore-reference.html">DXCore reference</a></li>
+<li><a href="../direct3d12/direct3d-12-graphics.html">Direct3D 12 graphics</a></li>
+</ul>
+</body>

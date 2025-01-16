@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Extracting Files from a Cabinet</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: View a code example that illustrates how to extract files from a cabinet using the Cabinet API. To compile, the callback functions must be defined.
+ms.assetid: d9d0e14a-f68c-4b3d-b91d-a3fa824031ea
+title: Extracting Files from a Cabinet
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Extracting Files from a Cabinet</h1>
+<p>The following syntax illustrates the creation of a cabinet.</p>
+<blockquote>
+<p>[!Note]<br />
+This code is for illustrative purposes only. To compile, the callback functions must be defined.</p>
+</blockquote>
+<p>Â </p>
+<h2>Example</h2>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;strsafe.h&gt;
+#include &quot;fdisample.h&quot;
+#include &quot;fdicallbacks.h&quot;
+
+#pragma comment(lib,&quot;cabinet.lib&quot;)
+
+//Function prototypes
+BOOL ExtractCabinetFiles(
+                         LPSTR pszCabinetName, 
+                         LPSTR pszCabinetPath,
+                         LPSTR pszDestinationDir 
+                         );
+LPCSTR FDIErrorToString(FDIERROR err);
+
+int main(INT argc, CHAR *argv[])
+{
+    INT iExitCode = -1;
+    HRESULT hr = S_OK;
+    HANDLE hFile = INVALID_HANDLE_VALUE;
+
+    LPSTR pszCabinetName = NULL;    //the cabinet name
+    LPSTR pszDestinationDir = NULL; //the destination directory
+    CHAR pszCabinetPath[MAX_PATH];  //the cabinet path
+    
+    WIN32_FIND_DATAA findFileData;
+
+    (VOID)HeapSetInformation(NULL, HeapEnableTerminationOnCorruption, NULL, 0);
+
+    if ( argc != 3 )
+    {
+        printf(&quot;Usage: %s [cabinet] [destination]\n&quot;, argv[0]);
+        goto CLEANUP;
+    }
+
+    //Split the cabinet name and path
+
+    pszCabinetName = strrchr(argv[1], '\\');
+
+    if ( pszCabinetName == NULL )
+    {
+        pszCabinetName = argv[1];
+        pszCabinetPath[0] = '\0'; 
+    }
+    else
+    {
+        pszCabinetName++;
+        hr = StringCchCopyA(pszCabinetPath, MAX_PATH, argv[1]);
+
+        if ( SUCCEEDED(hr) )
+        {
+            pszCabinetPath[(INT)( pszCabinetName - argv[1] )] = '\0';
+        }
+        else
+        {
+            printf(&quot;Failed to split the cabinet name \&quot;%s\&quot;.\n&quot;,
+                   argv[1]);
+            goto CLEANUP;
+        }
+    }
+
+    pszDestinationDir  = argv[2]; //Destination directory
+
+    //Determine whether the destination directory provided by the user exists
+
+    hFile = FindFirstFileA(pszDestinationDir, &amp;findFileData);
+
+    if ( hFile == INVALID_HANDLE_VALUE )
+    {
+        printf(&quot;Destination directory \&quot;%s\&quot; does not exist.\n&quot;, 
+               pszDestinationDir);
+        goto CLEANUP;
+    }
+    
+    if ( (findFileData.dwFileAttributes &amp; FILE_ATTRIBUTE_DIRECTORY) == FALSE )
+    {
+        printf(&quot;Destination, \&quot;%s\&quot;, is not a directory.\n&quot;, 
+               pszDestinationDir);
+        goto CLEANUP;
+    }
+
+    //Get the files from the cabinet
+
+    if ( ExtractCabinetFiles(pszCabinetName, pszCabinetPath, pszDestinationDir) == TRUE )
+    {
+        iExitCode = 0;
+    }
+
+CLEANUP:
+
+    if ( hFile != INVALID_HANDLE_VALUE )
+    {
+        FindClose(hFile);
+    }
+
+    return iExitCode;
+}
+
+BOOL ExtractCabinetFiles(
+                         LPSTR pszCabinetName, 
+                         LPSTR pszCabinetPath,
+                         LPSTR pszDestinationDir 
+                         )
+{
+    ERF  erf;         //FDI error structure
+    HFDI hfdi = NULL; //FDI handle
+    BOOL bSuccessful = FALSE;
+
+    //Creates the FDI context
+
+    hfdi = FDICreate(fnMemAlloc,  //function to allocate memory
+                     fnMemFree,   //function to free memory
+                     fnFileOpen,  //function to open a file
+                     fnFileRead,  //function to read data from a file
+                     fnFileWrite, //function to write data to a file
+                     fnFileClose, //function to close a file
+                     fnFileSeek,  //function to move the file pointer
+              cpuUNKNOWN,  //only used by the 16-bit version of FDI
+                     &amp;erf);       //pointer the FDI error structure
+
+    if ( hfdi == NULL )
+    {
+        printf(&quot;FDICreate failed with error code %d: %s\n&quot;,
+               erf.erfOper,
+               FDIErrorToString((FDIERROR)erf.erfOper));
+        goto CLEANUP;
+    }
+
+    //Extract the files from the cabinet
+
+    if ( FDICopy(hfdi,                        //FDI handle
+                 pszCabinetName,              //the cabinet name
+                 pszCabinetPath,              //the cabinet path
+                 0,                           //not used, set to zero
+                 fnNotify,                    //function for notifications
+                 NULL,                        //not used, set to NULL
+                 pszDestinationDir) == FALSE )//this value is application-specific 
+    {
+        printf(&quot;FDICopy failed with error code %d: %s\n&quot;,
+               erf.erfOper,
+               FDIErrorToString((FDIERROR)erf.erfOper));
+        goto CLEANUP;
+    }
+
+    bSuccessful = TRUE;
+
+CLEANUP:
+    
+    //Destory the FDI context
+
+    if ( hfdi != NULL )
+    {
+        if ( FDIDestroy(hfdi) != TRUE )
+        {
+            printf(&quot;FDIDestroy failed with error code %d: %s\n&quot;,
+                   erf.erfOper,
+                   FDIErrorToString((FDIERROR)erf.erfOper));
+        }
+    }
+
+    return bSuccessful;
+}
+
+LPCSTR FDIErrorToString(FDIERROR err)
+{
+    switch (err)
+    {      
+        case FDIERROR_NONE:
+        return &quot;No error&quot;;
+
+        case FDIERROR_CABINET_NOT_FOUND:
+            return &quot;Cabinet not found&quot;;
+
+        case FDIERROR_NOT_A_CABINET:
+            return &quot;Not a cabinet&quot;;
+
+        case FDIERROR_UNKNOWN_CABINET_VERSION:
+            return &quot;Unknown cabinet version&quot;;
+
+        case FDIERROR_CORRUPT_CABINET:
+            return &quot;Corrupt cabinet&quot;;
+
+        case FDIERROR_ALLOC_FAIL:
+            return &quot;Memory allocation failed&quot;;
+
+        case FDIERROR_BAD_COMPR_TYPE:
+            return &quot;Unknown compression type&quot;;
+
+        case FDIERROR_MDI_FAIL:
+            return &quot;Failure decompressing data&quot;;
+
+        case FDIERROR_TARGET_FILE:
+            return &quot;Failure writing to target file&quot;;
+
+    case FDIERROR_RESERVE_MISMATCH:
+        return &quot;Cabinets in set have different RESERVE sizes&quot;;
+            
+    case FDIERROR_WRONG_CABINET:
+        return &quot;Cabinet returned on fdintNEXT_CABINET is incorrect&quot;;
+
+        case FDIERROR_USER_ABORT:
+            return &quot;Application aborted&quot;;
+
+        default:
+        return &quot;Unknown error&quot;;
+    }
+}
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Fdi/nf-fdi-fdicreate"><strong>FDICreate</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Fdi/nf-fdi-fdicopy"><strong>FDICopy</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Fdi/nf-fdi-fdidestroy"><strong>FDIDestroy</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="cabinet-api-macros.html">Cabinet API Macros</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

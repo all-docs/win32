@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cache State In the Virtualization Root</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Cache State in the Virtualization Root
+description: Describes the different cache states a file or directory managed by the provider may have.
+ms.assetid: <!-- raw HTML omitted -->
+ms.date: 01/17/2020
+ms.topic: article</h2>
+<h1>Cache State In the Virtualization Root</h1>
+<p>The provider uses the local file system under the virtualization root as a cache of the items that it manages.  An item (file or directory) can be in one of six states on the local file system:</p>
+<ul>
+<li>
+<p>Virtual</p>
+<p>The item does not exist locally on disk.  It is projected, i.e. synthesized, during enumerations of its parent directory.  Virtual items are merged with any items that may exist on disk to present the full contents of the parent directory.</p>
+</li>
+<li>
+<p>Placeholder</p>
+<p>For files: The file's content (primary data stream) is not present on the disk.  The fileâ€™s metadata (name, size, timestamps, attributes, etc.) is cached on the disk.</p>
+<p>For directories: Some or all of the directoryâ€™s immediate descendants (the files and directories in the directory) are not present on the disk, i.e. they are still virtual.  The directoryâ€™s metadata (name, timestamps, attributes, etc.) is cached on the disk.</p>
+</li>
+<li>
+<p>Hydrated placeholder</p>
+<p>For files: The fileâ€™s content and metadata have been cached to the disk.  Also referred to as a &quot;partial file&quot;.</p>
+<p>For directories: A directory that was created on disk as a placeholder never becomes a hydrated placeholder directory.  This allows the provider to add or remove items from the directory in its backing store and have those changes be reflected in the local cache.</p>
+</li>
+<li>
+<p>Dirty placeholder (hydrated or not)</p>
+<p>The item's metadata has been locally modified and is no longer a cache of its state in the provider's store. Note that creating or deleting a file or directory under a placeholder directory causes that placeholder directory to become dirty.</p>
+</li>
+<li>
+<p>Full file/directory</p>
+<p>For files: The file's content (primary data stream) has been modified.  The file is no longer a cache of its state in the provider's store.  Files that have been created on the local file system (i.e. that do not exist in the provider's store at all) are also considered to be full files.</p>
+<p>For directories: Directories that have been created on the local file system (i.e. that do not exist in the provider's store at all) are considered to be full directories.  A directory that was created on disk as a placeholder never becomes a full directory.</p>
+</li>
+<li>
+<p>Tombstone</p>
+<p>A special hidden placeholder that represents an item that has been deleted from the local file system.  When a directory is enumerated ProjFS merges the set of local items (placeholders, full files, etc.) with the set of virtual projected items.  If an item appears in both the local and projected sets, the local item takes precedence.  If a file does not exist in the local file system there is no local state, so it would appear in the enumeration.  However if that item had been deleted, having it appear in the enumeration would be unexpected.  Replacing a deleted item with a tombstone results in the following effects:</p>
+<ul>
+<li>Enumerations to not reveal the item.</li>
+<li>File opens that expect the item to exist fail with e.g. &quot;file not found&quot;.</li>
+<li>File creates that expect to succeed only if the item does not exist succeed; ProjFS removes the tombstone as part of the operation.</li>
+</ul>
+</li>
+</ul>
+<p>To illustrate the above states, consider the following sequence, given a ProjFS provider that has a single file &quot;foo.txt&quot; located in the virtualization root C:\root.</p>
+<ol>
+<li>An app enumerates C:\root.  It sees the virtual file &quot;foo.txt&quot;.  Since the file has not yet been accessed, the file does not exist on disk.</li>
+<li>The app opens a handle to C:\root\foo.txt.  ProjFS tells the provider to create a placeholder for it.</li>
+<li>The app reads the content of the file.  The provider provides the file content to ProjFS and it is cached to C:\root\foo.txt.  The file is now a hydrated placeholder.</li>
+<li>The app updates the Last Modified timestamp.  The file is now a dirty hydrated placeholder.</li>
+<li>The app opens a handle for write access to the file.  C:\root\foo.txt is now a full file.</li>
+<li>The app deletes C:\root\foo.txt.  ProjFS replaces the file with a tombstone.  Now when the app enumerates C:\root it does not see foo.txt.  If it tries to open the file, the open fails with ERROR_FILE_NOT_FOUND.</li>
+</ol>
+</body>

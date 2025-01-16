@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using Output Protection Manager</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: &quot;Learn more about: Using Output Protection Manager&quot;
+ms.assetid: 01edc17e-e71c-4772-a03c-09c9a2b8400f
+title: Using Output Protection Manager
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using Output Protection Manager</h1>
+<p>This topic describes how to use Output Protection Manager (OPM) to protect video content as it travels over a physical connector to a display device. This topic contains the following sections:</p>
+<ul>
+<li><a href="#video-outputs">Video Outputs</a></li>
+<li><a href="#initializing-an-opm-session">Initializing an OPM Session</a></li>
+<li><a href="#sending-opm-status-requests">Sending OPM Status Requests</a></li>
+<li><a href="#sending-opm-commands">Sending OPM Commands</a></li>
+<li><a href="#sending-opm-commands">Handling a Disabled Video Output</a></li>
+<li><a href="#using-hdcp-to-protect-content">Using HDCP to Protect Content</a></li>
+</ul>
+<p>Premium video content is usually encrypted to protect it from unauthorized duplication. Of course, the video must be decrypted before it is displayed. The decrypted, uncompressed frames must then travel across a physical connector to the display device. Content providers may require the video frames to be protected at this point, as they travel across the physical connector.</p>
+<p>Various protection mechanisms exist for this purpose, including High-Bandwidth Digital Content Protection (HDCP) and DisplayPort Content Protection (DPCP) for digital outputs; and Copy Generation Management System - Analog (CGMS-A) for analog outputs. Generally, these mechanisms involve encrypting or scrambling the signal before it goes to the display.</p>
+<p>OPM enables an application to enforce content protection mechanisms on the video output. Using OPM, the application sends commands and status requests to the graphics driver through a trusted, secure channel. OPM enables an application to:</p>
+<ul>
+<li>Verify that a graphics driver has been signed by Microsoft.</li>
+<li>Set up a trusted communication channel with the driver.</li>
+<li>Enforce content protection mechanisms on the physical output.</li>
+</ul>
+<p>OPM replaces Certified Output Protection Protocol (COPP) and uses a similar API. For backward compatibility, the OPM interface can emulate the COPP interface. Differences between OPM and COPP include the following:</p>
+<ul>
+<li>OPM uses X.509 certificates, while COPP uses a proprietary certificate format.</li>
+<li>OPM supports HDCP repeaters.</li>
+<li>Applications that use OPM do not have to parse HDCP system renewability messages (SRMs).</li>
+<li>OPM can be used when the graphics display is using clone mode. COPP does not support clone mode.</li>
+</ul>
+<p>If your application uses the protected media path (PMP) to play video content, you do not have to use the OPM API, because the PMP makes all of the required OPM calls. The OPM API is available for applications that do not use the PMP.</p>
+<p>OPM is available in WindowsÂ Vista and later, but the API was not made public until WindowsÂ 7. To use OPM in an application, you must have the headers and library files from the WindowsÂ 7 SDK. You do not have to redistribute any DLLs to use OPM in WindowsÂ Vista or Windows ServerÂ 2008.</p>
+<h2>Video Outputs</h2>
+<p>A graphics adapter can have more than one physical output, each with its own capabilities. Before an application plays protected content, it must set the appropriate protection mechanisms on every video output associated with the graphics card that will display the video. Which protection mechanisms to apply will depend on the usage rules for the content.</p>
+<p>Each video output is represented by an instance of the <a href="/windows/desktop/api/opmapi/nn-opmapi-iopmvideooutput"><strong>IOPMVideoOutput</strong></a> interface. You can use a Direct3D device or monitor handles to get the video outputs.</p>
+<p>Using a Direct3D device:</p>
+<ol>
+<li>Get the <strong>IDirect3DDevice9</strong> pointer for the Direct3D device that your application will use to create surfaces to hold the video frames.</li>
+<li>Call the <a href="/windows/desktop/api/opmapi/nf-opmapi-opmgetvideooutputsfromidirect3ddevice9object"><strong>OPMGetVideoOutputsFromIDirect3DDevice9Object</strong></a> function. This function allocates an array of <a href="/windows/desktop/api/opmapi/nn-opmapi-iopmvideooutput"><strong>IOPMVideoOutput</strong></a> pointers, one for each output.</li>
+</ol>
+<p>Using monitor handles:</p>
+<ol>
+<li>Call <strong>EnumDisplayMonitors</strong> to get the <strong>HMONITOR</strong> handles that correspond to the video window. Several monitors can be associated with the same window, so you might get several <strong>HMONITOR</strong> handles.</li>
+<li>For each monitor handle, call <a href="/windows/desktop/api/opmapi/nf-opmapi-opmgetvideooutputsfromhmonitor"><strong>OPMGetVideoOutputsFromHMONITOR</strong></a>. This function allocates an array of <a href="/windows/desktop/api/opmapi/nn-opmapi-iopmvideooutput"><strong>IOPMVideoOutput</strong></a> pointers, one for each output.</li>
+</ol>
+<h2>Initializing an OPM Session</h2>
+<p>Before the application sends OPM commands or status requests, it must verify that the video output is trusted and establish a session key. The session key is used to sign the data that is exchanged between the application and the graphics driver.</p>
+<p>The OPM API defines a handshake that establishes trust and sets the session key. You must perform this handshake for each instance of the <a href="/windows/desktop/api/opmapi/nn-opmapi-iopmvideooutput"><strong>IOPMVideoOutput</strong></a> interface, as follows:</p>
+<ol>
+<li>
+<p>Call <a href="/windows/desktop/api/opmapi/nf-opmapi-iopmvideooutput-startinitialization"><strong>IOPMVideoOutput::StartInitialization</strong></a>. This method retrieves two pieces of data:</p>
+<ul>
+<li>A random number, generated by the driver. You will use this number to complete the handshake.</li>
+<li>The driver's X.509 certificate chain.</li>
+</ul>
+</li>
+<li>
+<p>Verify that the certificate chain has been signed by Microsoft.</p>
+<blockquote>
+<p>[!Note]<br />
+Certificate revocation is outside the scope of OPM.</p>
+</blockquote>
+<p>Â </p>
+</li>
+<li>
+<p>Get the driver's public key from the certificate chain.</p>
+</li>
+<li>
+<p>Generate a 128-bit AES session key.</p>
+</li>
+<li>
+<p>Generate two random 32-bit numbers:</p>
+<ul>
+<li>The starting sequence number for OPM status requests.</li>
+<li>The starting sequence number for OPM commands.</li>
+</ul>
+<p>These numbers must be generated using a cryptographically secure pseudo-random number generator, such as <strong>CryptGenRandom</strong>.</p>
+</li>
+<li>
+<p>Copy the driver's random number (obtained in step 1), the session key, and the two sequence numbers into an <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_encrypted_initialization_parameters"><strong>OPM_ENCRYPTED_INITIALIZATION_PARAMETERS</strong></a> structure, as described in <a href="/windows/desktop/api/opmapi/nf-opmapi-iopmvideooutput-finishinitialization"><strong>IOPMVideoOutput::FinishInitialization</strong></a>.</p>
+</li>
+<li>
+<p>Encrypt the <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_encrypted_initialization_parameters"><strong>OPM_ENCRYPTED_INITIALIZATION_PARAMETERS</strong></a> structure with RSAES-OAEP, using the driver's public key, which is found in the driver's certificate.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/opmapi/nf-opmapi-iopmvideooutput-finishinitialization"><strong>IOPMVideoOutput::FinishInitialization</strong></a>.</p>
+</li>
+</ol>
+<h2>Sending OPM Status Requests</h2>
+<p>OPM status requests return information about the video output, such as the type of physical connector and the current protection level. For a list of request types, see <a href="opm-status-requests.html">OPM Status Requests</a>.</p>
+<p>To send a status request, perform the following steps.</p>
+<ol>
+<li>
+<p>Initialize an <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_get_info_parameters"><strong>OPM_GET_INFO_PARAMETERS</strong></a> structure as shown in the following table.</p>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>omac</strong></td>
+<td>Skip this field for now.</td>
+</tr>
+<tr>
+<td><strong>rnRandomNumber</strong></td>
+<td>A cryptographically secure 128-bit random number. Whenever you make a status request, always generate a new random number, even if you are making the same request. Store the number in a variable, because you will need to refer to it later.</td>
+</tr>
+<tr>
+<td><strong>guidInformation</strong></td>
+<td>A GUID that identifies the status request. For a list of status requests, see <a href="opm-status-requests.html">OPM Status Requests</a>.</td>
+</tr>
+<tr>
+<td><strong>ulSequenceNumber</strong></td>
+<td>The sequence number. For the first status request, use the starting sequence number that you specified in the <a href="/windows/desktop/api/opmapi/nf-opmapi-iopmvideooutput-finishinitialization"><strong>IOPMVideoOutput::FinishInitialization</strong></a> method (step 5 of <a href="#initializing-an-opm-session">Initializing an OPM Session</a>.) Each time you make another status request, increment this number by 1.</td>
+</tr>
+<tr>
+<td><strong>abParameters</strong></td>
+<td>A byte array that contains additional input data for the request. The format of the input data is listed in the reference topic for each status request.</td>
+</tr>
+<tr>
+<td><strong>cbParametersSize</strong></td>
+<td>The size of the valid data in the <strong>abParameters</strong> array. The contents of the rest of the array are undefined.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+</li>
+<li>
+<p>Calculate the one-key CBC MAC (OMAC-1) to calculate a hash for the block of data that appears after the <strong>omac</strong> member, and then set the <strong>omac</strong> member to this value. See <a href="opm-example-code.html">OPM Example Code</a>.</p>
+</li>
+<li>
+<p>Call the <a href="/windows/desktop/api/opmapi/nf-opmapi-iopmvideooutput-getinformation"><strong>IOPMVideoOutput::GetInformation</strong></a> method. Pass in a pointer to the <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_get_info_parameters"><strong>OPM_GET_INFO_PARAMETERS</strong></a> structure and a pointer to an <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_requested_information"><strong>OPM_REQUESTED_INFORMATION</strong></a> structure. The driver's response is written to the <strong>OPM_REQUESTED_INFORMATION</strong> structure.</p>
+<ul>
+<li>The <strong>omac</strong> member of this structure contains an OMAC computed for the data that follows this member.</li>
+<li>The <strong>abRequestedInformation</strong> member is a byte array that contains output data for the response. The format of the output data is listed in the reference topic for each status request.</li>
+</ul>
+</li>
+<li>
+<p>Calculate an OMAC for the <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_requested_information"><strong>OPM_REQUESTED_INFORMATION</strong></a> structure, not including the <strong>omac</strong> member. Verify that the OMAC matches the value in the <strong>omac</strong> member.</p>
+</li>
+<li>
+<p>Make sure the <strong>cbRequestedInformationSize</strong> member of the <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_requested_information"><strong>OPM_REQUESTED_INFORMATION</strong></a> structure gives the correct size for the output data. For example, the output data for the <a href="opm-get-connector-type.html"><strong>OPM_GET_CONNECTOR_TYPE</strong></a> query is an <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_standard_information"><strong>OPM_STANDARD_INFORMATION</strong></a> structure, so the value of <strong>cbRequestedInformationSize</strong> should be <code>sizeof(OPM_STANDARD_INFORMATION)</code>.</p>
+</li>
+<li>
+<p>Cast the <strong>abRequestedInformation</strong> member of the <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_requested_information"><strong>OPM_REQUESTED_INFORMATION</strong></a> structure to the correct output data structure. For example, if the status request is <a href="opm-get-connector-type.html"><strong>OPM_GET_CONNECTOR_TYPE</strong></a>, cast <strong>abRequestedInformation</strong> to an <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_standard_information"><strong>OPM_STANDARD_INFORMATION</strong></a> structure.</p>
+</li>
+<li>
+<p>Make sure the <strong>rnRandomNumber</strong> member of the output data structure matches the value of <strong>rnRandomNumber</strong> from step 1.</p>
+</li>
+<li>
+<p>Check the <strong>ulStatusFlags</strong> member of the output data structure, as described in <a href="#handling-a-disabled-video-output">Handling a Disabled Video Output</a>.</p>
+</li>
+</ol>
+<p>If any of the checks in steps 5â€“8 fails, the application must stop showing protected content.</p>
+<h2>Sending OPM Commands</h2>
+<p>OPM commands are used to set the protection level and other settings on the video output. Sending an OPM command is similar to sending a status request, except there is no response data from the driver. For a list of commands, see <a href="opm-commands.html">OPM Commands</a>.</p>
+<p>To send an OPM command, perform the following steps.</p>
+<ol>
+<li>
+<p>Fill in an <a href="/windows/desktop/api/opmapi/ns-opmapi-opm_configure_parameters"><strong>OPM_CONFIGURE_PARAMETERS</strong></a> structure as shown in the following table.</p>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>omac</strong></td>
+<td>Skip this field for now.</td>
+</tr>
+<tr>
+<td><strong>guidSetting</strong></td>
+<td>A GUID that identifies the command. For a list of commands, see <a href="opm-commands.html">OPM Commands</a>.</td>
+</tr>
+<tr>
+<td><strong>ulSequenceNumber</strong></td>
+<td>The sequence number. For the first command, use the starting sequence number that you specified in the <a href="/windows/desktop/api/opmapi/nf-opmapi-iopmvideooutput-finishinitialization"><strong>IOPMVideoOutput::FinishInitialization</strong></a> method (step 5 of <a href="#initializing-an-opm-session">Initializing an OPM Session</a>.) Each time you send another command, increment this number by 1.</td>
+</tr>
+<tr>
+<td><strong>abParameters</strong></td>
+<td>A byte array that contains additional input data for the command. The format of the input data is listed in the reference topic for each command.</td>
+</tr>
+<tr>
+<td><strong>cbSettingDataSize</strong></td>
+<td>The size of the valid data in the <strong>abParameters</strong> array. The contents of the rest of the array are undefined.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+</li>
+<li>
+<p>Calculate an OMAC for the block of data that appears after the <strong>omac</strong> member, and then set the <strong>omac</strong> member to this value.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/opmapi/nf-opmapi-iopmvideooutput-configure"><strong>IOPMVideoOutput::Configure</strong></a>.</p>
+</li>
+</ol>
+<p>For most commands, there is a corresponding status request that returns the status of the command. For example, the <a href="opm-set-protection-level.html"><strong>OPM_SET_PROTECTION_LEVEL</strong></a> command sets the protection level, and the <a href="opm-get-virtual-protection-level.html"><strong>OPM_GET_VIRTUAL_PROTECTION_LEVEL</strong></a> command gets the current protection level.</p>
+<h2>Handling a Disabled Video Output</h2>
+<p>A video output might disable itself at any time to prevent the unauthorized use of video content. This might occur because a protection mechanism stops working, because the driver detects tampering, or because the display was disconnected from the physical connector. While a video output is disabled, no video frames are displayed.</p>
+<p>While content protection is enabled, an application should periodically (at least once every 2 seconds) perform the following steps.</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/opmapi/nf-opmapi-iopmvideooutput-getinformation"><strong>IOPMVideoOutput::GetInformation</strong></a> to send either the <a href="opm-get-actual-protection-level.html"><strong>OPM_GET_ACTUAL_PROTECTION_LEVEL</strong></a> or <a href="opm-get-virtual-protection-level.html"><strong>OPM_GET_VIRTUAL_PROTECTION_LEVEL</strong></a> status request. The return data for both commands is an <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_standard_information"><strong>OPM_STANDARD_INFORMATION</strong></a> structure.</li>
+<li>Check the <strong>ulInformation</strong> member of the <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_standard_information"><strong>OPM_STANDARD_INFORMATION</strong></a> structure. This member contains a flag indicating whether content protection is still enabled. If content protection is off, stop playing the video immediately.</li>
+<li>If content protection is on, check the <strong>ulStatusFlags</strong> member of the <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_standard_information"><strong>OPM_STANDARD_INFORMATION</strong></a> structure. If no flags are set, the video output is working correctly. Otherwise, the video output is disabled.</li>
+</ol>
+<p>The following flags are defined for <strong>ulStatusFlags</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><!-- raw HTML omitted -->OPM_STATUS_LINK_LOST<!-- raw HTML omitted --></td>
+<td>Output protection stopped working for some reason; for example, the display device might be unplugged from the connector. Stop playback and turn off all output protection mechanisms.</td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted -->OPM_STATUS_RENEGOTIATION_REQUIRED<!-- raw HTML omitted --></td>
+<td>The application must reestablish the OPM session. Respond as follows:<!-- raw HTML omitted --><!-- raw HTML omitted -->Stop playback.<!-- raw HTML omitted --><!-- raw HTML omitted -->Turn off all protection mechanisms.<!-- raw HTML omitted --><!-- raw HTML omitted -->Release the <!-- raw HTML omitted --><!-- raw HTML omitted -->IOPMVideoOutput<!-- raw HTML omitted --><!-- raw HTML omitted --> interface.<!-- raw HTML omitted --><!-- raw HTML omitted -->Recreate all video surfaces.<!-- raw HTML omitted --><!-- raw HTML omitted -->Create a new OPM object and attempt to reestablish content protection. If this fails, display an error message to the user. Do not play any more video content.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted -->OPM_STATUS_REVOKED_HDCP_DEVICE_ATTACHED<!-- raw HTML omitted --></td>
+<td>This flag applies only when HDCP is used, and indicates the presence of a revoked HDCP device. Stop playback and turn off all protection mechanisms on this video output. When this flag is set, the <!-- raw HTML omitted -->OPM_STATUS_LINK_LOST<!-- raw HTML omitted --> flag is also set.</td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted -->OPM_STATUS_REVOKED_HDCP_DEVICE_ATTACHED<!-- raw HTML omitted --></td>
+<td>The driver has detected tampering. Stop playback, and do not play any more video using this video output. It is also a good idea to stop using any other video outputs, because the system might be compromised.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Using HDCP to Protect Content</h2>
+<p>This section describes how to enable HDCP output protection using OPM. Here is a general outline of the steps the application must take. Details are given later in this section.</p>
+<ol>
+<li>The application might have to provide an SRM to the video output. The mechanism for receiving SRMs is outside the scope of the OPM interface. For example, SRMs might be delivered as part of a broadcast stream.</li>
+<li>The application enables HDCP output protection.</li>
+<li>The application plays the video content. Periodically, the application polls the driver to make sure HDCP is on.</li>
+<li>When playback is complete, the application turns off HDCP.</li>
+</ol>
+<h3>Setting the SRM</h3>
+<p>To set the SRM, perform the following steps.</p>
+<ol>
+<li>Initialize an <a href="/windows/desktop/api/opmapi/ns-opmapi-opm_set_hdcp_srm_parameters"><strong>OPM_SET_HDCP_SRM_PARAMETERS</strong></a> structure with the SRM version number.</li>
+<li>Store the SRM in a variable.</li>
+<li>Send an <a href="opm-set-hdcp-srm.html"><strong>OPM_SET_HDCP_SRM</strong></a> command to the video output. Use the procedure described in <a href="#sending-opm-commands">Sending OPM Commands</a>.
+<ul>
+<li>The <strong>abParameters</strong> member of the <a href="/windows/desktop/api/opmapi/ns-opmapi-opm_configure_parameters"><strong>OPM_CONFIGURE_PARAMETERS</strong></a> structure contains the <a href="/windows/desktop/api/opmapi/ns-opmapi-opm_set_hdcp_srm_parameters"><strong>OPM_SET_HDCP_SRM_PARAMETERS</strong></a> structure.</li>
+<li>The <em>pbAdditionalParameters</em> parameter of the <a href="/windows/desktop/api/opmapi/nf-opmapi-iopmvideooutput-configure"><strong>IOPMVideoOutput::Configure</strong></a> method points to the variable that contains the SRM.</li>
+</ul>
+</li>
+<li>Send an <a href="opm-get-current-hdcp-srm-version.html"><strong>OPM_GET_CURRENT_HDCP_SRM_VERSION</strong></a> status request to the video output. Use the procedure described in <a href="#sending-opm-status-requests">Sending OPM Status Requests</a>. This status request has no input data, so the contents of the <strong>abParameters</strong> member of the <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_get_info_parameters"><strong>OPM_GET_INFO_PARAMETERS</strong></a> structure are undefined.</li>
+<li>When the <a href="/windows/desktop/api/opmapi/nf-opmapi-iopmvideooutput-getinformation"><strong>IOPMVideoOutput::GetInformation</strong></a> method returns, the <strong>abRequestedInformation</strong> array in the <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_requested_information"><strong>OPM_REQUESTED_INFORMATION</strong></a> structure contains an <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_standard_information"><strong>OPM_STANDARD_INFORMATION</strong></a> structure. The <strong>ulInformation</strong> member of this structure contains the version number of the current SRM. This value must equal the value from step 2.</li>
+</ol>
+<h3>Enabling HDCP</h3>
+<p>To enable HDCP, perform the following steps.</p>
+<ol>
+<li>Initialize an <a href="/windows/desktop/api/opmapi/ns-opmapi-opm_set_protection_level_parameters"><strong>OPM_SET_PROTECTION_LEVEL_PARAMETERS</strong></a> structure with the following values:
+<ul>
+<li><strong>ulProtectionType</strong> = <strong>OPM_PROTECTION_TYPE_HDCP</strong></li>
+<li><strong>ulProtectionLevel</strong> = <strong>OPM_HDCP_ON</strong></li>
+<li><strong>Reserved</strong> = 0</li>
+<li><strong>Reserved2</strong> = 0</li>
+</ul>
+</li>
+<li>Send an <a href="opm-set-protection-level.html"><strong>OPM_SET_PROTECTION_LEVEL</strong></a> command. The input data in the <strong>abParameters</strong> array is the <a href="/windows/desktop/api/opmapi/ns-opmapi-opm_set_protection_level_parameters"><strong>OPM_SET_PROTECTION_LEVEL_PARAMETERS</strong></a> structure.</li>
+<li>Send an <a href="opm-get-virtual-protection-level.html"><strong>OPM_GET_VIRTUAL_PROTECTION_LEVEL</strong></a> status request to check whether HDCP is enabled. The first 4 bytes of the <strong>abParameters</strong> member of the <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_get_info_parameters"><strong>OPM_GET_INFO_PARAMETERS</strong></a> structure contain the value <strong>OPM_PROTECTION_TYPE_HDCP</strong>.</li>
+</ol>
+<p>When the <a href="/windows/desktop/api/opmapi/nf-opmapi-iopmvideooutput-getinformation"><strong>GetInformation</strong></a> method returns, the <strong>abRequestedInformation</strong> array in the <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_requested_information"><strong>OPM_REQUESTED_INFORMATION</strong></a> structure contains an <a href="/windows/desktop/api/ksopmapi/ns-ksopmapi-opm_standard_information"><strong>OPM_STANDARD_INFORMATION</strong></a> structure. The <strong>ulInformation</strong> member of this structure contains a value from the <a href="/windows/desktop/api/opmapi/ne-opmapi-opm_hdcp_protection_level"><strong>OPM_HDCP_PROTECTION_LEVEL</strong></a> enumeration. If the value equals <strong>OPM_HDCP_ON</strong>, it means HDCP is enabled. Otherwise, repeat steps 1â€“2 until HDCP is enabled, or an error occurs. (Remember to increment the sequence number and generate a new random number each time.)</p>
+<p>It usually takes between 100 and 200 milliseconds to enable HDCP, but it can take longer. Do not assume that HDCP is enabled until you have verified it.</p>
+<p>When the application finishes playing protected content, turn off HDCP. The steps are the same as for enabling HDCP, but in step 1, set <strong>ulProtectionLevel</strong> to <strong>OPM_HDCP_OFF</strong>.</p>
+<blockquote>
+<p>[!Note]<br />
+Do not enable HDCP if the connector type is <strong>OPM_CONNECTOR_TYPE_DISPLAYPORT_EMBEDDED</strong>. (See <a href="opm-connector-type-flags.html"><strong>OPM Connector Type Flags</strong></a>.)</p>
+</blockquote>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="output-protection-manager.html">Output Protection Manager</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

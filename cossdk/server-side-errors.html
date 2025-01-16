@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Server-Side Errors</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Server-Side Errors
+ms.assetid: ce8ddb52-237c-4d46-a088-9f592afadcd2
+title: Server-Side Errors
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Server-Side Errors</h1>
+<p>The listener and player work together to deal with poison messages. If a transaction that is being played back fails, <a href="/previous-versions/windows/desktop/legacy/ms711472(v=vs.85)">Message Queuing</a> moves the input message back to the input queue. The player aborts the transaction if it receives a failed HRESULT from the server component or if it catches an exception. If the problem persists, the listener could loop continuously in the following pattern:</p>
+<ul>
+<li>Dequeues the message</li>
+<li>Instantiates the object</li>
+<li>Suffers a rollback</li>
+<li>Puts the message back on the top of the queue</li>
+</ul>
+<p>The queued components service handles this failure by using a series of application-specific retry queues. Created when the component is installed, there are seven queues for each application, as follows:</p>
+<ol>
+<li>
+<p>The normal input queue. The name of this queue is the COM+ application name. This is a Message Queuing public queue.</p>
+</li>
+<li>
+<p>The first retry queue. Messages are moved here if the transaction repeatedly fails when processing messages from the normal input queue. Messages on this queue are processed after one minute. A message can be retried three times on this queue before being moved to the back of the second retry queue. This queue is named <em>ApplicationName</em>_0. This queue is a private Message Queuing queue.</p>
+</li>
+<li>
+<p>The second retry queue. Messages are moved here if the transaction repeatedly fails when processing messages from the first retry queue. Messages on this queue are processed after two minutes. A message can be retried three times on this queue before being moved to the back of the third retry queue. This queue is named <em>ApplicationName</em>_1. This queue is a private Message Queuing queue.</p>
+</li>
+<li>
+<p>The third retry queue. Messages are moved here if the transaction repeatedly fails when processing messages from the second retry queue. Messages on this queue are processed after four minutes. A message can be retried three times on this queue before being moved to the back of the fourth retry queue. This queue is named <em>ApplicationName</em>_2. This queue is a private Message Queuing queue.</p>
+</li>
+<li>
+<p>The fourth retry queue. Messages are moved here if the transaction repeatedly fails when processing messages from the third retry queue. Messages on this queue are processed after eight minutes. A message can be retried three times on this queue before being moved to the fifth retry queue. This queue is named <em>ApplicationName</em>_3. This queue is a private Message Queuing queue.</p>
+</li>
+<li>
+<p>The fifth retry queue. Messages are moved here if the transaction repeatedly fails when processing messages from the fourth retry queue. Messages on this queue are processed after sixteen minutes. A message can be retried three times on this queue before being moved to the final resting queue. This queue is named <em>ApplicationName</em>_4. This is a private Message Queuing queue.</p>
+</li>
+<li>
+<p>An application-specific final resting queue. Messages are moved here if the transaction repeatedly aborts when attempted on the fifth retry queue. This queue is named <em>ApplicationName</em>_DeadQueue. This is a private Message Queuing queue. The final resting queue is not serviced by a queue listener. Messages stay here until they are manually moved (perhaps by the queued components message mover utility) or are purged by Message Queuing Explorer.</p>
+</li>
+</ol>
+<p>Messages that are not playable because it is clear that every retry attempt will fail can be moved directly to the application-specific final resting queue without being advanced through all the retry levels.</p>
+<p>The player issues a COM+ event to notify interested parties that messages cannot be played. COM+ events are issued in the following situations:</p>
+<ul>
+<li>When a transaction aborts</li>
+<li>When a message is moved from one queue to another</li>
+<li>When a message is deposited onto the final resting queue</li>
+</ul>
+<p>Messages can be modified before moving from one queue to another. The COM+ queued components security mechanism allows a message to be moved to retry queues and then reinserted into the application's initial input queue. For more information on queued components security, see <a href="queued-components-security.html">Queued Components Security</a>.</p>
+<p>Retry queues are created along with the main application queue when the application is either marked as queued by the Component Services administration tool or by using the COM+ Administrative SDK functions. The queued components service allows for flexibility in the retry mechanism by allowing retry queues to be deleted. For example, if all the retry queues are deleted, a message that persistently aborts will be moved directly from the application queue to the application-specific final resting queue. By removing one or more of the retry queues, the number and length of the retries can be reduced. If queues are removed from the retry sequence, the timing of the remaining queues correspond to the position in the sequence of retry queues. For example, if you remove retry queue <em>ApplicationName</em>_1, <em>ApplicationName</em>_2, and <em>ApplicationName</em>_3, the messages on <em>ApplicationName</em>_4 would be processed as if the queue was the second retry queue.</p>
+<p>The retry mechanism is designed to complete a message if at all possible. In some cases, it may not be possible for the message to succeed. For example, a client may be attempting to withdraw money from an account that has insufficient funds. In these circumstances, you can handle the error in a number of ways, including the following:</p>
+<ul>
+<li>Generate a diagnostic and issue a warning</li>
+<li>Create a compensating transaction</li>
+<li>Ignore the problem and dismiss the message</li>
+</ul>
+<p>Like client-side persistent failures, the queued components service allows an exception class to be associated with a component. The exception class is associated with the component by using the <strong>Advanced</strong> tab in the component properties page of Component Services administration tool or by using the COM+ Administrative functions. The exception class allows the developer to have control after a message has been retried and before that message is moved to the application-specific final resting queue. For more information on the exception class, see <a href="persistent-client-side-failures.html">Persistent Client-Side Failures</a>.</p>
+<p>The following is the sequence of events for server-side exception handling:</p>
+<ol>
+<li>The message is moved through the available application-specific retry queues.</li>
+<li>The final retry on the last retry queue fails.</li>
+<li>The queued components service run-time retrieves the target component from the message and checks for an exception class.</li>
+<li>The run-time instantiates the exception class.</li>
+<li>The run-time queries <a href="/windows/desktop/api/ComSvcs/nn-comsvcs-iplaybackcontrol"><strong>IPlaybackControl</strong></a> on the exception class.</li>
+<li>The run-time calls <a href="/windows/desktop/api/ComSvcs/nf-comsvcs-iplaybackcontrol-finalserverretry"><strong>IPlaybackControl::FinalServerRetry</strong></a> in the exception class.</li>
+<li>The run-time plays back all property and method calls from the message to the exception class.</li>
+<li>If steps 4 through 6 do not succeed, the run-time moves the message onto the application-specific final resting queue.</li>
+</ol>
+<p>If you need to intervene in the process described above or you need to move a poison message out of its final resting queue, use the message mover utility. For more information on the message mover utility, see <a href="handling-errors-in-queued-components.html">Handling Errors</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="client-side-errors.html">Client-Side Errors</a></p>
+<!-- raw HTML omitted -->
+<p><a href="persistent-client-side-failures.html">Persistent Client-Side Failures</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

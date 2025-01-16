@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Binding to the Global Catalog</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Binding to the Global Catalog
+description: The Global Catalog is a namespace that contains directory data for all domains in a forest.
+ms.assetid: c3c131c7-d9dd-4dbd-a909-abd0ffd9f375
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Binding to the Global Catalog AD</li>
+<li>global catalog AD , binding to
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Binding to the Global Catalog</h1>
+<p>The Global Catalog is a namespace that contains directory data for all domains in a forest. The Global Catalog contains a partial replica of every domain directory. It contains an entry for every object in the enterprise forest, but does not contain all the properties of each object. Instead, it contains only the properties specified for inclusion in the Global Catalog.</p>
+<p>The Global Catalog is stored on specific servers throughout the enterprise. Only domain controllers can serve as Global Catalog servers. Administrators indicate whether a given domain controller holds a Global Catalog by using the Active Directory Sites and Services Manager.</p>
+<p>To bind to the Global Catalog with ADSI, use the &quot;GC:&quot; moniker.</p>
+<p>There are two ways to bind to the Global Catalog to perform a search in a forest:</p>
+<ul>
+<li>Bind to the enterprise root object to search across all domains in the forest.</li>
+<li>Bind to a specific object to search that object and its children. For example, if you bind to a domain that has two domains beneath it in a domain tree in the forest, you can search across those three domains. Be aware that the distinguished name for the object to bind to is exactly the same as the distinguished name used to bind to the &quot;LDAP:&quot; namespace. Recall that &quot;LDAP:&quot; is a full replica of a single domain and that &quot;GC:&quot; is a partial replica of all domains in the forest.</li>
+</ul>
+<p>As with the &quot;LDAP:&quot; moniker, you can use serverless binding or bind to a specific Global Catalog server. If searching in the current forest, use serverless binding. However, if searching in another forest, specify either a domain name or a Global Catalog server to bind to, such as shown in the following examples.</p>
+<p>Bind using the domain name:</p>
+<pre lang="syntax"><code>GC://fabrikam.com
+</code></pre>
+<p>Bind using the server name:</p>
+<pre lang="syntax"><code>GC://servername
+</code></pre>
+<p>You can also bind to a specific object within the Global Catalog. To bind to the sales object in the fabrikam domain, use the following format.</p>
+<pre lang="syntax"><code>GC://fabrikam.com/DC=sales,DC=fabrikam,DC=com
+</code></pre>
+<p>Or, to bind to the sales object on the server, use the following format.</p>
+<pre lang="syntax"><code>GC://servername.fabrikam.com/DC=sales,DC=fabrikam,DC=com
+</code></pre>
+<p><strong>To search the entire forest</strong></p>
+<ol>
+<li>Bind to the root of the Global Catalog namespace.</li>
+<li>Enumerate the Global Catalog container. The Global Catalog container contains a single object that you can use to search the entire forest.</li>
+<li>Use the object in the container to perform the search. In C/C++, call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> to get an <a href="/windows/desktop/api/iads/nn-iads-idirectorysearch"><strong>IDirectorySearch</strong></a> pointer on the object so that you can use the <strong>IDirectorySearch</strong> interface to perform the search. In Visual Basic, use the object returned from the enumeration in your ADO query.</li>
+</ol>
+<p>To enumerate the Global Catalog servers in a site, perform an LDAP subtree search of &quot;cn=&lt;yoursite&gt;,cn=sites,&lt;DN of the configurationNamingContext&gt;&quot;, using the following filter string.</p>
+<pre lang="syntax"><code>(&amp;(objectCategory=nTDSDSA)(options:1.2.840.113556.1.4.803:=1))
+</code></pre>
+<p>This filter uses the <strong>LDAP_MATCHING_RULE_BIT_AND</strong> matching rule operator (1.2.840.113556.1.4.803) to find <strong>nTDSDSA</strong> objects that have the low-order bit set in the bitmask of the <strong>options</strong> attribute. The low-order bit, which corresponds to the <strong>NTDSDSA_OPT_IS_GC</strong> constant defined in Ntdsapi.h, identifies the <strong>nTDSDSA</strong> object of a Global Catalog server. For more information about matching rules, see <a href="/windows/desktop/ADSI/search-filter-syntax">Search Filter Syntax</a>.</p>
+<p>The parent of the <strong>nTDSDSA</strong> object is the server object, and the <strong>dNSHostName</strong> property of the server object is the DNS name of the Global Catalog server.</p>
+<p>You cannot use #define constants such as <strong>NTDSDSA_OPT_IS_GC</strong> and <strong>LDAP_MATCHING_RULE_BIT_AND</strong> directly in a search filter string. However, you could use these constants as arguments to a function such as <a href="/windows/win32/api/winuser/nf-winuser-wsprintfa"><strong>swprintf_s</strong></a> to insert the constant values into a filter string.</p>
+<p>The global catalog does not represent the entire forest tree structure. For example, you might expect that the following code example would enumerate all of the domains in the forest and all child objects of each domain. In reality, what it actually does is enumerate all of the domains in the forest, but none of the enumerated domain objects contain any children. This is a limitation of the global catalog.</p>
+<pre lang="VB"><code>Dim oGC As IADs
+Dim oDomain As IADs
+Dim oChild As IADs
+
+Set oGC = GetObject(&quot;GC:&quot;)
+For Each oDomain In oGC
+    ' Print the name of the domain.
+    Debug.Print oDomain.Name
+    
+    ' Enumerate the child objects of the domain.
+    For Each oChild In oDomain
+        Debug.Print oChild.Name
+    Next
+Next
+</code></pre>
+<p>To correct this, it is necessary to bind to each domain object and then enumerate the child objects of each domain. The proper technique is shown in the following code example.</p>
+<pre lang="VB"><code>Dim oGC As IADs
+Dim oDomainEnum As IADs
+Dim oDomainBind As IADs
+Dim oChild As IADs
+
+Set oGC = GetObject(&quot;GC:&quot;)
+For Each oDomainEnum In oGC
+    ' Print the name of the domain.
+    Debug.Print oDomainEnum.Name
+    
+    ' Bind to the domain.
+    Set oDomainBind = GetObject(&quot;LDAP://&quot; + oDomainEnum.Name)
+    
+    ' Enumerate the child objects of the domain.
+    For Each oChild In oDomainBind
+        Debug.Print oChild.Name
+    Next
+Next
+</code></pre>
+<p>For more information and code examples that show how to search an entire forest, see <a href="example-code-for-searching-a-forest.html">Example Code for Searching a Forest</a>.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

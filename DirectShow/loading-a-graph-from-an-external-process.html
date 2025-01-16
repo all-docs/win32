@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Loading a Graph From an External Process</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Loading a Graph From an External Process
+ms.assetid: 1c657c7f-46d7-4feb-88a7-4a3227c9070b
+title: Loading a Graph From an External Process
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Loading a Graph From an External Process</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>GraphEdit can load a filter graph created by an external process. With this feature, you can see exactly what filter graph your application builds, with only a minimal amount of additional code in your application.</p>
+<blockquote>
+<p>[!Note]<br />
+This feature requires Windows 2000, Windows XP, or later.</p>
+</blockquote>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+Starting in Windows Vista, you must register proppage.dll to enable this feature. Proppage.dll is included in the Windows SDK.</p>
+</blockquote>
+<p>Â </p>
+<p>The application must register the filter graph instance in the Running Object Table (ROT). The ROT is a globally accessible look-up table that keeps track of running objects. Objects are registered in the ROT by moniker. To connect to the graph, GraphEdit searches the ROT for monikers whose display name matches a particular format:</p>
+<pre lang="C++"><code>!FilterGraph X pid Y
+</code></pre>
+<p>where <em>X</em> is the hexadecimal address of the Filter Graph Manager, and <em>Y</em> is the process id, also in hexadecimal.</p>
+<p>When your application first creates the filter graph, call the following function:</p>
+<pre lang="C++"><code>HRESULT AddToRot(IUnknown *pUnkGraph, DWORD *pdwRegister) 
+{
+    IMoniker * pMoniker = NULL;
+    IRunningObjectTable *pROT = NULL;
+
+    if (FAILED(GetRunningObjectTable(0, &amp;pROT))) 
+    {
+        return E_FAIL;
+    }
+    
+    const size_t STRING_LENGTH = 256;
+
+    WCHAR wsz[STRING_LENGTH];
+ 
+   StringCchPrintfW(
+        wsz, STRING_LENGTH, 
+        L&quot;FilterGraph %08x pid %08x&quot;, 
+        (DWORD_PTR)pUnkGraph, 
+        GetCurrentProcessId()
+        );
+    
+    HRESULT hr = CreateItemMoniker(L&quot;!&quot;, wsz, &amp;pMoniker);
+    if (SUCCEEDED(hr)) 
+    {
+        hr = pROT-&gt;Register(ROTFLAGS_REGISTRATIONKEEPSALIVE, pUnkGraph,
+            pMoniker, pdwRegister);
+        pMoniker-&gt;Release();
+    }
+    pROT-&gt;Release();
+    
+    return hr;
+}
+</code></pre>
+<p>This function creates a moniker and a new ROT entry for the filter graph. The first parameter is a pointer to the filter graph. The second parameter receives a value that identifies the new ROT entry. Before the application releases the filter graph, call the following function to remove the ROT entry. The <em>pdwRegister</em> parameter is the identifier returned by the AddToRot function.</p>
+<pre lang="C++"><code>void RemoveFromRot(DWORD pdwRegister)
+{
+    IRunningObjectTable *pROT;
+    if (SUCCEEDED(GetRunningObjectTable(0, &amp;pROT))) {
+        pROT-&gt;Revoke(pdwRegister);
+        pROT-&gt;Release();
+    }
+}
+</code></pre>
+<p>The following code example shows how to call these functions. In this example, the code that adds and removes ROT entries is conditionally compiled, so that it is included only in debug builds.</p>
+<pre lang="C++"><code>IGraphBuilder *pGraph;
+DWORD dwRegister;
+    
+// Create the filter graph manager.
+CoCreateInstance(CLSID_FilterGraph, NULL, CLSCTX_INPROC_SERVER,
+                        IID_IGraphBuilder, (void **)&amp;pGraph);
+#ifdef _DEBUG
+hr = AddToRot(pGraph, &amp;dwRegister);
+#endif
+
+// Rest of the application (not shown).
+
+#ifdef _DEBUG
+RemoveFromRot(dwRegister);
+#endif
+pGraph-&gt;Release();
+</code></pre>
+<p>To view the filter graph in GraphEdit, run your application and GraphEdit at the same time. In the GraphEdit <strong>File</strong> menu, click <strong>Connect to Remote Graph...</strong> In the <strong>Connect To Graph</strong> dialog box, select the process id (pid) of your application and click <strong>OK</strong>. GraphEdit loads the filter graph and displays it. Don't use any other GraphEdit features on this graphâ€”it might cause unexpected results. For example, don't add or remove filters, or stop and start the graph. Close GraphEdit before exiting your application.</p>
+<blockquote>
+<p>[!Note]<br />
+Your application might hit various asserts when it exits. You can ignore these.</p>
+</blockquote>
+<p>Â </p>
+<p>The following illustration shows the <strong>Connect To Graph</strong> dialog box.</p>
+<p><img src="images/gedit-spy.png" alt="connect to graph" /></p>
+<p>When GraphEdit loads the graph, it executes in the context of the target application. Therefore, GraphEdit might block because it is waiting for the thread. For example, this can occur if you are stepping through your code in the debugger.</p>
+<p>This feature should be used only in debug builds of your application, not retail builds, because it enables other applications to view or control the filter graph.</p>
+<h2>Connecting to a Remote Graph from the Command Line</h2>
+<p>GraphEdit supports a command-line option to load a remote graph automatically on startup. The syntax is:</p>
+<pre lang="C++"><code>GraphEdt -a moniker
+</code></pre>
+<p>where <em>moniker</em> is a moniker created using the AddToRot function, described previously.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="simulating-graph-building-with-graphedit.html">Simulating Graph Building with GraphEdit</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

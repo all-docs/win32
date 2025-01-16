@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using WinRM Windows PowerShell Cmdlets to Manage BITS Transfer Jobs</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Using WinRM Windows PowerShell Cmdlets to Manage BITS Transfer Jobs
+description: Windows Remote Management PowerShell cmdlets can manage Background Intelligent Transfer Service (BITS) transfer jobs.
+ms.assetid: 9fbef8a1-ed3f-4277-9a07-ed427f60d7a8
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using WinRM Windows PowerShell Cmdlets to Manage BITS Transfer Jobs</h1>
+<p>Windows Remote Management PowerShell cmdlets can manage Background Intelligent Transfer Service (BITS) transfer jobs. For more information about BITS remote management, see <a href="/previous-versions/windows/desktop/bitsprov/bits-provider">BITS provider</a> and <a href="/previous-versions//dd904507(v=vs.85)">BITS provider classes</a>.</p>
+<p>The following examples require the <a href="/previous-versions/windows/desktop/bitsprov/bits-provider">BITS provider</a>. The BITS provider is available after the BITS Compact server is installed. For information about installing the Compact server, see the <a href="bits-compact-server.html">BITS Compact Server</a> documentation.</p>
+<ol>
+<li>
+<p>Create a BITS transfer job.</p>
+<pre lang="PowerShell"><code># Get the credentials to connect to the remote client computer
+$cred = Get-Credential
+$result = Invoke-WsmanAction -Action CreateJob â€“Resourceuri wmi/root/microsoft/bits/BitsClientJob `
+â€“Valueset @{DisplayName=&quot;TestJob&quot;; RemoteUrl=&quot;https://Server01/servertestdir/testfile1.txt&quot;; LocalFile=&quot;C:\clienttestdir\testfile1.txt&quot;;Type=0} `
+â€“ComputerName Client1  -Credential $cred
+</code></pre>
+<p>The <a href="/previous-versions//dd315327(v=technet.10)">Get-Credential</a> cmdlet requests the user's credentials to connect to the remote computer and assigns the credentials to the $cred object.</p>
+<p>The <a href="/powershell/module/Microsoft.WsMan.Management/Invoke-WSManAction">Invoke-WsmanAction</a> cmdlet creates the BITS transfer job on Client1 by creating an instance of the <a href="/previous-versions/windows/desktop/legacy/dd904502(v=vs.85)">BitsClientJob</a> class and using the information in the hash table defined in the <em>Valueset</em> parameter. The <em>Valueset</em> parameter specifies the information needed to populate the parameters of the <a href="/previous-versions/windows/desktop/bitsprov/createjob-bitsclientjob">CreateJob</a> method. In the preceding example, the user is sets the <em>Type</em> parameter to 0 (download). The user also specifies the name of both the remote and local files for the download job. For more information about creating BITS transfer jobs and for detailed information about parameters, see <a href="/previous-versions/windows/desktop/bitsprov/createjob-bitsclientjob">CreateJob</a> method.</p>
+<p>The <a href="/powershell/module/Microsoft.WsMan.Management/Invoke-WSManAction?view=powershell-5.1&amp;preserve-view=true">Invoke-WsmanAction</a> cmdlet assigns the result to the $result variable.</p>
+<blockquote>
+<p>[!Note]<br />
+The grave-accent character (`) is used to indicate a line break.</p>
+</blockquote>
+<p>Â </p>
+</li>
+<li>
+<p>Set the Priority of the BITS transfer job.</p>
+<pre lang="PowerShell"><code>Set-WsmanInstance  -ResourceURI  wmi/root/microsoft/bits/BitsClientJob -SelectorSet @{JobId=$result.JobId} `
+-ValueSet @{Priority=0} â€“ComputerName Client1  -Credential $cred
+</code></pre>
+<p>The <a href="/powershell/module/Microsoft.WsMan.Management/Set-WSManInstance?view=powershell-5.1&amp;preserve-view=true">Set-WsmanInstance</a> cmdlet changes the new BITS transfer job priority to 0 (<strong>BG_JOB_PRIORITY_FOREGROUND</strong>). For more information about the priority levels, see the <a href="/windows/desktop/api/Bits/ne-bits-bg_job_priority"><strong>BG_JOB_PRIORITY</strong></a> enumeration.</p>
+</li>
+<li>
+<p>Resume the BITS transfer job.</p>
+<pre lang="PowerShell"><code>Invoke-WsmanAction -Action SetJobState -ResourceUri wmi/root/microsoft/bits/BitsClientJob  -selectorset @{JobId=$result.JobId}  `
+-valueset @{JobState= 2} â€“ComputerName Client1  -Credential $cred
+</code></pre>
+<p>The <a href="/powershell/module/Microsoft.WsMan.Management/Invoke-WSManAction?view=powershell-5.1&amp;preserve-view=true">Invoke-WsmanAction</a> cmdlet calls the <a href="/previous-versions/windows/desktop/bitsprov/setjobstate-bitsclientjob">SetJobState</a> method, which sets the job state to 2 (Resume the Job).</p>
+</li>
+<li>
+<p>Manage the BITS transfer job.</p>
+<pre lang="PowerShell"><code>$IsPprocessing = $TRUE
+while ($IsPprocessing)
+{
+    $result = Get-WsmanInstance  -ResourceURI  wmi/root/microsoft/bits/BitsClientJob -selectorset @{JobId = $result.JobId} `
+           â€“ComputerName Client1  -Credential $cred
+    if ($result.State -eq 6)
+    {
+
+#Complete the job           
+        Invoke-WsmanAction -action SetJobState -resourceuri wmi/root/microsoft/bits/BitsClientJob  -selectorset @{JobId=$result.JobId}  `
+                      -valueset @{JobState= 1} â€“ComputerName Client1  -Credential $cred
+        &quot;Job Successfully Transferred&quot;
+        $IsPprocessing = $FALSE;
+    }
+    elseif (($result.State -eq 4) -or ($result.State -eq 5))
+    {
+
+#Cancel the job
+        &quot;Job is in Error &quot; 
+        Invoke-WsmanAction -action SetJobState -resourceuri wmi/root/microsoft/bits/BitsClientJob  -selectorset @{JobId=$result.JobId}  `
+                     -valueset @{JobState= 0} â€“ComputerName Client1  -Credential $cred
+        # You can troubleshoot or delete the job
+        $IsPprocessing = $FALSE;
+    }
+    else
+    {
+    &quot;Job is processing\n&quot; 
+    }
+
+# Perform other action or poll in a tight loop. This example sleeps for 5 seconds
+sleep 5
+}
+</code></pre>
+<p>The preceding example is a script to poll the status of the job and take an action based on the status. The following actions are possible:</p>
+<ul>
+<li>If $result.State is 4 (<strong>BG_JOB_STATE_ERROR</strong>), the <a href="/powershell/module/Microsoft.WsMan.Management/Invoke-WSManAction?view=powershell-5.1&amp;preserve-view=true">Invoke-WsmanAction</a> cmdlet calls the <a href="/previous-versions/windows/desktop/bitsprov/setjobstate-bitsclientjob">SetJobState</a> method and cancels the job.</li>
+<li>If $result.State is 5 (<strong>BG_JOB_STATE_TRANSIENT_ERROR</strong>), the <a href="/powershell/module/Microsoft.WsMan.Management/Invoke-WSManAction?view=powershell-5.1&amp;preserve-view=true">Invoke-WsmanAction</a> cmdlet calls the <a href="/previous-versions/windows/desktop/bitsprov/setjobstate-bitsclientjob">SetJobState</a> method and cancels the job.</li>
+<li>If $result.State is 6 (<strong>BG_JOB_STATE_TRANSFERRED</strong>), the <a href="/powershell/module/Microsoft.WsMan.Management/Invoke-WSManAction?view=powershell-5.1&amp;preserve-view=true">Invoke-WsmanAction</a> cmdlet calls the <a href="/previous-versions/windows/desktop/bitsprov/setjobstate-bitsclientjob">SetJobState</a> method and sets the state to complete.</li>
+</ul>
+<p>For more information about job states, see the <a href="/windows/desktop/api/Bits/ne-bits-bg_job_state"><strong>BG_JOB_STATE</strong></a> enumeration.</p>
+</li>
+</ol>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions//dd315327(v=technet.10)">Get-Credential</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/powershell/module/Microsoft.WsMan.Management/Invoke-WSManAction?view=powershell-5.1&amp;preserve-view=true">Invoke-WsmanAction</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/powershell/module/Microsoft.WsMan.Management/Set-WSManInstance?view=powershell-5.1&amp;preserve-view=true">Set-WsmanInstance</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

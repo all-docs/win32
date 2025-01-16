@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HttpCalculatorWithSslClientExample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: HttpCalculatorWithSslClientExample
+description: This example show how to use the service proxy to talk to a calculator service, with SSL transport security.
+ms.assetid: cd0194d7-8ddd-4a0e-b4eb-fe7b3ef20e22
+keywords:</p>
+<ul>
+<li>HttpCalculatorWithSslClientExample Native-Web-Services</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>HttpCalculatorWithSslClientExample</h1>
+<p>This example show how to use the service proxy to talk to a calculator service, with SSL transport security.</p>
+<ul>
+<li><a href="#httpcalculatorclientwithsslcpp">HttpCalculatorClientWithSsl.cpp</a></li>
+<li><a href="#calculatorservicewsdl">CalculatorService.wsdl</a></li>
+<li><a href="#makefile">Makefile</a></li>
+</ul>
+<h2>HttpCalculatorClientWithSsl.cpp</h2>
+<pre lang="C++"><code>//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;string.h&quot;
+$$RC_START_HIGHLIGHT
+#include &quot;wincrypt.h&quot;
+$$RC_END_HIGHLIGHT
+#include &quot;CalculatorService.wsdl.h&quot;
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_ERROR* error = NULL;
+    WS_HEAP* heap = NULL;
+    WS_SERVICE_PROXY* proxy = NULL;
+    
+$$RC_START_HIGHLIGHT
+    // declare and initialize an SSL transport security binding
+    WS_SSL_TRANSPORT_SECURITY_BINDING sslBinding = {}; // zero out the struct
+    sslBinding.binding.bindingType = WS_SSL_TRANSPORT_SECURITY_BINDING_TYPE; // set the binding type
+    
+    // declare and initialize the array of all security bindings
+    WS_SECURITY_BINDING* securityBindings[1] = { &amp;sslBinding.binding };
+    
+    // declare and initialize the security description
+    WS_SECURITY_DESCRIPTION securityDescription = {}; // zero out the struct
+    securityDescription.securityBindings = securityBindings;
+    securityDescription.securityBindingCount = WsCountOf(securityBindings);
+$$RC_END_HIGHLIGHT
+    
+    int result = 0;
+    WS_ENDPOINT_ADDRESS address = {};
+    WS_STRING url = WS_STRING_VALUE(L&quot;https://localhost:8443/example&quot;);
+    address.url = url;
+    
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Create a heap to store deserialized data
+    hr = WsCreateHeap(
+        /*maxSize*/ 2048, 
+        /*trimSize*/ 512, 
+        NULL, 
+        0, 
+        &amp;heap, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Create the proxy
+    hr = WsCreateServiceProxy(
+        WS_CHANNEL_TYPE_REQUEST, 
+        WS_HTTP_CHANNEL_BINDING, 
+        &amp;securityDescription, 
+        NULL, 
+        0, 
+        NULL,
+        0,
+        &amp;proxy, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    
+    
+    hr = WsOpenServiceProxy(
+        proxy, 
+        &amp;address, 
+        NULL, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    hr = DefaultBinding_ICalculator_Add(
+        proxy, 
+        1, 
+        2, 
+        &amp;result, 
+        heap, 
+        NULL, 
+        0, 
+        NULL, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    wprintf(L&quot;%d + %d = %d\n&quot;, 1, 2, result);
+                   
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    if (proxy != NULL)
+    {
+        WsCloseServiceProxy(
+            proxy, 
+            NULL, 
+            NULL);
+    
+        WsFreeServiceProxy(
+            proxy);
+    }
+    
+    
+    if (heap != NULL)
+    {
+        WsFreeHeap(heap);
+    }
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+
+
+</code></pre>
+<h2>CalculatorService.wsdl</h2>
+<pre lang="syntax"><code>&lt;wsdl:definitions 
+    xmlns:soap=&quot;https://schemas.xmlsoap.org/wsdl/soap/&quot; 
+    xmlns:tns=&quot;https://Example.org&quot; 
+    xmlns:xsd=&quot;https://www.w3.org/2001/XMLSchema&quot; 
+    xmlns:wsaw=&quot;https://www.w3.org/2006/05/addressing/wsdl&quot; 
+    xmlns:soap12=&quot;https://schemas.xmlsoap.org/wsdl/soap12/&quot; 
+    targetNamespace=&quot;https://Example.org&quot; 
+    xmlns:wsdl=&quot;https://schemas.xmlsoap.org/wsdl/&quot;&gt;
+    &lt;wsdl:types&gt;
+        &lt;xsd:schema targetNamespace=&quot;https://Example.org&quot; elementFormDefault=&quot;qualified&quot; &gt;
+            &lt;xsd:element name=&quot;Add&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;a&quot; type=&quot;xsd:int&quot; /&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;b&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;AddResponse&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;result&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;Subtract&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;a&quot; type=&quot;xsd:int&quot; /&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;b&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;SubtractResponse&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;result&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+        &lt;/xsd:schema&gt;
+    &lt;/wsdl:types&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Add_InputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:Add&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Add_OutputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:AddResponse&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Subtract_InputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:Subtract&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Subtract_OutputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:SubtractResponse&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:portType name=&quot;ICalculator&quot;&gt;
+        &lt;wsdl:operation name=&quot;Add&quot;&gt;
+            &lt;wsdl:input wsaw:Action=&quot;https://Example.org/ICalculator/Add&quot; message=&quot;tns:ICalculator_Add_InputMessage&quot; /&gt;
+            &lt;wsdl:output wsaw:Action=&quot;https://Example.org/ICalculator/AddResponse&quot; message=&quot;tns:ICalculator_Add_OutputMessage&quot; /&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;Subtract&quot;&gt;
+            &lt;wsdl:input wsaw:Action=&quot;https://Example.org/ICalculator/Subtract&quot; message=&quot;tns:ICalculator_Subtract_InputMessage&quot; /&gt;
+            &lt;wsdl:output wsaw:Action=&quot;https://Example.org/ICalculator/SubtractResponse&quot; message=&quot;tns:ICalculator_Subtract_OutputMessage&quot; /&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:portType&gt;
+    &lt;wsdl:binding name=&quot;DefaultBinding_ICalculator&quot; type=&quot;tns:ICalculator&quot;&gt;
+        &lt;soap:binding transport=&quot;https://schemas.xmlsoap.org/soap/http&quot; /&gt;
+        &lt;wsdl:operation name=&quot;Add&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://Example.org/ICalculator/Add&quot; style=&quot;document&quot; /&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;Subtract&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://Example.org/ICalculator/Subtract&quot; style=&quot;document&quot; /&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:binding&gt;
+    &lt;wsdl:service name=&quot;CalculatorService&quot;&gt;
+        &lt;wsdl:port name=&quot;ICalculator&quot; binding=&quot;tns:DefaultBinding_ICalculator&quot;&gt;
+            &lt;soap:address location=&quot;https://Example.org/ICalculator&quot; /&gt;
+        &lt;/wsdl:port&gt;
+    &lt;/wsdl:service&gt;
+
+&lt;/wsdl:definitions&gt;
+</code></pre>
+<h2>Makefile</h2>
+<pre lang="syntax"><code>EXTRA_LIBS = WebServices.lib rpcrt4.lib Iphlpapi.lib
+
+all: $(OUTDIR) $(OUTDIR)\WsHttpCalculatorClientWithSsl.exe
+
+&quot;$(OUTDIR)&quot; :
+    if not exist &quot;$(OUTDIR)/$(NULL)&quot; mkdir &quot;$(OUTDIR)&quot;
+    
+$(OUTDIR)\CalculatorService.wsdl.c: CalculatorService.wsdl
+     Wsutil.exe /wsdl:CalculatorService.wsdl /string:WS_STRING /out:$(OUTDIR)    
+
+$(OUTDIR)\CalculatorService.wsdl.obj: $(OUTDIR)\CalculatorService.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; $(OUTDIR)\CalculatorService.wsdl.c
+
+$(OUTDIR)\HttpCalculatorClientWithSsl.obj: HttpCalculatorClientWithSsl.cpp $(OUTDIR)\CalculatorService.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; HttpCalculatorClientWithSsl.cpp
+
+$(OUTDIR)\WsHttpCalculatorClientWithSsl.exe: $(OUTDIR)\HttpCalculatorClientWithSsl.obj $(OUTDIR)\CalculatorService.wsdl.obj
+    $(link) $(ldebug) $(conlflags) $(conlibsmt) $(EXTRA_LIBS) -out:$(OUTDIR)\WsHttpCalculatorClientWithSsl.exe $(OUTDIR)\HttpCalculatorClientWithSsl.obj $(OUTDIR)\CalculatorService.wsdl.obj /PDB:$(OUTDIR)\WsHttpCalculatorClientWithSsl.PDB
+
+clean:
+    $(CLEANUP)
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using an Embedded UI</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: A custom user interface can be embedded within the Windows Installer package.
+ms.assetid: d037cd8d-9c88-4851-a9da-b2179f53cee6
+title: Using an Embedded UI
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using an Embedded UI</h1>
+<p>A custom user interface can be embedded within the Windows Installer package.</p>
+<p>The DLL file containing the custom UI, and any resource files used by the custom UI, should be listed in the <a href="msiembeddedui-table.html">MsiEmbeddedUI</a> table. For example, this MsiEmbeddedUI table contains a row for the DLL file containing the embedded UI and a row for a bitmap file used by the UI.</p>
+<table>
+<thead>
+<tr>
+<th>MsiEmbeddedUI</th>
+<th>FileName</th>
+<th>Attributes</th>
+<th>MessageFilter</th>
+<th>Data</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>EmbeddedUI</td>
+<td>embedui.dll</td>
+<td>3</td>
+<td>201359327</td>
+<td>[Binary Data]</td>
+</tr>
+<tr>
+<td>CustomBitmap</td>
+<td>custom.bmp</td>
+<td>0</td>
+<td></td>
+<td>[Binary Data]</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The custom UI DLL, in this example embedui.dll, should export the user-defined <em>InitializeEmbeddedUI</em>, <em>EmbeddedUIHandler</em>, and <em>ShutdownEmbeddedUI</em> functions. The following sample code illustrates these functions.</p>
+<pre lang="C++"><code>#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;msi.h&gt;
+#include &lt;msiquery.h&gt;
+#include &lt;Aclapi.h&gt;
+#include &lt;strsafe.h&gt;
+#pragma comment(lib, &quot;msi.lib&quot;)
+
+#define cchGUID 38
+
+int __stdcall InitializeEmbeddedUI(MSIHANDLE hInstall, 
+        LPCWSTR szResourcePath, LPDWORD pdwInternalUILevel)
+{
+    // The hInstall handle is only valid within this function and 
+     // can be used to get or set properties. The handle 
+    // does not need to be explicitly closed.
+
+    WCHAR szProductCode[cchGUID+1];
+    DWORD cchProductCode = ARRAYSIZE(szProductCode);
+    UINT uiStat =  MsiGetProperty(hInstall, L&quot;ProductCode&quot;,
+             szProductCode, &amp;cchProductCode);
+    UNREFERENCED_PARAMETER(szResourcePath);
+
+    if (ERROR_SUCCESS != uiStat)
+    {
+        // The installation should fail.
+        return ERROR_INSTALL_FAILURE;
+    }
+
+    WCHAR* szReinstall = NULL;
+    DWORD cchReinstall = 0;
+    uiStat = MsiGetProperty(hInstall, TEXT(&quot;REINSTALL&quot;),  
+            szReinstall, &amp;cchReinstall);
+    if (ERROR_MORE_DATA == uiStat)
+    {
+        ++cchProductCode; // Add 1 for terminating null character.
+        szReinstall = new WCHAR[cchReinstall];
+        if (szReinstall)
+        {
+        uiStat = MsiGetProperty(hInstall, L&quot;REINSTALL&quot;, 
+                szReinstall, &amp;cchReinstall);
+        }
+    }
+    if (ERROR_SUCCESS != uiStat)
+    {
+        if (szReinstall != NULL) 
+            delete [] szReinstall;
+        // This installation should fail.
+        return ERROR_INSTALL_FAILURE;
+    }
+
+    if (INSTALLSTATE_DEFAULT != MsiQueryProductState(szProductCode))
+    {
+        if (INSTALLUILEVEL_BASIC == *pdwInternalUILevel)
+        {
+            // Insert the custom UI used by basic installation here.
+        }
+        else
+        {
+            // Insert the custom UI used by full installation here.
+        }
+    }
+    else if (szReinstall &amp;&amp; szReinstall[0])
+    {
+        // Reinstall the UI sequence.
+    }
+    else
+    {
+        // This is a maintenance installation. Remove the UI sequence.
+
+        MsiSetProperty(hInstall, TEXT(&quot;REMOVE&quot;), TEXT(&quot;ALL&quot;));
+    }
+
+    if (szProductCode)
+        delete [] szReinstall;
+
+    // Setting the internal UI level to none specifies that 
+    // no authored UI should run.
+    *pdwInternalUILevel = INSTALLUILEVEL_NONE;
+    return 0;
+}
+
+DWORD __stdcall ShutdownEmbeddedUI()
+{
+    // ShutdownEmbeddedUI is optional. It can allow the embedded UI 
+    // to perform any cleanup. After this call, the embedded UI   
+    // should not receive any additional callbacks.
+    return 0;
+}
+
+
+INT __stdcall EmbeddedUIHandler(UINT iMessageType, MSIHANDLE hRecord)
+{
+    // This function is similar to the MsiSetExternalUIRecord callback.
+    INSTALLMESSAGE mt;
+    UINT uiFlags;
+    UNREFERENCED_PARAMETER(hRecord);
+
+    mt = (INSTALLMESSAGE) (0xFF000000 &amp; (UINT) iMessageType);
+    uiFlags = 0x00FFFFFF &amp; iMessageType;
+
+    switch (mt)
+    {
+    case INSTALLMESSAGE_FATALEXIT:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_ERROR:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_WARNING:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_FILESINUSE:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_RESOLVESOURCE:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_USER:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_INFO:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_OUTOFDISKSPACE:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_ACTIONSTART:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_ACTIONDATA:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_PROGRESS:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_SHOWDIALOG:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_COMMONDATA:
+        {
+            return IDOK;
+        }
+    case INSTALLMESSAGE_INSTALLSTART:
+        {
+            // This message is sent when the Install begins.
+            // Record contains the ProductName and ProductCode
+            return IDOK;
+        }
+    case INSTALLMESSAGE_INSTALLEND:
+        {
+            // This message is sent when the Install ends.
+            // Record contains the ProductName and ProductCode 
+            // and return value of the installation.
+            return IDOK;
+        }
+
+    default:
+        {
+            return 0;
+        }
+    }
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

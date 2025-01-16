@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 3: Build the Filter Graph</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic is step 3 of the tutorial Audio/Video Playback in DirectShow.
+ms.assetid: 45679c14-2671-420d-9766-61f2b2bb713a
+title: 'Step 3: Build the Filter Graph'
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Step 3: Build the Filter Graph</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This topic is step 3 of the tutorial <a href="audio-video-playback-in-directshow.html">Audio/Video Playback in DirectShow</a>. The complete code is shown in the topic <a href="directshow-playback-example.html">DirectShow Playback Example</a>.</p>
+<p>The next step is to build a filter graph to play the media file.</p>
+<h3>Opening a Media File</h3>
+<p>The <code>DShowPlayer::OpenFile</code> method opens a media file for playback. This method does the following:</p>
+<ol>
+<li>Creates a new (empty) filter graph.</li>
+<li>Calls <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-addsourcefilter"><strong>IGraphBuilder::AddSourceFilter</strong></a> to add a source filter for the specified file.</li>
+<li>Renders the streams on the source filter.</li>
+</ol>
+<pre lang="C++"><code>HRESULT DShowPlayer::OpenFile(PCWSTR pszFileName)
+{
+    IBaseFilter *pSource = NULL;
+
+    // Create a new filter graph. (This also closes the old one, if any.)
+    HRESULT hr = InitializeGraph();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+    
+    // Add the source filter to the graph.
+    hr = m_pGraph-&gt;AddSourceFilter(pszFileName, NULL, &amp;pSource);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Try to render the streams.
+    hr = RenderStreams(pSource);
+
+done:
+    if (FAILED(hr))
+    {
+        TearDownGraph();
+    }
+    SafeRelease(&amp;pSource);
+    return hr;
+}
+</code></pre>
+<h3>Creating the Filter Graph Manager</h3>
+<p>The <code>DShowPlayer::InitializeGraph</code> method creates a new filter graph. This method does the following:</p>
+<ol>
+<li>Calls <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> to create a new instance of the <a href="filter-graph-manager.html">Filter Graph Manager</a>.</li>
+<li>Queries the Filter Graph Manager for the <a href="/windows/desktop/api/Control/nn-control-imediacontrol"><strong>IMediaControl</strong></a> and <a href="/windows/desktop/api/Control/nn-control-imediaeventex"><strong>IMediaEventEx</strong></a> interfaces.</li>
+<li>Calls <a href="/windows/desktop/api/Control/nf-control-imediaeventex-setnotifywindow"><strong>IMediaEventEx::SetNotifyWindow</strong></a> to set up event notification. For more information, see <a href="event-notification-in-directshow.html">Event Notification in DirectShow</a>.</li>
+</ol>
+<pre lang="C++"><code>HRESULT DShowPlayer::InitializeGraph()
+{
+    TearDownGraph();
+
+    // Create the Filter Graph Manager.
+    HRESULT hr = CoCreateInstance(CLSID_FilterGraph, NULL, 
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&amp;m_pGraph));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = m_pGraph-&gt;QueryInterface(IID_PPV_ARGS(&amp;m_pControl));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = m_pGraph-&gt;QueryInterface(IID_PPV_ARGS(&amp;m_pEvent));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Set up event notification.
+    hr = m_pEvent-&gt;SetNotifyWindow((OAHWND)m_hwnd, WM_GRAPH_EVENT, NULL);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    m_state = STATE_STOPPED;
+
+done:
+    return hr;
+}
+</code></pre>
+<h3>Rendering the Streams</h3>
+<p>The next step is to connect the source filter to one or more renderer filters.</p>
+<p>The <code>DShowPlayer::RenderStreams</code> method performs the following steps.</p>
+<ol>
+<li>Queries the Filter Graph Manager for the <a href="/windows/desktop/api/Strmif/nn-strmif-ifiltergraph2"><strong>IFilterGraph2</strong></a> interface.</li>
+<li>Adds a video renderer filter to the filter graph.</li>
+<li>Adds the <a href="directsound-renderer-filter.html">DirectSound Renderer Filter</a> to the filter graph, to support audio playback. For more information about adding filters to the filter graph, see <a href="add-a-filter-by-clsid.html">Add a Filter by CLSID</a>.</li>
+<li>Enumerates the output pins on the source filter. For more information about enumerating pins, see <a href="enumerating-pins.html">Enumerating Pins</a>.</li>
+<li>For each pin, calls the <a href="/windows/desktop/api/Strmif/nf-strmif-ifiltergraph2-renderex"><strong>IFilterGraph2::RenderEx</strong></a> method. This method connects the output pin to a renderer filter, adding intermediate filters if needed (such as decoders).</li>
+<li>Calls <code>CVideoRenderer::FinalizeGraph</code> to finish initializing the video renderer.</li>
+<li>Removes the <a href="directsound-renderer-filter.html">DirectSound Renderer</a> filter if that filter is not connected to another filter. This can occur if the source file does not contain an audio stream.</li>
+</ol>
+<pre lang="C++"><code>// Render the streams from a source filter. 
+
+HRESULT DShowPlayer::RenderStreams(IBaseFilter *pSource)
+{
+    BOOL bRenderedAnyPin = FALSE;
+
+    IFilterGraph2 *pGraph2 = NULL;
+    IEnumPins *pEnum = NULL;
+    IBaseFilter *pAudioRenderer = NULL;
+    HRESULT hr = m_pGraph-&gt;QueryInterface(IID_PPV_ARGS(&amp;pGraph2));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Add the video renderer to the graph
+    hr = CreateVideoRenderer();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Add the DSound Renderer to the graph.
+    hr = AddFilterByCLSID(m_pGraph, CLSID_DSoundRender, 
+        &amp;pAudioRenderer, L&quot;Audio Renderer&quot;);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Enumerate the pins on the source filter.
+    hr = pSource-&gt;EnumPins(&amp;pEnum);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Loop through all the pins
+    IPin *pPin;
+    while (S_OK == pEnum-&gt;Next(1, &amp;pPin, NULL))
+    {           
+        // Try to render this pin. 
+        // It's OK if we fail some pins, if at least one pin renders.
+        HRESULT hr2 = pGraph2-&gt;RenderEx(pPin, AM_RENDEREX_RENDERTOEXISTINGRENDERERS, NULL);
+
+        pPin-&gt;Release();
+        if (SUCCEEDED(hr2))
+        {
+            bRenderedAnyPin = TRUE;
+        }
+    }
+
+    hr = m_pVideo-&gt;FinalizeGraph(m_pGraph);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Remove the audio renderer, if not used.
+    BOOL bRemoved;
+    hr = RemoveUnconnectedRenderer(m_pGraph, pAudioRenderer, &amp;bRemoved);
+
+done:
+    SafeRelease(&amp;pEnum);
+    SafeRelease(&amp;pAudioRenderer);
+    SafeRelease(&amp;pGraph2);
+
+    // If we succeeded to this point, make sure we rendered at least one 
+    // stream.
+    if (SUCCEEDED(hr))
+    {
+        if (!bRenderedAnyPin)
+        {
+            hr = VFW_E_CANNOT_RENDER;
+        }
+    }
+    return hr;
+}
+</code></pre>
+<p>Here is the code for the <code>RemoveUnconnectedRenderer</code> function, which is used in the previous example.</p>
+<pre lang="C++"><code>HRESULT RemoveUnconnectedRenderer(IGraphBuilder *pGraph, IBaseFilter *pRenderer, BOOL *pbRemoved)
+{
+    IPin *pPin = NULL;
+
+    *pbRemoved = FALSE;
+
+    // Look for a connected input pin on the renderer.
+
+    HRESULT hr = FindConnectedPin(pRenderer, PINDIR_INPUT, &amp;pPin);
+    SafeRelease(&amp;pPin);
+
+    // If this function succeeds, the renderer is connected, so we don't remove it.
+    // If it fails, it means the renderer is not connected to anything, so
+    // we remove it.
+
+    if (FAILED(hr))
+    {
+        hr = pGraph-&gt;RemoveFilter(pRenderer);
+        *pbRemoved = TRUE;
+    }
+
+    return hr;
+}
+</code></pre>
+<h3>Releasing the Filter Graph</h3>
+<p>When the application exits, it must release the filter graph, as shown in the following code.</p>
+<pre lang="C++"><code>void DShowPlayer::TearDownGraph()
+{
+    // Stop sending event messages
+    if (m_pEvent)
+    {
+        m_pEvent-&gt;SetNotifyWindow((OAHWND)NULL, NULL, NULL);
+    }
+
+    SafeRelease(&amp;m_pGraph);
+    SafeRelease(&amp;m_pControl);
+    SafeRelease(&amp;m_pEvent);
+
+    delete m_pVideo;
+    m_pVideo = NULL;
+
+    m_state = STATE_NO_GRAPH;
+}
+</code></pre>
+<p>Next: <a href="step-4--add-the-video-renderer.html">Step 4: Add the Video Renderer</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="audio-video-playback-in-directshow.html">Audio/Video Playback in DirectShow</a></p>
+<!-- raw HTML omitted -->
+<p><a href="directshow-playback-example.html">DirectShow Playback Example</a></p>
+<!-- raw HTML omitted -->
+<p><a href="building-the-filter-graph.html">Building the Filter Graph</a></p>
+<!-- raw HTML omitted -->
+<p><a href="general-graph-building-techniques.html">General Graph-Building Techniques</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

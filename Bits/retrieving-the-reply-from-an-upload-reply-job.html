@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Retrieving the Reply from an Upload-Reply Job</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Retrieving the Reply from an Upload-Reply Job
+description: To upload data to a server application and have it return data to the client, specify the job as a BG_JOB_TYPE_UPLOAD_REPLY job.
+ms.assetid: bab28a2c-1e2f-4b76-9dc6-57df26f7efec
+ms.topic: article
+ms.date: 11/29/2018</h2>
+<h1>Retrieving the Reply from an Upload-Reply Job</h1>
+<p>A BITS Upload-Reply job, in addition to uploading a file to a server, will also examine a reply URL sent as part of the server reply and then automatically follow the reply URL and download a response from it. See the <a href="/windows/desktop/Bits/ack-for-fragment">Ack for Fragment</a> documentation for more details about the BITS-Reply-URL header value.</p>
+<p>Set the job type as BG_JOB_TYPE_UPLOAD_REPLY to create an Upload-Reply type job. The reply data is available to the client after the job enters the BG_JOB_STATE_TRANSFERRED state. To retrieve the reply, call one of the following methods:</p>
+<ul>
+<li>
+<p><a href="/windows/desktop/api/Bits1_5/nf-bits1_5-ibackgroundcopyjob2-getreplydata"><strong>IBackgroundCopyJob2::GetReplyData</strong></a></p>
+<p>Provides an in-memory copy of the reply data. Use this method to read the reply data before or after calling the <a href="/windows/desktop/api/Bits/nf-bits-ibackgroundcopyjob-complete"><strong>IBackgroundCopyJob::Complete</strong></a> method. If the reply data exceeds 1 MB, the application must call the <a href="/windows/desktop/api/Bits1_5/nf-bits1_5-ibackgroundcopyjob2-getreplyfilename"><strong>IBackgroundCopyJob2::GetReplyFileName</strong></a> method to retrieve the name of the reply file and read its contents directly.</p>
+</li>
+<li>
+<p><a href="/windows/desktop/api/Bits1_5/nf-bits1_5-ibackgroundcopyjob2-getreplyfilename"><strong>IBackgroundCopyJob2::GetReplyFileName</strong></a></p>
+<p>Provides the name of the file that contains the reply. You must call the <strong>IBackgroundCopyJob::Complete</strong> method before opening and reading the reply file; the reply file is not available to the client until you call the <strong>Complete</strong> method.</p>
+</li>
+</ul>
+<p>Call these methods in your <a href="/windows/desktop/api/Bits/nf-bits-ibackgroundcopycallback-jobtransferred"><strong>IBackgroundCopyCallback::JobTransferred</strong></a> method only if the reply is small and can be processed quickly so as to not block the callback thread. If you use <a href="/windows/desktop/api/Bits1_5/nf-bits1_5-ibackgroundcopyjob2-setnotifycmdline"><strong>command line notification</strong></a> instead of the callback, pass the job identifier to the executable file. The executable file uses the job identifier to call the <strong>Complete</strong> method to make the reply file available.</p>
+<p>The following examples show how to use each method to retrieve the reply data.</p>
+<ul>
+<li><a href="#using-getreplydata">Using GetReplyData</a></li>
+<li><a href="#using-getreplyfilename">Using GetReplyFileName</a></li>
+</ul>
+<h2>Using GetReplyData</h2>
+<p>The following example shows how to retrieve the reply data using the <a href="/windows/desktop/api/Bits1_5/nf-bits1_5-ibackgroundcopyjob2-getreplydata"><strong>IBackgroundCopyJob2::GetReplyData</strong></a> method. The example assumes the <a href="/windows/desktop/api/Bits/nn-bits-ibackgroundcopyjob"><strong>IBackgroundCopyJob</strong></a> interface pointer is valid, the type of the job is upload-reply, and the state of the job is BG_JOB_STATE_TRANSFERRED.</p>
+<pre lang="C++"><code>HRESULT hr;
+IBackgroundCopyJob* pJob;
+IBackgroundCopyJob2* pJob2 = NULL;
+BYTE* pReply = NULL;
+UINT64 ReplySize;
+
+//Need to query the IBackgroundCopyJob interface for an IBackgroundCopyJob2
+//interface pointer. The IBackgroundCopyJob2 interface contains the GetReplyData method.
+hr = pJob-&gt;QueryInterface(__uuidof(IBackgroundCopyJob2), (void**)&amp;pJob2);
+if (SUCCEEDED(hr))
+{
+    hr = pJob2-&gt;GetReplyData(&amp;pReply, &amp;ReplySize);
+    if (S_OK == hr))
+    {
+        if (pReply)
+        {
+            //Do something with the data.
+            CoTaskMemFree(pReply);
+        }
+        else
+        {
+            //The server application did not return a reply.
+        }
+    }
+    else if (BG_E_TOO_LARGE == hr)
+    {
+        //The reply exceeds 1 MB. To retrieve the reply, get the reply file name,
+        //complete the job, open the reply file, and read the reply.
+    }
+    else
+    {
+        //Handle the error
+    }
+
+    pJob2-&gt;Release(); //When done, release the interface.
+}
+else
+{
+    //Handle error. QueryInterface will return E_NOINTERFACE if the version of BITS
+    //running on the computer is less than BITS 1.5.
+}
+</code></pre>
+<h2>Using GetReplyFileName</h2>
+<p>The following example shows how to retrieve the reply data using the <a href="/windows/desktop/api/Bits1_5/nf-bits1_5-ibackgroundcopyjob2-getreplyfilename"><strong>IBackgroundCopyJob2::GetReplyFileName</strong></a> method. The example assumes the <a href="/windows/desktop/api/Bits/nn-bits-ibackgroundcopyjob"><strong>IBackgroundCopyJob</strong></a> interface pointer is valid, the type of job is upload-reply, and the state of the job is BG_JOB_STATE_TRANSFERRED.</p>
+<pre lang="C++"><code>HRESULT hr;
+IBackgroundCopyJob* pJob;
+IBackgroundCopyJob2* pJob2 = NULL;
+WCHAR* pszFileName = NULL;
+
+//Need to query the IBackgroundCopyJob interface for an IBackgroundCopyJob2
+//interface pointer. The IBackgroundCopyJob2 interface contains the GetReplyFileName method.
+hr = pJob-&gt;QueryInterface(__uuidof(IBackgroundCopyJob2), (void**)&amp;pJob2);
+if (SUCCEEDED(hr))
+{
+    hr = pJob2-&gt;GetReplyFileName(&amp;pszFileName);
+    if (SUCCEEDED(hr))
+    {
+        //Calling the Complete method removes the job from the queue, 
+        //so make sure you maintain an interface pointer to this job 
+        //or retrieve any job related information that you require 
+        //when processing the reply.
+        hr = pJob-&gt;Complete();
+
+        //Open, read the file, and do something with the data.
+        CoTaskMemFree(pszFileName);
+    }
+
+    pJob2-&gt;Release(); //When done, release the interface.
+}
+else
+{
+    //Handle error. QueryInterface will return E_NOINTERFACE if the version of BITS
+    //running on the computer is less than BITS 1.5.
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

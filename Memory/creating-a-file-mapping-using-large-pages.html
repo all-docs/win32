@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating a File Mapping Using Large Pages</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example uses the CreateFileMapping function with the SEC_LARGE_PAGES flag to use large pages. It requires Windows ServerÂ 2003 with Service PackÂ 1 (SP1) or later.
+ms.assetid: be2cdcbc-03e8-407d-8ae2-569f8fd8cba8
+title: Creating a File Mapping Using Large Pages
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Creating a File Mapping Using Large Pages</h1>
+<p>The following example uses the <a href="/windows/desktop/api/WinBase/nf-winbase-createfilemappinga"><strong>CreateFileMapping</strong></a> function with the <strong>SEC_LARGE_PAGES</strong> flag to use large pages. The buffer must be large enough to contain the minimum size of a large page. This value is obtained using the <a href="/windows/win32/api/memoryapi/nf-memoryapi-getlargepageminimum"><strong>GetLargePageMinimum</strong></a> function. This feature also requires the &quot;SeLockMemoryPrivilege&quot; privilege.</p>
+<blockquote>
+<p>[!NOTE]
+Starting in Windows 10, version 1703, the <a href="/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile"><strong>MapViewOfFile</strong></a> function maps a view using small pages by default, even for file mapping objects created with the <strong>SEC_LARGE_PAGES</strong> flag. In this and later OS versions, you must specify the <strong>FILE_MAP_LARGE_PAGES</strong> flag with the <a href="/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile"><strong>MapViewOfFile</strong></a> function to map large pages. This flag is ignored on OS versions before Windows 10, version 1703.</p>
+</blockquote>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;stdio.h&gt;
+
+#define BUF_SIZE 65536
+
+TCHAR szName[]=TEXT(&quot;LARGEPAGE&quot;);
+typedef int (*GETLARGEPAGEMINIMUM)(void);
+
+void DisplayError(const wchar_t* pszAPI, DWORD dwError)
+{
+    LPVOID lpvMessageBuffer;
+
+    FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                  FORMAT_MESSAGE_FROM_SYSTEM |
+                  FORMAT_MESSAGE_IGNORE_INSERTS,
+                  NULL, dwError,
+                  MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                  (LPTSTR)&amp;lpvMessageBuffer, 0, NULL);
+
+    //... now display this string
+    _tprintf(TEXT(&quot;ERROR: API        = %s\n&quot;), pszAPI);
+    _tprintf(TEXT(&quot;       error code = %d\n&quot;), dwError);
+    _tprintf(TEXT(&quot;       message    = %s\n&quot;), lpvMessageBuffer);
+
+    // Free the buffer allocated by the system
+    LocalFree(lpvMessageBuffer);
+
+    ExitProcess(GetLastError());
+}
+
+void Privilege(const wchar_t* pszPrivilege, BOOL bEnable)
+{
+    HANDLE           hToken;
+    TOKEN_PRIVILEGES tp;
+    BOOL             status;
+    DWORD            error;
+
+    // open process token
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &amp;hToken))
+        DisplayError(TEXT(&quot;OpenProcessToken&quot;), GetLastError());
+
+    // get the luid
+    if (!LookupPrivilegeValue(NULL, pszPrivilege, &amp;tp.Privileges[0].Luid))
+        DisplayError(TEXT(&quot;LookupPrivilegeValue&quot;), GetLastError());
+
+    tp.PrivilegeCount = 1;
+
+    // enable or disable privilege
+    if (bEnable)
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    else
+        tp.Privileges[0].Attributes = 0;
+
+    // enable or disable privilege
+    status = AdjustTokenPrivileges(hToken, FALSE, &amp;tp, 0, (PTOKEN_PRIVILEGES)NULL, 0);
+
+    // It is possible for AdjustTokenPrivileges to return TRUE and still not succeed.
+    // So always check for the last error value.
+    error = GetLastError();
+    if (!status || (error != ERROR_SUCCESS))
+        DisplayError(TEXT(&quot;AdjustTokenPrivileges&quot;), GetLastError());
+
+    // close the handle
+    if (!CloseHandle(hToken))
+        DisplayError(TEXT(&quot;CloseHandle&quot;), GetLastError());
+}
+
+int _tmain(void)
+{
+    HANDLE hMapFile;
+    LPCTSTR pBuf;
+    DWORD size;
+    GETLARGEPAGEMINIMUM pGetLargePageMinimum;
+    HINSTANCE  hDll;
+
+    // call succeeds only on Windows Server 2003 SP1 or later
+    hDll = LoadLibrary(TEXT(&quot;kernel32.dll&quot;));
+    if (hDll == NULL)
+        DisplayError(TEXT(&quot;LoadLibrary&quot;), GetLastError());
+
+    pGetLargePageMinimum = (GETLARGEPAGEMINIMUM)GetProcAddress(hDll,
+        &quot;GetLargePageMinimum&quot;);
+    if (pGetLargePageMinimum == NULL)
+        DisplayError(TEXT(&quot;GetProcAddress&quot;), GetLastError());
+
+    size = (*pGetLargePageMinimum)();
+
+    FreeLibrary(hDll);
+
+    _tprintf(TEXT(&quot;Page Size: %u\n&quot;), size);
+
+    Privilege(TEXT(&quot;SeLockMemoryPrivilege&quot;), TRUE);
+
+    hMapFile = CreateFileMapping(
+         INVALID_HANDLE_VALUE,    // use paging file
+         NULL,                    // default security
+         PAGE_READWRITE | SEC_COMMIT | SEC_LARGE_PAGES,
+         0,                       // max. object size
+         size,                    // buffer size
+         szName);                 // name of mapping object
+
+    if (hMapFile == NULL)
+        DisplayError(TEXT(&quot;CreateFileMapping&quot;), GetLastError());
+    else
+        _tprintf(TEXT(&quot;File mapping object successfully created.\n&quot;));
+
+    Privilege(TEXT(&quot;SeLockMemoryPrivilege&quot;), FALSE);
+
+    pBuf = (LPTSTR) MapViewOfFile(hMapFile,          // handle to map object
+         FILE_MAP_ALL_ACCESS | FILE_MAP_LARGE_PAGES, // read/write permission
+         0,
+         0,
+         BUF_SIZE);
+
+    if (pBuf == NULL)
+        DisplayError(TEXT(&quot;MapViewOfFile&quot;), GetLastError());
+    else
+        _tprintf(TEXT(&quot;View of file successfully mapped.\n&quot;));
+
+    // do nothing, clean up an exit
+    UnmapViewOfFile(pBuf);
+    CloseHandle(hMapFile);
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="creating-a-file-mapping-object.html">Creating a File Mapping Object</a></p>
+<!-- raw HTML omitted -->
+<p><a href="large-page-support.html">Large Page Support</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

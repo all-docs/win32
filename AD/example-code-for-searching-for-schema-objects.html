@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example Code for Searching for Schema Objects</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Example Code for Searching for Schema Objects
+description: This topic includes a code example used to search for schema objects.
+ms.assetid: 539e0127-1355-4606-97bd-49dfafb25f8d
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Example Code for Searching for Schema Objects AD
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Example Code for Searching for Schema Objects</h1>
+<p>This topic includes a code example used to search for schema objects.</p>
+<p>The following C++ code example shows how to search for schema objects that have bits set in the <strong>systemFlags</strong> attribute.</p>
+<pre lang="C++"><code>#include &lt;stdio.h&gt;
+#include &lt;atlbase.h&gt;
+#include &lt;activeds.h&gt;
+#include &lt;ntldap.h&gt;
+
+/***************************************************************************
+
+    PrintAttributesByType()
+
+    Searches for and prints all attributeSchema objects that contain all of 
+    the specified attribute type flags.
+
+    Parameters:
+
+    pSchemaNC - IDirectorySearch pointer to schema naming context.
+
+    dwAttributeType - Bit flags to search for in systemFlags. These are 
+        values such as ADS_SYSTEMFLAG_ATTR_IS_CONSTRUCTED.
+
+    bIsExactMatch - TRUE to find attributes that have systemFlags exactly 
+        matching dwAttributeType. FALSE to find attributes that have the 
+        dwAttributeType bit set, and possibly others.
+
+***************************************************************************/
+
+HRESULT PrintAttributesByType(IDirectorySearch *pSchemaNC,
+        DWORD dwAttributeType,
+        BOOL bIsExactMatch)
+{
+    HRESULT hr;
+
+    // Attributes are one-level deep in the Schema container, so only search one level.
+    ADS_SEARCHPREF_INFO SearchPrefs[2];
+    SearchPrefs[0].dwSearchPref = ADS_SEARCHPREF_SEARCH_SCOPE;
+    SearchPrefs[0].vValue.dwType = ADSTYPE_INTEGER;
+    SearchPrefs[0].vValue.Integer = ADS_SCOPE_ONELEVEL;
+ 
+    // Use paging if there are more properties than can be returned by one page.
+    SearchPrefs[1].dwSearchPref = ADS_SEARCHPREF_PAGESIZE;
+    SearchPrefs[1].vValue.dwType = ADSTYPE_INTEGER;
+    SearchPrefs[1].vValue.Integer = 1000;
+
+    // Set the search preferences.
+    hr = pSchemaNC-&gt;SetSearchPreference(SearchPrefs, sizeof(SearchPrefs)/sizeof(ADS_SEARCHPREF_INFO));
+    if(FAILED(hr))
+    {
+        return hr;
+    }
+ 
+    // Handle that is used for searching.
+    ADS_SEARCH_HANDLE hSearch;
+ 
+    LPWSTR rgpwszAttributes[] = {L&quot;cn&quot;};
+    DWORD dwAttributes = sizeof(rgpwszAttributes)/sizeof(LPWSTR);
+
+    // Create the search filter.
+    WCHAR wszAttributeType[30]; // Plenty large enough to handle the biggest 32-bit number.
+    swprintf_s(wszAttributeType, L&quot;%d&quot;, dwAttributeType);
+
+    CComBSTR sbstrSearchFilter;
+    if (bIsExactMatch)
+    {
+        sbstrSearchFilter = &quot;(&amp;(objectCategory=attributeSchema)(systemFlags=&quot;;
+        sbstrSearchFilter += wszAttributeType;
+        sbstrSearchFilter += &quot;))&quot;;
+    }
+    else
+    {
+        sbstrSearchFilter = &quot;(&amp;(objectCategory=attributeSchema)(systemFlags:&quot;;
+        sbstrSearchFilter += LDAP_MATCHING_RULE_BIT_AND;
+        sbstrSearchFilter += &quot;:=&quot;;
+        sbstrSearchFilter += wszAttributeType;
+        sbstrSearchFilter += &quot;))&quot;;
+    }
+ 
+    // Execute the search.
+    hr = pSchemaNC-&gt;ExecuteSearch(sbstrSearchFilter,
+                                  rgpwszAttributes,
+                                  dwAttributes,
+                                  &amp;hSearch);
+    if(SUCCEEDED(hr))
+    {
+        // Get the first row of results.
+        hr = pSchemaNC-&gt;GetFirstRow(hSearch);
+
+        while(S_OK == hr)
+        {
+            ADS_SEARCH_COLUMN col;
+
+            // Print each column.
+            for(DWORD i = 0; i &lt; dwAttributes; i++)
+            {
+                hr = pSchemaNC-&gt;GetColumn(hSearch, rgpwszAttributes[i], &amp;col);
+                if(SUCCEEDED(hr))
+                {
+                    // Print the data for the column and free the column.
+                    if (col.dwADsType == ADSTYPE_CASE_IGNORE_STRING)
+                    {
+                        wprintf(L&quot;%s:&quot;, rgpwszAttributes[i]); 
+
+                        // Print each attribute value.
+                        for(DWORD x = 0; x &lt; col.dwNumValues; x++)
+                        {
+                            wprintf(L&quot;\t%s\n&quot;, col.pADsValues[x].CaseIgnoreString); 
+                        }
+                    }
+                    else
+                    {
+                        wprintf(L&quot;&lt;%s property is not a string&gt;&quot;, rgpwszAttributes[0]);
+                    }
+                    
+                    // Free the column.
+                    pSchemaNC-&gt;FreeColumn(&amp;col);
+                }
+            }
+
+            // Get the next set of results.
+            hr = pSchemaNC-&gt;GetNextRow(hSearch);
+        }
+
+        // Close the search handle to cleanup.
+        pSchemaNC-&gt;CloseSearchHandle(hSearch);
+    } 
+
+    return hr;
+}
+</code></pre>
+<p>The following C and C++ code example shows how to search for schema objects replicated to the global catalog.</p>
+<pre lang="C++"><code>#include &lt;stdio.h&gt;
+#include &lt;atlbase.h&gt;
+#include &lt;activeds.h&gt;
+#include &lt;ntldap.h&gt;
+
+/***************************************************************************
+
+    PrintGCAttributes()
+
+    Searches for and prints all attributeSchema objects replicated 
+    to the global catalog.
+
+    Parameters:
+    
+    pSchemaNC - IDirectorySearch pointer to schema naming context.
+    
+***************************************************************************/
+
+HRESULT PrintGCAttributes(IDirectorySearch *pSchemaNC)
+{
+    HRESULT hr;
+
+    // Attributes are one-level deep in the Schema container, so only search one level.
+    ADS_SEARCHPREF_INFO SearchPrefs[2];
+    SearchPrefs[0].dwSearchPref = ADS_SEARCHPREF_SEARCH_SCOPE;
+    SearchPrefs[0].vValue.dwType = ADSTYPE_INTEGER;
+    SearchPrefs[0].vValue.Integer = ADS_SCOPE_ONELEVEL;
+ 
+    // Use paging if there are more properties than can be returned by one page.
+    SearchPrefs[1].dwSearchPref = ADS_SEARCHPREF_PAGESIZE;
+    SearchPrefs[1].vValue.dwType = ADSTYPE_INTEGER;
+    SearchPrefs[1].vValue.Integer = 1000;
+
+    // Set the search preferences.
+    hr = pSchemaNC-&gt;SetSearchPreference(SearchPrefs, sizeof(SearchPrefs)/sizeof(ADS_SEARCHPREF_INFO));
+    if(FAILED(hr))
+    {
+        return hr;
+    }
+ 
+    // Handle used for search.
+    ADS_SEARCH_HANDLE hSearch;
+ 
+    LPWSTR rgpwszAttributes[] = {L&quot;cn&quot;};
+    DWORD dwAttributes = sizeof(rgpwszAttributes)/sizeof(LPWSTR);
+
+    // Create the search filter.
+    LPWSTR pwszSearchFilter = L&quot;(&amp;(objectCategory=attributeSchema)(isMemberOfPartialAttributeSet=TRUE))&quot;;
+ 
+    // Execute the search.
+    hr = pSchemaNC-&gt;ExecuteSearch(pwszSearchFilter,
+                                  rgpwszAttributes,
+                                  dwAttributes,
+                                  &amp;hSearch);
+    if(SUCCEEDED(hr))
+    {
+        // Get the first row of results.
+        hr = pSchemaNC-&gt;GetFirstRow(hSearch);
+
+        while(S_OK == hr)
+        {
+            ADS_SEARCH_COLUMN col;
+
+            // Print each column.
+            for(DWORD i = 0; i &lt; dwAttributes; i++)
+            {
+                hr = pSchemaNC-&gt;GetColumn(hSearch, rgpwszAttributes[i], &amp;col);
+                if(SUCCEEDED(hr))
+                {
+                    // Print the data for the column and free the column.
+                    if (col.dwADsType == ADSTYPE_CASE_IGNORE_STRING)
+                    {
+                        wprintf(L&quot;%s:&quot;, rgpwszAttributes[i]); 
+
+                        // Print each attribute value.
+                        for(DWORD x = 0; x &lt; col.dwNumValues; x++)
+                        {
+                            wprintf(L&quot;\t%s\n&quot;, col.pADsValues[x].CaseIgnoreString); 
+                        }
+                    }
+                    else
+                    {
+                        wprintf(L&quot;&lt;%s property is not a string&gt;&quot;, rgpwszAttributes[0]);
+                    }
+                    
+                    // Free the column.
+                    pSchemaNC-&gt;FreeColumn(&amp;col);
+                }
+            }
+
+            // Get the next set of results.
+            hr = pSchemaNC-&gt;GetNextRow(hSearch);
+        }
+
+        // Close the search handle to cleanup.
+        pSchemaNC-&gt;CloseSearchHandle(hSearch);
+    } 
+
+    return hr;
+}
+</code></pre>
+<p>The following C and C++ code example shows how to search for indexed schema objects.</p>
+<pre lang="C++"><code>#include &lt;stdio.h&gt;
+#include &lt;atlbase.h&gt;
+#include &lt;activeds.h&gt;
+#include &lt;ntldap.h&gt;
+
+/***************************************************************************
+
+    PrintIndexedAttributes()
+
+    Searches for, and prints, all indexed attributeSchema objects.
+
+    Parameters:
+
+    pSchemaNC - IDirectorySearch pointer to schema naming context.
+
+***************************************************************************/
+
+HRESULT PrintIndexedAttributes(IDirectorySearch *pSchemaNC)
+{
+    HRESULT hr;
+
+    // Attributes are one-level deep in the Schema container, so only search one level.
+    ADS_SEARCHPREF_INFO SearchPrefs[2];
+    SearchPrefs[0].dwSearchPref = ADS_SEARCHPREF_SEARCH_SCOPE;
+    SearchPrefs[0].vValue.dwType = ADSTYPE_INTEGER;
+    SearchPrefs[0].vValue.Integer = ADS_SCOPE_ONELEVEL;
+ 
+    // Use paging in the case that there are more properties than can be returned by one page.
+    SearchPrefs[1].dwSearchPref = ADS_SEARCHPREF_PAGESIZE;
+    SearchPrefs[1].vValue.dwType = ADSTYPE_INTEGER;
+    SearchPrefs[1].vValue.Integer = 1000;
+
+    // Set the search preferences.
+    hr = pSchemaNC-&gt;SetSearchPreference(SearchPrefs, sizeof(SearchPrefs)/sizeof(ADS_SEARCHPREF_INFO));
+    if(FAILED(hr))
+    {
+        return hr;
+    }
+ 
+    // Handle used for search.
+    ADS_SEARCH_HANDLE hSearch;
+ 
+    LPWSTR rgpwszAttributes[] = {L&quot;cn&quot;};
+    DWORD dwAttributes = sizeof(rgpwszAttributes)/sizeof(LPWSTR);
+
+    /*
+    Create the search filter. Indexed attributes have the least significant bit 
+    of the searchFlags attribute set to 1.
+    */
+    CComBSTR sbstrSearchFilter;    
+    sbstrSearchFilter = &quot;(&amp;(objectCategory=attributeSchema)(searchFlags:&quot;;
+    sbstrSearchFilter += LDAP_MATCHING_RULE_BIT_AND;
+    sbstrSearchFilter += &quot;:=1))&quot;;
+ 
+    // Execute the search.
+    hr = pSchemaNC-&gt;ExecuteSearch(sbstrSearchFilter,
+                                  rgpwszAttributes,
+                                  dwAttributes,
+                                  &amp;hSearch);
+    if(SUCCEEDED(hr))
+    {
+        // Get the first row of results.
+        hr = pSchemaNC-&gt;GetFirstRow(hSearch);
+
+        while(S_OK == hr)
+        {
+            ADS_SEARCH_COLUMN col;
+
+            // Print each column.
+            for(DWORD i = 0; i &lt; dwAttributes; i++)
+            {
+                hr = pSchemaNC-&gt;GetColumn(hSearch, rgpwszAttributes[i], &amp;col);
+                if(SUCCEEDED(hr))
+                {
+                    // Print the data for the column and free the column.
+                    if (col.dwADsType == ADSTYPE_CASE_IGNORE_STRING)
+                    {
+                        wprintf(L&quot;%s:&quot;, rgpwszAttributes[i]); 
+
+                        // Print each attribute value.
+                        for(DWORD x = 0; x &lt; col.dwNumValues; x++)
+                        {
+                            wprintf(L&quot;\t%s\n&quot;, col.pADsValues[x].CaseIgnoreString); 
+                        }
+                    }
+                    else
+                    {
+                        wprintf(L&quot;&lt;%s property is not a string&gt;&quot;, rgpwszAttributes[0]);
+                    }
+                    
+                    // Free the column.
+                    pSchemaNC-&gt;FreeColumn(&amp;col);
+                }
+            }
+
+            // Get the next set of results.
+            hr = pSchemaNC-&gt;GetNextRow(hSearch);
+        }
+
+        // Close the search handle to cleanup.
+        pSchemaNC-&gt;CloseSearchHandle(hSearch);
+    } 
+
+    return hr;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Setting Up a Simple SHA</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Setting Up a Simple SHA
+description: The following example sets up a simple system health agent (SHA) and shows two optional actions Statement of Health (SoH) change notification and flushing of the SoH cache.
+ms.assetid: 7c96e1ca-f9b2-40e6-bd89-c8ef77b48dfa
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Setting Up a Simple SHA</h1>
+<blockquote>
+<p>[!Note]<br />
+The Network Access Protection platform is not available starting with WindowsÂ 10</p>
+</blockquote>
+<p>Â </p>
+<p>The following example sets up a simple system health agent (SHA) and shows two optional actions: Statement of Health (SoH) change notification and flushing of the SoH cache. Note that error processing is not included in the main() function for simplicity of this example.</p>
+<blockquote>
+<p>[!Note]<br />
+The NAP SDK also contains a full set of sample code, found in the ...\Samples\NetDS\NAP... directory of your SDK installation. This sample set includes an SHA, system health validator (SHV), and enforcement client (EC). It has full working NAP scenarios setting up communication between SHA-SHV and SHA-EC.</p>
+</blockquote>
+<p>Â </p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;Callback.h&quot;
+#include &lt;NapTypes.h&gt;
+#include &lt;NapClientManagement.h&gt;
+#include &quot;Strsafe.h&quot;
+
+static const UINT32 NapSystemHealthId = 0x000137F0;
+
+// Set GUID infoClsid equal to {08B8B292-7033-46f3-AB97-D62B6FCDC0DE}
+static const GUID infoClsid = { 0x8b8b292, 0x7033, 0x46f3, { 0xab, 0x97, 0xd6, 0x2b, 0x6f, 0xcd, 0xc0, 0xde } };
+static const wchar_t SHA_FRIENDLY_NAME[] = L&quot;SHA SDK Sample&quot;;
+static const wchar_t SHA_DESCRIPTION[] = L&quot;Microsoft SHA SDK Sample&quot;;
+static const wchar_t SHA_VERSION[] = L&quot;1.0.0.1&quot;;
+static const wchar_t SHA_VENDOR_NAME[] = L&quot;Microsoft&quot;;
+
+// Helper Function for FillShaComponentRegistrationInfo.
+HRESULT ConstructCountedString(const WCHAR* src, UINT16 len,
+   CountedString* dest)
+{
+    HRESULT hr = S_OK;
+    DWORD retCode = ERROR_SUCCESS;
+    hr = AllocateMemory(dest-&gt;string, ((len+1)*sizeof(WCHAR)));
+    dest-&gt;length = len;
+    retCode = StringCchCopy(dest-&gt;string, len+1, src);
+    return hr;
+}
+
+HRESULT FillShaComponentRegistrationInfo(NapComponentRegistrationInfo *agentInfo)
+{
+    HRESULT hr = S_OK;
+    agentInfo-&gt;id = NapSystemHealthId;
+    agentInfo-&gt;infoClsid = infoClsid;
+    hr = ConstructCountedString(SHA_FRIENDLY_NAME, sizeof(SHA_FRIENDLY_NAME), &amp;(agentInfo-&gt;friendlyName));
+    hr = ConstructCountedString(SHA_DESCRIPTION, sizeof(SHA_DESCRIPTION), &amp;(agentInfo-&gt;description));
+    hr = ConstructCountedString(SHA_VERSION, sizeof(SHA_VERSION), &amp;(agentInfo-&gt;version));
+    hr = ConstructCountedString(SHA_VENDOR_NAME, sizeof(SHA_VENDOR_NAME), &amp;(agentInfo-&gt;vendorName));
+    return hr;
+}
+
+// Helper Function for releasing ShaComponentRegistrationInfo members
+void FreeComponentRegistration(NapComponentRegistrationInfo *agentInfo)
+{
+    FreeMemory(agentInfo-&gt;friendlyName.string);
+    FreeMemory(agentInfo-&gt;description.string);
+    FreeMemory(agentInfo-&gt;version.string);
+    FreeMemory(agentInfo-&gt;vendorName.string);
+}
+
+// Registers the SHA with the NAP Server.
+HRESULT CsdkShaModule::RegisterSha()
+{
+    HRESULT hr = S_OK;
+
+    // Pointer to the INapServerManagement interface
+    CComPtr&lt;INapClientManagement&gt; m_pNAPClientMgmt = NULL;
+
+    // Registration Information
+    NapComponentRegistrationInfo m_shaInfo;
+    
+    ZeroMemory (&amp;m_shaInfo, sizeof(m_shaInfo));
+    hr = m_pNAPClientMgmt.CoCreateInstance(CLSID_NapClientManagement, NULL, CLSCTX_INPROC_SERVER);
+
+    if (FAILED(hr))
+    {
+       DebugPrintfW(L&quot;RegisterSdkSha: CoCreateInstance Failed with %#x&quot;,hr);
+       goto Cleanup;
+    }
+
+    hr = FillShaComponentRegistrationInfo(&amp;m_shaInfo);
+    if(FAILED(hr))
+    {
+       DebugPrintfW(L&quot;RegisterSdkSha:: FillShaComponentRegistrationInfo Failed with %#x&quot;,hr);
+       goto Cleanup;
+    }
+
+    hr = m_pNAPClientMgmt-&gt;RegisterSystemHealthAgent(&amp;m_shaInfo);
+    if (FAILED(hr))
+    {
+       DebugPrintfW(L&quot;RegisterSdkSha:: RegisterSystemHealthAgent failed %#x&quot;, hr);
+       goto Cleanup;
+    }
+ 
+    Cleanup:
+       FreeComponentRegistration(&amp;m_shaInfo);
+       return hr;
+}
+
+// Unregisters the SHA with the NAP Server.
+HRESULT CSdkShaModule::UnRegisterSha()
+{
+    HRESULT hr = S_OK;
+    // Pointer to the INapServerManagement interface
+    CComPtr&lt;INapClientManagement&gt; m_pNAPClientMgmt = NULL;
+
+    hr = m_pNAPClientMgmt.CoCreateInstance(CLSID_NapClientManagement, NULL, CLSCTX_INPROC_SERVER);
+
+    if (FAILED(hr))
+    {
+       DebugPrintfW(L&quot;UnregisterSdkSha: CoCreateInstance Failed with %#x&quot;,hr);
+       goto Cleanup;
+    }
+
+    hr = m_pNAPClientMgmt-&gt;UnregisterSystemHealthAgent(QuarSampleSystemHealthId);
+    if (FAILED(hr))
+    {
+       DebugPrintfW(L&quot;UnregisterSdkSha: UnregisterSystemHealthAgent Failed with %#x&quot;,hr);
+       goto Cleanup;
+    }
+
+    Cleanup:
+       return hr;
+}
+
+// Main function
+DWORD __cdecl wmain(DWORD argc, WCHAR * pArgv[])  throw()
+{
+    HRESULT hr = S_OK;
+
+    // 1. Register Sha
+    hr = RegisterSha();
+
+    // 2. Start up COM and ATL.
+    hr  = CoInitializeEx(NULL, COINIT_MULTITHREADED );
+
+    // 3. Create Binding instance
+    // pointer to the binding  interface
+    CComPtr&lt;INapSystemHealthAgentBinding&gt; binding = NULL;
+    hr = binding.CoCreateInstance(CLSID_NapSystemHealthAgentBinding, NULL, CLSCTX_INPROC_SERVER);
+
+    // 4. Create Callback
+    // Create Callback (The code for this interface is separate)
+    IShaCallbackPtr callback = NULL;
+    callback = ShaCallback::CreateInstance(binding);
+
+    // 5. Call Initialize on the binding interface
+    hr = binding-&gt;Initialize(QuarSampleSystemHealthId,callback);
+
+    // 6. Send Notify SoH Change OR Flush Cache
+    hr = binding-&gt;NotifySoHChange();
+    //  hr = binding-&gt;FlushCache();
+
+    // 7. Stopping the SHA
+    hr = binding-&gt;Uninitialize();
+    
+    hr = UnRegisterSha();
+
+    return 0;
+}
+
+// SHA Callback 
+STDMETHODIMP ShaCallback::GetFixupInfo(FixupInfo** ppStatus)
+{
+    wprintf(L&quot;\nQA called ShaCallback::GetFixupInfo()\n&quot;);
+    HRESULT hr = S_OK;
+
+    assert(ppStatus != NULL);
+
+    // The caller should free this memory using CoTaskMemFree
+    hr = AllocFixupInfo(ppStatus, NUMBER_OF_HRESULTS);
+    if (FAILED(hr))
+    {
+       goto Cleanup;
+    }
+
+    //
+    // SDK Note:
+    //
+    // ppStatus should be filled according to the current Fix-up status. This 
+    // is just a simple example
+    if (g_setHealthySoh)
+    {
+       (*ppStatus)-&gt;fixupMsgId = SDK_SAMPLE_GENERIC_FIXUP_SUCCESS_MSG_ID;
+       (*ppStatus)-&gt;percentage = 100;
+       (*ppStatus)-&gt;state = fixupStateSuccess;
+    }
+    else
+    {
+       (*ppStatus)-&gt;fixupMsgId = SDK_SAMPLE_GENERIC_FIXUP_INPROGRESS_MSG_ID;
+       (*ppStatus)-&gt;percentage = 50;
+       (*ppStatus)-&gt;state = fixupStateInProgress;
+    }
+
+    (*ppStatus)-&gt;resultCodes.count = NUMBER_OF_HRESULTS;   // 1 HRESULT
+    *((*ppStatus)-&gt;resultCodes.results) = S_OK;
+
+    Cleanup:
+        return hr;
+}
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

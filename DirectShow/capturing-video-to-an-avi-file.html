@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Capturing Video to an AVI File</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Capturing Video to an AVI File
+ms.assetid: 0f5f4a82-4a2e-4c48-b201-bda641cb8619
+title: Capturing Video to an AVI File
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Capturing Video to an AVI File</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>The following illustration shows the simplest possible graph for capturing video to an AVI file.</p>
+<p><img src="images/vidcap02.png" alt="avi video capture graph" /></p>
+<p>The <a href="avi-mux-filter.html">AVI Mux</a> filter takes the video stream from the capture pin and packages it into an AVI stream. An audio stream could also be connected to the AVI Mux filter, in which case the mux would interleave the two streams. The <a href="file-writer-filter.html">File Writer</a> filter writes the AVI stream to disk.</p>
+<p>To build the graph, start by calling the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-setoutputfilename"><strong>ICaptureGraphBuilder2::SetOutputFileName</strong></a> method, as follows:</p>
+<pre lang="C++"><code>IBaseFilter *pMux;
+hr = pBuild-&gt;SetOutputFileName(
+    &amp;MEDIASUBTYPE_Avi,  // Specifies AVI for the target file.
+    L&quot;C:\\Example.avi&quot;, // File name.
+    &amp;pMux,              // Receives a pointer to the mux.
+    NULL);              // (Optional) Receives a pointer to the file sink.
+</code></pre>
+<p>The first parameter specifies the file type â€” in this case, AVI. The second parameter gives the file name. For AVI, the SetOutputFileName method cocreates the AVI Mux filter and the File Writer filter and adds them to the graph. It also sets the file name on the File Writer filter, by calling the <a href="/windows/desktop/api/Strmif/nf-strmif-ifilesinkfilter-setfilename"><strong>IFileSinkFilter::SetFileName</strong></a> method, and connects the two filters. The method returns a pointer to the AVI Mux in the third parameter. Optionally, it returns a pointer to the <a href="/windows/desktop/api/Strmif/nn-strmif-ifilesinkfilter"><strong>IFileSinkFilter</strong></a> interface in the fourth parameter. If you don't need this interface, you can set this parameter to <strong>NULL</strong>, as shown in the previous example.</p>
+<p>Next, call the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>ICaptureGraphBuilder2::RenderStream</strong></a> method to connect the capture filter to the AVI Mux, as follows:</p>
+<pre lang="C++"><code>hr = pBuild-&gt;RenderStream(
+    &amp;PIN_CATEGORY_CAPTURE, // Pin category.
+    &amp;MEDIATYPE_Video,      // Media type.
+    pCap,                  // Capture filter.
+    NULL,                  // Intermediate filter (optional).
+    pMux);                 // Mux or file sink filter.
+
+// Release the mux filter.
+pMux-&gt;Release();
+</code></pre>
+<p>The first parameter gives the pin category, which is PIN_CATEGORY_CAPTURE for capture. The second parameter gives the media type. The third parameter is a pointer to the capture filter's <a href="/windows/desktop/api/Strmif/nn-strmif-ibasefilter"><strong>IBaseFilter</strong></a> interface. The fourth parameter is optional; it lets you route the video stream through an intermediate filter, such as an encoder, before passing it to the mux filter. Otherwise, set this parameter to <strong>NULL</strong>, as shown in the previous example. The fifth parameter is the pointer to the mux filter. This pointer is obtained by calling the SetOutputFileName method.</p>
+<p>To capture audio, call RenderStream with the media type MEDIATYPE_Audio. If you are capturing audio and video from two separate devices, it is a good idea to make the audio stream the master stream. This helps to prevent drift between the two streams, because the AVI Mux filter adjust the playback rate on the video stream to match the audio stream. To set the master stream, call the <a href="/windows/desktop/api/Strmif/nf-strmif-iconfigavimux-setmasterstream"><strong>IConfigAviMux::SetMasterStream</strong></a> method on the AVI Mux filter:</p>
+<pre lang="C++"><code>IConfigAviMux *pConfigMux = NULL;
+hr = pMux-&gt;QueryInterface(IID_IConfigAviMux, (void**)&amp;pConfigMux);
+if (SUCCEEDED(hr))
+{
+    pConfigMux-&gt;SetMasterStream(1);
+    pConfigMux-&gt;Release();
+}
+</code></pre>
+<p>The parameter to SetMasterStream is the stream number, which is determined by the order in which you call RenderStream. For example, if you call RenderStream first for video and then for audio, the video is stream 0 and the audio is stream 1.</p>
+<p>You may also want to set how the AVI Mux filter interleaves the audio and video streams, by calling the <a href="/windows/desktop/api/Strmif/nf-strmif-iconfiginterleaving-put_mode"><strong>IConfigInterleaving::put_Mode</strong></a> method.</p>
+<pre lang="C++"><code>IConfigInterleaving *pInterleave = NULL;
+hr = pMux-&gt;QueryInterface(IID_IConfigInterleaving, (void**)&amp;pInterleave);
+if (SUCCEEDED(hr))
+{
+    pInterleave-&gt;put_Mode(INTERLEAVE_CAPTURE);
+    pInterleave-&gt;Release();
+}
+</code></pre>
+<p>With the INTERLEAVE_CAPTURE flag, the AVI Mux performs interleaving at a rate that is suitable for video capture. You can also use INTERLEAVE_NONE, which means no interleaving â€” the AVI Mux will simply write the data in the order that it arrives. The INTERLEAVE_FULL flag means the AVI Mux performs full interleaving; however, this mode is less suitable for video capture because it requires the most overheard.</p>
+<p>Encoding the Video Stream</p>
+<p>You can encode the video stream by inserting an encoder filter between the capture filter and the AVI Mux filter. Use the <a href="system-device-enumerator.html">System Device Enumerator</a> or the <a href="filter-mapper.html">Filter Mapper</a> to select an encoder filter. (For more information, see <a href="enumerating-devices-and-filters.html">Enumerating Devices and Filters</a>.)</p>
+<p>Specify the encoder filter as the fourth parameter to RenderStream, shown in bold in the following example:</p>
+<pre lang="C++"><code>IBaseFilter *pEncoder;
+/* Create the encoder filter (not shown). */
+// Add it to the filter graph.
+pGraph-&gt;AddFilter(pEncoder, L&quot;Encoder&quot;);
+
+/* Call SetOutputFileName as shown previously. */
+
+// Render the stream.
+hr = pBuild-&gt;RenderStream(&amp;PIN_CATEGORY_CAPTURE, &amp;MEDIATYPE_Video, 
+    pCap, 
+pEncoder, pMux);
+pEncoder-&gt;Release();
+</code></pre>
+<p>The encoder filter might support <a href="/windows/desktop/api/Strmif/nn-strmif-iamvideocompression"><strong>IAMVideoCompression</strong></a> or other interfaces for setting the encoding parameters. For a list of possible interfaces, see <a href="file-encoding-and-decoding-interfaces.html">File Encoding and Decoding Interfaces</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="capturing-video-to-a-file.html">Capturing Video to a File</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

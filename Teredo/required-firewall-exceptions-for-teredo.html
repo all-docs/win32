@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Required Firewall Exceptions for Teredo</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Required Firewall Exceptions for Teredo
+description: For an application to receive Teredo traffic, the application must be permitted to receive IPv6 traffic in the host firewall, and the application is required to set the socket option IPV6_PROTECTION_LEVEL to 'PROTECTION_LEVEL_UNRESTRICTED'.
+ms.assetid: 2fc74d86-9696-4ba9-adbe-e5558ae7d7c2
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Required Firewall Exceptions for Teredo</h1>
+<p>For an application to receive Teredo traffic, the application must be permitted to receive IPv6 traffic in the host firewall, and the application is required to set the socket option <a href="/windows/desktop/WinSock/ipv6-protection-level">IPV6_PROTECTION_LEVEL</a> to 'PROTECTION_LEVEL_UNRESTRICTED'. To enable this type of scenario, the firewall exceptions detailed in this document must be implemented.</p>
+<p>The following firewall configurations are required to ensure smooth interoperation between a firewall and Teredo:</p>
+<ul>
+<li>
+<p>The client firewall must allow resolution of teredo.ipv6.microsoft.com.</p>
+</li>
+<li>
+<p>UDP Port 3544 must be open to ensure that Teredo clients can successfully communicate with the Teredo server.</p>
+</li>
+<li>
+<p>The firewall must retrieve dynamic UDP ports used by Teredo service on the local machine by calling the <a href="/windows/desktop/api/fwpmu/nf-fwpmu-fwpmsystemportsget0"><strong>FwpmSystemPortsGet0</strong></a> function; relevant ports are of type FWPM_SYSTEM_PORT_TEREDO. The <strong>FwpmSystemPortsGet0</strong> function should be implemented in place of the now deprecated <a href="/windows/desktop/api/netioapi/nf-netioapi-getteredoport"><strong>GetTeredoPort</strong></a> or <a href="/windows/desktop/api/netioapi/nf-netioapi-notifyteredoportchange"><strong>NotifyTeredoPortChange</strong></a> functions.</p>
+</li>
+<li>
+<p>The firewall permits the system to send and receive UDP/IPv4 packets to UDP port 1900 on the local subnet as this allows UPnP discovery traffic to flow and has the potential to improve connectivity rates.</p>
+<blockquote>
+<p>[!Note]<br />
+If this condition is not met, the potential for scenarios to encounter compatibility issues involving communication between certain NAT types is introduced; specifically between Symmetric NATs and Restricted NATs. While Symmetric NATs are popular in hotspots and Restricted NATs are popular in homes, communication between the two has the potential to fault on the side of the Restricted NAT.</p>
+</blockquote>
+<p>Â </p>
+</li>
+<li>
+<p>Incoming and outgoing ICMPv6 &quot;Echo Request&quot; and &quot;Echo Reply&quot; exceptions must be enabled. These exceptions are necessary to ensure that a Teredo client can act as a Teredo host-specific relay. A Teredo host-specific relay can be identified by the additional native IPv6 address or a 6to4 address supplied with the Teredo address.</p>
+</li>
+</ul>
+<p>Client firewalls must support the following ICMPv6 error messages and discovery functions per RFC 4443:</p>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>135/136</td>
+<td>ICMPV6 Neighbor Solicitation and Advertisement</td>
+</tr>
+<tr>
+<td>133/134</td>
+<td>Router Solicitation and Advertisement</td>
+</tr>
+<tr>
+<td>128/129</td>
+<td>ICMPV6 Echo Request and Reply</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Destination Unreachable</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Packet Too Large</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Time Exceeded</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Invalid Parameter</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>If these messages cannot be specifically allowed, then the exemption of all ICMPv6 messages should be enabled on the firewall. Additionally, the host firewall may notice that the packets classified by codes 135/136 or 133/134 originate from, or are targeted to, the user mode service <strong>iphlpsvc</strong> and not from the stack. These packets must not be dropped by the host firewall. The Teredo service is implemented primarily within the 'user mode' IP Helper service.</p>
+<p>Using the <a href="/previous-versions/windows/desktop/api/netfw/nn-netfw-inetfwpolicy2"><strong>INetFwPolicy2</strong></a> Windows Firewall API to enumerate all rules with the Edge Traversal flag set, all applications that want to listen for unsolicited traffic are enumerated for the firewall exception. Specific information regarding the use of the Edge Traversal option is detailed in <a href="receiving-unsolicited-traffic-over-teredo.html">Receiving Unsolicited Traffic Over Teredo</a>.</p>
+<p>Callbacks are not associated with the following sample enumeration code; it is strongly recommended that third party firewalls perform the enumeration periodically, or whenever the firewall detects a new application attempting to go through the firewall.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;objbase.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;atlcomcli.h&gt;
+#include &lt;strsafe.h&gt;
+#include &lt;netfw.h&gt;
+
+#define NET_FW_IP_PROTOCOL_TCP_NAME L&quot;TCP&quot;
+#define NET_FW_IP_PROTOCOL_UDP_NAME L&quot;UDP&quot;
+
+#define NET_FW_RULE_DIR_IN_NAME L&quot;In&quot;
+#define NET_FW_RULE_DIR_OUT_NAME L&quot;Out&quot;
+
+#define NET_FW_RULE_ACTION_BLOCK_NAME L&quot;Block&quot;
+#define NET_FW_RULE_ACTION_ALLOW_NAME L&quot;Allow&quot;
+
+#define NET_FW_RULE_ENABLE_IN_NAME L&quot;TRUE&quot;
+#define NET_FW_RULE_DISABLE_IN_NAME L&quot;FALSE&quot;
+
+#import &quot;netfw.tlb&quot;
+
+void DumpFWRulesInCollection(long Allprofiletypes, NetFwPublicTypeLib::INetFwRulePtr FwRule)
+{
+    variant_t InterfaceArray;
+    variant_t InterfaceString;    
+
+    if(FwRule-&gt;Profiles == Allprofiletypes)
+    {
+        wprintf(L&quot;---------------------------------------------\n&quot;);
+        wprintf(L&quot;Name:             %s\n&quot;, (BSTR)FwRule-&gt;Name);        
+        wprintf(L&quot;Description:      %s\n&quot;, (BSTR)FwRule-&gt;Description);
+        wprintf(L&quot;Application Name: %s\n&quot;, (BSTR)FwRule-&gt;ApplicationName);
+        wprintf(L&quot;Service Name:     %s\n&quot;, (BSTR)FwRule-&gt;serviceName);
+
+        switch(FwRule-&gt;Protocol)
+        {
+        case NET_FW_IP_PROTOCOL_TCP: wprintf(L&quot;IP Protocol:      %s\n&quot;, NET_FW_IP_PROTOCOL_TCP_NAME);
+            break;
+        case NET_FW_IP_PROTOCOL_UDP: wprintf(L&quot;IP Protocol:      %s\n&quot;, NET_FW_IP_PROTOCOL_UDP_NAME);
+            break;
+        default:
+            break;
+        }
+
+        if(FwRule-&gt;Protocol != NET_FW_IP_VERSION_V4 &amp;&amp; FwRule-&gt;Protocol != NET_FW_IP_VERSION_V6)
+        {
+            wprintf(L&quot;Local Ports:      %s\n&quot;, (BSTR)FwRule-&gt;LocalPorts);
+            wprintf(L&quot;Remote Ports:     %s\n&quot;, (BSTR)FwRule-&gt;RemotePorts);
+        }
+        
+        wprintf(L&quot;LocalAddresses:   %s\n&quot;, (BSTR)FwRule-&gt;LocalAddresses);
+        wprintf(L&quot;RemoteAddresses:  %s\n&quot;, (BSTR)FwRule-&gt;RemoteAddresses);
+        wprintf(L&quot;Profile:          %d\n&quot;, Allprofiletypes);
+        
+
+        if(FwRule-&gt;Protocol == NET_FW_IP_VERSION_V4 || FwRule-&gt;Protocol == NET_FW_IP_VERSION_V6)
+        {
+            wprintf(L&quot;ICMP TypeCode:    %s\n&quot;, (BSTR)FwRule-&gt;IcmpTypesAndCodes);
+        }
+
+        switch(FwRule-&gt;Direction)
+        {
+        case NET_FW_RULE_DIR_IN:
+            wprintf(L&quot;Direction:        %s\n&quot;, NET_FW_RULE_DIR_IN_NAME);
+            break;
+        case NET_FW_RULE_DIR_OUT:
+            wprintf(L&quot;Direction:        %s\n&quot;, NET_FW_RULE_DIR_OUT_NAME);
+            break;
+        default:
+            break;
+        }
+
+        switch(FwRule-&gt;Action)
+        {
+        case NET_FW_ACTION_BLOCK:
+            wprintf(L&quot;Action:           %s\n&quot;, NET_FW_RULE_ACTION_BLOCK_NAME);
+            break;
+        case NET_FW_ACTION_ALLOW:
+            wprintf(L&quot;Action:           %s\n&quot;, NET_FW_RULE_ACTION_ALLOW_NAME);
+            break;
+        default:
+            break;
+        }
+        
+        InterfaceArray = FwRule-&gt;Interfaces;
+
+        if(InterfaceArray.vt != VT_EMPTY)
+        {
+            SAFEARRAY    *pSa = NULL;
+            long index = 0;
+
+            pSa = InterfaceArray.parray;
+
+            for(long index= pSa-&gt;rgsabound-&gt;lLbound; index &lt; (long)pSa-&gt;rgsabound-&gt;cElements; index++)
+            {
+                SafeArrayGetElement(pSa, &amp;index, &amp;InterfaceString);
+                wprintf(L&quot;Interfaces:       %s\n&quot;, (BSTR)InterfaceString.bstrVal);
+            }
+        }
+        wprintf(L&quot;Interface Types:  %s\n&quot;, (BSTR)FwRule-&gt;InterfaceTypes);
+        if(FwRule-&gt;Enabled)
+        {
+            wprintf(L&quot;Enabled:          %s\n&quot;, NET_FW_RULE_ENABLE_IN_NAME);
+        }
+        else
+        {
+            wprintf(L&quot;Enabled:          %s\n&quot;, NET_FW_RULE_DISABLE_IN_NAME);
+        }
+        wprintf(L&quot;Grouping:         %s\n&quot;, (BSTR)FwRule-&gt;Grouping);
+        wprintf(L&quot;Edge:             %s\n&quot;, (BSTR)FwRule-&gt;EdgeTraversal);
+    }
+}
+
+int __cdecl main()
+{
+    HRESULT hr;
+    BOOL fComInitialized = FALSE;
+    ULONG cFetched = 0; 
+    CComVariant var;
+    long Allprofiletypes = 0;
+
+    try
+    {
+        IUnknownPtr pEnumerator = NULL;
+        IEnumVARIANT* pVariant = NULL;
+        NetFwPublicTypeLib::INetFwPolicy2Ptr sipFwPolicy2;
+
+        //
+        // Initialize the COM library on the current thread.
+        //
+        hr = CoInitialize(NULL);
+        if (FAILED(hr))
+        {
+            _com_issue_error(hr);
+        }
+        fComInitialized = TRUE;
+        
+        hr = sipFwPolicy2.CreateInstance(&quot;HNetCfg.FwPolicy2&quot;);
+        if (FAILED(hr))
+        {
+            _com_issue_error(hr);
+        }
+        Allprofiletypes = NET_FW_PROFILE2_ALL; // 0x7FFFFFFF
+        
+        printf(&quot;The number of rules in the Windows Firewall are %d\n&quot;, sipFwPolicy2-&gt;Rules-&gt;Count);
+
+        pEnumerator = sipFwPolicy2-&gt;Rules-&gt;Get_NewEnum();
+
+        if(pEnumerator)
+        {
+            hr = pEnumerator-&gt;QueryInterface(__uuidof(IEnumVARIANT), (void **) &amp;pVariant);
+        }
+
+        while(SUCCEEDED(hr) &amp;&amp; hr != S_FALSE)
+        {        
+            NetFwPublicTypeLib::INetFwRulePtr sipFwRule;
+
+            var.Clear();
+            hr = pVariant-&gt;Next(1, &amp;var, &amp;cFetched);
+            if (S_FALSE != hr)
+            {
+                if (SUCCEEDED(hr))
+                {
+                    hr = var.ChangeType(VT_DISPATCH);
+                }
+                if (SUCCEEDED(hr))
+                {
+                    hr = (V_DISPATCH(&amp;var))-&gt;QueryInterface(__uuidof(INetFwRule), reinterpret_cast&lt;void**&gt;(&amp;sipFwRule));
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    DumpFWRulesInCollection(Allprofiletypes, sipFwRule);
+                }
+            }
+        }
+    }
+    catch(_com_error&amp; e)
+    {
+        printf (&quot;Error. HRESULT message is: %s (0x%08lx)\n&quot;, e.ErrorMessage(), e.Error());
+        if (e.ErrorInfo())
+        {
+            printf (&quot;Description: %s\n&quot;, (char *)e.Description());
+        }
+    }
+    if (fComInitialized)
+    {
+        CoUninitialize();
+    }
+    return 0;
+}
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

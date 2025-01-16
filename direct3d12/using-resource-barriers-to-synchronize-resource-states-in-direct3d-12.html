@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using Resource Barriers to Synchronize Resource States in Direct3D 12</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Using Resource Barriers to Synchronize Resource States in Direct3D 12
+description: To reduce overall CPU usage and enable driver multi-threading and pre-processing, Direct3D 12 moves the responsibility of per-resource state management from the graphics driver to the application.
+ms.assetid: 3AB3BF34-433C-400B-921A-55B23CCDA44F
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using Resource Barriers to Synchronize Resource States in Direct3D 12</h1>
+<p>To reduce overall CPU usage and enable driver multi-threading and pre-processing, Direct3D 12 moves the responsibility of per-resource state management from the graphics driver to the application. An example of per-resource state is whether a texture resource is currently being accessed as through a Shader Resource View or as a Render Target View. In Direct3D 11, drivers were required to track this state in the background. This is expensive from a CPU perspective and significantly complicates any sort of multi-threaded design. In Microsoft Direct3D 12, most per-resource state is managed by the application with a single API, <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ID3D12GraphicsCommandList::ResourceBarrier</strong></a>.</p>
+<ul>
+<li><a href="#using-the-resourcebarrier-api-to-manage-per-resource-state">Using the ResourceBarrier API to manage per-resource state</a>
+<ul>
+<li><a href="#using-resource-barriers-to-synchronize-resource-states-in-direct3d-12">Resource states</a></li>
+<li><a href="#initial-states-for-resources">Initial states for resources</a></li>
+<li><a href="#readwrite-resource-state-restrictions">Read/write resource state restrictions</a></li>
+<li><a href="#resource-states-for-presenting-back-buffers">Resource states for presenting back buffers</a></li>
+<li><a href="#discarding-resources">Discarding resources</a></li>
+</ul>
+</li>
+<li><a href="#implicit-state-transitions">Implicit State Transitions</a>
+<ul>
+<li><a href="#common-state-promotion">Common state promotion</a></li>
+<li><a href="#state-decay-to-common">State decay to common</a></li>
+<li><a href="#performance-implications">Performance implications</a></li>
+</ul>
+</li>
+<li><a href="#split-barriers">Split Barriers</a></li>
+<li><a href="#resource-barrier-example-scenario">Resource barrier example scenario</a></li>
+<li><a href="#common-state-promotion-and-decay-sample">Common state promotion and decay sample</a></li>
+<li><a href="#example-of-split-barriers">Example of split barriers</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Using the ResourceBarrier API to manage per-resource state</h2>
+<p><a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ResourceBarrier</strong></a> notifies the graphics driver of situations in which the driver may need to synchronize multiple accesses to the memory in which a resource is stored. The method is called with one or more resource barrier description structures indicating the type of resource barrier being declared.</p>
+<p>There are three types of resource barriers:</p>
+<ul>
+<li>
+<p><strong>Transition barrier</strong> - A transition barrier indicates that a set of subresources transition between different usages. A <a href="/windows/win32/api/d3d12/ns-d3d12-d3d12_resource_transition_barrier"><strong>D3D12_RESOURCE_TRANSITION_BARRIER</strong></a> structure is used to specify the subresource that is transitioning as well as the <em>before</em> and <em>after</em> states of the subresource.</p>
+<p>The system verifies that subresource transitions in a command list are consistent with previous transitions in the same command list. The debug layer further tracks subresource state to find other errors however this validation is conservative and not exhaustive.</p>
+<p>Note that you can use the D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES flag to specify that all subresources within a resource are being transitioned.</p>
+</li>
+<li>
+<p><strong>Aliasing barrier</strong> - An aliasing barrier indicates a transition between usages of two different resources which have overlapping mappings into the same heap. This applies to both reserved and placed resources. A <a href="/windows/win32/api/d3d12/ns-d3d12-d3d12_resource_aliasing_barrier"><strong>D3D12_RESOURCE_ALIASING_BARRIER</strong></a> structure is used to specify both the <em>before</em> resource and the <em>after</em> resource.</p>
+<p>Note that one or both resources can be NULL, which indicates that any tiled resource could cause aliasing. For more information about using tiled resources, see <a href="../direct3d11/tiled-resources.html">Tiled resources</a> and <a href="volume-tiled-resources.html">Volume Tiled Resources</a>.</p>
+</li>
+<li>
+<p><strong>Unordered access view (UAV) barrier</strong> - A UAV barrier indicates that all UAV accesses, both read or write, to a particular resource must complete between any future UAV accesses, both read or write. It's not necessary for an app to put a UAV barrier between two draw or dispatch calls that only read from a UAV. Also, it's not necessary to put a UAV barrier between two draw or dispatch calls that write to the same UAV if the application knows that it is safe to execute the UAV access in any order. A <a href="/windows/win32/api/d3d12/ns-d3d12-d3d12_resource_uav_barrier"><strong>D3D12_RESOURCE_UAV_BARRIER</strong></a> structure is used to specify the UAV resource to which the barrier applies. The application can specify NULL for the barrier's UAV, which indicates that any UAV access could require the barrier.</p>
+</li>
+</ul>
+<p>When <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ResourceBarrier</strong></a> is called with an array of resource barrier descriptions, the API behaves as if it was called once for each element, in the order in which they were supplied.</p>
+<p>At any given time, a subresource is in exactly one state, determined by the set of <a href="/windows/win32/api/d3d12/ne-d3d12-d3d12_resource_states"><strong>D3D12_RESOURCE_STATES</strong></a> flags supplied to <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ResourceBarrier</strong></a>. The application must ensure that the <em>before</em> and <em>after</em> states of consecutive calls to <strong>ResourceBarrier</strong> agree.</p>
+<blockquote>
+<p>[!TIP]</p>
+<p>Applications should batch multiple transitions into one API call wherever possible.</p>
+</blockquote>
+<p>Â </p>
+<h3>Resource states</h3>
+<p>For the complete list of resource states that a resource can transition between, see the reference topic for the <a href="/windows/win32/api/d3d12/ne-d3d12-d3d12_resource_states"><strong>D3D12_RESOURCE_STATES</strong></a> enumeration.</p>
+<p>For split resource barriers, also refer to <a href="/windows/win32/api/d3d12/ne-d3d12-d3d12_resource_barrier_flags"><strong>D3D12_RESOURCE_BARRIER_FLAGS</strong></a>.</p>
+<h3>Initial states for resources</h3>
+<p>Resources may be created with any user-specified initial state (valid for the resource description), with the following exceptions:</p>
+<ul>
+<li>Upload heaps must start out in the state D3D12_RESOURCE_STATE_GENERIC_READ which is a bitwise OR combination of:
+<ul>
+<li>D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER</li>
+<li>D3D12_RESOURCE_STATE_INDEX_BUFFER</li>
+<li>D3D12_RESOURCE_STATE_COPY_SOURCE</li>
+<li>D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE</li>
+<li>D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE</li>
+<li>D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT</li>
+</ul>
+</li>
+<li>Readback heaps must start out in the D3D12_RESOURCE_STATE_COPY_DEST state.</li>
+<li>Swap chain back buffers automatically start out in the D3D12_RESOURCE_STATE_COMMON state.</li>
+</ul>
+<p>Before a heap can be the target of a GPU copy operation, normally the heap must first be transitioned to the D3D12_RESOURCE_STATE_COPY_DEST state. However, resources created on UPLOAD heaps must start in and cannot change from the GENERIC_READ state since only the CPU will be doing writing. Conversely, committed resources created in READBACK heaps must start in and cannot change from the COPY_DEST state.</p>
+<h3>Read/write resource state restrictions</h3>
+<p>The resource state usage bits that are used to describe a resource state are divided into read-only and read/write states. The reference topic for the <a href="/windows/win32/api/d3d12/ne-d3d12-d3d12_resource_states"><strong>D3D12_RESOURCE_STATES</strong></a> indicates the read/write access level for each bit in the enumeration.</p>
+<p>At most, only one read/write bit can be set for any resource. If a write bit is set, then no read-only bit may be set for that resource. If no write bit is set, then any number of read bits may be set.</p>
+<h3>Resource states for presenting back buffers</h3>
+<p>Before a back buffer is presented, it must be in the D3D12_RESOURCE_STATE_COMMON state. Note, the resource state D3D12_RESOURCE_STATE_PRESENT is a synonym for D3D12_RESOURCE_STATE_COMMON, and they both have a value of 0. If <a href="/windows/win32/api/dxgi/nf-dxgi-idxgiswapchain-present"><strong>IDXGISwapChain::Present</strong></a> (or <a href="/windows/win32/api/dxgi1_2/nf-dxgi1_2-idxgiswapchain1-present1"><strong>IDXGISwapChain1::Present1</strong></a>) is called on a resource that is not currently in this state, a debug layer warning is emitted.</p>
+<h3>Discarding resources</h3>
+<p>All subresources in a resource must be in the RENDER_TARGET state, or DEPTH_WRITE state, for render targets/depth-stencil resources respectively, when <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-discardresource"><strong>ID3D12GraphicsCommandList::DiscardResource</strong></a> is called.</p>
+<h2>Implicit State Transitions</h2>
+<p>Resources can only be &quot;promoted&quot; out of D3D12_RESOURCE_STATE_COMMON. Similarly, resources will only &quot;decay&quot; to D3D12_RESOURCE_STATE_COMMON.</p>
+<h3>Common state promotion</h3>
+<p>All buffer resources as well as textures with the D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS flag set are implicitly promoted from D3D12_RESOURCE_STATE_COMMON to the relevant state on first GPU access, including GENERIC_READ to cover any read scenario. Any resource in the COMMON state can be accessed as through it were in a single state with</p>
+<!-- raw HTML omitted -->
+<p>Resources can be promoted from the COMMON state based on the following table:</p>
+<table>
+<thead>
+<tr>
+<th>State flag</th>
+<th>Buffers and Simultaneous-Access Textures</th>
+<th>Non-Simultaneous-Access Textures</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VERTEX_AND_CONSTANT_BUFFER</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>INDEX_BUFFER</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>RENDER_TARGET</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>UNORDERED_ACCESS</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>DEPTH_WRITE</td>
+<td>No<!-- raw HTML omitted -->*<!-- raw HTML omitted --></td>
+<td>No</td>
+</tr>
+<tr>
+<td>DEPTH_READ</td>
+<td>No<!-- raw HTML omitted -->*<!-- raw HTML omitted --></td>
+<td>No</td>
+</tr>
+<tr>
+<td>NON_PIXEL_SHADER_RESOURCE</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>PIXEL_SHADER_RESOURCE</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>STREAM_OUT</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>INDIRECT_ARGUMENT</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>COPY_DEST</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>COPY_SOURCE</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>RESOLVE_DEST</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>RESOLVE_SOURCE</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>PREDICATION</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p><!-- raw HTML omitted -->*<!-- raw HTML omitted -->Depth-stencil resources must be non-simultaneous-access textures and thus can never be implicitly promoted.</p>
+<p>When this access occurs the promotion acts like an implicit resource barrier. For subsequent accesses, resource barriers will be required to change the resource state if necessary. Note that promotion from one promoted read state into multiple read state is valid, but this is not the case for write states.<br />
+For example, if a resource in the common state is promoted to PIXEL_SHADER_RESOURCE in a Draw call, it can still be promoted to NON_PIXEL_SHADER_RESOURCE | PIXEL_SHADER_RESOURCE in another Draw call. However, if it is used in a write operation, such as a copy destination, a resource state transition barrier from the combined promoted read states, here NON_PIXEL_SHADER_RESOURCE | PIXEL_SHADER_RESOURCE, to COPY_DEST is needed.<br />
+Similarly, if promoted from COMMON to COPY_DEST, a barrier is still required to transition from COPY_DEST to RENDER_TARGET.</p>
+<p>Note that common state promotion is &quot;free&quot; in that there is no need for the GPU to perform any synchronization waits. The promotion represents the fact that resources in the COMMON state should not require additional GPU work or driver tracking to support certain accesses.</p>
+<h3>State decay to common</h3>
+<p>The flip-side of common state promotion is decay back to D3D12_RESOURCE_STATE_COMMON. Resources that meet certain requirements are considered to be stateless and effectively return to the common state when the GPU finishes execution of an <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12commandqueue-executecommandlists"><strong>ExecuteCommandLists</strong></a> operation. Decay does not occur between command lists executed together in the same <strong>ExecuteCommandLists</strong> call.</p>
+<p>The following resources will decay when an <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12commandqueue-executecommandlists"><strong>ExecuteCommandLists</strong></a> operation is completed on the GPU:</p>
+<ul>
+<li>Resources being accessed on a Copy queue, <em>or</em></li>
+<li>Buffer resources on any queue type, <em>or</em></li>
+<li>Texture resources on any queue type that have the D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS flag set, <em>or</em></li>
+<li>Any resource implicitly promoted to a read-only state.</li>
+</ul>
+<p>Like common state promotion, the decay is free in that no additional synchronization is needed. Combining common state promotion and decay can help to eliminate many unnecessary <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ResourceBarrier</strong></a> transitions. In some cases, this can provide significant performance improvements.</p>
+<p>Buffers and Simultaneous-Access resources will decay to the common state regardless of whether they were explicitly transitioned using resource barriers or implicitly promoted.</p>
+<h3>Performance implications</h3>
+<p>When recording explicit <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ResourceBarrier</strong></a> transitions on resources in the common state, it is correct to use either D3D12_RESOURCE_STATE_COMMON or any promotable state as the <em>BeforeState</em> value in the D3D12_RESOURCE_TRANSITION_BARRIER structure. This allows traditional state management that ignores automatic decay of buffers and simultaneous-access textures. This may not be desirable though, as avoiding transition <strong>ResourceBarrier</strong> calls with resources known to be in the common state can significantly improve performance. Resource barriers can be expensive. They are designed to force cache flushes, memory layout changes and other synchronization that may not be necessary for resources already in the common state. A command list that uses a resource barrier from a non-common state to another non-common state on a resource currently in the common state can introduce a lot of unneeded overhead.</p>
+<p>Also, avoid explicit <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ResourceBarrier</strong></a> transitions to D3D12_RESOURCE_STATE_COMMON unless absolutely necessary (e.g. the next access is on a COPY command queue which requires a resources begin in the common state). Excessive transitions to the common state can dramatically slow down GPU performance.</p>
+<p>In summary, try to rely on common state promotion and decay whenever its semantics let you get away without issuing <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ResourceBarrier</strong></a> calls.</p>
+<h2>Split Barriers</h2>
+<p>A resource transition barrier with the D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY flag begins a split barrier and the transition barrier is said to be pending. While the barrier is pending the (sub)resource cannot be read or written by the GPU. The only legal transition barrier that can be applied to a (sub)resource with a pending barrier is one with the same <em>before</em> and <em>after</em> states and the D3D12_RESOURCE_BARRIER_FLAG_END_ONLY flag, which barrier completes the pending transition.</p>
+<p>Split barriers provide hints to the GPU that a resource in state <em>A</em> will next be used in state <em>B</em> sometime later. This gives the GPU the option to optimize the transition workload, possibly reducing or eliminating execution stalls. Issuing the end-only barrier guarantees that all GPU transition work is finished before moving onto the next command.</p>
+<p>Using split barriers can help to improve performance, especially in multi-engine scenarios or where resources are read/write transitioned sparsely throughout one or more command lists.</p>
+<h2>Resource barrier example scenario</h2>
+<p>The following snippets show the use of the <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ResourceBarrier</strong></a> method in a multi-threading sample.</p>
+<p>Creating the depth stencil view, transitioning it to a writeable state.</p>
+<pre lang="C++"><code>// Create the depth stencil.
+{
+    CD3DX12_RESOURCE_DESC shadowTextureDesc(
+        D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+        0,
+        static_cast&lt;UINT&gt;(m_viewport.Width), 
+        static_cast&lt;UINT&gt;(m_viewport.Height), 
+        1,
+        1,
+        DXGI_FORMAT_D32_FLOAT,
+        1, 
+        0,
+        D3D12_TEXTURE_LAYOUT_UNKNOWN,
+        D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL | D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE);
+
+    D3D12_CLEAR_VALUE clearValue;    // Performance tip: Tell the runtime at resource creation the desired clear value.
+    clearValue.Format = DXGI_FORMAT_D32_FLOAT;
+    clearValue.DepthStencil.Depth = 1.0f;
+    clearValue.DepthStencil.Stencil = 0;
+
+    ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+        &amp;CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+        D3D12_HEAP_FLAG_NONE,
+        &amp;shadowTextureDesc,
+        D3D12_RESOURCE_STATE_DEPTH_WRITE,
+        &amp;clearValue,
+        IID_PPV_ARGS(&amp;m_depthStencil)));
+
+    // Create the depth stencil view.
+    m_device-&gt;CreateDepthStencilView(m_depthStencil.Get(), nullptr, m_dsvHeap-&gt;GetCPUDescriptorHandleForHeapStart());
+}
+</code></pre>
+<p>Creating the vertex buffer view, first changing it from a common state to a destination, then from a destination to a generic readable state.</p>
+<pre lang="C++"><code>// Create the vertex buffer.
+{
+    ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+        &amp;CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+        D3D12_HEAP_FLAG_NONE,
+        &amp;CD3DX12_RESOURCE_DESC::Buffer(SampleAssets::VertexDataSize),
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&amp;m_vertexBuffer)));
+
+    {
+        ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+            &amp;CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+            D3D12_HEAP_FLAG_NONE,
+            &amp;CD3DX12_RESOURCE_DESC::Buffer(SampleAssets::VertexDataSize),
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_PPV_ARGS(&amp;m_vertexBufferUpload)));
+
+        // Copy data to the upload heap and then schedule a copy 
+        // from the upload heap to the vertex buffer.
+        D3D12_SUBRESOURCE_DATA vertexData = {};
+        vertexData.pData = pAssetData + SampleAssets::VertexDataOffset;
+        vertexData.RowPitch = SampleAssets::VertexDataSize;
+        vertexData.SlicePitch = vertexData.RowPitch;
+
+        PIXBeginEvent(commandList.Get(), 0, L&quot;Copy vertex buffer data to default resource...&quot;);
+
+        UpdateSubresources&lt;1&gt;(commandList.Get(), m_vertexBuffer.Get(), m_vertexBufferUpload.Get(), 0, 0, 1, &amp;vertexData);
+        commandList-&gt;ResourceBarrier(1, &amp;CD3DX12_RESOURCE_BARRIER::Transition(m_vertexBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
+
+        PIXEndEvent(commandList.Get());
+    }
+</code></pre>
+<p>Creating the index buffer view, first changing it from a common state to a destination, then from a destination to a generic readable state.</p>
+<pre lang="C++"><code>// Create the index buffer.
+{
+    ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+        &amp;CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+        D3D12_HEAP_FLAG_NONE,
+        &amp;CD3DX12_RESOURCE_DESC::Buffer(SampleAssets::IndexDataSize),
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&amp;m_indexBuffer)));
+
+    {
+        ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+            &amp;CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+            D3D12_HEAP_FLAG_NONE,
+            &amp;CD3DX12_RESOURCE_DESC::Buffer(SampleAssets::IndexDataSize),
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_PPV_ARGS(&amp;m_indexBufferUpload)));
+
+        // Copy data to the upload heap and then schedule a copy 
+        // from the upload heap to the index buffer.
+        D3D12_SUBRESOURCE_DATA indexData = {};
+        indexData.pData = pAssetData + SampleAssets::IndexDataOffset;
+        indexData.RowPitch = SampleAssets::IndexDataSize;
+        indexData.SlicePitch = indexData.RowPitch;
+
+        PIXBeginEvent(commandList.Get(), 0, L&quot;Copy index buffer data to default resource...&quot;);
+
+        UpdateSubresources&lt;1&gt;(commandList.Get(), m_indexBuffer.Get(), m_indexBufferUpload.Get(), 0, 0, 1, &amp;indexData);
+        commandList-&gt;ResourceBarrier(1, &amp;CD3DX12_RESOURCE_BARRIER::Transition(m_indexBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_INDEX_BUFFER));
+
+        PIXEndEvent(commandList.Get());
+    }
+
+    // Initialize the index buffer view.
+    m_indexBufferView.BufferLocation = m_indexBuffer-&gt;GetGPUVirtualAddress();
+    m_indexBufferView.SizeInBytes = SampleAssets::IndexDataSize;
+    m_indexBufferView.Format = SampleAssets::StandardIndexFormat;
+}
+</code></pre>
+<p>Creating textures and shader resource views. The texture is changed from a common state to a destination, and then from a destination to a pixel shader resource.</p>
+<pre lang="C++"><code>    // Create each texture and SRV descriptor.
+    const UINT srvCount = _countof(SampleAssets::Textures);
+    PIXBeginEvent(commandList.Get(), 0, L&quot;Copy diffuse and normal texture data to default resources...&quot;);
+    for (int i = 0; i &lt; srvCount; i++)
+    {
+        // Describe and create a Texture2D.
+        const SampleAssets::TextureResource &amp;tex = SampleAssets::Textures[i];
+        CD3DX12_RESOURCE_DESC texDesc(
+            D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+            0,
+            tex.Width, 
+            tex.Height, 
+            1,
+            static_cast&lt;UINT16&gt;(tex.MipLevels),
+            tex.Format,
+            1, 
+            0,
+            D3D12_TEXTURE_LAYOUT_UNKNOWN,
+            D3D12_RESOURCE_FLAG_NONE);
+
+        ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+            &amp;CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+            D3D12_HEAP_FLAG_NONE,
+            &amp;texDesc,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            IID_PPV_ARGS(&amp;m_textures[i])));
+
+        {
+            const UINT subresourceCount = texDesc.DepthOrArraySize * texDesc.MipLevels;
+            UINT64 uploadBufferSize = GetRequiredIntermediateSize(m_textures[i].Get(), 0, subresourceCount);
+            ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+                &amp;CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+                D3D12_HEAP_FLAG_NONE,
+                &amp;CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize),
+                D3D12_RESOURCE_STATE_GENERIC_READ,
+                nullptr,
+                IID_PPV_ARGS(&amp;m_textureUploads[i])));
+
+            // Copy data to the intermediate upload heap and then schedule a copy 
+            // from the upload heap to the Texture2D.
+            D3D12_SUBRESOURCE_DATA textureData = {};
+            textureData.pData = pAssetData + tex.Data-&gt;Offset;
+            textureData.RowPitch = tex.Data-&gt;Pitch;
+            textureData.SlicePitch = tex.Data-&gt;Size;
+
+            UpdateSubresources(commandList.Get(), m_textures[i].Get(), m_textureUploads[i].Get(), 0, 0, subresourceCount, &amp;textureData);
+            commandList-&gt;ResourceBarrier(1, &amp;CD3DX12_RESOURCE_BARRIER::Transition(m_textures[i].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+        }
+
+        // Describe and create an SRV.
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Format = tex.Format;
+        srvDesc.Texture2D.MipLevels = tex.MipLevels;
+        srvDesc.Texture2D.MostDetailedMip = 0;
+        srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+        m_device-&gt;CreateShaderResourceView(m_textures[i].Get(), &amp;srvDesc, cbvSrvHandle);
+
+        // Move to the next descriptor slot.
+        cbvSrvHandle.Offset(cbvSrvDescriptorSize);
+    }
+</code></pre>
+<p>Beginning a frame; this not only uses <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ResourceBarrier</strong></a> to indicate that the backbuffer is to be used as a render target, but also initializes the frame resource (which calls <strong>ResourceBarrier</strong> on the depth stencil buffer).</p>
+<pre lang="C++"><code>// Assemble the CommandListPre command list.
+void D3D12Multithreading::BeginFrame()
+{
+    m_pCurrentFrameResource-&gt;Init();
+
+    // Indicate that the back buffer will be used as a render target.
+    m_pCurrentFrameResource-&gt;m_commandLists[CommandListPre]-&gt;ResourceBarrier(1, &amp;CD3DX12_RESOURCE_BARRIER::Transition(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+
+    // Clear the render target and depth stencil.
+    const float clearColor[] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_rtvHeap-&gt;GetCPUDescriptorHandleForHeapStart(), m_frameIndex, m_rtvDescriptorSize);
+    m_pCurrentFrameResource-&gt;m_commandLists[CommandListPre]-&gt;ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+    m_pCurrentFrameResource-&gt;m_commandLists[CommandListPre]-&gt;ClearDepthStencilView(m_dsvHeap-&gt;GetCPUDescriptorHandleForHeapStart(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+    ThrowIfFailed(m_pCurrentFrameResource-&gt;m_commandLists[CommandListPre]-&gt;Close());
+}
+
+// Assemble the CommandListMid command list.
+void D3D12Multithreading::MidFrame()
+{
+    // Transition our shadow map from the shadow pass to readable in the scene pass.
+    m_pCurrentFrameResource-&gt;SwapBarriers();
+
+    ThrowIfFailed(m_pCurrentFrameResource-&gt;m_commandLists[CommandListMid]-&gt;Close());
+}
+</code></pre>
+<p>Ending a frame, indicating the back buffer is now used to present.</p>
+<pre lang="C++"><code>// Assemble the CommandListPost command list.
+void D3D12Multithreading::EndFrame()
+{
+    m_pCurrentFrameResource-&gt;Finish();
+
+    // Indicate that the back buffer will now be used to present.
+    m_pCurrentFrameResource-&gt;m_commandLists[CommandListPost]-&gt;ResourceBarrier(1, &amp;CD3DX12_RESOURCE_BARRIER::Transition(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+
+    ThrowIfFailed(m_pCurrentFrameResource-&gt;m_commandLists[CommandListPost]-&gt;Close());
+}
+</code></pre>
+<p>Initializing a frame resource, called when beginning a frame, transitions the depth stencil buffer to writeable.</p>
+<pre lang="C++"><code>void FrameResource::Init()
+{
+    // Reset the command allocators and lists for the main thread.
+    for (int i = 0; i &lt; CommandListCount; i++)
+    {
+        ThrowIfFailed(m_commandAllocators[i]-&gt;Reset());
+        ThrowIfFailed(m_commandLists[i]-&gt;Reset(m_commandAllocators[i].Get(), m_pipelineState.Get()));
+    }
+
+    // Clear the depth stencil buffer in preparation for rendering the shadow map.
+    m_commandLists[CommandListPre]-&gt;ClearDepthStencilView(m_shadowDepthView, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+    // Reset the worker command allocators and lists.
+    for (int i = 0; i &lt; NumContexts; i++)
+    {
+        ThrowIfFailed(m_shadowCommandAllocators[i]-&gt;Reset());
+        ThrowIfFailed(m_shadowCommandLists[i]-&gt;Reset(m_shadowCommandAllocators[i].Get(), m_pipelineStateShadowMap.Get()));
+
+        ThrowIfFailed(m_sceneCommandAllocators[i]-&gt;Reset());
+        ThrowIfFailed(m_sceneCommandLists[i]-&gt;Reset(m_sceneCommandAllocators[i].Get(), m_pipelineState.Get()));
+    }
+}
+</code></pre>
+<p>Barriers are swapped mid-frame, transitioning the shadow map from writeable to readable.</p>
+<pre lang="C++"><code>void FrameResource::SwapBarriers()
+{
+    // Transition the shadow map from writeable to readable.
+    m_commandLists[CommandListMid]-&gt;ResourceBarrier(1, &amp;CD3DX12_RESOURCE_BARRIER::Transition(m_shadowTexture.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+}
+</code></pre>
+<p>Finish is called when a frame is ended, transitioning the shadow map to a common state.</p>
+<pre lang="C++"><code>void FrameResource::Finish()
+{
+    m_commandLists[CommandListPost]-&gt;ResourceBarrier(1, &amp;CD3DX12_RESOURCE_BARRIER::Transition(m_shadowTexture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE));
+}
+</code></pre>
+<h2>Common state promotion and decay sample</h2>
+<pre lang="syntax"><code>    // Create a buffer resource using D3D12_RESOURCE_STATE_COMMON as the init state
+    ID3D12Resource *pResource;
+    CreateCommittedVertexBufferInCommonState(1024, &amp;pResource);
+
+    // Copy data to the buffer without the need for a barrier.
+    // Promotes pResource state to D3D12_RESOURCE_STATE_COPY_DEST.
+    pCommandList-&gt;CopyBufferRegion(pResource, 0, pOtherResource, 0, 1024); 
+
+    // To use pResource as a vertex buffer a transition barrier is needed.
+    // Note the StateBefore is D3D12_RESOURCE_STATE_COPY_DEST.
+    D3D12_RESOURCE_BARRIER BarrierDesc = {};
+    BarrierDesc.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+    BarrierDesc.Transition.pResource = pResource;
+    BarrierDesc.Transition.Subresource = 0;
+    BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+    pCommandList-&gt;ResourceBarrier( 1, &amp;BarrierDesc );
+
+    // Use pResource as a vertex buffer
+    D3D12_VERTEX_BUFFER_VIEW vbView;
+    vbView.BufferLocation = pResource-&gt;GetGPUVirtualAddress();
+    vbView.SizeInBytes = 1024;
+    vbView.StrideInBytes = sizeof(MyVertex);
+
+    pCommandList-&gt;IASetVertexBuffers(0, 1, &amp;vbView);
+    pCommandList-&gt;Draw();
+
+    pCommandQueue-&gt;ExecuteCommandLists(1, &amp;pCommandList); 
+    pCommandList-&gt;Reset(pAllocator, pPipelineState);
+
+    // Since the reset command list will be executed in a separate call to 
+    // ExecuteCommandLists, the previous state of pResource
+    // will have decayed to D3D12_RESOURCE_STATE_COMMON so, again, no barrier is needed
+    pCommandList-&gt;CopyBufferRegion(pResource, 0, pDifferentResource, 0, 1024);
+
+    FinishRecordingCommandList(pCommandList);
+    pCommandQueue-&gt;ExecuteCommandLists(1, &amp;pCommandList); 
+
+    WaitForQueue(pCommandQueue);
+
+    // The previous ExecuteCommandLists call has finished so 
+    // pResource has decayed to D3D12_RESOURCE_STATE_COMMON
+</code></pre>
+<h2>Example of split barriers</h2>
+<p>The following example shows how to use a split barrier to reduce pipeline stalls. The code that follows does not use split barriers:</p>
+<pre lang="syntax"><code> D3D12_RESOURCE_BARRIER BarrierDesc = {};
+    BarrierDesc.Type = D3D12_RESOURCE_BARRIER_TRANSITION;
+    BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_NONE;
+    BarrierDesc.Transition.pResource = pResource;
+    BarrierDesc.Transition.Subresource = 0;
+    BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+    BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+
+    pCommandList-&gt;ResourceBarrier( 1, &amp;BarrierDesc );
+    
+    Write(pResource); // ... render to pResource
+    OtherStuff(); // .. other gpu work
+
+    // Transition pResource to PIXEL_SHADER_RESOURCE
+    BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    
+    pCommandList-&gt;ResourceBarrier( 1, &amp;BarrierDesc );
+
+    Read(pResource); // ... read from pResource
+</code></pre>
+<p>The following code uses split barriers:</p>
+<pre lang="syntax"><code>D3D12_RESOURCE_BARRIER BarrierDesc = {};
+    BarrierDesc.Type = D3D12_RESOURCE_BARRIER_TRANSITION;
+    BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_NONE;
+    BarrierDesc.Transition.pResource = pResource;
+    BarrierDesc.Transition.Subresource = 0;
+    BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+    BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+
+    pCommandList-&gt;ResourceBarrier( 1, &amp;BarrierDesc );
+    
+    Write(pResource); // ... render to pResource
+
+    // Done writing to pResource. Start barrier to PIXEL_SHADER_RESOURCE and
+    // then do other work
+    BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_BEGIN_ONLY;
+    BarrierDesc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    BarrierDesc.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    pCommandList-&gt;ResourceBarrier( 1, &amp;BarrierDesc );
+
+    OtherStuff(); // .. other gpu work
+
+    // Need to read from pResource so end barrier
+    BarrierDesc.Flags = D3D12_RESOURCE_BARRIER_END_ONLY;
+
+    pCommandList-&gt;ResourceBarrier( 1, &amp;BarrierDesc );
+    Read(pResource); // ... read from pResource
+</code></pre>
+<h2>Related topics</h2>
+<p><a href="https://www.youtube.com/watch?v=nmB2XMasz2o">DirectX advanced learning video tutorials : Resource Barriers and State Tracking</a></p>
+<p><a href="./user-mode-heap-synchronization.html">Multi-engine synchronization</a></p>
+<p><a href="command-queues-and-command-lists.html">Work Submission in Direct3D 12</a></p>
+<p><a href="https://devblogs.microsoft.com/directx/a-look-inside-d3d12-resource-state-barriers/">A Look Inside D3D12 Resource State Barriers</a></p>
+</body>

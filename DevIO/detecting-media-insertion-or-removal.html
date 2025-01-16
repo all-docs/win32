@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Detecting Media Insertion or Removal</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Windows sends all top-level windows a set of default WM_DEVICECHANGE messages when new devices or media (such as a CD or DVD) are added and become available, and when existing devices or media are removed.
+ms.assetid: 26baa3aa-e54d-42fe-b2b2-a3fcca6dee91
+title: Detecting Media Insertion or Removal
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Detecting Media Insertion or Removal</h1>
+<p>Windows sends all top-level windows a set of default <a href="wm-devicechange.html"><strong>WM_DEVICECHANGE</strong></a> messages when new devices or media (such as a CD or DVD) are added and become available, and when existing devices or media are removed. You do not need to register to receive these default messages. See the Remarks section in <a href="/windows/desktop/api/Winuser/nf-winuser-registerdevicenotificationa"><strong>RegisterDeviceNotification</strong></a> for details on which messages are sent by default. The messages in the code example below are among the default messages.</p>
+<blockquote>
+<p>[!Note]<br />
+Windows only sends <a href="wm-devicechange.html"><strong>WM_DEVICECHANGE</strong></a> messages for CD or DVD media events to top-level windows that are owned by applications that run in the active console session. Top-level windows that are owned by applications that run in a remote desktop session do not receive <a href="wm-devicechange.html"><strong>WM_DEVICECHANGE</strong></a> messages for CD or DVD media events.</p>
+</blockquote>
+<p>Â </p>
+<p>Each <a href="wm-devicechange.html"><strong>WM_DEVICECHANGE</strong></a> message has an associated event that describes the change, and a structure that provides detailed information about the change. The structure consists of an event-independent header, <a href="/windows/desktop/api/Dbt/ns-dbt-dev_broadcast_hdr"><strong>DEV_BROADCAST_HDR</strong></a>, followed by event-dependent members. The event-dependent members describe the device to which the event applies. To use this structure, applications must first determine the event type and the device type. Then, they can use the correct structure to take appropriate action.</p>
+<p>When the user inserts a new CD or DVD into a drive, applications receive a <a href="wm-devicechange.html"><strong>WM_DEVICECHANGE</strong></a> message with a <a href="dbt-devicearrival.html">DBT_DEVICEARRIVAL</a> event. The application must check the event to ensure that the type of device arriving is a volume (the <strong>dbch_devicetype</strong> member is <strong>DBT_DEVTYP_VOLUME</strong>) and that the change affects the media (the <strong>dbcv_flags</strong> member is <strong>DBTF_MEDIA</strong>).</p>
+<p>When the user removes a CD or DVD from a drive, applications receive a <a href="wm-devicechange.html"><strong>WM_DEVICECHANGE</strong></a> message with a <a href="dbt-deviceremovecomplete.html">DBT_DEVICEREMOVECOMPLETE</a> event. Again, the application must check the event to ensure that the device being removed is a volume and that the change affects the media.</p>
+<p>The following code demonstrates how to check for insertion or removal of a CD or DVD.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;dbt.h&gt;
+#include &lt;strsafe.h&gt;
+#pragma comment(lib, &quot;user32.lib&quot; )
+
+void Main_OnDeviceChange( HWND hwnd, WPARAM wParam, LPARAM lParam );
+char FirstDriveFromMask( ULONG unitmask );  //prototype
+
+/*------------------------------------------------------------------
+   Main_OnDeviceChange( hwnd, wParam, lParam )
+
+   Description
+      Handles WM_DEVICECHANGE messages sent to the application's
+      top-level window.
+--------------------------------------------------------------------*/
+
+void Main_OnDeviceChange( HWND hwnd, WPARAM wParam, LPARAM lParam )
+ {
+  PDEV_BROADCAST_HDR lpdb = (PDEV_BROADCAST_HDR)lParam;
+  TCHAR szMsg[80];
+
+  switch(wParam )
+   {
+    case DBT_DEVICEARRIVAL:
+      // Check whether a CD or DVD was inserted into a drive.
+      if (lpdb -&gt; dbch_devicetype == DBT_DEVTYP_VOLUME)
+       {
+        PDEV_BROADCAST_VOLUME lpdbv = (PDEV_BROADCAST_VOLUME)lpdb;
+
+        if (lpdbv -&gt; dbcv_flags &amp; DBTF_MEDIA)
+         {
+          StringCchPrintf( szMsg, sizeof(szMsg)/sizeof(szMsg[0]), 
+                           TEXT(&quot;Drive %c: Media has arrived.\n&quot;), 
+                           FirstDriveFromMask(lpdbv -&gt;dbcv_unitmask) );
+
+          MessageBox( hwnd, szMsg, TEXT(&quot;WM_DEVICECHANGE&quot;), MB_OK );
+         }
+       }
+      break;
+
+    case DBT_DEVICEREMOVECOMPLETE:
+      // Check whether a CD or DVD was removed from a drive.
+      if (lpdb -&gt; dbch_devicetype == DBT_DEVTYP_VOLUME)
+       {
+        PDEV_BROADCAST_VOLUME lpdbv = (PDEV_BROADCAST_VOLUME)lpdb;
+
+        if (lpdbv -&gt; dbcv_flags &amp; DBTF_MEDIA)
+         {
+          StringCchPrintf( szMsg, sizeof(szMsg)/sizeof(szMsg[0]), 
+                           TEXT(&quot;Drive %c: Media was removed.\n&quot; ),
+                           FirstDriveFromMask(lpdbv -&gt;dbcv_unitmask) );
+
+          MessageBox( hwnd, szMsg, TEXT(&quot;WM_DEVICECHANGE&quot; ), MB_OK );
+         }
+       }
+      break;
+
+    default:
+      /*
+        Process other WM_DEVICECHANGE notifications for other 
+        devices or reasons.
+      */ 
+      ;
+   }
+}
+
+/*------------------------------------------------------------------
+   FirstDriveFromMask( unitmask )
+
+   Description
+     Finds the first valid drive letter from a mask of drive letters.
+     The mask must be in the format bit 0 = A, bit 1 = B, bit 2 = C, 
+     and so on. A valid drive letter is defined when the 
+     corresponding bit is set to 1.
+
+   Returns the first drive letter that was found.
+--------------------------------------------------------------------*/
+
+char FirstDriveFromMask( ULONG unitmask )
+ {
+  char i;
+
+  for (i = 0; i &lt; 26; ++i)
+   {
+    if (unitmask &amp; 0x1)
+      break;
+    unitmask = unitmask &gt;&gt; 1;
+   }
+
+  return( i + 'A' );
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="device-events.html">Device Events</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

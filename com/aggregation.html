@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Aggregation</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Aggregation
+description: Aggregation is the object reuse mechanism in which the outer object exposes interfaces from the inner object as if they were implemented on the outer object itself.
+ms.assetid: 6845b114-8f43-47ad-acdf-b63d6008d221
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Aggregation</h1>
+<p>Aggregation is the object reuse mechanism in which the outer object exposes interfaces from the inner object as if they were implemented on the outer object itself. This is useful when the outer object delegates every call to one of its interfaces to the same interface in the inner object. Aggregation is available as a convenience to avoid extra implementation overhead in the outer object in this case. Aggregation is actually a specialized case of <a href="containment-delegation.html">containment/delegation</a>.</p>
+<p>Aggregation is almost as simple to implement as containment is, except for the three <a href="/windows/desktop/api/Unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> functions: <a href="/windows/desktop/api/Unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a>, <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-addref"><strong>AddRef</strong></a>, and <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a>. The catch is that from the client's perspective, any <strong>IUnknown</strong> function on the outer object must affect the outer object. That is, <strong>AddRef</strong> and <strong>Release</strong> affect the outer object and <strong>QueryInterface</strong> exposes all the interfaces available on the outer object. However, if the outer object simply exposes an inner object's interface as its own, that inner object's <strong>IUnknown</strong> members called through that interface will behave differently than those <strong>IUnknown</strong> members on the outer object's interfaces, an absolute violation of the rules and properties governing <strong>IUnknown</strong>.</p>
+<p>The solution is that aggregation requires an explicit implementation of <a href="/windows/desktop/api/Unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> on the inner object and delegation of the <strong>IUnknown</strong> methods of any other interface to the outer object's <strong>IUnknown</strong> methods.</p>
+<h2>Creating Aggregable Objects</h2>
+<p>Creating objects that can be aggregated is optional; however, it is simple to do and provides significant benefits. The following rules apply to creating an aggregable object:</p>
+<ul>
+<li>The aggregable (or inner) object's implementation of <a href="/windows/desktop/api/Unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a>, <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-addref"><strong>AddRef</strong></a>, and <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> for its <a href="/windows/desktop/api/Unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> interface controls the inner object's reference count, and this implementation must not delegate to the outer object's unknown (the controlling <strong>IUnknown</strong>).</li>
+<li>The aggregable (or inner) object's implementation of <a href="/windows/desktop/api/Unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a>, <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-addref"><strong>AddRef</strong></a>, and <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> for its other interfaces must delegate to the controlling <a href="/windows/desktop/api/Unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> and must not directly affect the inner object's reference count.</li>
+<li>The inner <a href="/windows/desktop/api/Unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> must implement <a href="/windows/desktop/api/Unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> only for the inner object.</li>
+<li>The aggregable object must not call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-addref"><strong>AddRef</strong></a> when holding a reference to the controlling <a href="/windows/desktop/api/Unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> pointer.</li>
+<li>When the object is created, if any interface other than <a href="/windows/desktop/api/Unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> is requested, the creation must fail with E_NOINTERFACE.</li>
+</ul>
+<p>The following code fragment illustrates a correct implementation of an aggregable object by using the nested class method of implementing interfaces:</p>
+<pre lang="C++"><code>// CSomeObject is an aggregable object that implements 
+// IUnknown and ISomeInterface 
+class CSomeObject : public IUnknown 
+{ 
+    private: 
+        DWORD        m_cRef;         // Object reference count 
+        IUnknown*    m_pUnkOuter;    // Controlling IUnknown, no AddRef 
+ 
+        // Nested class to implement the ISomeInterface interface 
+        class CImpSomeInterface : public ISomeInterface 
+        { 
+            friend class CSomeObject ; 
+            private: 
+                DWORD    m_cRef;    // Interface ref-count, for debugging 
+                IUnknown*    m_pUnkOuter;    // Controlling IUnknown 
+            public: 
+                CImpSomeInterface() { m_cRef = 0;   }; 
+                ~ CImpSomeInterface(void) {}; 
+ 
+                // IUnknown members delegate to the outer unknown 
+                // IUnknown members do not control lifetime of object 
+                STDMETHODIMP     QueryInterface(REFIID riid, void** ppv) 
+                {    return m_pUnkOuter-&gt;QueryInterface(riid,ppv);   }; 
+ 
+                STDMETHODIMP_(DWORD) AddRef(void) 
+                {    return m_pUnkOuter-&gt;AddRef();   }; 
+ 
+                STDMETHODIMP_(DWORD) Release(void) 
+                {    return m_pUnkOuter-&gt;Release();   }; 
+ 
+                // ISomeInterface members 
+                STDMETHODIMP SomeMethod(void) 
+                {    return S_OK;   }; 
+        } ; 
+        CImpSomeInterface m_ImpSomeInterface ; 
+    public: 
+        CSomeObject(IUnknown * pUnkOuter) 
+        { 
+            m_cRef=0; 
+            // No AddRef necessary if non-NULL as we're aggregated. 
+            m_pUnkOuter=pUnkOuter; 
+            m_ImpSomeInterface.m_pUnkOuter=pUnkOuter; 
+        } ; 
+        ~CSomeObject(void) {} ; 
+ 
+        // Static member function for creating new instances (don't use 
+        // new directly). Protects against outer objects asking for 
+        // interfaces other than Iunknown. 
+        static HRESULT Create(IUnknown* pUnkOuter, REFIID riid, void **ppv) 
+        { 
+            CSomeObject*        pObj; 
+            if (pUnkOuter != NULL &amp;&amp; riid != IID_IUnknown) 
+                return CLASS_E_NOAGGREGATION; 
+            pObj = new CSomeObject(pUnkOuter); 
+            if (pObj == NULL) 
+                return E_OUTOFMEMORY; 
+            // Set up the right unknown for delegation (the non-
+            // aggregation case) 
+            if (pUnkOuter == NULL) 
+            {
+                pObj-&gt;m_pUnkOuter = (IUnknown*)pObj ; 
+                pObj-&gt;m_ImpSomeInterface.m_pUnkOuter = (IUnknown*)pObj;
+            }
+            HRESULT hr; 
+            if (FAILED(hr = pObj-&gt;QueryInterface(riid, (void**)ppv))) 
+                delete pObj ; 
+            return hr; 
+        } 
+ 
+        // Inner IUnknown members, non-delegating 
+        // Inner QueryInterface only controls inner object 
+        STDMETHODIMP QueryInterface(REFIID riid, void** ppv) 
+        { 
+            *ppv=NULL; 
+            if (riid == IID_IUnknown) 
+                *ppv=this; 
+            if (riid == IID_ISomeInterface) 
+                *ppv=&amp;m_ImpSomeInterface; 
+            if (NULL==*ppv) 
+                return ResultFromScode(E_NOINTERFACE); 
+            ((IUnknown*)*ppv)-&gt;AddRef(); 
+            return NOERROR; 
+        } ; 
+        STDMETHODIMP_(DWORD) AddRef(void) 
+        {    return ++m_cRef; }; 
+        STDMETHODIMP_(DWORD) Release(void) 
+        { 
+            if (--m_cRef != 0) 
+                return m_cRef; 
+            delete this; 
+            return 0; 
+        }; 
+}; 
+ 
+</code></pre>
+<h2>Aggregating Objects</h2>
+<p>When developing an aggregable object, the following rules apply:</p>
+<ul>
+<li>
+<p>When creating the inner object, the outer object must explicitly ask for its <a href="/windows/desktop/api/Unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a>.</p>
+</li>
+<li>
+<p>The outer object must protect its implementation of <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> from reentrancy with an artificial reference count around its destruction code.</p>
+</li>
+<li>
+<p>The outer object must call its controlling <strong>IUnknown</strong>Â <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> method if it queries for a pointer to any of the inner object's interfaces. To free this pointer, the outer object calls its controlling <strong>IUnknown</strong>Â <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-addref"><strong>AddRef</strong></a> method, followed by <strong>Release</strong> on the inner object's pointer.</p>
+<pre lang="C++"><code>// Obtaining inner object interface pointer 
+pUnkInner-&gt;QueryInterface(IID_ISomeInterface, &amp;pISomeInterface); 
+pUnkOuter-&gt;Release(); 
+ 
+// Releasing inner object interface pointer 
+pUnkOuter-&gt;AddRef(); 
+pISomeInterface-&gt;Release(); 
+ 
+</code></pre>
+</li>
+<li>
+<p>The outer object must not blindly delegate a query for any unrecognized interface to the inner object, unless that behavior is specifically the intention of the outer object.</p>
+</li>
+</ul>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="containment-delegation.html">Containment/Delegation</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

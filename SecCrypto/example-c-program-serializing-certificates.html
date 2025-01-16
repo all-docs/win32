@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Serializing Certificates</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example demonstrates serializing a certificate context and its properties into a form that can be stored in a file, sent with an email message, or otherwise transmitted to another user.
+ms.assetid: cda7fa68-debe-40e6-8c4a-536dacccc2d1
+title: 'Example C Program: Serializing Certificates'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Serializing Certificates</h1>
+<p>The following example demonstrates serializing a <a href="../secgloss/c-gly.html"><em>certificate context</em></a> and its properties into a form that can be stored in a file, sent with an email message, or otherwise transmitted to another user. The example also shows how the serialized certificate can be changed back into a certificate and added to a certificate store. The same process works also with <a href="../secgloss/c-gly.html"><em>CRLs</em></a> and <a href="../secgloss/c-gly.html"><em>CTLs</em></a> using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certserializecrlstoreelement"><strong>CertSerializeCRLStoreElement</strong></a> and <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certserializectlstoreelement"><strong>CertSerializeCTLStoreElement</strong></a>.</p>
+<p>This example illustrates the following tasks and CryptoAPI functions:</p>
+<ul>
+<li>Opening a system certificate store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certopensystemstorea"><strong>CertOpenSystemStore</strong></a>.</li>
+<li>Opening a certificate store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certopenstore"><strong>CertOpenStore</strong></a>.</li>
+<li>Retrieving a certificate from a store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certenumcertificatesinstore"><strong>CertEnumCertificatesInStore</strong></a>.</li>
+<li>Getting the name of the certificate's subject using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certgetnamestringa"><strong>CertGetNameString</strong></a>.</li>
+<li>Creating a serialized form of a <a href="../secgloss/c-gly.html"><em>certificate context</em></a> and its properties using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certserializecertificatestoreelement"><strong>CertSerializeCertificateStoreElement</strong></a>.</li>
+<li>Creating a new certificate from a serialized string and adding it into a certificate store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certaddserializedelementtostore"><strong>CertAddSerializedElementToStore</strong></a>.</li>
+<li>Using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certaddencodedcertificatetostore"><strong>CertAddEncodedCertificateToStore</strong></a> to create a new certificate from the encoded portion of an existing certificate.</li>
+<li>Using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certclosestore"><strong>CertCloseStore</strong></a> to close a certificate store.</li>
+</ul>
+<pre lang="C++"><code>//------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+// Example that uses CertSerializeCertificateStoreElement to
+// serialize the data from a certificate, 
+// and CertAddSerializedElementToStore to add that data as a new
+// certificate to a store.
+// CertAddEncodeCertificateToStore is also demonstrated.
+#pragma comment(lib, &quot;crypt32.lib&quot;)
+
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Wincrypt.h&gt;
+#define MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+void MyHandleError(char *s);
+
+void main(void)
+{
+//-------------------------------------------------------------------
+// Declare and initialize variables.
+
+HCERTSTORE         hSystemStore;
+HCERTSTORE         hFileStore;
+PCCERT_CONTEXT     pCertContext = NULL;
+char               pszNameString[256]; 
+BYTE*              pbElement;
+DWORD              cbElement;
+
+//-------------------------------------------------------------------
+// Open a system certificate store.
+
+if(hSystemStore = CertOpenSystemStore(
+    0,
+    &quot;CA&quot;))
+{
+  printf(&quot;The CA system store is open. Continue.\n&quot;);
+}
+else
+{
+  MyHandleError(&quot;The first system store did not open.&quot;);
+}
+//-------------------------------------------------------------------
+// Open a second store.
+// In order to work, a file-based certificate store named 
+// teststor.sto must be available in the working directory.
+
+if(hFileStore = CertOpenStore(
+   CERT_STORE_PROV_FILENAME,
+   MY_ENCODING_TYPE,
+   NULL,
+   0,
+   L&quot;testStor.sto&quot; ))
+{
+     printf(&quot;The file store is open. Continue.\n&quot;);
+}
+else
+{
+     MyHandleError(&quot;The file store did not open.&quot;);
+}
+//-------------------------------------------------------------------
+// Retrieve the first certificate from the Root store.
+// CertFindCertificateInStore could be used here to find
+// a certificate with a specific property.
+
+if(pCertContext=CertEnumCertificatesInStore(
+    hSystemStore,
+    pCertContext))
+{
+printf(&quot;A certificate is available. Continue.\n&quot;);
+}
+else
+{
+     MyHandleError(&quot;No certificate available. &quot;
+         &quot;The store may be empty.&quot;);
+}
+//-------------------------------------------------------------------
+//  Find and print the name of the subject of the certificate 
+//  just retrieved.
+
+if(CertGetNameString(   
+   pCertContext,   
+   CERT_NAME_SIMPLE_DISPLAY_TYPE,   
+   0,
+   NULL,   
+   pszNameString,   
+   128))
+{
+     printf(&quot;Certificate for %s has been retrieved.\n&quot;,
+         pszNameString);
+}
+else
+{
+     printf(&quot;CertGetName failed. \n&quot;);
+}
+//-------------------------------------------------------------------
+// Find out how much memory to allocate for the serialized element.
+
+if(CertSerializeCertificateStoreElement(
+    pCertContext,      // The existing certificate.
+    0,                 // Accept default for dwFlags, 
+    NULL,              // NULL for the first function call.
+    &amp;cbElement))       // Address where the length of the 
+                       // serialized element will be placed.
+{
+     printf(&quot;The length of the serialized string is %d.\n&quot;,
+         cbElement);
+}
+else
+{
+     MyHandleError(&quot;Finding the length of the serialized &quot;
+         &quot;element failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Allocate memory for the serialized element.
+
+if(pbElement = (BYTE*)malloc(cbElement))
+{
+     printf(&quot;Memory has been allocated. Continue.\n&quot;);
+}
+else
+{
+     MyHandleError(&quot;The allocation of memory failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Create the serialized element from a certificate context.
+
+if(CertSerializeCertificateStoreElement(
+    pCertContext,        // The certificate context source for the 
+                         // serialized element.
+    0,                   // dwFlags. Accept the default.
+    pbElement,           // A pointer to where the new element will
+                         // be stored.
+    &amp;cbElement))         // The length of the serialized element,
+{
+     printf(&quot;The encoded element has been serialized. \n&quot;);
+}
+else
+{
+     MyHandleError(&quot;The element could not be serialized.&quot;);
+}
+//-------------------------------------------------------------------
+//  pbElement could be written to a file or be sent by email
+//  to another user. 
+//  The following process uses the serialized 
+//  pbElement and its length, cbElement, to 
+//  add a new certificate to a store.
+
+if(CertAddSerializedElementToStore(
+    hFileStore,          // Store where certificate is to be added.
+    pbElement,           // The serialized element for another
+                         // certificate. 
+    cbElement,           // The length of pbElement.  
+    CERT_STORE_ADD_REPLACE_EXISTING,
+                         // Flag to indicate what to do if a matching
+                         // certificate is already in the store.
+    0,                   // dwFlags. Accept the default.
+    CERT_STORE_CERTIFICATE_CONTEXT_FLAG, 
+    NULL,
+    NULL
+    ))
+{
+     printf(&quot;The new certificate is added to the second store.\n&quot;);
+}
+else
+{
+     MyHandleError(&quot;The new element was not added to a store.&quot;);
+}
+//-------------------------------------------------------------------
+//  Next, another certificate will be retrieved from the system store
+//  and its encoded part, pCertContext-&gt;pbCertEncoded, will be
+//  used to create a new certificate to be added to the file store.
+
+if(pCertContext=CertEnumCertificatesInStore(
+    hSystemStore,
+    pCertContext))
+{
+printf(&quot;Another certificate is available. Continue.\n&quot;);
+}
+else
+{
+     MyHandleError(&quot;No certificate is available. &quot;
+         &quot;The store may be empty.&quot;);
+}
+
+//-------------------------------------------------------------------
+//  Find and print the name of the subject of the certificate 
+//  just retrieved.
+
+if(CertGetNameString(   
+   pCertContext,   
+   CERT_NAME_SIMPLE_DISPLAY_TYPE,   
+   0,
+   NULL,   
+   pszNameString,   
+   128))
+{
+     printf(&quot;Certificate for %s has been retrieved.\n&quot;,
+         pszNameString);
+}
+else
+{
+     printf(&quot;CertGetName failed. \n&quot;);
+}
+//-------------------------------------------------------------------
+//  Create a new certificate from the encoded portion of pCertContext
+//  and add it to the file-based store.
+
+if(CertAddEncodedCertificateToStore(
+     hFileStore,
+     MY_ENCODING_TYPE,
+     pCertContext-&gt;pbCertEncoded,
+     pCertContext-&gt;cbCertEncoded,
+     CERT_STORE_ADD_USE_EXISTING,
+     NULL))
+{
+     printf(&quot;Another certificate is added to the file store.\n&quot;);
+}
+else
+{
+     MyHandleError(&quot;The new certificate was not added to the &quot;
+         &quot;file store.&quot;);
+}
+//-------------------------------------------------------------------
+// Free memory.
+
+free(pbElement);
+CertCloseStore(hSystemStore,0);
+CertCloseStore(hFileStore,0); 
+printf(&quot;The program ran without error to the end.\n&quot;);
+
+} // End of main
+
+//-------------------------------------------------------------------
+//  This example uses the function MyHandleError, a simple error
+//  handling function, to print an error message to the standard  
+//  error (stderr) file and exit the program. 
+//  For most applications, replace this function with one 
+//  that does more extensive error reporting.
+
+void MyHandleError(char *s)
+{
+    fprintf(stderr,&quot;An error occurred in running the program. \n&quot;);
+    fprintf(stderr,&quot;%s\n&quot;,s);
+    fprintf(stderr, &quot;Error number %x.\n&quot;, GetLastError());
+    fprintf(stderr, &quot;Program terminating. \n&quot;);
+    exit(1);
+} // End of MyHandleError
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

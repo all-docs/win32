@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Streaming and Application Threads</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The Streaming and Application Threads
+ms.assetid: 954f7abd-fe06-430a-b6f7-d60852826bc9
+title: The Streaming and Application Threads
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>The Streaming and Application Threads</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>Any DirectShow application contains at least two important threads: the application thread, and one or more streaming threads. Samples are delivered on the streaming threads, and state changes happen on the application thread. The main streaming thread is created by a source or parser filter. Other filters might create worker threads that deliver samples, and these are considered streaming threads as well.</p>
+<p>Some methods are called on the application thread, while others are called on a streaming thread. For example:</p>
+<ul>
+<li>Streaming thread(s): <a href="/windows/desktop/api/Strmif/nf-strmif-imeminputpin-receive"><strong>IMemInputPin::Receive</strong></a>, <a href="/windows/desktop/api/Strmif/nf-strmif-imeminputpin-receivemultiple"><strong>IMemInputPin::ReceiveMultiple</strong></a>, <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-endofstream"><strong>IPin::EndOfStream</strong></a>, <a href="/windows/desktop/api/Strmif/nf-strmif-imemallocator-getbuffer"><strong>IMemAllocator::GetBuffer</strong></a>.</li>
+<li>Application thread: <a href="/windows/desktop/api/Strmif/nf-strmif-imediafilter-pause"><strong>IMediaFilter::Pause</strong></a>, <a href="/windows/desktop/api/Strmif/nf-strmif-imediafilter-run"><strong>IMediaFilter::Run</strong></a>, <a href="/windows/desktop/api/Strmif/nf-strmif-imediafilter-stop"><strong>IMediaFilter::Stop</strong></a>, <a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-setpositions"><strong>IMediaSeeking::SetPositions</strong></a>, <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-beginflush"><strong>IPin::BeginFlush</strong></a>, <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-endflush"><strong>IPin::EndFlush</strong></a>.</li>
+<li>Either: <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-newsegment"><strong>IPin::NewSegment</strong></a>.</li>
+</ul>
+<p>Having a separate streaming thread allows data to flow through the graph while the application thread waits for user input. The danger of multiple threads, however, is that a filter may create resources when it pauses (on the application thread), use them inside a streaming method, and destroy them when it stops (also on the application thread). If you are not careful, the streaming thread might try to use the resources after they are destroyed. The solution is to protect resources using critical sections, and synchronize streaming methods with state changes.</p>
+<p>A filter needs one critical section to protect the filter state. The <a href="cbasefilter.html"><strong>CBaseFilter</strong></a> class has a member variable for this critical section, <a href="cbasefilter-m-plock.html"><strong>CBaseFilter::m_pLock</strong></a>. This critical section is called the filter lock. Also, each input pin needs a critical section to protect resources used by the streaming thread. These critical sections are called streaming locks; you must declare them in your derived pin class. It is easiest to use the <a href="ccritsec.html"><strong>CCritSec</strong></a> class, which wraps a Windows <strong>CRITICAL_SECTION</strong> object and can be locked using the <a href="cautolock.html"><strong>CAutoLock</strong></a> class. The <strong>CCritSec</strong> class also provides some useful debugging functions. For more information, see <a href="critical-section-debugging-functions.html">Critical Section Debugging Functions</a>.</p>
+<p>When a filter stops or flushes, it must synchronize the application thread with the streaming thread. To avoid deadlocking, it must first unblock the streaming thread, which might be blocked for several reasons:</p>
+<ul>
+<li>It is waiting to get a sample inside the <a href="/windows/desktop/api/Strmif/nf-strmif-imemallocator-getbuffer"><strong>IMemAllocator::GetBuffer</strong></a> method, because all of the allocator's samples are in use.</li>
+<li>It is waiting for another filter to return from a streaming method, such as <strong>Receive</strong>.</li>
+<li>It is waiting inside one of its own streaming methods, for some resource to become available.</li>
+<li>It is a renderer filter waiting for the presentation time of the next sample</li>
+<li>It is a renderer filter waiting inside the <strong>Receive</strong> method while paused.</li>
+</ul>
+<p>Therefore, when the filter stops or flushes, it must do the following:</p>
+<ul>
+<li>Release any sample it is holding for any reason. Doing so unblocks the <strong>GetBuffer</strong> method.</li>
+<li>Return from any streaming method as quickly as possible. If a streaming method is waiting for a resource, it must stop waiting immediately.</li>
+<li>Start rejecting samples in <strong>Receive</strong>, so that the streaming thread does not access any more resources. (The <a href="cbaseinputpin.html"><strong>CBaseInputPin</strong></a> class handles this automatically.)</li>
+<li>The <strong>Stop</strong> method must decommit all of the filter's allocators. (The <strong>CBaseInputPin</strong> class handles this automatically.)</li>
+</ul>
+<p>Flushing and stopping both happen on the application thread. A filter stops in response to the <a href="/windows/desktop/api/Control/nf-control-imediacontrol-stop"><strong>IMediaControl::Stop</strong></a> method. The Filter Graph Manager issues the stop command in upstream order, starting from the renderers and working backward to the source filters. The stop command happens completely inside the filter's <strong>CBaseFilter::Stop</strong> method. When the method returns, the filter should be in a stopped state.</p>
+<p>Flushing typically occurs because of a seek command. A flush command starts from the source or parser filter, and travels downstream. Flushing happens in two stages: The <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-beginflush"><strong>IPin::BeginFlush</strong></a> method informs a filter to discard all pending and incoming data; the <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-endflush"><strong>IPin::EndFlush</strong></a> method signals the filter to accept data again. Flushing requires two stages because the <strong>BeginFlush</strong> call is on the application thread, during which the streaming thread continues to deliver data. Therefore, some samples may arrive after the <strong>BeginFlush</strong> call. The filter should discard these. Any samples that arrive after the <strong>EndFlush</strong> call are guaranteed to be new, and should be delivered.</p>
+<p>The sections that follow contain code samples showing how to implement the most important filter methods, such as <strong>Pause</strong>, <strong>Receive</strong>, and so forth, in ways that avoid deadlocks and race conditions. Every filter has different requirements, however, so you will need to adapt these examples to your particular filter.</p>
+<blockquote>
+<p>[!Note]<br />
+The <a href="ctransformfilter.html"><strong>CTransformFilter</strong></a> and <a href="ctransinplacefilter.html"><strong>CTransInPlaceFilter</strong></a> base classes handle many of the issues described in this article. If you are writing a transform filter, and your filter does not wait on events inside a streaming method, or hold onto samples outside of <strong>Receive</strong>, then these base classes should be sufficient.</p>
+</blockquote>
+<p>Â </p>
+<p>Â </p>
+<p>Â </p>
+</body>

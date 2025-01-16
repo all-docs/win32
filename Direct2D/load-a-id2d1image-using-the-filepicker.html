@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to load an image into Direct2D effects using the FilePicker</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: How to load an image into Direct2D effects using the FilePicker
+description: Shows how to use the Windows Storage Pickers FileOpenPicker to load an image into Direct2D effects.
+ms.assetid: 42158EF0-2FC8-45F3-8C92-E12318D4724F
+keywords:</p>
+<ul>
+<li>FileOpenPicker</li>
+<li>FilePicker
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>How to load an image into Direct2D effects using the FilePicker</h1>
+<p>Shows how to use the <a href="/uwp/api/Windows.Storage.Pickers.FileOpenPicker"><strong>Windows::Storage::Pickers::FileOpenPicker</strong></a> to load an image into <a href="effects-overview.html">Direct2D effects</a>. If you want to let the user select an image file from storage in a Windows Store app, we recommend that you use the <a href="/uwp/api/Windows.Storage.Pickers.FileOpenPicker"><strong>FileOpenPicker</strong></a>.</p>
+<h2>What you need to know</h2>
+<h3>Technologies</h3>
+<ul>
+<li><a href="./direct2d-portal.html">Direct2D</a></li>
+<li><a href="effects-overview.html">Direct2D effects</a></li>
+<li><a href="/uwp/api/Windows.Storage.Pickers.FileOpenPicker"><strong>Windows::Storage::Pickers::FileOpenPicker</strong></a></li>
+</ul>
+<h3>Prerequisites</h3>
+<ul>
+<li>You need an <a href="/windows/win32/api/d2d1_1/nn-d2d1_1-id2d1devicecontext"><strong>ID2D1DeviceContext</strong></a> object for creating effects.</li>
+<li>You need an <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicimagingfactory"><strong>IWICImagingFactory</strong></a> object for creating WIC objects.</li>
+</ul>
+<h2>Instructions</h2>
+<h3>Step 1: Open the file picker</h3>
+<p>Create a <a href="/uwp/api/Windows.Storage.Pickers.FileOpenPicker"><strong>FileOpenPicker</strong></a> object and set the <em>ViewMode</em>, <em>SuggestedStartLocation</em>, and the <em>FileTypeFilter</em> for selecting images. Call the <a href="/uwp/api/windows.storage.pickers.fileopenpicker.picksinglefileasync"><strong>PickSingleFileAsync</strong></a> method.</p>
+<pre lang="C++"><code>    FileOpenPicker^ openPicker = ref new FileOpenPicker();
+    openPicker-&gt;ViewMode = PickerViewMode::Thumbnail;
+    openPicker-&gt;SuggestedStartLocation = PickerLocationId::PicturesLibrary;
+    openPicker-&gt;FileTypeFilter-&gt;Append(&quot;.jpg&quot;);
+    auto pickOperation = openPicker-&gt;PickSingleFileAsync();
+</code></pre>
+<p>After the <a href="/uwp/api/windows.storage.pickers.fileopenpicker.picksinglefileasync"><strong>PickSingleFileAsync</strong></a> completes, you get a file stream from the <a href="/previous-versions//bb776309(v=vs.85)"><strong>IAsyncOperation</strong></a> interface it returns.</p>
+<h3>Step 2: Get a file stream</h3>
+<p>Declare a completion handler to run after the file picker async operation returns. Use the <a href="/previous-versions//br205815(v=vs.85)"><strong>GetResults</strong></a> method to retrieve the file and to get the file stream object.</p>
+<pre lang="C++"><code>    pickOperation-&gt;Completed = ref new AsyncOperationCompletedHandler&lt;StorageFile^&gt;(
+          [=](IAsyncOperation&lt;StorageFile^&gt; ^operation, AsyncStatus status)
+    {
+        auto file = operation-&gt;GetResults();
+        if (file) // If file == nullptr, the user did not select a file.
+        {
+                             auto openOperation = file-&gt;OpenAsync(FileAccessMode::Read);
+                             openOperation-&gt;Completed = ref new
+                                      AsyncOperationCompletedHandler&lt;IRandomAccessStream^&gt;(
+                                      [=](IAsyncOperation&lt;IRandomAccessStream^&gt; ^operation, AsyncStatus status)
+                             {
+                                      auto fileStream = operation-&gt;GetResults();
+
+                                      // Pass IRandomAccessStream^ into DirectXApp for decoding/processing.
+                                      OpenFile(fileStream);
+                             });
+        }
+    });
+</code></pre>
+<p>In the next step you convert the <a href="/previous-versions//hh438400(v=vs.85)"><strong>IRandomAccessStream</strong></a> object to an <a href="/windows/desktop/api/objidl/nn-objidl-istream"><strong>IStream</strong></a> that you can pass to <a href="/windows/desktop/wic/-wic-api">WIC</a>.</p>
+<h3>Step 3: Convert the file stream</h3>
+<p>Use the <a href="/windows/desktop/api/shcore/nf-shcore-createstreamoverrandomaccessstream"><strong>CreateStreamOverRandomAccessStream</strong></a> function to convert the file stream. Windows Runtime APIs represent streams with <a href="/previous-versions//hh438400(v=vs.85)"><strong>IRandomAccessStream</strong></a>, while <a href="/windows/desktop/wic/-wic-api">WIC</a> consumes <a href="/windows/desktop/api/objidl/nn-objidl-istream"><strong>IStream</strong></a>.</p>
+<pre lang="C++"><code>    ComPtr&lt;IStream&gt; istream;
+    DX::ThrowIfFailed(
+        CreateStreamOverRandomAccessStream(
+        reinterpret_cast&lt;IUnknown*&gt;(fileStream),
+        IID_PPV_ARGS(&amp;istream)
+        )
+    );
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+To use the <a href="/windows/desktop/api/shcore/nf-shcore-createstreamoverrandomaccessstream"><strong>CreateStreamOverRandomAccessStream</strong></a> function, you should include <em>shcore.h</em> in your project.</p>
+</blockquote>
+<p>Â </p>
+<h3>Step 4: Create a WIC decoder and get the frame</h3>
+<p>Create an <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapdecoder"><strong>IWICBitmapDecoder</strong></a> object using the <a href="/windows/desktop/api/wincodec/nf-wincodec-iwicimagingfactory-createdecoderfromstream"><strong>IWICImagingFactory::CreateDecoderFromStream</strong></a> method.</p>
+<pre lang="C++"><code>    ComPtr&lt;IWICBitmapDecoder&gt; decoder;
+    DX::ThrowIfFailed(
+          m_wicFactory-&gt;CreateDecoderFromStream(
+                    istream.Get(),
+                    nullptr,
+                    WICDecodeMetadataCacheOnDemand,
+                    &amp;decoder
+                    )
+          );
+</code></pre>
+<p>Get the first frame of the image from the decoder using the <a href="/windows/desktop/api/wincodec/nf-wincodec-iwicbitmapdecoder-getframecount"><strong>IWICBitmapDecoder::GetFrame</strong></a> method.</p>
+<pre lang="C++"><code>    ComPtr&lt;IWICBitmapFrameDecode&gt; frame;
+    DX::ThrowIfFailed(
+        decoder-&gt;GetFrame(0, &amp;frame)
+        );
+</code></pre>
+<h3>Step 5: Create a WIC converter and initialize</h3>
+<p>Convert the image to the BGRA color format using <a href="/windows/desktop/wic/-wic-api">WIC</a>. <a href="/windows/desktop/wic/-wic-imp-iwicbitmapframedecode">IWICBitmapFrameDecode</a> will return the native pixel format of the image, like JPEGs are stored in GUID_WICPixelFormat24bppBGR. However, as a performance optimization with Direct2D we recommend that you convert to WICPixelFormat32bppPBGRA.</p>
+<ol>
+<li>
+<p>Create a <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicformatconverter"><strong>IWICFormatConverter</strong></a> object using the <a href="/windows/desktop/api/wincodec/nf-wincodec-iwicimagingfactory-createformatconverter"><strong>IWICImagingFactory::CreateFormatConverter</strong></a> method.</p>
+<pre lang="C++"><code>    ComPtr&lt;IWICFormatConverter&gt; converter;
+    DX::ThrowIfFailed(
+        m_wicFactory-&gt;CreateFormatConverter(&amp;converter)
+        ); 
+ 
+</code></pre>
+</li>
+<li>
+<p>Initialize the format converter to use the WICPixelFormat32bppPBGRA and pass in the bitmap frame.</p>
+<pre lang="C++"><code>   DX::ThrowIfFailed(
+        converter-&gt;Initialize(
+            frame.Get(),
+            GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone,
+            nullptr,
+            0.0f,
+            WICBitmapPaletteTypeCustom  // premultiplied BGRA has no paletting, so this is ignored
+            )
+        );
+</code></pre>
+</li>
+</ol>
+<p>The <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicformatconverter"><strong>IWICFormatConverter</strong></a> interface is derived from the <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapsource"><strong>IWICBitmapSource</strong></a> interface, so you can pass the converter to the <a href="bitmap-source.html">bitmap source</a> effect.</p>
+<h3>Step 6: Create effect and pass in an IWICBitmapSource</h3>
+<p>Use the <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1devicecontext-createeffect"><strong>CreateEffect</strong></a> method to create a <a href="bitmap-source.html">bitmap source</a> <a href="/windows/win32/api/d2d1_1/nn-d2d1_1-id2d1effect"><strong>ID2D1Effect</strong></a> object using the <a href="getting-started-with-direct2d.html">Direct2D</a> <a href="/windows/win32/api/d2d1_1/nn-d2d1_1-id2d1devicecontext"><strong>device context</strong></a>.</p>
+<p>Use the <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1properties-setvalue(uint32_constbyte_uint32)"><strong>ID2D1Effect::SetValue</strong></a> method to set the <em>D2D1_BITMAPSOURCE_PROP_WIC_BITMAP_SOURCE</em> property to the <a href="/windows/desktop/wic/-wic-api">WIC</a> <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicformatconverter"><strong>format converter</strong></a>.</p>
+<blockquote>
+<p>[!Note]<br />
+The <a href="bitmap-source.html">bitmap source</a> effect doesn't take an input from the <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1effect-setinput"><strong>SetInput</strong></a> method like many <a href="effects-overview.html">Direct2D effects</a>. Instead, the <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapsource"><strong>IWICBitmapSource</strong></a> object is specified as a property.</p>
+</blockquote>
+<p>Â </p>
+<pre lang="C++"><code>    ComPtr&lt;ID2D1Effect&gt; bitmapSourceEffect;
+
+    DX::ThrowIfFailed(
+        m_d2dContext-&gt;CreateEffect(CLSID_D2D1BitmapSource, &amp;bitmapSourceEffect)
+        );
+
+    DX::ThrowIfFailed(
+        bitmapSourceEffect-&gt;SetValue(D2D1_BITMAPSOURCE_PROP_WIC_BITMAP_SOURCE, converter.Get())
+        );
+
+    // Insert code using the bitmap source in an effect graph.
+</code></pre>
+<p>Now that you have the <a href="bitmap-source.html">bitmap source</a> effect, you can use it as input to any <a href="/windows/win32/api/d2d1_1/nn-d2d1_1-id2d1effect"><strong>ID2D1Effect</strong></a> and create an effect graph.</p>
+<h2>Complete example</h2>
+<p>Here is the full code for this example.</p>
+<pre lang="C++"><code>ComPtr&lt;ID2D1Effect&gt; bitmapSourceEffect;
+
+void OpenFilePicker()
+{
+    FileOpenPicker^ openPicker = ref new FileOpenPicker();
+    openPicker-&gt;ViewMode = PickerViewMode::Thumbnail;
+    openPicker-&gt;SuggestedStartLocation = PickerLocationId::PicturesLibrary;
+    openPicker-&gt;FileTypeFilter-&gt;Append(&quot;.jpg&quot;);
+    auto pickOperation = openPicker-&gt;PickSingleFileAsync();
+    
+    pickOperation-&gt;Completed = ref new AsyncOperationCompletedHandler&lt;StorageFile^&gt;(
+          [=](IAsyncOperation&lt;StorageFile^&gt; ^operation, AsyncStatus status)
+    {
+        auto file = operation-&gt;GetResults();
+        if (file)
+        {
+                             auto openOperation = file-&gt;OpenAsync(FileAccessMode::Read);
+                             openOperation-&gt;Completed = ref new
+                                      AsyncOperationCompletedHandler&lt;IRandomAccessStream^&gt;(
+                                      [=](IAsyncOperation&lt;IRandomAccessStream^&gt; ^operation, AsyncStatus status)
+                             {
+                                      auto fileStream = operation-&gt;GetResults();
+
+                                      // Pass IRandomAccessStream^ into DirectXApp for decoding/processing.
+                                      OpenFile(fileStream);
+                             });
+        }
+    });
+}
+
+void OpenFile(Windows::Storage::Streams::IRandomAccessStream^ fileStream)
+{
+    ComPtr&lt;IStream&gt; istream;
+    DX::ThrowIfFailed(
+        CreateStreamOverRandomAccessStream(
+            reinterpret_cast&lt;IUnknown*&gt;(fileStream),
+            IID_PPV_ARGS(&amp;istream)
+            )
+        );
+
+    ComPtr&lt;IWICBitmapDecoder&gt; decoder;
+    DX::ThrowIfFailed(
+          m_wicFactory-&gt;CreateDecoderFromStream(
+                    istream.Get(),
+                    nullptr,
+                    WICDecodeMetadataCacheOnDemand,
+                    &amp;decoder
+                    )
+          );
+
+    ComPtr&lt;IWICBitmapFrameDecode&gt; frame;
+    DX::ThrowIfFailed(
+        decoder-&gt;GetFrame(0, &amp;frame)
+        );
+
+    ComPtr&lt;IWICFormatConverter&gt; converter;
+    DX::ThrowIfFailed(
+        m_wicFactory-&gt;CreateFormatConverter(&amp;converter)
+        );
+
+    DX::ThrowIfFailed(
+        converter-&gt;Initialize(
+            frame.Get(),
+            GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone,
+            nullptr,
+            0.0f,
+            WICBitmapPaletteTypeCustom  // premultiplied BGRA has no paletting, so this is ignored
+            )
+        );
+
+       ComPtr&lt;ID2D1Effect&gt; bitmapSourceEffect;
+
+    DX::ThrowIfFailed(
+        m_d2dContext-&gt;CreateEffect(CLSID_D2D1BitmapSource, &amp;bitmapSourceEffect)
+        );
+
+    DX::ThrowIfFailed(
+        bitmapSourceEffect-&gt;SetValue(D2D1_BITMAPSOURCE_PROP_WIC_BITMAP_SOURCE, converter.Get())
+        );
+
+    // Insert code using the bitmap source in an effect graph.
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

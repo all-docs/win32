@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating an Authorization Policy Store Object in C++</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: An authorization policy store contains information about the security policy of an application or group of applications. The information includes the applications, operations, tasks, users, and groups of users associated with the store.
+ms.assetid: 6fc84944-8050-4000-8856-36558d94e2fd
+title: Creating an Authorization Policy Store Object in C++
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Creating an Authorization Policy Store Object in C++</h1>
+<p>An authorization policy store contains information about the security policy of an application or group of applications. The information includes the applications, operations, tasks, users, and groups of users associated with the store. When an application that uses Authorization Manager initializes, it loads this information from the store. The authorization policy store must be located on a trusted system because administrators on that system have a high degree of access to the store.</p>
+<p>Authorization Manager supports storing authorization policy either in the Active Directory directory service or in an XML file as shown in the following examples. In the Authorization Manager API, an authorization policy store is represented by an <a href="/windows/desktop/api/Azroles/nn-azroles-iazauthorizationstore"><strong>AzAuthorizationStore</strong></a> object. The examples show how to create an <strong>AzAuthorizationStore</strong> object for an Active Directory store and an XML store.</p>
+<ul>
+<li><a href="#creating-an-active-directory-store">Creating an Active Directory Store</a></li>
+<li><a href="#creating-a-sql-server-store">Creating a SQL Server Store</a></li>
+<li><a href="#creating-an-xml-store">Creating an XML Store</a></li>
+</ul>
+<h2>Creating an Active Directory Store</h2>
+<p>To use Active Directory to store the authorization policy, the domain must be in the <strong>WindowsÂ ServerÂ 2003</strong> domain functional level. The authorization policy store cannot be located in a <strong>Non-Domain Naming Context</strong> (also called an application partition). It is recommended that the store be located in the <strong>Program Data</strong> container under a new organizational unit created specifically for the authorization policy store. It is also recommended that the store be located within the same local area network as application servers that run applications that use the store.</p>
+<p>The following example shows how to create an <a href="/windows/desktop/api/Azroles/nn-azroles-iazauthorizationstore"><strong>AzAuthorizationStore</strong></a> object that represents an authorization policy store in Active Directory. The example assumes that there is an existing Active Directory organizational unit named Program Data in a domain named authmanager.com.</p>
+<pre lang="C++"><code>#pragma comment(lib, &quot;duser.lib&quot;)
+
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0502
+#endif
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;azroles.h&gt;
+#include &lt;objbase.h&gt;
+
+void main(void){
+    IAzAuthorizationStore* pStore = NULL;
+    HRESULT hr;
+    void MyHandleError(char *s);
+    BSTR storeName = NULL;
+
+    //  Initialize COM.
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize COM.&quot;);
+
+    //  Create the AzAuthorizationStore object.
+    hr = CoCreateInstance(
+   /*&quot;b2bcff59-a757-4b0b-a1bc-ea69981da69e&quot;*/
+         __uuidof(AzAuthorizationStore),
+         NULL,
+         CLSCTX_ALL,
+   /*&quot;edbd9ca9-9b82-4f6a-9e8b-98301e450f14&quot;*/
+         __uuidof(IAzAuthorizationStore),
+         (void**)&amp;pStore);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not create AzAuthorizationStore object.&quot;);
+    
+    //  Create a null VARIANT for function parameters.
+    VARIANT myVar;
+    VariantInit(&amp;myVar);
+
+    //  Allocate a string for the distinguished name of the
+ //  Active Directory store.
+    if(!(storeName = SysAllocString
+   (L&quot;msldap://CN=MyAzStore,CN=Program Data,DC=authmanager,DC=com&quot;)))
+        MyHandleError(&quot;Could not allocate string.&quot;);
+    
+    //  Initialize the store in Active Directory. Use the
+ //  AZ_AZSTORE_FLAG_CREATE flag.
+    hr = pStore-&gt;Initialize(AZ_AZSTORE_FLAG_CREATE, storeName, myVar);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize store.&quot;);
+
+    //  Call the submit method to save changes to the new store.
+    hr = pStore-&gt;Submit(0, myVar);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not save data to the store.&quot;);
+
+    //  Clean up resources.
+    pStore-&gt;Release();
+    VariantClear(&amp;myVar);
+    SysFreeString(storeName);
+    CoUninitialize();
+}
+
+void MyHandleError(char *s)
+{
+    printf(&quot;An error occurred in running the program.\n&quot;);
+    printf(&quot;%s\n&quot;,s);
+    printf(&quot;Error number %x\n.&quot;,GetLastError());
+    printf(&quot;Program terminating.\n&quot;);
+    exit(1);
+}
+</code></pre>
+<h2>Creating a SQL Server Store</h2>
+<p>Authorization Manager supports creating a Microsoft SQL Serverâ€“based authorization policy store. To create a SQL Serverâ€“based authorization store, use a URL that begins with the prefix <strong>MSSQL://</strong>. The URL must contain a valid SQL connection string, a database name, and the name of the authorization policy store: **MSSQL://<em><strong>ConnectionString</strong></em>/<em><strong>DatabaseName</strong></em>/**<em>PolicyStoreName</em>.</p>
+<p>If the instance of SQL Server does not contain the specified Authorization Manager database, Authorization Manager creates a new database with that name.</p>
+<blockquote>
+<p>[!Note]<br />
+Connections to a SQL Server store are not encrypted unless you explicitly set up SQL encryption for the connection or set up encryption of the network traffic that uses Internet Protocol Security (IPsec).</p>
+</blockquote>
+<p>Â </p>
+<p>The following example shows how to create an <a href="/windows/desktop/api/Azroles/nn-azroles-iazauthorizationstore"><strong>AzAuthorizationStore</strong></a> object that represents an authorization policy store in a SQL Server database.</p>
+<pre lang="C++"><code>#pragma comment(lib, &quot;duser.lib&quot;)
+
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0502
+#endif
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;azroles.h&gt;
+#include &lt;objbase.h&gt;
+
+void main(void){
+    IAzAuthorizationStore* pStore = NULL;
+    HRESULT hr;
+    void MyHandleError(char *s);
+    BSTR storeName = NULL;
+
+    //  Initialize COM.
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize COM.&quot;);
+
+    //  Create the AzAuthorizationStore object.
+    hr = CoCreateInstance(
+   /*&quot;b2bcff59-a757-4b0b-a1bc-ea69981da69e&quot;*/
+         __uuidof(AzAuthorizationStore),
+         NULL,
+         CLSCTX_ALL,
+   /*&quot;edbd9ca9-9b82-4f6a-9e8b-98301e450f14&quot;*/
+         __uuidof(IAzAuthorizationStore),
+         (void**)&amp;pStore);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not create AzAuthorizationStore object.&quot;);
+    
+    VARIANT myVar; 
+    myVar.vt = VT_NULL;
+
+    //  Allocate a string for the SQL Server store.
+    if(!(storeName = SysAllocString
+   (L&quot;MSSQL://Driver={SQL Server};Server={AzServer};/AzDB/MyStore&quot;)))
+        MyHandleError(&quot;Could not allocate string.&quot;);
+    
+    //  Initialize the store. Use the
+ //  AZ_AZSTORE_FLAG_CREATE flag.
+    hr = pStore-&gt;Initialize(AZ_AZSTORE_FLAG_CREATE, storeName, myVar);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize store.&quot;);
+
+    //  Call the submit method to save changes to the new store.
+    hr = pStore-&gt;Submit(0, myVar);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not save data to the store.&quot;);
+
+    //  Clean up resources.
+    pStore-&gt;Release();
+    SysFreeString(storeName);
+    CoUninitialize();
+}
+
+void MyHandleError(char *s)
+{
+    printf(&quot;An error occurred in running the program.\n&quot;);
+    printf(&quot;%s\n&quot;,s);
+    printf(&quot;Error number %x\n.&quot;,GetLastError());
+    printf(&quot;Program terminating.\n&quot;);
+    exit(1);
+}
+</code></pre>
+<h2>Creating an XML Store</h2>
+<p>Authorization Manager supports creating an authorization policy store in XML format. The XML store can be located on the same computer where the application runs, or it can be stored remotely. Editing the XML file directly is not supported. Use the Authorization Manager MMC snap-in or the Authorization Manager API to edit the policy store.</p>
+<p>Authorization Manager does not support delegating administration of an XML policy store. For information about delegation, see <a href="delegating-the-defining-of-permissions-in-c--.html">Delegating the Defining of Permissions in C++</a>.</p>
+<p>The following example shows how to create an <a href="/windows/desktop/api/Azroles/nn-azroles-iazauthorizationstore"><strong>AzAuthorizationStore</strong></a> object that represents an authorization policy store in an XML file.</p>
+<pre lang="C++"><code>#pragma comment(lib, &quot;duser.lib&quot;)
+
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0502
+#endif
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;azroles.h&gt;
+#include &lt;objbase.h&gt;
+
+void main(void){
+    IAzAuthorizationStore* pStore = NULL;
+    HRESULT hr;
+    void MyHandleError(char *s);
+    BSTR storeName = NULL;
+
+    //  Initialize COM.
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize COM.&quot;);
+
+    //  Create the AzAuthorizationStore object.
+    hr = CoCreateInstance(
+   /*&quot;b2bcff59-a757-4b0b-a1bc-ea69981da69e&quot;*/
+         __uuidof(AzAuthorizationStore),
+         NULL,
+         CLSCTX_ALL,
+   /*&quot;edbd9ca9-9b82-4f6a-9e8b-98301e450f14&quot;*/
+         __uuidof(IAzAuthorizationStore),
+         (void**)&amp;pStore);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not create AzAuthorizationStore object.&quot;);
+    
+    VARIANT myVar; 
+    myVar.vt = VT_NULL;
+
+    //  Allocate a string for the distinguished name of the XML store.
+    if(!(storeName = SysAllocString(L&quot;msxml://C:\\MyStore.xml&quot;)))
+        MyHandleError(&quot;Could not allocate string.&quot;);
+    
+    //  Initialize the store in an XML file. Use the
+ //  AZ_AZSTORE_FLAG_CREATE flag.
+    hr = pStore-&gt;Initialize(AZ_AZSTORE_FLAG_CREATE, storeName, myVar);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize store.&quot;);
+
+    //  Call the submit method to save changes to the new store.
+    hr = pStore-&gt;Submit(0, myVar);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not save data to the store.&quot;);
+
+    //  Clean up resources.
+    pStore-&gt;Release();
+    SysFreeString(storeName);
+    CoUninitialize();
+}
+
+void MyHandleError(char *s)
+{
+    printf(&quot;An error occurred in running the program.\n&quot;);
+    printf(&quot;%s\n&quot;,s);
+    printf(&quot;Error number %x\n.&quot;,GetLastError());
+    printf(&quot;Program terminating.\n&quot;);
+    exit(1);
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

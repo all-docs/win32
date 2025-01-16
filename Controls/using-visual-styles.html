@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using Visual Styles with Custom and Owner-Drawn Controls</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Using Visual Styles with Custom and Owner-Drawn Controls
+description: This topic describes how to use the visual styles API to apply visual styles to custom controls or owner-drawn controls.
+ms.assetid: 8b06f9ce-702c-48f8-8cf3-2718a09b8d77
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using Visual Styles with Custom and Owner-Drawn Controls</h1>
+<p>This topic describes how to use the visual styles API to apply visual styles to custom controls or owner-drawn controls.</p>
+<ul>
+<li><a href="#drawing-controls-with-visual-styles">Drawing Controls with Visual Styles</a></li>
+<li><a href="#responding-to-theme-changes">Responding to Theme Changes</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Drawing Controls with Visual Styles</h2>
+<p>Visual styles are supported by ComCtrl32.dll version 6 and later. If your application is configured to use ComCtrl32.dll version 6 and later, and if that version is available on the system, the current visual styles are automatically applied to all common controls in your application. However, the current visual styles are not automatically applied to custom controls or owner-drawn controls. Your application must include code that checks whether visual styles are available and, if so, uses the visual styles API to apply the currently selected visual styles to your custom and owner-drawn controls.</p>
+<p>To check whether visual styles are available, call the <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-isappthemed"><strong>IsAppThemed</strong></a> function. If visual styles are not available, use fallback code to draw the control.</p>
+<p>If visual styles are available, you can use visual-styles functions such as <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-drawthemetext"><strong>DrawThemeText</strong></a> to render your control. Note that <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-drawthemetextex"><strong>DrawThemeTextEx</strong></a> enables you to customize the appearance of text, retaining some properties of the theme font while modifying others.</p>
+<p><strong>To draw a control in the current visual style</strong></p>
+<ol>
+<li>Call <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-openthemedata"><strong>OpenThemeData</strong></a>, passing the <em>hwnd</em> of the control you want to apply visual styles to and a class list that describes the control's type. The classes are defined in Vssym32.h. <strong>OpenThemeData</strong> returns an HTHEME handle, but if the visual styles manager is disabled or the current visual style does not supply specific information for a given control, the function returns <strong>NULL</strong>. If the return value is <strong>NULL</strong>, use non-visual-styles drawing functions.</li>
+<li>To draw the control background, call <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-drawthemebackground"><strong>DrawThemeBackground</strong></a> or <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-drawthemebackgroundex"><strong>DrawThemeBackgroundEx</strong></a>.</li>
+<li>To determine the location of the content rectangle, call <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-getthemebackgroundcontentrect"><strong>GetThemeBackgroundContentRect</strong></a>.</li>
+<li>To render text, use either <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-drawthemetext"><strong>DrawThemeText</strong></a> or <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-drawthemetextex"><strong>DrawThemeTextEx</strong></a>, basing the coordinates on the rectangle returned by <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-getthemebackgroundcontentrect"><strong>GetThemeBackgroundContentRect</strong></a>. These functions can render text either in the theme's font for a specified control part and state, or in the font currently selected into the device context (DC).</li>
+<li>When your control receives a <a href="/windows/desktop/winmsg/wm-destroy"><strong>WM_DESTROY</strong></a> message, call <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-closethemedata"><strong>CloseThemeData</strong></a> to release the theme handle that was returned when you called <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-openthemedata"><strong>OpenThemeData</strong></a>.</li>
+</ol>
+<p>The following example code demonstrates one way to draw a button control in the current visual style.</p>
+<pre lang="C++"><code>HTHEME hTheme = NULL;
+
+hTheme = OpenThemeData(hwndButton, L&quot;Button&quot;);
+// ...
+DrawMyControl(hDC, hwndButton, hTheme, iState);
+// ...
+if (hTheme)
+{
+    CloseThemeData(hTheme);
+}
+
+
+void DrawMyControl(HDC hDC, HWND hwndButton, HTHEME hTheme, int iState)
+{
+    RECT rc, rcContent;
+    TCHAR szButtonText[255];
+    HRESULT hr;
+    size_t cch;
+
+    GetWindowRect(hwndButton, &amp;rc);
+    GetWindowText(hwndButton, szButtonText,
+                  (sizeof(szButtonText) / sizeof(szButtonText[0])+1));
+    hr = StringCchLength(szButtonText,
+         (sizeof(szButtonText) / sizeof(szButtonText[0])), &amp;cch);
+    if (hTheme)
+    {
+        hr = DrawThemeBackground(hTheme, hDC, BP_PUSHBUTTON, iState, &amp;rc, 0);
+        if (SUCCEEDED(hr))
+        {
+            hr = GetThemeBackgroundContentRect(hTheme, hDC, BP_PUSHBUTTON, 
+                    iState, &amp;rc, &amp;rcContent);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = DrawThemeText(hTheme, hDC, BP_PUSHBUTTON, iState, 
+                    szButtonText, cch,
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                    0, &amp;rcContent);
+        }
+
+    }
+    else
+    {
+        // Draw the control without using visual styles.
+    }
+}
+</code></pre>
+<p>The following example code is in the <a href="/windows/desktop/gdi/wm-paint"><strong>WM_PAINT</strong></a> message handler for a subclassed button control. The text for the control is drawn in the visual styles font, but the color is application-defined depending on the state of the control.</p>
+<pre lang="C++"><code>// textColor is a COLORREF whose value has been set according to whether the button is &quot;hot&quot;.
+// paint is the PAINTSTRUCT whose members are filled in by BeginPaint.
+HTHEME theme = OpenThemeData(hWnd, L&quot;button&quot;);
+if (theme)
+{
+    DTTOPTS opts = { 0 };
+    opts.dwSize = sizeof(opts);
+    opts.crText = textColor;
+    opts.dwFlags |= DTT_TEXTCOLOR;
+    WCHAR caption[255];
+    size_t cch;
+    GetWindowText(hWnd, caption, 255);
+    StringCchLength(caption, 255, &amp;cch);
+    DrawThemeTextEx(theme, paint.hdc, BP_PUSHBUTTON, CBS_UNCHECKEDNORMAL, 
+        caption, cch, DT_CENTER | DT_VCENTER | DT_SINGLELINE, 
+        &amp;paint.rcPaint, &amp;opts);
+    CloseThemeData(theme);
+}
+else
+{
+    // Draw the control without using visual styles.
+}
+</code></pre>
+<p>You can use parts from other controls and render each part separately. For example, for a calendar control that consists of a grid, you can treat each square formed by the grid as a toolbar button, by obtaining the theme handle as follows:</p>
+<pre lang="C++"><code>OpenThemeData(hwnd, L&quot;Toolbar&quot;);
+</code></pre>
+<p>You can mix and match control parts by calling <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-openthemedata"><strong>OpenThemeData</strong></a> multiple times for a given control and using the appropriate theme handle to draw different parts. In some visual styles, however, certain parts might not be compatible with other parts.</p>
+<p>Another approach to rendering controls in the active visual style is to use the system colors. For example, you can use system colors to set the text color when calling the <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-drawthemetextex"><strong>DrawThemeTextEx</strong></a> function. Most system colors are set when a visual style file is applied.</p>
+<h2>Responding to Theme Changes</h2>
+<p>When your control receives a <a href="/windows/desktop/winmsg/wm-themechanged"><strong>WM_THEMECHANGED</strong></a> message and is holding a global handle to the theme, it should do the following:</p>
+<ul>
+<li>Call <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-closethemedata"><strong>CloseThemeData</strong></a> to close the existing theme handle.</li>
+<li>Call <a href="/windows/desktop/api/Uxtheme/nf-uxtheme-openthemedata"><strong>OpenThemeData</strong></a> to get the theme handle to the newly loaded visual style.</li>
+</ul>
+<p>The following example illustrates the two calls.</p>
+<pre lang="C++"><code>case WM_THEMECHANGED:
+     CloseThemeData (g_hTheme);
+     g_hTheme = OpenThemeData (hwnd, L&quot;MyClassName&quot;);
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="cookbook-overview.html">Enabling Visual Styles</a></p>
+<!-- raw HTML omitted -->
+<p><a href="themes-overview.html">Visual Styles</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

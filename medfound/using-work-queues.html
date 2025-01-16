@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using Work Queues</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to use work queues in Microsoft Media Foundation.
+ms.assetid: 6be05df7-e8ff-4110-8f73-a62eb31fd414
+title: Using Work Queues
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using Work Queues</h1>
+<p>This topic describes how to use work queues in Microsoft Media Foundation.</p>
+<ul>
+<li><a href="#using-work-queues">Using Work Queues</a></li>
+<li><a href="#shutting-down-work-queues">Shutting Down Work Queues</a></li>
+<li><a href="#using-scheduled-work-items">Using Scheduled Work Items</a></li>
+<li><a href="#using-periodic-callbacks">Using Periodic Callbacks</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Using Work Queues</h2>
+<p>A work queue is an efficient way to perform asynchronous operations on another thread. Conceptually, you put work items in the queue, and the queue has a thread that pulls each item from the queue and dispatches it. Work items are implemented as callbacks by using the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasynccallback"><strong>IMFAsyncCallback</strong></a> interface.</p>
+<p>Media Foundation creates several standard work queues, called <em>platform work queues</em>. Applications can also create their own work queues, called <em>private work queues</em>. For a list of the platform work queues, see <a href="work-queue-identifiers.html">Work Queue Identifiers</a>. To create a private work queue, call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfallocateworkqueue"><strong>MFAllocateWorkQueue</strong></a>. This function returns an identifier for the new work queue. To put an item in the queue, call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfputworkitem"><strong>MFPutWorkItem</strong></a> or <a href="/windows/desktop/api/mfapi/nf-mfapi-mfputworkitemex"><strong>MFPutWorkItemEx</strong></a>. In both cases, you must specify a callback interface.</p>
+<ul>
+<li><a href="/windows/desktop/api/mfapi/nf-mfapi-mfputworkitem"><strong>MFPutWorkItem</strong></a> takes a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasynccallback"><strong>IMFAsyncCallback</strong></a> interface, plus an optional state object that implements <strong>IUnknown</strong>. These are the same parameters used in asynchronous methods, as described in the topic <a href="asynchronous-callback-methods.html">Asynchronous Callback Methods</a>. Internally, this function creates an asynchronous result object, which is passed to the callback's <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>Invoke</strong></a> method.</li>
+<li><a href="/windows/desktop/api/mfapi/nf-mfapi-mfputworkitemex"><strong>MFPutWorkItemEx</strong></a> takes a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasyncresult"><strong>IMFAsyncResult</strong></a> interface. This interface represents an asynchronous result object. Create this object by calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreateasyncresult"><strong>MFCreateAsyncResult</strong></a> and specifying your callback interface and, optionally, a state object.</li>
+</ul>
+<p>In both cases, the work queue thread calls your <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>IMFAsyncCallback::Invoke</strong></a> method. Use the <strong>Invoke</strong> method to perform the work item.</p>
+<p>If more than one thread or component shares the same work queue, you can call <a href="/windows/desktop/api/mfapi/nf-mfapi-mflockworkqueue"><strong>MFLockWorkQueue</strong></a> to lock the work queue, which prevents the platform from releasing it. For each call to <a href="/windows/desktop/api/mfapi/nf-mfapi-mfallocateworkqueue"><strong>MFAllocateWorkQueue</strong></a> or <strong>MFLockWorkQueue</strong>, you must call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfunlockworkqueue"><strong>MFUnlockWorkQueue</strong></a> once to release the work queue. For example, if you create a new work queue and then lock it once, you must call <strong>MFUnlockWorkQueue</strong> twice, once for the call to <strong>MFAllocateWorkQueue</strong> and once for the call to <strong>MFLockWorkQueue</strong>.</p>
+<p>The following code shows how to create a new work queue, put a work item in the queue, and release the work queue.</p>
+<p>See <a href="media-foundation-work-queue-and-threading-improvements.html">Work Queue and Threading Improvements</a> for additional information on work queues in WindowsÂ 8.</p>
+<pre lang="C++"><code>DWORD idWorkQueue = 0;
+HRESULT hr = S_OK;
+
+// Create a new work queue.
+hr = MFAllocateWorkQueue(&amp;idWorkQueue);
+
+// Put an item on the queue.
+if (SUCCEEDED(hr))
+{
+    hr = MFPutWorkItem(idWorkQueue, pCallback, NULL);
+}
+
+// Wait for the callback to be invoked.
+if (SUCCEEDED(hr))
+{
+    WaitForSingleObject(hEvent, INFINITE);
+}
+
+// Release the work queue.
+if (SUCCEEDED(hr))
+{
+    hr = MFUnlockWorkQueue(idWorkQueue);
+}
+</code></pre>
+<p>This example assumes that <em>pCallback</em> is a pointer to the application's <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasynccallback"><strong>IMFAsyncCallback</strong></a> interface. It also assumes that the callback sets the <em>hEvent</em> event handle. The code waits for this event to be set before calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfunlockworkqueue"><strong>MFUnlockWorkQueue</strong></a>.</p>
+<p>Work queue threads are always created in the caller's process. Within each work queue, the callbacks are serialized. If you call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfputworkitem"><strong>MFPutWorkItem</strong></a> twice with the same work queue, the second callback is not invoked until the first callback has returned.</p>
+<h2>Shutting Down Work Queues</h2>
+<p>Before calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfshutdown"><strong>MFShutdown</strong></a>, release any resources that are being used by work queue threads. To synchronize this process, you can lock the Media Foundation platform, which prevents the <strong>MFShutdown</strong> function from closing any work queue threads. If <strong>MFShutdown</strong> is called while the platform is locked, <strong>MFShutdown</strong> waits a few hundred milliseconds for the platform to be unlocked. If it is not unlocked within that time, <strong>MFShutdown</strong> closes the work queue threads.</p>
+<p>The default implementation of <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasyncresult"><strong>IMFAsyncResult</strong></a> automatically locks the Media Foundation platform when the result object is created. Releasing the interface unlocks the platform. Therefore, you will almost never need to lock the platform directly. But if you write your own custom implementation of <strong>IMFAsyncResult</strong>, then you should manually lock and unlock the platform. To lock the platform, call <a href="/windows/desktop/api/mfapi/nf-mfapi-mflockplatform"><strong>MFLockPlatform</strong></a>. To unlock the platform, call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfunlockplatform"><strong>MFUnlockPlatform</strong></a>. For an example, see <a href="custom-asynchronous-result-objects.html">Custom Asynchronous Result Objects</a>.</p>
+<p>After you call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfshutdown"><strong>MFShutdown</strong></a>, you need to ensure that the platform is unlocked within the 5-second time-out period. Do this by releasing all <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasyncresult"><strong>IMFAsyncResult</strong></a> pointers, and by calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfunlockplatform"><strong>MFUnlockPlatform</strong></a> if you locked the platform manually. Make sure to release any resources that are being used by work queue threads, or your application might leak memory.</p>
+<p>Typically, if your application shuts down and releases every Media Foundation object before calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfshutdown"><strong>MFShutdown</strong></a>, you do not have to worry about locking. The locking mechanism simply allows work queue threads to exit gracefully after you call <strong>MFShutdown</strong>.</p>
+<h2>Using Scheduled Work Items</h2>
+<p>You can schedule a callback to occur after a set period of time by calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfscheduleworkitem"><strong>MFScheduleWorkItem</strong></a> or <a href="/windows/desktop/api/mfapi/nf-mfapi-mfscheduleworkitemex"><strong>MFScheduleWorkItemEx</strong></a>.</p>
+<ul>
+<li><a href="/windows/desktop/api/mfapi/nf-mfapi-mfscheduleworkitem"><strong>MFScheduleWorkItem</strong></a> takes a pointer to your callback, an optional state object, and a time-out interval.</li>
+<li><a href="/windows/desktop/api/mfapi/nf-mfapi-mfscheduleworkitemex"><strong>MFScheduleWorkItemEx</strong></a> takes a pointer to an asynchronous result object and a time-out value.</li>
+</ul>
+<p>Specify the time-out as a negative value in milliseconds. For example, to schedule a callback to be invoked in 5 seconds, use the value âˆ’5000. Both functions return an <strong>MFWORKITEM_KEY</strong> value, which you can use to cancel the callback by passing it to the <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcancelworkitem"><strong>MFCancelWorkItem</strong></a> function.</p>
+<p>Scheduled work items always use the MFASYNC_CALLBACK_QUEUE_TIMER platform work queue.</p>
+<h2>Using Periodic Callbacks</h2>
+<p>The <a href="/windows/desktop/api/mfapi/nf-mfapi-mfaddperiodiccallback"><strong>MFAddPeriodicCallback</strong></a> function schedules a callback to be invoked periodically until you cancel it. The callback interval is fixed; applications cannot change it. To find out the exact interval, call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfgettimerperiodicity"><strong>MFGetTimerPeriodicity</strong></a>. The interval is on the order of 10 milliseconds, so this function is meant for situations where you need a frequent &quot;tick,&quot; such as implementing a presentation clock. If you want to schedule an operation to occur less frequently, use a scheduled work item, as described previously.</p>
+<p>Unlike the other callbacks described in this topic, the periodic callback does not use the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasynccallback"><strong>IMFAsyncCallback</strong></a> interface. Instead, it uses a function pointer. For more information, see <a href="/windows/win32/api/mfapi/nc-mfapi-mfperiodiccallback"><strong>MFPERIODICCALLBACK Callback</strong></a>.</p>
+<p>To cancel the periodic callback, call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfremoveperiodiccallback"><strong>MFRemovePeriodicCallback</strong></a>.</p>
+<p>Periodic callbacks use the MFASYNC_CALLBACK_QUEUE_TIMER platform work queue.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="work-queues.html">Work Queues</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/win32/api/mfapi/ns-mfapi-mfasyncresult"><strong>MFASYNCRESULT</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="media-foundation-work-queue-and-threading-improvements.html">Work Queue and Threading Improvements</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Winsock timestamping</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Winsock timestamping
+description: Packet timestamps are a crucial feature to many clock synchronization applications—for example, Precision Time Protocol. The closer the timestamp generation is to when a packet is received/sent by the network adapter hardware, the more accurate the synchronization application can be.
+ms.topic: article
+ms.date: 10/22/2020</h2>
+<h1>Winsock timestamping</h1>
+<h2>Introduction</h2>
+<p>Packet timestamps are a crucial feature to many clock synchronization applications—for example, Precision Time Protocol. The closer the timestamp generation is to when a packet is received/sent by the network adapter hardware, the more accurate the synchronization application can be.</p>
+<p>So the timestamping APIs described in this topic provide your application with a mechanism to report timestamps that are generated well below the application layer. Specifically, a software timestamp at the interface between the miniport and NDIS, and a hardware timestamp in the NIC hardware. The timestamping API can greatly improve clock synchronization accuracy. Currently, support is scoped to User Datagram Protocol (UDP) sockets.</p>
+<h2>Receive timestamps</h2>
+<p>You configure receive timestamp reception through the <a href="/windows/win32/winsock/winsock-ioctls#sio_timestamping"><strong>SIO_TIMESTAMPING</strong></a> IOCTL. Use that IOCTL to enable receive timestamp reception. When you receive a datagram using the <a href="/windows/win32/api/mswsock/nc-mswsock-lpfn_wsarecvmsg"><strong>LPFN_WSARECVMSG (WSARecvMsg)</strong></a> function, its timestamp (if available) is contained in the <strong>SO_TIMESTAMP</strong> control message.</p>
+<p><strong>SO_TIMESTAMP</strong> (0x300A) is defined in <code>mstcpip.h</code>. The control message data is returned as a <strong>UINT64</strong>.</p>
+<h2>Transmit timestamps</h2>
+<p>Transmit timestamp reception is also configured through the <a href="/windows/win32/winsock/winsock-ioctls#sio_timestamping"><strong>SIO_TIMESTAMPING</strong></a> IOCTL. Use that IOCTL to enable transmit timestamp reception, and specify the number of transmit timestamps that the system will buffer. As transmit timestamps are generated, they are added to the buffer. If the buffer is full, new transmit timestamps are discarded.</p>
+<p>When sending a datagram, associate the datagram with an <strong>SO_TIMESTAMP_ID</strong> control message. This should contain a unique identifier. Send the datagram, along with its <strong>SO_TIMESTAMP_ID</strong> control message, using <a href="/windows/win32/api/winsock2/nf-winsock2-wsasendmsg"><strong>WSASendMsg</strong></a>. Transmit timestamps might not be immediately available after <strong>WSASendMsg</strong> returns. As transmit timestamps become available, they are placed into a per-socket buffer. Use the <a href="/windows/win32/winsock/winsock-ioctls#sio_get_tx_timestamp"><strong>SIO_GET_TX_TIMESTAMP</strong></a> IOCTL to poll for the timestamp by its ID. If the timestamp is available, then it is removed from the buffer and returned. If the timestamp is not available, then <a href="/windows/win32/api/winsock/nf-winsock-wsagetlasterror">WSAGetLastError</a> returns <strong>WSAEWOULDBLOCK</strong>. If a transmit timestamp is generated while the buffer is full, the new timestamp is discarded.</p>
+<p><strong>SO_TIMESTAMP_ID</strong> (0x300B) is defined in <code>mstcpip.h</code>. You should supply the control message data as a <strong>UINT32</strong>.</p>
+<p>Timestamps are represented as a 64-bit counter value. The frequency of the counter depends on the source of the timestamp. For software timestamps, the counter is a <a href="/windows/win32/api/profileapi/nf-profileapi-queryperformancecounter"><strong>QueryPerformanceCounter</strong></a> (QPC) value, and you can determine its frequency via <a href="/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency"><strong>QueryPerformanceFrequency</strong></a>. For NIC hardware timestamps, the counter frequency is dependent on the NIC hardware, and you can determine it with additional information given by <a href="/windows/win32/api/iphlpapi/nf-iphlpapi-captureinterfacehardwarecrosstimestamp"><strong>CaptureInterfaceHardwareCrossTimestamp</strong></a>. To determine the source of timestamps, use the <a href="/windows/win32/api/iphlpapi/nf-iphlpapi-getinterfaceactivetimestampcapabilities"><strong>GetInterfaceActiveTimestampCapabilities</strong></a> and <a href="/windows/win32/api/iphlpapi/nf-iphlpapi-getinterfacesupportedtimestampcapabilities"><strong>GetInterfaceSupportedTimestampCapabilities</strong></a> functions.</p>
+<p>In addition to socket-level configuration using the <a href="/windows/win32/winsock/winsock-ioctls#sio_timestamping"><strong>SIO_TIMESTAMPING</strong></a> socket option to enable timestamp reception for a socket, system-level configuration is also needed.</p>
+<h2>Estimating latency of socket send path</h2>
+<p>In this section, we'll use transmit timestamps to estimate the latency of the socket send path. If you have an existing application that consumes application-level IO timestamps—where the timestamp needs to be as close as possible to the actual point of transmission—then this sample provides a quantitative description as to how much the Winsock timestamping APIs can improve the accuracy of your application.</p>
+<p>The example assumes that there's only one network interface card (NIC) in the system, and that <em>interfaceLuid</em> is the LUID of that adapter.</p>
+<pre lang="c"><code>void QueryHardwareClockFrequency(LARGE_INTEGER* clockFrequency)
+{
+    // Returns the hardware clock frequency. This can be calculated by
+    // collecting crosstimestamps via CaptureInterfaceHardwareCrossTimestamp
+    // and forming a linear regression model.
+}
+
+void estimate_send_latency(SOCKET sock,
+    PSOCKADDR_STORAGE addr,
+    NET_LUID* interfaceLuid,
+    BOOLEAN hardwareTimestampSource)
+{
+    DWORD numBytes;
+    INT error;
+    CHAR data[512];
+    CHAR control[WSA_CMSG_SPACE(sizeof(UINT32))] = { 0 };
+    WSABUF dataBuf;
+    WSABUF controlBuf;
+    WSAMSG wsaMsg;
+    ULONG64 appLevelTimestamp;
+
+    dataBuf.buf = data;
+    dataBuf.len = sizeof(data);
+    controlBuf.buf = control;
+    controlBuf.len = sizeof(control);
+    wsaMsg.name = (PSOCKADDR)addr;
+    wsaMsg.namelen = (INT)INET_SOCKADDR_LENGTH(addr-&gt;ss_family);
+    wsaMsg.lpBuffers = &amp;dataBuf;
+    wsaMsg.dwBufferCount = 1;
+    wsaMsg.Control = controlBuf;
+    wsaMsg.dwFlags = 0;
+
+    // Configure tx timestamp reception.
+    TIMESTAMPING_CONFIG config = { 0 };
+    config.flags |= TIMESTAMPING_FLAG_TX;
+    config.txTimestampsBuffered = 1;
+    error =
+        WSAIoctl(
+            sock,
+            SIO_TIMESTAMPING,
+            &amp;config,
+            sizeof(config),
+            NULL,
+            0,
+            &amp;numBytes,
+            NULL,
+            NULL);
+    if (error == SOCKET_ERROR) {
+        printf(&quot;WSAIoctl failed %d\n&quot;, WSAGetLastError());
+        return;
+    }
+
+    // Assign a tx timestamp ID to this datagram.
+    UINT32 txTimestampId = 123;
+    PCMSGHDR cmsg = WSA_CMSG_FIRSTHDR(&amp;wsaMsg);
+    cmsg-&gt;cmsg_len = WSA_CMSG_LEN(sizeof(UINT32));
+    cmsg-&gt;cmsg_level = SOL_SOCKET;
+    cmsg-&gt;cmsg_type = SO_TIMESTAMP_ID;
+    *(PUINT32)WSA_CMSG_DATA(cmsg) = txTimestampId;
+
+    // Capture app-layer timestamp prior to send call.
+    if (hardwareTimestampSource) {
+        INTERFACE_HARDWARE_CROSSTIMESTAMP crossTimestamp = { 0 };
+        crossTimestamp.Version = INTERFACE_HARDWARE_CROSSTIMESTAMP_VERSION_1;
+        error = CaptureInterfaceHardwareCrossTimestamp(interfaceLuid, &amp;crossTimestamp);
+        if (error != NO_ERROR) {
+            printf(&quot;CaptureInterfaceHardwareCrossTimestamp failed %d\n&quot;, error);
+            return;
+        }
+        appLevelTimestamp = crossTimestamp.HardwareClockTimestamp;
+    }
+    else { // software source
+        LARGE_INTEGER t1;
+        QueryPerformanceCounter(&amp;t1);
+        appLevelTimestamp = t1.QuadPart;
+    }
+
+    error =
+        sendmsg(
+            sock,
+            &amp;wsaMsg,
+            0,
+            &amp;numBytes,
+            NULL,
+            NULL);
+    if (error == SOCKET_ERROR) {
+        printf(&quot;sendmsg failed %d\n&quot;, WSAGetLastError());
+        return;
+    }
+
+    printf(&quot;sent packet\n&quot;);
+
+    // Poll for the socket tx timestamp value. The timestamp may not be available
+    // immediately.
+    UINT64 socketTimestamp;
+    ULONG maxTimestampPollAttempts = 6;
+    ULONG txTstampRetrieveIntervalMs = 1;
+    BOOLEAN retrievedTimestamp = FALSE;
+    for (ULONG i = 0; i &lt; maxTimestampPollAttempts; i++) {
+        error =
+            WSAIoctl(
+                sock,
+                SIO_GET_TX_TIMESTAMP,
+                &amp;txTimestampId,
+                sizeof(txTimestampId),
+                &amp;socketTimestamp,
+                sizeof(socketTimestamp),
+                &amp;numBytes,
+                NULL,
+                NULL);
+        if (error != SOCKET_ERROR) {
+            ASSERT(numBytes == sizeof(timestamp));
+            ASSERT(timestamp != 0);
+            retrievedTimestamp = TRUE;
+            break;
+        }
+
+        error = WSAGetLastError();
+        if (error != WSAEWOULDBLOCK) {
+            printf(â€œWSAIoctl failed % d\nâ€, error);
+            break;
+        }
+
+        Sleep(txTstampRetrieveIntervalMs);
+        txTstampRetrieveIntervalMs *= 2;
+    }
+
+    if (retrievedTimestamp) {
+        LARGE_INTEGER clockFrequency;
+        ULONG64 elapsedMicroseconds;
+
+        if (hardwareTimestampSource) {
+            QueryHardwareClockFrequency(&amp;clockFrequency);
+        }
+        else { // software source
+            QueryPerformanceFrequency(&amp;clockFrequency);
+        }
+
+        // Compute socket send path latency.
+        elapsedMicroseconds = socketTimestamp - appLevelTimestamp;
+        elapsedMicroseconds *= 1000000;
+        elapsedMicroseconds /= clockFrequency.QuadPart;
+        printf(&quot;socket send path latency estimation: %lld microseconds\n&quot;,
+            elapsedMicroseconds);
+    }
+    else {
+        printf(&quot;failed to retrieve TX timestamp\n&quot;);
+    }
+}
+</code></pre>
+<h2>Estimating latency of socket receive path</h2>
+<p>Here's a similar sample for the receive path. The example assumes that there's only one network interface card (NIC) in the system, and that <em>interfaceLuid</em> is the LUID of that adapter.</p>
+<pre lang="c"><code>void QueryHardwareClockFrequency(LARGE_INTEGER* clockFrequency)
+{
+    // Returns the hardware clock frequency. This can be calculated by
+    // collecting crosstimestamps via CaptureInterfaceHardwareCrossTimestamp
+    // and forming a linear regression model.
+}
+
+void estimate_receive_latency(SOCKET sock,
+    NET_LUID* interfaceLuid,
+    BOOLEAN hardwareTimestampSource)
+{
+    DWORD numBytes;
+    INT error;
+    CHAR data[512];
+    CHAR control[WSA_CMSG_SPACE(sizeof(UINT64))] = { 0 };
+    WSABUF dataBuf;
+    WSABUF controlBuf;
+    WSAMSG wsaMsg;
+    UINT64 socketTimestamp = 0;
+    ULONG64 appLevelTimestamp;
+
+    dataBuf.buf = data;
+    dataBuf.len = sizeof(data);
+    controlBuf.buf = control;
+    controlBuf.len = sizeof(control);
+    wsaMsg.name = NULL;
+    wsaMsg.namelen = 0;
+    wsaMsg.lpBuffers = &amp;dataBuf;
+    wsaMsg.dwBufferCount = 1;
+    wsaMsg.Control = controlBuf;
+    wsaMsg.dwFlags = 0;
+
+    // Configure rx timestamp reception.
+    TIMESTAMPING_CONFIG config = { 0 };
+    config.flags |= TIMESTAMPING_FLAG_RX;
+    error =
+        WSAIoctl(
+            sock,
+            SIO_TIMESTAMPING,
+            &amp;config,
+            sizeof(config),
+            NULL,
+            0,
+            &amp;numBytes,
+            NULL,
+            NULL);
+    if (error == SOCKET_ERROR) {
+        printf(&quot;WSAIoctl failed %d\n&quot;, WSAGetLastError());
+        return;
+    }
+
+    error =
+        recvmsg(
+            sock,
+            &amp;wsaMsg,
+            &amp;numBytes,
+            NULL,
+            NULL);
+    if (error == SOCKET_ERROR) {
+        printf(&quot;recvmsg failed %d\n&quot;, WSAGetLastError());
+        return;
+    }
+
+    // Capture app-layer timestamp upon message reception.
+    if (hardwareTimestampSource) {
+        INTERFACE_HARDWARE_CROSSTIMESTAMP crossTimestamp = { 0 };
+        crossTimestamp.Version = INTERFACE_HARDWARE_CROSSTIMESTAMP_VERSION_1;
+        error = CaptureInterfaceHardwareCrossTimestamp(interfaceLuid, &amp;crossTimestamp);
+        if (error != NO_ERROR) {
+            printf(&quot;CaptureInterfaceHardwareCrossTimestamp failed %d\n&quot;, error);
+            return;
+        }
+        appLevelTimestamp = crossTimestamp.HardwareClockTimestamp;
+    }
+    else { // software source
+        LARGE_INTEGER t1;
+        QueryPerformanceCounter(&amp;t1);
+        appLevelTimestamp = t1.QuadPart;
+    }
+
+    printf(&quot;received packet\n&quot;);
+
+    // Look for socket rx timestamp returned via control message.
+    BOOLEAN retrievedTimestamp = FALSE;
+    PCMSGHDR cmsg = WSA_CMSG_FIRSTHDR(&amp;wsaMsg);
+    while (cmsg != NULL) {
+        if (cmsg-&gt;cmsg_level == SOL_SOCKET &amp;&amp; cmsg-&gt;cmsg_type == SO_TIMESTAMP) {
+            socketTimestamp = *(PUINT64)WSA_CMSG_DATA(cmsg);
+            retrievedTimestamp = TRUE;
+            break;
+        }
+        cmsg = WSA_CMSG_NXTHDR(&amp;wsaMsg, cmsg);
+    }
+
+    if (retrievedTimestamp) {
+        // Compute socket receive path latency.
+        LARGE_INTEGER clockFrequency;
+        ULONG64 elapsedMicroseconds;
+
+        if (hardwareTimestampSource) {
+            QueryHardwareClockFrequency(&amp;clockFrequency);
+        }
+        else { // software source
+            QueryPerformanceFrequency(&amp;clockFrequency);
+        }
+
+        // Compute socket send path latency.
+        elapsedMicroseconds = appLevelTimestamp - socketTimestamp;
+        elapsedMicroseconds *= 1000000;
+        elapsedMicroseconds /= clockFrequency.QuadPart;
+        printf(&quot;RX latency estimation: %lld microseconds\n&quot;,
+            elapsedMicroseconds);
+    }
+    else {
+        printf(&quot;failed to retrieve RX timestamp\n&quot;);
+    }
+}
+</code></pre>
+<h2>A limitation</h2>
+<p>One limitation of the Winsock timestamping APIs is that calling <a href="/windows/win32/winsock/winsock-ioctls#sio_get_tx_timestamp"><strong>SIO_GET_TX_TIMESTAMP</strong></a> is always a non-blocking operation. Even calling the IOCTL in an OVERLAPPED fashion results in an immediate return of <strong>WSAEWOULDBLOCK</strong> if there are currently no available transmit timestamps. Since transmit timestamps might not be immediately available after <a href="/windows/win32/api/winsock2/nf-winsock2-wsasendmsg"><strong>WSASendMsg</strong></a> returns, your application must poll the IOCTL until the timestamp is available. A transmit timestamp is guaranteed to be available after a successful <strong>WSASendMsg</strong> call given that the transmit timestamp buffer is not full.</p>
+</body>

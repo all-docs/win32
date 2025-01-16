@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Querying for Events</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Querying for Events
+description: You can query for events from a channel or a log file.
+ms.assetid: 929bedbf-6dce-428e-b2c0-de9dcfe4531b
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Querying for Events</h1>
+<p>You can query for events from a channel or a log file. The channel or log file can exist on the local computer or a remote computer. To specify the events that you want to get from the channel or log file, you use an XPath query or a structure XML query. For details on writing the query, see <a href="consuming-events.html">Consuming Events</a>.</p>
+<p>To query events, call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtquery"><strong>EvtQuery</strong></a> function. You can specify the order in which the events are returned (oldest to newest (the default) or newest to oldest) and whether to tolerate malformed XPath expressions in the query (for details on how the function ignores the malformed expressions, see the <a href="/windows/desktop/api/WinEvt/ne-winevt-evt_query_flags"><strong>EvtQueryTolerateQueryErrors</strong></a> flag).</p>
+<p>The following example shows how to query events from a channel using an XPath expression.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;sddl.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;winevt.h&gt;
+
+#pragma comment(lib, &quot;wevtapi.lib&quot;)
+
+#define ARRAY_SIZE 10
+#define TIMEOUT 1000  // 1 second; Set and use in place of INFINITE in EvtNext call
+
+DWORD PrintResults(EVT_HANDLE hResults);
+DWORD PrintEvent(EVT_HANDLE hEvent); // Shown in the Rendering Events topic
+
+void main(void)
+{
+    DWORD status = ERROR_SUCCESS;
+    EVT_HANDLE hResults = NULL;
+    LPWSTR pwsPath = L&quot;&lt;Name of the channel goes here&gt;&quot;;
+    LPWSTR pwsQuery = L&quot;Event/System[EventID=4]&quot;;
+
+    hResults = EvtQuery(NULL, pwsPath, pwsQuery, EvtQueryChannelPath | EvtQueryReverseDirection);
+    if (NULL == hResults)
+    {
+        status = GetLastError();
+
+        if (ERROR_EVT_CHANNEL_NOT_FOUND == status)
+            wprintf(L&quot;The channel was not found.\n&quot;);
+        else if (ERROR_EVT_INVALID_QUERY == status)
+            // You can call the EvtGetExtendedStatus function to try to get 
+            // additional information as to what is wrong with the query.
+            wprintf(L&quot;The query is not valid.\n&quot;);
+        else
+            wprintf(L&quot;EvtQuery failed with %lu.\n&quot;, status);
+
+        goto cleanup;
+    }
+
+    PrintResults(hResults);
+
+cleanup:
+
+    if (hResults)
+        EvtClose(hResults);
+
+}
+</code></pre>
+<p>The following example shows how to query events from a channel using a structured XML query. The events are returned in order from newest to oldest.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;sddl.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;winevt.h&gt;
+
+#pragma comment(lib, &quot;wevtapi.lib&quot;)
+
+#define ARRAY_SIZE 10
+#define TIMEOUT 1000  // 1 second; Set and use in place of INFINITE in EvtNext call
+
+// The structured XML query.
+#define QUERY \
+    L&quot;&lt;QueryList&gt;&quot; \
+    L&quot;  &lt;Query Path='Name of the channel goes here'&gt;&quot; \
+    L&quot;    &lt;Select&gt;Event/System[EventID=4]&lt;/Select&gt;&quot; \
+    L&quot;  &lt;/Query&gt;&quot; \
+    L&quot;&lt;/QueryList&gt;&quot;
+
+DWORD PrintQueryStatuses(EVT_HANDLE hResults);
+DWORD GetQueryStatusProperty(EVT_QUERY_PROPERTY_ID Id, EVT_HANDLE hResults, PEVT_VARIANT&amp; pProperty);
+DWORD PrintResults(EVT_HANDLE hResults);
+DWORD PrintEvent(EVT_HANDLE hEvent);  // Shown in the Rendering Events topic
+
+void main(void)
+{
+    DWORD status = ERROR_SUCCESS;
+    EVT_HANDLE hResults = NULL;
+
+    hResults = EvtQuery(NULL, NULL, QUERY, EvtQueryChannelPath | EvtQueryTolerateQueryErrors);
+    if (NULL == hResults)
+    {
+        // Handle error.
+        goto cleanup;
+    }
+
+    // Print the status of each query. If all the queries succeeded,
+    // print the events in the result set. The status can be
+    // ERROR_EVT_CHANNEL_NOT_FOUND or ERROR_EVT_INVALID_QUERY among others.
+    if (ERROR_SUCCESS == PrintQueryStatuses(hResults))
+        PrintResults(hResults);
+
+cleanup:
+
+    if (hResults)
+        EvtClose(hResults);
+
+}
+</code></pre>
+<p>If you are using a structured XML query and pass the EvtQueryTolerateQueryErrors flag to <a href="/windows/desktop/api/WinEvt/nf-winevt-evtquery"><strong>EvtQuery</strong></a>, the function succeeds even though one or more of the queries in the structured query may have actually failed. To determine which queries in the structured query succeeded or failed, call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtgetqueryinfo"><strong>EvtGetQueryInfo</strong></a> function. If you do not pass the EvtQueryTolerateQueryErrors flag, the <strong>EvtQuery</strong> function will fail with the first error that it finds in the query. If the query fails with ERROR_EVT_INVALID_QUERY, call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtgetextendedstatus"><strong>EvtGetExtendedStatus</strong></a> function to get a message string that describes the XPath error.</p>
+<p>The following example shows how to determine the success or failure of each query in a structured query when passing the EvtQueryTolerateQueryErrors flag to <a href="/windows/desktop/api/WinEvt/nf-winevt-evtquery"><strong>EvtQuery</strong></a>.</p>
+<pre lang="C++"><code>// Get the list of paths in the query and the status for each path. Return
+// the sum of the statuses, so the caller can decide whether to enumerate 
+// the results.
+DWORD PrintQueryStatuses(EVT_HANDLE hResults)
+{
+    DWORD status = ERROR_SUCCESS;
+    PEVT_VARIANT pPaths = NULL;
+    PEVT_VARIANT pStatuses = NULL;
+
+    wprintf(L&quot;List of channels/logs that were queried and their status\n\n&quot;);
+
+    if (status = GetQueryStatusProperty(EvtQueryNames, hResults, pPaths))
+        goto cleanup;
+
+    if (status = GetQueryStatusProperty(EvtQueryStatuses, hResults, pStatuses))
+        goto cleanup;
+
+    for (DWORD i = 0; i &lt; pPaths-&gt;Count; i++)
+    {
+        wprintf(L&quot;%s (%lu)\n&quot;, pPaths-&gt;StringArr[i], pStatuses-&gt;UInt32Arr[i]);
+        status += pStatuses-&gt;UInt32Arr[i];
+    }
+
+cleanup:
+
+    if (pPaths)
+        free(pPaths);
+
+    if (pStatuses)
+        free(pStatuses);
+
+    return status;
+}
+
+
+// Get the list of paths specified in the query or the list of status values 
+// for each path.
+DWORD GetQueryStatusProperty(EVT_QUERY_PROPERTY_ID Id, EVT_HANDLE hResults, PEVT_VARIANT&amp; pProperty)
+{
+    DWORD status = ERROR_SUCCESS;
+    DWORD dwBufferSize = 0;
+    DWORD dwBufferUsed = 0;
+
+    if  (!EvtGetQueryInfo(hResults, Id, dwBufferSize, pProperty, &amp;dwBufferUsed))
+    {
+        status = GetLastError();
+        if (ERROR_INSUFFICIENT_BUFFER == status)
+        {
+            dwBufferSize = dwBufferUsed;
+            pProperty = (PEVT_VARIANT)malloc(dwBufferSize);
+            if (pProperty)
+            {
+                EvtGetQueryInfo(hResults, Id, dwBufferSize, pProperty, &amp;dwBufferUsed);
+            }
+            else
+            {
+                wprintf(L&quot;realloc failed\n&quot;);
+                status = ERROR_OUTOFMEMORY;
+                goto cleanup;
+            }
+        }
+
+        if (ERROR_SUCCESS != (status = GetLastError()))
+        {
+            wprintf(L&quot;EvtGetQueryInfo failed with %d\n&quot;, GetLastError());
+            goto cleanup;
+        }
+    }
+
+cleanup:
+
+    return status;
+}
+</code></pre>
+<h2>Reading events from the result set</h2>
+<p>To enumerate the events in the result set, call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtnext"><strong>EvtNext</strong></a> function in a loop until the function returns <strong>FALSE</strong> and the <a href="/windows/desktop/api/errhandlingapi/nf-errhandlingapi-getlasterror"><strong>GetLastError</strong></a> function returns ERROR_NO_MORE_ITEMS. The events in the result set are not static; new events that are written to the channel will be included in the result set until ERROR_NO_MORE_ITEMS is set. To improve performance, fetch events from the result set in batches (taking into account the size of each event when determining the number of events to fetch).</p>
+<p>The following example shows how to enumerate the events in a result set.</p>
+<pre lang="C++"><code>// Enumerate all the events in the result set. 
+DWORD PrintResults(EVT_HANDLE hResults)
+{
+    DWORD status = ERROR_SUCCESS;
+    EVT_HANDLE hEvents[ARRAY_SIZE];
+    DWORD dwReturned = 0;
+
+    while (true)
+    {
+        // Get a block of events from the result set.
+        if (!EvtNext(hResults, ARRAY_SIZE, hEvents, INFINITE, 0, &amp;dwReturned))
+        {
+            if (ERROR_NO_MORE_ITEMS != (status = GetLastError()))
+            {
+                wprintf(L&quot;EvtNext failed with %lu\n&quot;, status);
+            }
+
+            goto cleanup;
+        }
+
+        // For each event, call the PrintEvent function which renders the
+        // event for display. PrintEvent is shown in RenderingEvents.
+        for (DWORD i = 0; i &lt; dwReturned; i++)
+        {
+            if (ERROR_SUCCESS == (status = PrintEvent(hEvents[i])))
+            {
+                EvtClose(hEvents[i]);
+                hEvents[i] = NULL;
+            }
+            else
+            {
+                goto cleanup;
+            }
+        }
+    }
+
+cleanup:
+
+    for (DWORD i = 0; i &lt; dwReturned; i++)
+    {
+        if (NULL != hEvents[i])
+            EvtClose(hEvents[i]);
+    }
+
+    return status;
+}
+</code></pre>
+<p>For details on rendering the events that you get from the result set, see <a href="rendering-events.html">Rendering Events</a>.</p>
+<p>If you want to query for events from where you left off, create a bookmark of the last event that you read and use it the next time you run your query. For details, see <a href="bookmarking-events.html">Bookmarking Events</a>.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

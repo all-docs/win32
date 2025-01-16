@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Deleting Certificates from a Certificate Store</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example lists the certificates in a system certificate store, displaying the name of the subject of each certificate, and it allows the user to choose to delete any certificates from the store.
+ms.assetid: 52a0287b-7d2a-483e-8bbc-43621c4b7103
+title: 'Example C Program: Deleting Certificates from a Certificate Store'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Deleting Certificates from a Certificate Store</h1>
+<p>The following example lists the certificates in a system <a href="../secgloss/c-gly.html"><em>certificate store</em></a>, displaying the name of the subject of each certificate, and it allows the user to choose to delete any certificates from the store. The example gets the name of the certificate store from the user and thus can be used to maintain the contents of any system certificate store.</p>
+<p>This example illustrates the following tasks and <a href="../secgloss/c-gly.html"><em>CryptoAPI</em></a> functions:</p>
+<ul>
+<li>Opening a system certificate store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certopensystemstorea"><strong>CertOpenSystemStore</strong></a>.</li>
+<li>Listing the certificates in a certificate store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certenumcertificatesinstore"><strong>CertEnumCertificatesInStore</strong></a>.</li>
+<li>Getting the name of the subject of a certificate using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certgetnamestringa"><strong>CertGetNameString</strong></a>.</li>
+<li>Comparing the name of the subject of the certificate with the name of the issuer of the certificate using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certcomparecertificatename"><strong>CertCompareCertificateName</strong></a>.</li>
+<li>Checking to determine whether the public key of the current certificate matches the public key of a previous certificate using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certcomparepublickeyinfo"><strong>CertComparePublicKeyInfo</strong></a>.</li>
+<li>Duplicating a pointer to a <a href="../secgloss/c-gly.html"><em>certificate context</em></a> using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certduplicatecertificatecontext"><strong>CertDuplicateCertificateContext</strong></a>.</li>
+<li>Comparing the <a href="/windows/desktop/api/Wincrypt/ns-wincrypt-cert_info"><strong>CERT_INFO</strong></a> members of each certificate using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certcomparecertificate"><strong>CertCompareCertificate</strong></a>.</li>
+<li>Deleting a certificate from a store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certdeletecertificatefromstore"><strong>CertDeleteCertificateFromStore</strong></a>.</li>
+<li>Closing a certificate store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certclosestore"><strong>CertCloseStore</strong></a>.</li>
+</ul>
+<p>This example gets the name of a system certificate store from the user, opens that store, and goes through the certificates in that store. For each certificate, the name of the certificate's subject is displayed and the user is given an option to delete that certificate.</p>
+<pre lang="C++"><code>#pragma comment(lib, &quot;crypt32.lib&quot;)
+
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Wincrypt.h&gt;
+#define MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+void MyHandleError(char *s);
+
+void main(void)
+{
+//-------------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+// Declare and initialize variables.
+
+HANDLE          hStoreHandle;
+PCCERT_CONTEXT  pCertContext=NULL;   
+PCCERT_CONTEXT  pDupCertContext; 
+PCERT_PUBLIC_KEY_INFO pOldPubKey = NULL;
+PCERT_PUBLIC_KEY_INFO pNewPubKey; 
+char pszStoreName[256];
+char pszNameString[256];
+char fResponse ='n';  
+char x;
+
+//-------------------------------------------------------------------
+// Get the name of the certificate store to open. 
+printf(&quot;This program maintains the contents of a certificate\n&quot;);
+printf(&quot;store by allowing you to delete any excess certificates\n&quot;);
+printf(&quot;from a store. \n\n&quot;);
+printf(&quot;Please enter the name of the system store to maintain:&quot;);
+fgets(pszStoreName, 255, stdin);
+if (pszStoreName[strlen(pszStoreName) - 1] =='\n')
+   pszStoreName[strlen(pszStoreName) - 1] = '\0';
+printf(&quot;Certificates will be deleted from &quot;
+       &quot;the %s store.\n&quot;,pszStoreName);
+
+//-------------------------------------------------------------------
+// Open a system certificate store.
+
+if ( hStoreHandle = CertOpenSystemStore(
+     NULL,     
+     pszStoreName))
+{
+     printf(&quot;The %s store has been opened. \n&quot;, pszStoreName);
+}
+else
+{
+     MyHandleError(&quot;The store was not opened.&quot;);
+}
+//-------------------------------------------------------------------
+// Find the certificates in the system store. 
+
+while(pCertContext= CertEnumCertificatesInStore(
+    hStoreHandle,
+    pCertContext)) // on the first call to the function,
+                   //  this parameter is NULL
+                   // on all subsequent
+                   //  calls, it is the last pointer returned by 
+                   //  the function
+{
+//-------------------------------------------------------------------
+// Get and display the name of the subject of the certificate.
+
+if(CertGetNameString(   
+   pCertContext,   
+   CERT_NAME_SIMPLE_DISPLAY_TYPE,   
+   0,
+   NULL,   
+   pszNameString,   
+   128))
+{
+   printf(&quot;\nCertificate for %s \n&quot;,pszNameString);
+}
+else
+{
+   MyHandleError(&quot;CertGetName failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Check to determine whether the issuer 
+// and the subject are the same.
+
+if(CertCompareCertificateName(
+   MY_ENCODING_TYPE,
+   &amp;(pCertContext-&gt;pCertInfo-&gt;Issuer),
+   &amp;(pCertContext-&gt;pCertInfo-&gt;Subject)))
+{
+     printf(&quot;The certificate subject and issuer are the same.\n&quot;);
+}
+else
+{
+     printf(&quot;The certificate subject and issuer &quot;
+         &quot;are not the same.\n&quot;);
+}
+//--------------------------------------------------------------------
+// Determine whether this certificate's public key matches 
+// the public key of the last certificate.
+
+pNewPubKey = &amp;(pCertContext-&gt;pCertInfo-&gt;SubjectPublicKeyInfo);
+if(pOldPubKey)
+   if(CertComparePublicKeyInfo(
+       MY_ENCODING_TYPE,
+       pOldPubKey,
+       pNewPubKey))
+   {
+       printf(&quot;The public keys are the same.\n&quot;);
+   }
+   else
+   {
+       printf(&quot;This certificate has a different public key.\n&quot;);
+   }
+//-------------------------------------------------------------------
+// Reset the old key.
+
+pOldPubKey = pNewPubKey;
+
+//-------------------------------------------------------------------
+// Determine whether this certificate is to be deleted. 
+
+printf(&quot;Would you like to delete this certificate? (y/n) &quot;);
+fResponse = getchar();
+if(fResponse == 'y')
+{
+   //----------------------------------------------------------------
+   // Create a duplicate pointer to the certificate to be 
+   // deleted. In this way, the original pointer is not freed 
+   // when the certificate is deleted from the store 
+   // and the enumeration of the certificates in the store can
+   // continue. If the original pointer is used, after the 
+   // certificate is deleted, the enumeration loop stops.
+
+   if(pDupCertContext = CertDuplicateCertificateContext(
+      pCertContext))
+   {
+       printf(&quot;A duplicate pointer was created. Continue. \n&quot;);
+   }
+   else
+   {
+        MyHandleError(&quot;Duplication of the certificate &quot;
+            &quot;pointer failed.&quot;);
+   }
+
+//-------------------------------------------------------------------
+// Compare the pCertInfo members of the two certificates 
+// to determine whether they are identical.
+
+if(CertCompareCertificate(
+      X509_ASN_ENCODING,
+      pDupCertContext-&gt;pCertInfo, 
+      pCertContext-&gt;pCertInfo))
+{
+     printf(&quot;The two certificates are identical. \n&quot;);
+}
+else
+{
+     printf(&quot;The two certificates are not identical. \n&quot;);
+}
+//-------------------------------------------------------------------
+// Delete the certificate.
+   if(CertDeleteCertificateFromStore(
+     pDupCertContext))   
+   {
+       printf(&quot;The certificate has been deleted. Continue. \n&quot;);
+   }
+   else
+   {
+      printf(&quot;The deletion of the certificate failed.\n&quot;);
+   }
+} // end if
+
+//-------------------------------------------------------------------
+// Clear the input buffer.
+
+x = getchar();
+
+} // end while
+
+//-------------------------------------------------------------------
+// Clean up.
+
+CertCloseStore(
+   hStoreHandle,
+   0);
+printf(&quot;The program ran to completion successfully. \n&quot;);
+} // end main
+
+//-------------------------------------------------------------------
+// This example uses the function MyHandleError, a simple error
+// handling function to print an error message and exit 
+// the program. 
+// For most applications, replace this function with one 
+// that does more extensive error reporting.
+
+void MyHandleError(char *s)
+{
+    fprintf(stderr,&quot;An error occurred in running the program. \n&quot;);
+    fprintf(stderr,&quot;%s\n&quot;,s);
+    fprintf(stderr, &quot;Error number %x.\n&quot;, GetLastError());
+    fprintf(stderr, &quot;Program terminating. \n&quot;);
+    exit(1);
+} // end MyHandleError
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

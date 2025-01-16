@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How To Play a File</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: How To Play a File
+ms.assetid: 3d8c5d06-8690-4298-a1d1-f21af35bcfd4
+title: How To Play a File
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>How To Play a File</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This article is intended to give you the flavor of DirectShow programming. It presents a simple console application that plays an audio or video file. The program is only a few lines long, but it demonstrates some of the power of DirectShow programming.</p>
+<p>As the article <a href="introduction-to-directshow-application-programming.html">Introduction to DirectShow Application Programming</a> describes, a DirectShow application always performs the same basic steps:</p>
+<ol>
+<li>Create an instance of the <a href="filter-graph-manager.html">Filter Graph Manager</a>.</li>
+<li>Use the Filter Graph Manager to build a filter graph.</li>
+<li>Run the graph, causing data to move through the filters.</li>
+</ol>
+<p>To compile and link the code in this topic, include the header file Dshow.h and link to the static library file strmiids.lib. For more information, see <a href="setting-up-the-build-environment.html">Building DirectShow Applications</a>.</p>
+<p>Start by calling <a href="/windows/desktop/api/objbase/nf-objbase-coinitialize"><strong>CoInitialize</strong></a> or <a href="/windows/desktop/api/combaseapi/nf-combaseapi-coinitializeex"><strong>CoInitializeEx</strong></a> to initialize the COM library:</p>
+<pre lang="C++"><code>HRESULT hr = CoInitialize(NULL);
+if (FAILED(hr))
+{
+    // Add error-handling code here. (Omitted for clarity.)
+}
+</code></pre>
+<p>To keep things simple, this example ignores the return value, but you should always check the <strong>HRESULT</strong> value from any method call.</p>
+<p>Next, call <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> to create the Filter Graph Manager:</p>
+<pre lang="C++"><code>IGraphBuilder *pGraph;
+HRESULT hr = CoCreateInstance(CLSID_FilterGraph, NULL, 
+    CLSCTX_INPROC_SERVER, IID_IGraphBuilder, (void **)&amp;pGraph);
+</code></pre>
+<p>As shown, the class identifier (CLSID) is CLSID_FilterGraph. The Filter Graph Manager is provided by an in-process DLL, so the execution context is <strong>CLSCTX_INPROC_SERVER</strong>. DirectShow supports the free-threading model, so you can also call <a href="/windows/desktop/api/combaseapi/nf-combaseapi-coinitializeex"><strong>CoInitializeEx</strong></a> with the <strong>COINIT_MULTITHREADED</strong> flag.</p>
+<p>The call to <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> returns the <a href="/windows/desktop/api/Strmif/nn-strmif-igraphbuilder"><strong>IGraphBuilder</strong></a> interface, which mostly contains methods for building the filter graph. Two other interfaces are needed for this example:</p>
+<ul>
+<li><a href="/windows/desktop/api/Control/nn-control-imediacontrol"><strong>IMediaControl</strong></a> controls streaming. It contains methods for stopping and starting the graph.</li>
+<li><a href="/windows/desktop/api/Control/nn-control-imediaevent"><strong>IMediaEvent</strong></a> has methods for getting events from the Filter Graph Manager. In this example, the interface is used to wait for playback to complete.</li>
+</ul>
+<p>Both of these interfaces are exposed by the Filter Graph Manager. Use the returned <a href="/windows/desktop/api/Strmif/nn-strmif-igraphbuilder"><strong>IGraphBuilder</strong></a> pointer to query for them:</p>
+<pre lang="C++"><code>IMediaControl *pControl;
+IMediaEvent   *pEvent;
+hr = pGraph-&gt;QueryInterface(IID_IMediaControl, (void **)&amp;pControl);
+hr = pGraph-&gt;QueryInterface(IID_IMediaEvent, (void **)&amp;pEvent);
+</code></pre>
+<p>Now you can build the filter graph. For file playback, this is done by a single method call:</p>
+<pre lang="C++"><code>hr = pGraph-&gt;RenderFile(L&quot;C:\\Example.avi&quot;, NULL);
+</code></pre>
+<p>The <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-renderfile"><strong>IGraphBuilder::RenderFile</strong></a> method builds a filter graph that can play the specified file. The first parameter is the file name, represented as a wide character (2-byte) string. The second parameter is reserved and must equal <strong>NULL</strong>.</p>
+<p>This method can fail if the specified file does not exist, or the file format is not recognized. Assuming that the method succeeds, however, the filter graph is now ready for playback. To run the graph, call the <a href="/windows/desktop/api/Control/nf-control-imediacontrol-run"><strong>IMediaControl::Run</strong></a> method:</p>
+<pre lang="C++"><code>hr = pControl-&gt;Run();
+</code></pre>
+<p>When the filter graph runs, data moves through the filters and is rendered as video and audio. Playback occurs on a separate thread. You can wait for playback to complete by calling the <a href="/windows/desktop/api/Control/nf-control-imediaevent-waitforcompletion"><strong>IMediaEvent::WaitForCompletion</strong></a> method:</p>
+<pre lang="C++"><code>long evCode = 0;
+pEvent-&gt;WaitForCompletion(INFINITE, &amp;evCode);
+</code></pre>
+<p>This method blocks until the file is done playing, or until the specified time-out interval elapses. The value INFINITE means the application blocks indefinitely until the file is done playing. For a more realistic example of event handling, see <a href="responding-to-events.html">Responding to Events</a>.</p>
+<p>When the application is finished, release the interface pointers and close the COM library:</p>
+<pre lang="C++"><code>pControl-&gt;Release();
+pEvent-&gt;Release();
+pGraph-&gt;Release();
+CoUninitialize();
+</code></pre>
+<h2>Example Code</h2>
+<p>Here is the complete code for the example described in this article:</p>
+<pre lang="C++"><code>#include &lt;dshow.h&gt;
+void main(void)
+{
+    IGraphBuilder *pGraph = NULL;
+    IMediaControl *pControl = NULL;
+    IMediaEvent   *pEvent = NULL;
+
+    // Initialize the COM library.
+    HRESULT hr = CoInitialize(NULL);
+    if (FAILED(hr))
+    {
+        printf(&quot;ERROR - Could not initialize COM library&quot;);
+        return;
+    }
+
+    // Create the filter graph manager and query for interfaces.
+    hr = CoCreateInstance(CLSID_FilterGraph, NULL, CLSCTX_INPROC_SERVER, 
+                        IID_IGraphBuilder, (void **)&amp;pGraph);
+    if (FAILED(hr))
+    {
+        printf(&quot;ERROR - Could not create the Filter Graph Manager.&quot;);
+        return;
+    }
+
+    hr = pGraph-&gt;QueryInterface(IID_IMediaControl, (void **)&amp;pControl);
+    hr = pGraph-&gt;QueryInterface(IID_IMediaEvent, (void **)&amp;pEvent);
+
+    // Build the graph. IMPORTANT: Change this string to a file on your system.
+    hr = pGraph-&gt;RenderFile(L&quot;C:\\Example.avi&quot;, NULL);
+    if (SUCCEEDED(hr))
+    {
+        // Run the graph.
+        hr = pControl-&gt;Run();
+        if (SUCCEEDED(hr))
+        {
+            // Wait for completion.
+            long evCode;
+            pEvent-&gt;WaitForCompletion(INFINITE, &amp;evCode);
+
+            // Note: Do not use INFINITE in a real application, because it
+            // can block indefinitely.
+        }
+    }
+    pControl-&gt;Release();
+    pEvent-&gt;Release();
+    pGraph-&gt;Release();
+    CoUninitialize();
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="basic-directshow-tasks.html">Basic DirectShow Tasks</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

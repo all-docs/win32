@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementing IWICBitmapSourceTransform</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Implementing IWICBitmapSourceTransform
+ms.assetid: 6a3e682c-55c6-4728-9d14-5eb0290f3dcc
+title: Implementing IWICBitmapSourceTransform
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Implementing IWICBitmapSourceTransform</h1>
+<h2>IWICBitmapSourceTransform</h2>
+<p>Though optional, we highly recommend that every decoder implement this interface on your frame-level decoding class, because it can provide major performance benefits. When an application requests a specific region of interest, size, orientation, or pixel format, instead of just decoding the whole image at full resolution and then applying the requested transforms, Windows Imaging Component (WIC) calls <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)">IUnknown::QueryInterface</a> for this interface on the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframedecode"><strong>IWICBitmapFrameDecode</strong></a> object. If the frame decoder supports it, WIC calls the appropriate method or methods to determine whether the frame decoder can perform the requested transform or determine the closest size or pixel format the decoder can provide to the one requested. If the decoder can perform the requested transform or transforms, WIC invokes <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapsourcetransform-copypixels"><strong>CopyPixels</strong></a> with the appropriate parameters. If the decoder can perform some, but not all of the requested transforms, WIC asks the decoder to perform those that it can, and uses the WIC transform objects (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapscaler"><strong>IWICBitmapScaler</strong></a>, <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapclipper"><strong>IWICBitmapClipper</strong></a>, <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapfliprotator"><strong>IWICBitmapFlipRotator</strong></a>, and <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicformatconverter"><strong>IWICFormatConverter</strong></a>) to perform the remaining transforms that could not be performed by the frame decoder on the result of the <strong>CopyPixels</strong> call. If the decoder doesnâ€™t support <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapsourcetransform"><strong>IWICBitmapSourceTransform</strong></a>, then WIC must use the transform objects to perform all of the transforms. Itâ€™s usually much more efficient for the decoder to perform transforms during the decoding process than it is to decode the entire image and then perform the transforms. This is especially true for operations such as scaling to a much smaller size or pixel format conversions.</p>
+<pre lang="C++"><code>interface IWICBitmapSourceTransform : IUnknown
+{
+   // Required methods
+   HRESULT DoesSupportTransform ( WICTransformOptions dstTransform,
+              BOOL *pfIsSupported);
+   HRESULT CopyPixels ( WICRect *prcSrc, 
+      UINT uiWidth, 
+      UINT uiHeight,
+      WICPixelFormatGUID * pguidDstFormat,
+      WICBitmapTransformOptions dstTransform, 
+      UINT nStride, 
+      UINT cbBufferSize, 
+      BYTE *pbBuffer );
+
+   // Optional methods
+   HRESULT GetClosestSize ( UINT *puiWidth,
+              UINT *puiHeight);
+   HRESULT GetClosestPixelFormat ( WICPixelFormatGUID *pguidDstFormat);
+}
+</code></pre>
+<ul>
+<li><a href="#doessupporttransform">DoesSupportTransform</a></li>
+<li><a href="#copypixels">CopyPixels</a></li>
+<li><a href="#getclosestsize">GetClosestSize</a></li>
+<li><a href="#getclosestpixelformat">GetClosestPixelFormat</a></li>
+</ul>
+<h3>DoesSupportTransform</h3>
+<p><a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapsourcetransform-doessupporttransform"><strong>DoesSupportTransform</strong></a> asks whether the decoder supports the requested rotation or flipping operation. The <a href="/windows/desktop/api/Wincodec/ne-wincodec-wicbitmaptransformoptions"><strong>WICBitmapTransformOptions</strong></a> that may be requested are:</p>
+<pre lang="C++"><code>enum WICBitmapTransformOptions
+{   
+   WICBitmapTransformRotate0,
+   WICBitmapTransformRotate90,
+   WICBitmapTransformRotate180,
+   WICBitmapTransformRotate270,
+   WICBitmapTransformFlipHorizontal,
+   WICBitmapTransformFlipVertical
+}
+</code></pre>
+<h3>CopyPixels</h3>
+<p><a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapsourcetransform-copypixels"><strong>CopyPixels</strong></a> performs the actual work of decoding the image bits, such as the <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapsource-copypixels"><strong>CopyPixels</strong></a> method on the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapsource"><strong>IWICBitmapSource</strong></a> interface, but the <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapsourcetransform-copypixels"><strong>CopyPixels</strong></a> method on <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapsourcetransform"><strong>IWICBitmapSourceTransform</strong></a> is much more powerful, and can improve image processing performance significantly.</p>
+<p>When multiple transform operations are requested, the result is dependent on the order in which the operations are performed. To ensure predictability and consistency across codecs, itâ€™s important that all codecs perform these operations in the same order. This is the canonical order for performing these operations.</p>
+<ol>
+<li>Scale</li>
+<li>Crop</li>
+<li>Rotate</li>
+</ol>
+<p>Pixel format conversion can be performed at any time, because it has no effect on the other transforms.</p>
+<p>The first parameter, <em>prcSrc</em>, is used to specify the region of interest for clipping the image. Because scaling is performed before clipping by convention, if the image is to be scaled as well as clipped, the region of interest should be determined after the image has been scaled.</p>
+<p>The second and third parameters indicate the size to which to scale the image.</p>
+<p>The <em>pguidDstFormat</em> parameter indicates the requested pixel format for the decoded image. Because WIC has already called <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapsourcetransform-getclosestpixelformat"><strong>GetClosestPixelFormat</strong></a>, this should be a pixel format that the decoder has indicated that it supports.</p>
+<p>The <em>dstTransform</em> parameter indicates the requested rotation angle, and whether to flip the image vertically, horizontally, or both. Again, because WIC will have already called <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapsourcetransform-doessupporttransform"><strong>DoesSupportTransform</strong></a>, the requested transform should be one that the decoder has already indicated that it supports. Remember that rotation should always be performed after scaling and clipping.</p>
+<h3>GetClosestSize</h3>
+<p><a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapsourcetransform-getclosestsize"><strong>GetClosestSize</strong></a> takes two in/out parameters. The caller uses the <em>puiWidth</em> and <em>puiHeight</em> parameters to specify the size at which that the caller prefers the image to be decoded. However, a decoder can decode an image only to a size thatâ€™s a multiple of its DCT size, and different image formats can have different DCT sizes. The decoder should determine, based on its own DCT size, the closest it can come to the requested size, and set the <em>puiWidth</em> and <em>puiHeight</em> to those dimensions on return. If a larger size is requested, but the codec doesnâ€™t support upscaling, the original should be returned.</p>
+<h3>GetClosestPixelFormat</h3>
+<p><a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapsourcetransform-getclosestpixelformat"><strong>GetClosestPixelFormat</strong></a> is used to determine the closest pixel format to the requested pixel format that the decoder can provide without loss of data. Itâ€™s always preferable to convert to a wider pixel format than a narrower one, even though it will increase the size of the image, because it can always be reconverted to a more restrictive format if necessary. However, after the data is lost, it canâ€™t be recovered.</p>
+<h2>Continued Reading</h2>
+<p>To learn more about how to create a WIC-enabled codec, see <a href="-wic-imp-iwicdevelopraw.html">Implementing IWICDevelopRaw</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Reference</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapsourcetransform"><strong>IWICBitmapSourceTransform</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Wincodecsdk/nn-wincodecsdk-iwicmetadatablockreader"><strong>IWICMetadataBlockReader</strong></a></p>
+<!-- raw HTML omitted -->
+<p><strong>Conceptual</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-imp-iwicmetadatablockreader.html">Implementing IWICMetadataBlockReader</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-imp-iwicdevelopraw.html">Implementing IWICDevelopRaw</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-howtowriteacodec.html">How to Write a WIC-Enabled CODEC</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-about-windows-imaging-codec.html">Windows Imaging Component Overview</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Signing a Message and Verifying a Message Signature</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example implements the procedure described in Procedure for Signing Data.
+ms.assetid: beaf3d67-de2b-4b30-812f-1659386a1bfc
+title: 'Example C Program: Signing a Message and Verifying a Message Signature'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Signing a Message and Verifying a Message Signature</h1>
+<p>The following example implements the procedure described in <a href="procedure-for-signing-data.html">Procedure for Signing Data</a>. For general information, see <a href="simplified-messages.html">Simplified Messages</a>. Details about the functions and structures can be found in <a href="cryptography-functions.html">Base Cryptography Functions</a>, <a href="cryptography-functions.html">Simplified Message Functions</a>, and <a href="cryptography-structures.html">CryptoAPI Structures</a>.</p>
+<p>This example also includes code to verify the message signature created. This code would usually be in a separate program but is included here for completeness and clarity.</p>
+<p>This example illustrates the following CryptoAPI functions:</p>
+<ul>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certopenstore"><strong>CertOpenStore</strong></a></li>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptsignmessage"><strong>CryptSignMessage</strong></a></li>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptverifymessagesignature"><strong>CryptVerifyMessageSignature</strong></a></li>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certfreecertificatecontext"><strong>CertFreeCertificateContext</strong></a></li>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certclosestore"><strong>CertCloseStore</strong></a></li>
+</ul>
+<p>Signing the message can only be done with access to a certificate that has an available <a href="../secgloss/p-gly.html"><em>private key</em></a>. Verification of the message can only be done with access to the public key related to the private key used to sign the certificate. The user can change the <strong>#define</strong> statement to the subject name from one of the user's personal certificates.</p>
+<p>This example also demonstrates the initialization of the CRYPT_SIGN_MESSAGE_PARA and CRYPT_VERIFY_MESSAGE_PARA structures needed for calls to <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptsignmessage"><strong>CryptSignMessage</strong></a> and <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptverifymessagesignature"><strong>CryptVerifyMessageSignature</strong></a>.</p>
+<p>This example also uses the function <a href="myhandleerror.html"><strong>MyHandleError</strong></a>. Code for this function is included with the example program and also can be seen in <a href="general-purpose-functions.html">General Purpose Functions</a>.</p>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+//   Copyright (C) Microsoft.  All rights reserved.
+
+#include &lt;stdio.h&gt;
+#include &lt;conio.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;wincrypt.h&gt;
+
+// Link with the Crypt32.lib file.
+#pragma comment (lib, &quot;Crypt32&quot;)
+
+#define MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+
+//-------------------------------------------------------------------
+//   Define the name of a certificate subject.
+//   To use this program, the definition of SIGNER_NAME
+//   must be changed to the name of the subject of
+//   a certificate that has access to a private key. That certificate
+//   must have either the CERT_KEY_PROV_INFO_PROP_ID or 
+//   CERT_KEY_CONTEXT_PROP_ID property set for the context to 
+//   provide access to the private signature key.
+
+//-------------------------------------------------------------------
+//    You can use a command similar to the following to create a 
+//    certificate that can be used with this example:
+//
+//    makecert -n &quot;cn=Test&quot; -sk Test -ss my
+
+//#define SIGNER_NAME L&quot;test&quot;
+#define SIGNER_NAME L&quot;Insert_signer_name_here&quot;
+
+//-------------------------------------------------------------------
+//    Define the name of the store where the needed certificate
+//    can be found. 
+
+#define CERT_STORE_NAME  L&quot;MY&quot;
+
+//-------------------------------------------------------------------
+//   Local function prototypes.
+void MyHandleError(LPTSTR psz);
+bool SignMessage(CRYPT_DATA_BLOB *pSignedMessageBlob);
+bool VerifySignedMessage(
+    CRYPT_DATA_BLOB *pSignedMessageBlob, 
+    CRYPT_DATA_BLOB *pDecodedMessageBlob);
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    CRYPT_DATA_BLOB SignedMessage;
+
+    if(SignMessage(&amp;SignedMessage))
+    {
+        CRYPT_DATA_BLOB DecodedMessage;
+
+        if(VerifySignedMessage(&amp;SignedMessage, &amp;DecodedMessage))
+        {
+            free(DecodedMessage.pbData);
+        }
+
+        free(SignedMessage.pbData);
+    }
+
+    _tprintf(TEXT(&quot;Press any key to exit.&quot;));
+    _getch();
+}
+
+//-------------------------------------------------------------------
+//    MyHandleError
+void MyHandleError(LPTSTR psz)
+{
+    _ftprintf(stderr, TEXT(&quot;An error occurred in the program. \n&quot;));
+    _ftprintf(stderr, TEXT(&quot;%s\n&quot;), psz);
+    _ftprintf(stderr, TEXT(&quot;Error number %x.\n&quot;), GetLastError());
+    _ftprintf(stderr, TEXT(&quot;Program terminating. \n&quot;));
+} // End of MyHandleError
+
+//-------------------------------------------------------------------
+//    SignMessage
+bool SignMessage(CRYPT_DATA_BLOB *pSignedMessageBlob)
+{
+    bool fReturn = false;
+    BYTE* pbMessage;
+    DWORD cbMessage;
+    HCERTSTORE hCertStore = NULL;   
+    PCCERT_CONTEXT pSignerCert; 
+    CRYPT_SIGN_MESSAGE_PARA  SigParams;
+    DWORD cbSignedMessageBlob;
+    BYTE  *pbSignedMessageBlob = NULL;
+
+    // Initialize the output pointer.
+    pSignedMessageBlob-&gt;cbData = 0;
+    pSignedMessageBlob-&gt;pbData = NULL;
+
+    // The message to be signed.
+    // Usually, the message exists somewhere and a pointer is
+    // passed to the application.
+    pbMessage = 
+        (BYTE*)TEXT(&quot;CryptoAPI is a good way to handle security&quot;);
+
+    // Calculate the size of message. To include the 
+    // terminating null character, the length is one more byte 
+    // than the length returned by the strlen function.
+    cbMessage = (lstrlen((TCHAR*) pbMessage) + 1) * sizeof(TCHAR);
+
+    // Create the MessageArray and the MessageSizeArray.
+    const BYTE* MessageArray[] = {pbMessage};
+    DWORD_PTR MessageSizeArray[1];
+    MessageSizeArray[0] = cbMessage;
+
+    //  Begin processing. 
+    _tprintf(TEXT(&quot;The message to be signed is \&quot;%s\&quot;.\n&quot;),
+        pbMessage);
+
+    // Open the certificate store.
+    if ( !( hCertStore = CertOpenStore(
+       CERT_STORE_PROV_SYSTEM,
+       0,
+       NULL,
+       CERT_SYSTEM_STORE_CURRENT_USER,
+       CERT_STORE_NAME)))
+    {
+         MyHandleError(TEXT(&quot;The MY store could not be opened.&quot;));
+         goto exit_SignMessage;
+    }
+
+    // Get a pointer to the signer's certificate.
+    // This certificate must have access to the signer's private key.
+    if(pSignerCert = CertFindCertificateInStore(
+       hCertStore,
+       MY_ENCODING_TYPE,
+       0,
+       CERT_FIND_SUBJECT_STR,
+       SIGNER_NAME,
+       NULL))
+    {
+       _tprintf(TEXT(&quot;The signer's certificate was found.\n&quot;));
+    }
+    else
+    {
+        MyHandleError( TEXT(&quot;Signer certificate not found.&quot;));
+        goto exit_SignMessage;
+    }
+
+    // Initialize the signature structure.
+    SigParams.cbSize = sizeof(CRYPT_SIGN_MESSAGE_PARA);
+    SigParams.dwMsgEncodingType = MY_ENCODING_TYPE;
+    SigParams.pSigningCert = pSignerCert;
+    SigParams.HashAlgorithm.pszObjId = szOID_RSA_SHA1RSA;
+    SigParams.HashAlgorithm.Parameters.cbData = NULL;
+    SigParams.cMsgCert = 1;
+    SigParams.rgpMsgCert = &amp;pSignerCert;
+    SigParams.cAuthAttr = 0;
+    SigParams.dwInnerContentType = 0;
+    SigParams.cMsgCrl = 0;
+    SigParams.cUnauthAttr = 0;
+    SigParams.dwFlags = 0;
+    SigParams.pvHashAuxInfo = NULL;
+    SigParams.rgAuthAttr = NULL;
+
+    // First, get the size of the signed BLOB.
+    if(CryptSignMessage(
+        &amp;SigParams,
+        FALSE,
+        1,
+        MessageArray,
+        MessageSizeArray,
+        NULL,
+        &amp;cbSignedMessageBlob))
+    {
+        _tprintf(TEXT(&quot;%d bytes needed for the encoded BLOB.\n&quot;),
+            cbSignedMessageBlob);
+    }
+    else
+    {
+        MyHandleError(TEXT(&quot;Getting signed BLOB size failed&quot;));
+        goto exit_SignMessage;
+    }
+
+    // Allocate memory for the signed BLOB.
+    if(!(pbSignedMessageBlob = 
+       (BYTE*)malloc(cbSignedMessageBlob)))
+    {
+        MyHandleError(
+            TEXT(&quot;Memory allocation error while signing.&quot;));
+        goto exit_SignMessage;
+    }
+
+    // Get the signed message BLOB.
+    if(CryptSignMessage(
+          &amp;SigParams,
+          FALSE,
+          1,
+          MessageArray,
+          MessageSizeArray,
+          pbSignedMessageBlob,
+          &amp;cbSignedMessageBlob))
+    {
+        _tprintf(TEXT(&quot;The message was signed successfully. \n&quot;));
+
+        // pbSignedMessageBlob now contains the signed BLOB.
+        fReturn = true;
+    }
+    else
+    {
+        MyHandleError(TEXT(&quot;Error getting signed BLOB&quot;));
+        goto exit_SignMessage;
+    }
+
+exit_SignMessage:
+
+    // Clean up and free memory as needed.
+    if(pSignerCert)
+    {
+        CertFreeCertificateContext(pSignerCert);
+    }
+    
+    if(hCertStore)
+    {
+        CertCloseStore(hCertStore, CERT_CLOSE_STORE_CHECK_FLAG);
+        hCertStore = NULL;
+    }
+
+    // Only free the signed message if a failure occurred.
+    if(!fReturn)
+    {
+        if(pbSignedMessageBlob)
+        {
+            free(pbSignedMessageBlob);
+            pbSignedMessageBlob = NULL;
+        }
+    }
+
+    if(pbSignedMessageBlob)
+    {
+        pSignedMessageBlob-&gt;cbData = cbSignedMessageBlob;
+        pSignedMessageBlob-&gt;pbData = pbSignedMessageBlob;
+    }
+    
+    return fReturn;
+}
+
+//-------------------------------------------------------------------
+//    VerifySignedMessage
+//
+//    Verify the message signature. Usually, this would be done in 
+//    a separate program. 
+bool VerifySignedMessage(
+    CRYPT_DATA_BLOB *pSignedMessageBlob, 
+    CRYPT_DATA_BLOB *pDecodedMessageBlob)
+{
+    bool fReturn = false;
+    DWORD cbDecodedMessageBlob;
+    BYTE *pbDecodedMessageBlob = NULL;
+    CRYPT_VERIFY_MESSAGE_PARA VerifyParams;
+
+    // Initialize the output.
+    pDecodedMessageBlob-&gt;cbData = 0;
+    pDecodedMessageBlob-&gt;pbData = NULL;
+
+    // Initialize the VerifyParams data structure.
+    VerifyParams.cbSize = sizeof(CRYPT_VERIFY_MESSAGE_PARA);
+    VerifyParams.dwMsgAndCertEncodingType = MY_ENCODING_TYPE;
+    VerifyParams.hCryptProv = 0;
+    VerifyParams.pfnGetSignerCertificate = NULL;
+    VerifyParams.pvGetArg = NULL;
+
+    // First, call CryptVerifyMessageSignature to get the length 
+    // of the buffer needed to hold the decoded message.
+    if(CryptVerifyMessageSignature(
+        &amp;VerifyParams,
+        0,
+        pSignedMessageBlob-&gt;pbData,
+        pSignedMessageBlob-&gt;cbData,
+        NULL,
+        &amp;cbDecodedMessageBlob,
+        NULL))
+    {
+        _tprintf(TEXT(&quot;%d bytes needed for the decoded message.\n&quot;),
+            cbDecodedMessageBlob);
+
+    }
+    else
+    {
+        _tprintf(TEXT(&quot;Verification message failed. \n&quot;));
+        goto exit_VerifySignedMessage;
+    }
+
+    //---------------------------------------------------------------
+    //   Allocate memory for the decoded message.
+    if(!(pbDecodedMessageBlob = 
+       (BYTE*)malloc(cbDecodedMessageBlob)))
+    {
+        MyHandleError(
+            TEXT(&quot;Memory allocation error allocating decode BLOB.&quot;));
+        goto exit_VerifySignedMessage;
+    }
+
+    //---------------------------------------------------------------
+    // Call CryptVerifyMessageSignature again to verify the signature
+    // and, if successful, copy the decoded message into the buffer. 
+    // This will validate the signature against the certificate in 
+    // the local store.
+    if(CryptVerifyMessageSignature(
+        &amp;VerifyParams,
+        0,
+        pSignedMessageBlob-&gt;pbData,
+        pSignedMessageBlob-&gt;cbData,
+        pbDecodedMessageBlob,
+        &amp;cbDecodedMessageBlob,
+        NULL))
+    {
+        _tprintf(TEXT(&quot;The verified message is \&quot;%s\&quot;.\n&quot;),
+            pbDecodedMessageBlob);
+
+        fReturn = true;
+    }
+    else
+    {
+        _tprintf(TEXT(&quot;Verification message failed. \n&quot;));
+    }
+
+exit_VerifySignedMessage:
+    // If something failed and the decoded message buffer was 
+    // allocated, free it.
+    if(!fReturn)
+    {
+        if(pbDecodedMessageBlob)
+        {
+            free(pbDecodedMessageBlob);
+            pbDecodedMessageBlob = NULL;
+        }
+    }
+
+    // If the decoded message buffer is still around, it means the 
+    // function was successful. Copy the pointer and size into the 
+    // output parameter.
+    if(pbDecodedMessageBlob)
+    {
+        pDecodedMessageBlob-&gt;cbData = cbDecodedMessageBlob;
+        pDecodedMessageBlob-&gt;pbData = pbDecodedMessageBlob;
+    }
+
+    return fReturn;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

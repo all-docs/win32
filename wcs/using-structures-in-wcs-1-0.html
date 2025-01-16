@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using Structures in WCS 1.0</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Using Structures in WCS 1.0
+description: Most of the structures used by WCS 1.0 are very straightforward and require little explanation. They are documented in the WCS 1.0 Reference section entitled Structures.
+ms.assetid: 8d3682e2-38fd-4a33-b386-ab0716bb6972
+keywords:</p>
+<ul>
+<li>Windows Color System (WCS),structures</li>
+<li>WCS (Windows Color System),structures</li>
+<li>image color management,structures</li>
+<li>color management,structures</li>
+<li>colors,structures</li>
+</ul>
+<h2>ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using Structures in WCS 1.0</h1>
+<p>Most of the structures used by WCS 1.0 are very straightforward and require little explanation. They are documented in the WCS 1.0 Reference section entitled <a href="structures.html">Structures</a>.</p>
+<p>Exceptions are the <a href="/windows/win32/api/icm/ns-icm-colormatchsetupw"><strong>COLORMATCHSETUPW</strong></a> structure used by the <a href="/windows/win32/api/icm/nf-icm-setupcolormatchingw"><strong>SetupColorMatchingW</strong></a> function, and the following Windows structures defined in Wingdi.h:</p>
+<ul>
+<li><a href="#windows-bitmap-header-structures">BITMAPV5HEADER</a></li>
+<li><a href="/windows/win32/api/wingdi/ns-wingdi-logcolorspacea"><strong>LOGCOLORSPACE</strong></a></li>
+<li><a href="/windows/win32/api/wingdi/ns-wingdi-ciexyz"><strong>CIEXYZ</strong></a></li>
+<li><a href="/windows/win32/api/wingdi/ns-wingdi-ciexyztriple"><strong>CIEXYZTRIPLE</strong></a></li>
+</ul>
+<p>The following topics are discussed at greater length:</p>
+<ul>
+<li><a href="#windows-bitmap-header-structures">Windows Bitmap Header Structures</a></li>
+<li><a href="#differences-between-v4-and-v5-headers">Differences Between V4 and V5 Headers</a></li>
+<li><a href="#bitmapexe-a-command-line-utility-for-converting-bitmap-headers">Bitmap.exe: a Command-Line Utility for Converting Bitmap Headers</a></li>
+</ul>
+<h2>Windows Bitmap Header Structures</h2>
+<p>WCS 1.0 allows ICC color profiles to be linked or embedded in device-independent bitmaps (DIBs). This allows DIB colors to be characterized more accurately than was possible using WCS in Windows 95. <a href="/windows/win32/api/wingdi/ns-wingdi-bitmapv5header">BITMAPV5HEADER</a> , the new bitmap header structure, is defined in Wingdi.h in the release of Windows 98. For development purposes, it is also included in the file Icm.h with this Programmer's Reference. The <strong>BITMAPV5HEADER</strong> structure is as follows:</p>
+<pre lang="C++"><code>typedef struct {
+    DWORD        bV5Size;
+    LONG         bV5Width;
+    LONG         bV5Height;
+    WORD         bV5Planes;
+    WORD         bV5BitCount;
+    DWORD        bV5Compression;
+    DWORD        bV5SizeImage;
+    LONG         bV5XPelsPerMeter;
+    LONG         bV5YPelsPerMeter;
+    DWORD        bV5ClrUsed;
+    DWORD        bV5ClrImportant;
+    DWORD        bV5RedMask;
+    DWORD        bV5GreenMask;
+    DWORD        bV5BlueMask;
+    DWORD        bV5AlphaMask;
+    DWORD        bV5CSType;
+    CIEXYZTRIPLE bV5Endpoints;
+    DWORD        bV5GammaRed;
+    DWORD        bV5GammaGreen;
+    DWORD        bV5GammaBlue;
+    DWORD        bV5Intent;         // Rendering intent for bitmap 
+    DWORD        bV5ProfileData;    // Offset to profile data 
+    DWORD        bV5ProfileSize;    // Size of embedded profile data 
+    DWORD        bV5Reserved;       // Should be zero 
+} BITMAPV5HEADER, FAR *LPBITMAPV5HEADER, *PBITMAPV5HEADER;
+</code></pre>
+<p>The member <strong>bV5CSType</strong> can have the values PROFILE_EMBEDDED or PROFILE_LINKED to specify whether a profile is embedded or linked with the DIB. The member <strong>bV5ProfileData</strong> is the offset in bytes from the beginning of the <strong>BITMAPV5HEADER</strong> structure to the start of the profile data. If the profile is embedded, profile data is the actual profile, and if it is linked, the profile data is the null-terminated file name of the profile. This cannot be a Unicode string. It must be composed exclusively of characters from the Windows character set (code page 1252).</p>
+<p>When a DIB is loaded into memory, the profile data (if present) should follow the color table, and <strong>bV5ProfileData</strong> should give the offset of the profile data from the beginning of the <strong>BITMAPV5HEADER</strong> structure. The value of this member will be different now, as the bitmap bits do not follow the color table in memory. Applications should modify the <strong>bV5ProfileData</strong> member after loading the DIB into memory.</p>
+<p>For packed DIBs, the profile data should follow the bitmap bits similar to the file format. The <strong>bV5ProfileData</strong> member should still give the offset of the profile data from the beginning of the <strong>BITMAPV5HEADER</strong> structure.</p>
+<p>Applications should access the profile data only when <strong>bV5Size</strong> == <strong>sizeof</strong> ( <strong>BITMAPV5HEADER</strong> ) <strong>ANDbV5CSType</strong> is PROFILE_EMBEDDED or PROFILE_LINKED.</p>
+<p>If a profile is linked, the path of the profile can be any fully qualified name (including a network path) that can be opened using the Win32 <strong>CreateFile</strong> function.</p>
+<h2>Differences Between V4 and V5 Headers</h2>
+<p>In working with the new bitmap structure, it is useful to recognize differences in how <strong>BITMAPV4HEADER</strong> and <strong>BITMAPV5HEADER</strong> structures are set up:</p>
+<table>
+<thead>
+<tr>
+<th>V4 Header</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>bV4CSType</strong></td>
+<td>LCS_CALIBRATED_RGB. This value implies that end points and gammas are given in the appropriate fields. Bogus values cause trouble.</td>
+</tr>
+<tr>
+<td><strong>bV4CSType</strong></td>
+<td>LCS_sRGB. This value implies that the bitmap is in sRGB color space (gammas and endpoints ignored).</td>
+</tr>
+<tr>
+<td><strong>bV4CSType</strong></td>
+<td>LCS_WINDOWS_COLOR_SPACE. This value implies that the bitmap is in Windows default color space.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<table>
+<thead>
+<tr>
+<th>V5 Header</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>bV5CSType</strong></td>
+<td>LCS_CALIBRATED_RGB. This value implies that end points and gammas are given in the appropriate fields. Bogus values cause trouble.</td>
+</tr>
+<tr>
+<td><strong>bV5CSType</strong></td>
+<td>LCS_sRGB. This value implies that the bitmap is in sRGB color space (gammas and endpoints ignored).</td>
+</tr>
+<tr>
+<td><strong>bV5CSType</strong></td>
+<td>PROFILE_EMBEDDED. This value implies that <strong>bV5ProfileData</strong> points to a memory buffer that contains the profile to use (gammas and endpoints are ignored).</td>
+</tr>
+<tr>
+<td><strong>bV5CSType</strong></td>
+<td>PROFILE_LINKED. This value implies that <strong>bV5ProfileData</strong> points to the file name of the profile to use (gammas and endpoints are ignored).</td>
+</tr>
+<tr>
+<td><strong>bV5CSType</strong></td>
+<td>LCS_WINDOWS_COLOR_SPACE. This value implies that the bitmap is in Windows default color space.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>In order to convert older bitmaps to and from the new <strong>BITMAPV5HEADER</strong> structure, a command-line conversion utility file named Bitmap.exe is included in the WCS 1.0 Programmer's Reference.</p>
+<h2>BitMap.exe: a Command-Line Utility for Converting Bitmap Headers</h2>
+<p>Bitmap.exe is a command-line utility located in the \Bin folder under the installation folder that you specified. It modifies the headers of Windows bitmaps, allowing you to convert existing bitmaps from <strong>BITMAPINFOHEADER</strong> and <strong>BITMAPV4HEADER</strong> header structures to the newer <strong>BITMAPV5HEADER</strong> structure and back again. The command-line syntax is as follows:</p>
+<pre lang="C++"><code>BITMAP [/d] [/1|4|5] [/s] [/f] 
+filename
+</code></pre>
+<p>The command-line switches have the following effects.</p>
+<table>
+<thead>
+<tr>
+<th>Switch</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>/d</td>
+<td>Default values are automatically entered in the converted headers.</td>
+</tr>
+<tr>
+<td>/1</td>
+<td>Convert the specified bitmaps to <strong>BITMAPINFOHEADER</strong></td>
+</tr>
+<tr>
+<td>/4</td>
+<td>Convert the specified bitmaps to <strong>BITMAPV4HEADER</strong></td>
+</tr>
+<tr>
+<td>/5</td>
+<td>Convert the specified bitmaps to <strong>BITMAPV5HEADER</strong></td>
+</tr>
+<tr>
+<td>/f</td>
+<td>Forces conversion, even if the bitmap already has the right header</td>
+</tr>
+<tr>
+<td>/s</td>
+<td>Converts bitmaps in the specified folder and all subdirectories under it</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Â </p>
+<p>Â </p>
+</body>

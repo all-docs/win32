@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Managing the File System</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The Shell provides a number of ways to manage file systems.
+ms.assetid: d9ffda6f-adc0-44a3-b410-e23bf5f4f165
+title: Managing the File System
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Managing the File System</h1>
+<p>The Shell provides a number of ways to manage file systems. The Shell provides a function, <a href="/windows/desktop/api/Shellapi/nf-shellapi-shfileoperationa"><strong>SHFileOperation</strong></a>, that allows an application to programmatically move, copy, rename, and delete files. The Shell also supports some additional file management capabilities.</p>
+<ul>
+<li>HTML documents can be <em>connected</em> to related files, such as graphics files or style sheets. When the document is moved or copied, the connected files are automatically moved or copied as well.</li>
+<li>For systems that are available to more than one user, files can be managed on a per-user basis. Users have easy access to their data files, but not to files belonging to other users.</li>
+<li>If document files are added or modified, they can be added to the Shell's list of recent documents. When the user clicks the <strong>Documents</strong> command on the Start menu, a list of links to the documents appears.</li>
+</ul>
+<p>This document discusses how these file management technologies work. It then outlines how to use the Shell to move, copy, rename, and delete files, and how to manage objects in the Recycle Bin.</p>
+<ul>
+<li><a href="#per-user-file-management">Per-User File Management</a></li>
+<li><a href="#my-documents-and-my-pictures-folders">My Documents and My Pictures Folders</a></li>
+<li><a href="#connected-files">Connected Files</a></li>
+<li><a href="#moving-copying-renaming-and-deleting-files">Moving, Copying, Renaming, and Deleting Files</a>
+<ul>
+<li><a href="#notifying-the-shell">Notifying the Shell</a></li>
+</ul>
+</li>
+<li><a href="#simple-example-of-managing-files-with-shfileoperation">Simple Example of Managing Files with SHFileOperation</a></li>
+<li><a href="#adding-files-to-the-shells-list-of-recent-documents">Adding Files to the Shell's List of Recent Documents</a></li>
+</ul>
+<h2>Per-User File Management</h2>
+<p>The WindowsÂ 2000 Shell allows files to be associated with a particular user so the files remain hidden from other users. In terms of the file system, the files are stored under the user's profile folder, typically C:\Documents and Settings\<em>Username</em>\ on WindowsÂ 2000 systems. This feature allows many individuals to use the same computer, while maintaining the privacy of their files from other users. Different users can have different programs available. It also provides a straightforward way for administrators and applications to store such things as initialization (.ini) or link (.lnk) files. Applications can thus preserve a different state for each user and easily recover that particular state when needed. There is also a profile folder for storing information that is common to all users.</p>
+<p>Because it is inconvenient to determine which user is logged in and where their files are located, the standard per-user folders are special folders and are identified by a <a href="csidl.html"><strong>CSIDL</strong></a>. For instance, the CSIDL for the per-user Program Files folder is CSIDL_PROGRAMS. If your application calls <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shgetfolderlocation"><strong>SHGetFolderLocation</strong></a> or <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shgetfolderpatha"><strong>SHGetFolderPath</strong></a> with one of the per-user CSIDLs, the function returns the pointer to an item identifier list (PIDL) or path appropriate to the currently logged-in user. If your application needs to retrieve the path or PIDL of the profile folder, its CSIDL is <strong>CSIDL_PROFILE</strong>.</p>
+<h2>My Documents and My Pictures Folders</h2>
+<p>One of the standard icons found on the desktop is <strong>My Documents</strong>. When you open this folder, it contains the current user's document files. The desktop instance of My Documents is a virtual folderâ€”an alias to the file system location used to physically store the user's documentsâ€”located immediately below the desktop in the namespace hierarchy.</p>
+<p>The purpose of the My Documents and My Pictures folders is to provide a straightforward and secure way for users to access their document and picture files on a system that might have multiple users. Each user is assigned separate file system folders for his or her files. For example, the location of a user's documents folder in the file system is typically something like C:\Documents and Settings\<em>username</em>\My Documents. There is no need for users to know anything about the physical location of their file system folders. They simply access their files through the My Documents icon.</p>
+<blockquote>
+<p>[!Note]<br />
+My Documents allows a user to access his or her own files but not those of any other user. If multiple individuals use the same computer, an administrator can lock users out of the part of the file system where the actual files are stored. Users will thus be able to work on their own documents through the My Documents folder but not on documents that belong to any other users.</p>
+</blockquote>
+<p>Â </p>
+<p>There is usually no need for an application to know which user is logged in or where in the file system that user's My Documents folder is located. Instead, your application can retrieve the PIDL of the My Documents desktop icon by calling the desktop's <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellfolder-parsedisplayname"><strong>IShellFolder::ParseDisplayName</strong></a> method. The parsing name used to identify the My Documents folder is not a file path but rather ::{450d8fba-ad25-11d0-98a8-0800361b1103}. The bracketed expression is the text form of the My Documents GUID. For example, to retrieve the PIDL of My Documents, your application should use this call to <strong>IShellFolder::ParseDisplayName</strong>.</p>
+<pre lang="C++"><code>hr = psfDeskTop-&gt;ParseDisplayName(NULL, 
+                                  NULL, 
+                                  L&quot;::{450d8fba-ad25-11d0-98a8-0800361b1103}&quot;, 
+                                  &amp;chEaten, 
+                                  &amp;pidlDocFiles, 
+                                  NULL);
+</code></pre>
+<p>Once your application has the My Documents PIDL, it can handle the folder just as it would a normal file system folderâ€”enumerating items, parsing, binding, and performing any other valid folder operations. The Shell automatically maps changes in My Documents or its subfolders to the appropriate file system folders.</p>
+<p>If your application needs access to the actual file system folder that contains the current user's documents, pass CSIDL_PERSONAL to <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shgetfolderlocation"><strong>SHGetFolderLocation</strong></a>. The function returns the PIDL of the file system folder that is displayed in the current user's My Documents folder.</p>
+<h2>Connected Files</h2>
+<p>HTML documents often have a number of associated graphics files, a style sheet file, several Microsoft JScript (compatible with ECMA 262 language specification ) files, and so on. When you move or copy the primary HTML document, you also usually want to move or copy its associated files to avoid breaking links. Unfortunately, there has been no easy way until now to determine which files are related to any given HTML document other than by analyzing their contents. To alleviate this problem, WindowsÂ 2000 provides a simple way to <em>connect</em> a primary HTML document to its group of associated files. If file connection is enabled, when the document is moved or copied all its connected files go with it.</p>
+<p>To create a group of connected files, the primary document must have an .htm or .html file name extension. Create a subfolder of the primary document's parent folder. The subfolder's name must be the name of the primary document, minus the .htm or .html extension, followed by one of the extensions listed below. The most commonly used extensions are &quot;.files&quot; or &quot;_files&quot;. For instance, if the primary document is named MyDoc.htm, naming the subfolder &quot;MyDoc_files&quot; defines the subfolder as the container for the document's connected files. If the primary document is moved or copied, the subfolder and its files are moved or copied as well.</p>
+<p>For some languages, it is possible to use a localized equivalent of &quot;_files&quot; to create a subfolder for connected files. The following table lists the valid strings that can be appended to a document name to create a connected files subfolder. Note that some of these strings have '-' as their first character rather than '_' or '.'.</p>
+<p>:::row:::
+:::column span=&quot;&quot;:::
+&quot;_archivos&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_arquivos&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_bestanden&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_bylos&quot;
+:::column-end:::
+:::row-end:::
+:::row:::
+:::column span=&quot;&quot;:::
+&quot;-Dateien&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_datoteke&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_dosyalar&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_elemei&quot;
+:::column-end:::
+:::row-end:::
+:::row:::
+:::column span=&quot;&quot;:::
+&quot;_failid&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_fails&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_fajlovi&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_ficheiros&quot;
+:::column-end:::
+:::row-end:::
+:::row:::
+:::column span=&quot;&quot;:::
+&quot;_fichiers&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;-filer&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;.files&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_files&quot;
+:::column-end:::
+:::row-end:::
+:::row:::
+:::column span=&quot;&quot;:::
+&quot;_file&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_fitxers&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_fitxategiak&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_pliki&quot;
+:::column-end:::
+:::row-end:::
+:::row:::
+:::column span=&quot;&quot;:::
+&quot;_soubory&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+&quot;_tiedostot&quot;
+:::column-end:::
+:::column span=&quot;&quot;:::
+:::column-end:::
+:::column span=&quot;&quot;:::
+:::column-end:::
+:::row-end:::</p>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+This feature is sensitive to the case of the extension. For instance, for the example given above, a subfolder named &quot;MyDoc_Files&quot; will not be connected to MyDoc.htm.</p>
+</blockquote>
+<p>Â </p>
+<p>Whether file connection is enabled or disabled is controlled by a <strong>REG_DWORD</strong> value, NoFileFolderConnection, of the following registry key.</p>
+<pre><code>HKEY_CURRENT_USER
+Â Â Â Software
+Â Â Â Â Â Â Microsoft
+Â Â Â Â Â Â Â Â Â Windows
+Â Â Â Â Â Â Â Â Â Â Â Â CurrentVersion
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Explorer
+</code></pre>
+<p>This value normally is not defined, and file connection is enabled. If necessary, you can disable file connection by adding this value to the key and setting it to 1. To enable file connection again, set NoFileFolderConnection to zero.</p>
+<blockquote>
+<p>[!Note]<br />
+File connection should normally be enabled because other applications might depend on it. Disable file connection only if absolutely necessary.</p>
+</blockquote>
+<p>Â </p>
+<h2>Moving, Copying, Renaming, and Deleting Files</h2>
+<p>The namespace is not static, and applications commonly need to manage the file system by performing one of the following operations.</p>
+<ul>
+<li>Copying an object to another folder.</li>
+<li>Moving an object to another folder.</li>
+<li>Deleting an object.</li>
+<li>Renaming an object.</li>
+</ul>
+<p>These operations are all performed with <a href="/windows/desktop/api/Shellapi/nf-shellapi-shfileoperationa"><strong>SHFileOperation</strong></a>. This function takes one or more source files and produces corresponding destination files. In the case of the delete operation, the system attempts to put the deleted files into the Recycle Bin.</p>
+<p>It is also possible to move files using the <a href="dragdrop.html">drag-and-drop</a> functionality.</p>
+<p>To use the function, you must fill in the members of an <a href="/windows/desktop/api/Shellapi/ns-shellapi-shfileopstructa"><strong>SHFILEOPSTRUCT</strong></a> structure and pass it to <a href="/windows/desktop/api/Shellapi/nf-shellapi-shfileoperationa"><strong>SHFileOperation</strong></a>. The key members of the structure are <strong>pFrom</strong> and <strong>pTo</strong>.</p>
+<p>The <strong>pFrom</strong> member is a double <strong>null</strong>-terminated string that contains one or more source file names. These names can be either fully qualified paths or standard DOS wildcards such as *.*. Although this member is declared as a <strong>null</strong>-terminated string, it is used as a buffer to hold multiple file names. Each file name must be terminated by the usual single <strong>NULL</strong> character. An additional <strong>NULL</strong> character must be appended to the end of the final name to indicate the end of <strong>pFrom</strong>.</p>
+<p>The <strong>pTo</strong> member is a double <strong>null</strong>-terminated string, much like <strong>pFrom</strong>. The <strong>pTo</strong> member contains the names of one or more fully qualified destination names. They are packed into <strong>pTo</strong> in the same way as they are for <strong>pFrom</strong>. If <strong>pTo</strong> contains multiple names, you must also set the <strong>FOF_MULTIDESTFILES</strong> flag in the <strong>fFlags</strong> member. The usage of <strong>pTo</strong> depends on the operation as described here.</p>
+<ul>
+<li>For copy and move operations, if all the files are going to a single directory, <strong>pTo</strong> contains the fully qualified directory name. If the files are going to different destinations, <strong>pTo</strong> can also contain one fully qualified directory or file name for each source file. If a directory does not exist, the system creates it.</li>
+<li>For rename operations, <strong>pTo</strong> contains one fully qualified path for each source file in <strong>pFrom</strong>.</li>
+<li>For delete operations, <strong>pTo</strong> is not used.</li>
+</ul>
+<h3>Notifying the Shell</h3>
+<p>Notify the Shell of the change after using <a href="/windows/desktop/api/Shellapi/nf-shellapi-shfileoperationa"><strong>SHFileOperation</strong></a> to move, copy, rename, or delete files, or after taking any other action that affects the namespace. Actions that should be accompanied by notification include the following:</p>
+<ul>
+<li>Adding or deleting files or folders.</li>
+<li>Moving, copying, or renaming files or folders.</li>
+<li>Changing a file association.</li>
+<li>Changing file attributes.</li>
+<li>Adding or removing drives or storage media.</li>
+<li>Creating or disabling a shared folder.</li>
+<li>Changing the system image list.</li>
+</ul>
+<p>An application notifies the Shell by calling <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shchangenotify"><strong>SHChangeNotify</strong></a> with the details of what has changed. The Shell can then update its image of the namespace to accurately reflect its new state.</p>
+<h2>Simple Example of Managing Files with SHFileOperation</h2>
+<p>The following sample console application illustrates the use of <a href="/windows/desktop/api/Shellapi/nf-shellapi-shfileoperationa"><strong>SHFileOperation</strong></a> to copy files from one directory to another. The source and destination directories, C:\My_Docs and C:\My_Docs2, are hard-coded into the application for simplicity.</p>
+<pre lang="C++"><code>#include &lt;shlobj.h&gt;
+#include &lt;shlwapi.h&gt;
+#include &lt;strsafe.h&gt;
+
+int main(void)
+{
+    IShellFolder *psfDeskTop = NULL;
+    IShellFolder *psfDocFiles = NULL;
+    LPITEMIDLIST pidlDocFiles = NULL;
+    LPITEMIDLIST pidlItems = NULL;
+    IEnumIDList *ppenum = NULL;
+    SHFILEOPSTRUCT sfo;
+    STRRET strDispName;
+    TCHAR szParseName[MAX_PATH];
+    TCHAR szSourceFiles[256];
+    int i;
+    int iBufPos = 0;
+    ULONG chEaten;
+    ULONG celtFetched;
+    size_t ParseNameSize = 0;
+    HRESULT hr;
+    
+
+    szSourceFiles[0] = '\0';
+    hr = SHGetDesktopFolder(&amp;psfDeskTop);
+
+    hr = psfDeskTop-&gt;ParseDisplayName(NULL, NULL, L&quot;c:\\My_Docs&quot;, 
+         &amp;chEaten, &amp;pidlDocFiles, NULL);
+    hr = psfDeskTop-&gt;BindToObject(pidlDocFiles, NULL, IID_IShellFolder, 
+         (LPVOID *) &amp;psfDocFiles);
+    hr = psfDeskTop-&gt;Release();
+
+    hr = psfDocFiles-&gt;EnumObjects(NULL,SHCONTF_FOLDERS | SHCONTF_NONFOLDERS, 
+         &amp;ppenum);
+
+    while( (hr = ppenum-&gt;Next(1,&amp;pidlItems, &amp;celtFetched)) == S_OK 
+       &amp;&amp; (celtFetched) == 1)
+    {
+        psfDocFiles-&gt;GetDisplayNameOf(pidlItems, SHGDN_FORPARSING, 
+            &amp;strDispName);
+        StrRetToBuf(&amp;strDispName, pidlItems, szParseName, MAX_PATH);
+        
+        hr = StringCchLength(szParseName, MAX_PATH, &amp;ParseNameSize);
+        
+        if (SUCCEEDED(hr))
+        {
+            for(i=0; i&lt;=ParseNameSize; i++)
+            {
+                szSourceFiles[iBufPos++] = szParseName[i];
+            }
+            CoTaskMemFree(pidlItems);
+        }
+    }
+    ppenum-&gt;Release();
+    
+    szSourceFiles[iBufPos] = '\0';
+
+    sfo.hwnd = NULL;
+    sfo.wFunc = FO_COPY;
+    sfo.pFrom = szSourceFiles;
+    sfo.pTo = &quot;c:\\My_Docs2\0&quot;;
+    sfo.fFlags = FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOCONFIRMMKDIR;
+
+    hr = SHFileOperation(&amp;sfo);
+    
+    SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATH, (LPCVOID) &quot;c:\\My_Docs2&quot;, 0);
+
+    CoTaskMemFree(pidlDocFiles);
+    psfDocFiles-&gt;Release();
+
+    return 0;
+}
+</code></pre>
+<p>The application first retrieves a pointer to the desktop's <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellfolder"><strong>IShellFolder</strong></a> interface. It then retrieves the source directory's PIDL by passing its fully qualified path to <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellfolder-parsedisplayname"><strong>IShellFolder::ParseDisplayName</strong></a>. Note that <strong>IShellFolder::ParseDisplayName</strong> requires the directory's path to be a Unicode string. The application then binds to the source directory and uses its <strong>IShellFolder</strong> interface to retrieve an enumerator object's <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ienumidlist"><strong>IEnumIDList</strong></a> interface.</p>
+<p>As each file in the source directory is enumerated, <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellfolder-getdisplaynameof"><strong>IShellFolder::GetDisplayNameOf</strong></a> is used to retrieve its name. The SHGDN_FORPARSING flag is set, which causes <strong>IShellFolder::GetDisplayNameOf</strong> to return the file's fully qualified path. The file paths, including the terminating <strong>NULL</strong> characters, are concatenated into a single array, <em>szSourceFiles</em>. A second <strong>NULL</strong> character is appended to the final path to terminate the array properly.</p>
+<p>Once the enumeration is complete, the application assigns values to an <a href="/windows/desktop/api/Shellapi/ns-shellapi-shfileopstructa"><strong>SHFILEOPSTRUCT</strong></a> structure. Note that the array assigned to <strong>pTo</strong> to specify the destination must also be terminated by a double <strong>NULL</strong>. In this case, it is simply included in the string that is assigned to <strong>pTo</strong>. Because this is a console application, the FOF_SILENT, FOF_NOCONFIRMATION, and FOF_NOCONFIRMMKDIR flags are set to suppress any dialog boxes that might appear. After <a href="/windows/desktop/api/Shellapi/nf-shellapi-shfileoperationa"><strong>SHFileOperation</strong></a> returns, <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shchangenotify"><strong>SHChangeNotify</strong></a> is called to notify the Shell of the change. Then the application performs the usual cleanup and returns.</p>
+<h2>Adding Files to the Shell's List of Recent Documents</h2>
+<p>The Shell maintains a list of recently added or modified documents for each user. The user can display a list of links to these files by clicking Documents on the Start menu. As with My Documents, each user has a file system directory to hold the actual links. To retrieve the PIDL of the current user's Recent directory, your application can call <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shgetfolderlocation"><strong>SHGetFolderLocation</strong></a> with CSIDL_RECENT, or call <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shgetfolderpatha"><strong>SHGetFolderPath</strong></a> to retrieve its path.</p>
+<p>Your application can enumerate the contents of the Recent folder using the techniques discussed earlier in this document. However, an application should not modify the contents of the folder as if it were a normal file system folder. If it does so, the Shell's list of recent documents will not be updated properly, and the changes will not be reflected in the Start menu. Instead, to add a document link to a user's Recent folder, your application can call <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shaddtorecentdocs"><strong>SHAddToRecentDocs</strong></a>. The Shell will add a link to the appropriate file system folder, as well as updating its list of recent documents and the Start menu. You can also use this function to clear the folder.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

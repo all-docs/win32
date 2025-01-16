@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Handling Stream Changes</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how a Media Foundation transform (MFT) should handle format changes during streaming.
+ms.assetid: b0a94760-b4dd-4e50-a5ce-a1f674dde156
+title: Handling Stream Changes
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Handling Stream Changes</h1>
+<p>This topic describes how a Media Foundation transform (MFT) should handle format changes during streaming.</p>
+<blockquote>
+<p>[!IMPORTANT]</p>
+<p>This topic does not apply to encoders. Encoders should not propagate format changes as described in this topic. Encoders should only accept an input type that matches the currently configured output type.</p>
+</blockquote>
+<p>Â </p>
+<h2>Overview of Format Changes</h2>
+<p>Generally, there are two reasons that a format can change during streaming.</p>
+<ul>
+<li>The client might switch to a stream with a new format. For example, in digital television, this can occur due to a channel change.</li>
+<li>In some video formats, such as H.264, the bitstream can signal a format change. Such changes might include changes in field dominance, video resolution, or pixel aspect ratio.</li>
+</ul>
+<p>If the encoding type changes, the client might need to remove the MFT from the pipeline and replace it with another MFT. (For example, the client might need to swap in a new decoder.) This topic does not cover that situation. This topic covers only the case where the current MFT can handle the new format.</p>
+<p>If the format changes, the MFT might require a new input type, a new output type, or both.</p>
+<ul>
+<li>Changes to input type are initiated by the client. An MFT never changes its own input type.</li>
+<li>Changes to output type are initiated by the MFT. The MFT signals that it requires a new output type, and the client negotiates the new output type with the MFT.</li>
+</ul>
+<p>Thus, three distinct cases are possible:</p>
+<ul>
+<li>The client sets a new input type. The MFT consumes the new format, with no change to its output type.</li>
+<li>The client sets a new input type, and this triggers a change in the output type.</li>
+<li>The input type does not change, but the MFT detects a format change in the bitstream, which requires a new output type.</li>
+</ul>
+<h2>Implementing Format Changes</h2>
+<p>The remainder of this topic describes how the client should process a format change, and how to implement format changes in an MFT.</p>
+<h3>Output Type</h3>
+<p>Any MFT can initiate a change to its output type, as follows:</p>
+<ol>
+<li>The client calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>IMFTransform::ProcessOutput</strong></a>. The MFT responds as follows:
+<ol>
+<li>The MFT does not produce an output sample in <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>ProcessOutput</strong></a>.</li>
+<li>The MFT sets the <strong>MFT_OUTPUT_DATA_BUFFER_FORMAT_CHANGE</strong> flag in the <strong>dwStatus</strong> member of the <a href="/windows/desktop/api/mftransform/ns-mftransform-mft_output_data_buffer"><strong>MFT_OUTPUT_DATA_BUFFER</strong></a> structure.</li>
+<li>The <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>ProcessOutput</strong></a> method returns the error code <strong>MF_E_TRANSFORM_STREAM_CHANGE</strong>.</li>
+</ol>
+</li>
+<li>The client calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getoutputavailabletype"><strong>IMFTransform::GetOutputAvailableType</strong></a>. This method returns an updated set of output types.</li>
+<li>The client calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setoutputtype"><strong>SetOutputType</strong></a> to set a new output type.</li>
+<li>The client resumes calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfqualitymanager-notifyprocessinput"><strong>ProcessInput</strong></a>/<a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>ProcessOutput</strong></a>.</li>
+</ol>
+<h3>Input Type</h3>
+<p>Changes to the input type are initiated by the client, never by the MFT. If the input type changes, it might trigger a change to the output type.</p>
+<p>The exact sequence of events depends on the value of the <a href="mft-support-dynamic-format-change-attribute.html"><strong>MFT_SUPPORT_DYNAMIC_FORMAT_CHANGE</strong></a> attribute.</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>FALSE</strong></td>
+<td>Before the client sets a new input type, it must drain the MFT.</td>
+</tr>
+<tr>
+<td><strong>TRUE</strong></td>
+<td>The client can set a new input type without draining the MFT.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>An MFT exposes this attribute through its <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getattributes"><strong>IMFTransform::GetAttributes</strong></a> method. The default value of this attribute is <strong>FALSE</strong>; if the MFT does not set the attribute, treat the value as <strong>FALSE</strong>.</p>
+<p><strong>MFT_SUPPORT_DYNAMIC_FORMAT_CHANGE is FALSE</strong></p>
+<ol>
+<li>The client sends the <a href="mft-message-command-drain.html"><strong>MFT_MESSAGE_COMMAND_DRAIN</strong></a> message.</li>
+<li>The client drains the MFT by calling <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>IMFTransform::ProcessOutput</strong></a> until <strong>ProcessOutput</strong> returns <strong>MF_E_TRANSFORM_NEED_MORE_INPUT</strong>.</li>
+<li>The client calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setinputtype"><strong>IMFTransform::SetInputType</strong></a> to set the new input type.</li>
+<li>The MFT validates the input type. If the type is invalid, <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setinputtype"><strong>SetInputType</strong></a> returns <strong>MF_E_INVALIDMEDIATYPE</strong> or another error code. Otherwise, <strong>SetInputType</strong> returns S_OK.</li>
+<li>Assuming the input type is valid, the MFT evaluates whether the output type also changes. If not, streaming continues, and no further action is required.</li>
+<li>If the output type changes:
+<ol>
+<li>The MFT invalidates its current output media type, and updates the list of available output media types.</li>
+<li>The next call to <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>ProcessOutput</strong></a> returns <strong>MF_E_TRANSFORM_STREAM_CHANGE</strong>, as described in the previous section.</li>
+<li>The client calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getoutputavailabletype"><strong>IMFTransform::GetOutputAvailableType</strong></a> to get the updated list of output types.</li>
+<li>The client calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setoutputtype"><strong>SetOutputType</strong></a>.</li>
+</ol>
+</li>
+</ol>
+<p><strong>MFT_SUPPORT_DYNAMIC_FORMAT_CHANGE is TRUE</strong></p>
+<ol>
+<li>The client calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setinputtype"><strong>IMFTransform::SetInputType</strong></a> to set the new input type.</li>
+<li>The MFT validates the input type. If the type is invalid, <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setinputtype"><strong>SetInputType</strong></a> returns <strong>MF_E_INVALIDMEDIATYPE</strong> or another error code. Otherwise, <strong>SetInputType</strong> returns S_OK.</li>
+<li>Assuming the input type is valid, the MFT evaluates whether the output type also changes. If not, streaming continues, and no further action is required.</li>
+<li>Before the output type changes, the MFT must process any cached input samples, as follows:
+<ol>
+<li>The MFT does not invalidate its current output type.</li>
+<li>The MFT produces as much output as it can from the cached input samples.</li>
+<li>It is optional whether the MFT accepts new input samples while it processes the cached samples. If so, the new input samples will use the new input format, so the MFT must keep track of the point when the format changed.</li>
+</ol>
+</li>
+<li>After the MFT processes all of the samples that it received before the input type changed, the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>IMFTransform::ProcessOutput</strong></a> returns <strong>MF_E_TRANSFORM_STREAM_CHANGE</strong>.</li>
+<li>The MFT invalidates its current output type, and updates the list of available output media types.</li>
+<li>The client negotiates the new output type, as described previously.</li>
+</ol>
+<p><a href="asynchronous-mfts.html">Asynchronous MFTs</a> must return the value <strong>TRUE</strong> for the <a href="mft-support-dynamic-format-change-attribute.html"><strong>MFT_SUPPORT_DYNAMIC_FORMAT_CHANGE</strong></a> attribute. When using an asynchronous MFT, the client can assume that the <strong>MFT_SUPPORT_DYNAMIC_FORMAT_CHANGE</strong> attribute is set to <strong>TRUE</strong>.</p>
+<p>When <a href="mft-support-dynamic-format-change-attribute.html"><strong>MFT_SUPPORT_DYNAMIC_FORMAT_CHANGE</strong></a> is <strong>TRUE</strong>, the main difference is that the client is not required to drain the MFT before setting a new input type. As a result, the input type might change while the MFT is holding onto input samples. It is important that the MFT does not simply drop these samples. Also, the output type cannot change until the MFT processes all of its cached data.</p>
+<p>The previous paragraph applies especially to video decoders, which can receive inter-coded frames out of temporal order, and thus need to cache them. If an MFT does not cache input samples, draining is essentially a no-op. In that case, the MFT can set <a href="mft-support-dynamic-format-change-attribute.html"><strong>MFT_SUPPORT_DYNAMIC_FORMAT_CHANGE</strong></a> to <strong>FALSE</strong> (or leave the attribute unset).</p>
+<p>Also, note that every MFT is expected to handle format changes correctly after being drained. The <a href="mft-support-dynamic-format-change-attribute.html"><strong>MFT_SUPPORT_DYNAMIC_FORMAT_CHANGE</strong></a> attribute indicates whether the MFT supports format changes without draining.</p>
+<h2>Change in Interlace Mode</h2>
+<p>Changes in the video interlacing mode are a special case, because they do not invalidate the current media type. Instead, the interlace mode is specified for each video frame by setting attributes on the media sample. A video MFT should check each input sample for the presence of these flags.</p>
+<p>The interlace mode can change when the field dominance switches from top-field to bottom-field, or when the video switches between progressive and interlaced pictures.</p>
+<p>For more information, see <a href="video-interlacing.html">Interlace Flags on Samples</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="writing-a-custom-mft.html">Writing a Custom MFT</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

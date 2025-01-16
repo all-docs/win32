@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Choosing a Compression Filter</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Choosing a Compression Filter
+ms.assetid: 9a2c3c48-771e-44db-a042-3db0fd9a6c76
+title: Choosing a Compression Filter
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Choosing a Compression Filter</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>Several types of software components can perform video or audio compression, such as:</p>
+<ul>
+<li>Native DirectShow filters</li>
+<li>Video Compression Manager (VCM) codecs</li>
+<li>Audio Compression Manager (ACM) codecs</li>
+<li>DirectX Media Objects (DMOs)</li>
+</ul>
+<p>In DirectShow, VCM codecs are wrapped by the <a href="avi-compressor-filter.html">AVI Compressor Filter</a>, and ACM codecs are wrapped by the <a href="acm-wrapper-filter.html">ACM Wrapper Filter</a>. DMOs are wrapped by the <a href="dmo-wrapper-filter.html">DMO Wrapper Filter</a>. The system device enumerator provides a consistent way to enumerate and create any of these compressor types, without worrying about the underlying model.</p>
+<p>For details about the system device enumerator, see <a href="using-the-system-device-enumerator.html">Using the System Device Enumerator</a>. Briefly, all DirectShow filters are classified by category, and each category is identified by a GUID. For video compressors, the category GUID is CLSID_VideoCompressorCategory. For audio compressors, it is CLSID_AudioCompressorCategory. To enumerate a particular category, the system device enumerator creates an <em>enumerator</em> object that supports the <a href="/windows/desktop/api/objidl/nn-objidl-ienummoniker"><strong>IEnumMoniker</strong></a> interface. The application uses this interface to retrieve device monikers, where each device moniker represents an instance of a DirectShow filter. You can use the moniker to create the filter, or to get the device's friendly name without creating the filter.</p>
+<p>To enumerate the video or audio compressors available on the user's system, do the following:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> to create the system device enumerator, which has a class ID of CLSID_SystemDeviceEnum.</li>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-icreatedevenum-createclassenumerator"><strong>ICreateDevEnum::CreateClassEnumerator</strong></a> with the filter category GUID. The method returns an <strong>IEnumMoniker</strong> interface pointer.</li>
+<li>Use the IEnumMoniker::Next method to enumerate the device monikers. This method returns an <a href="/windows/desktop/api/objidl/nn-objidl-imoniker"><strong>IMoniker</strong></a> interface, which represents the moniker.</li>
+</ol>
+<p>To get the friendly name from a moniker, do the following:</p>
+<ol>
+<li>Call the <strong>IMoniker::BindToStorage</strong> method. This method returns an <strong>IPropertyBag</strong> interface pointer.</li>
+<li>Use the <strong>IPropertyBag::Read</strong> method to read the <strong>FriendlyName</strong> property.</li>
+</ol>
+<p>Typically, an application would display a list of compressors, so that the user could choose one. For example, the following code populates a list box with the names of the available video compressors.</p>
+<pre lang="C++"><code>void OnInitDialog(HWND hDlg)
+{
+    HRESULT hr;
+    ICreateDevEnum *pSysDevEnum = NULL;
+    IEnumMoniker *pEnum = NULL;
+    IMoniker *pMoniker = NULL;
+
+    hr = CoCreateInstance(CLSID_SystemDeviceEnum, NULL, 
+        CLSCTX_INPROC_SERVER, IID_ICreateDevEnum, 
+        (void**)&amp;pSysDevEnum);
+    if (FAILED(hr))
+    {
+        // Handle the error.
+    }    
+
+    hr = pSysDevEnum-&gt;CreateClassEnumerator(
+             CLSID_VideoCompressorCategory, &amp;pEnum, 0);
+    if (hr == S_OK)  // S_FALSE means nothing in this category.
+    {
+        while (S_OK == pEnum-&gt;Next(1, &amp;pMoniker, NULL))
+        {
+            IPropertyBag *pPropBag = NULL;
+            pMoniker-&gt;BindToStorage(0, 0, IID_IPropertyBag, 
+                (void **)&amp;pPropBag);
+            VARIANT var;
+            VariantInit(&amp;var);
+            hr = pPropBag-&gt;Read(L&quot;FriendlyName&quot;, &amp;var, 0);
+            if (SUCCEEDED(hr))
+            {
+                LRESULT iSel = AddString(GetDlgItem(hDlg, 
+                    IDC_CODEC_LIST), var.bstrVal);
+            }   
+            VariantClear(&amp;var); 
+            pPropBag-&gt;Release();
+            pMoniker-&gt;Release();
+        }
+    }
+
+    SendDlgItemMessage(hDlg, IDC_CODEC_LIST, 
+                       LB_SETCURSEL, 0, 0);
+    pSysDevEnum-&gt;Release();
+    pEnum-&gt;Release();
+}
+</code></pre>
+<p>To create a filter instance from the moniker, call the <strong>IMoniker::BindToObject</strong> method. The method returns an <a href="/windows/desktop/api/Strmif/nn-strmif-ibasefilter"><strong>IBaseFilter</strong></a> pointer.</p>
+<pre lang="C++"><code>IBaseFilter *pFilter = NULL;
+hr = pMoniker-&gt;BindToObject(NULL, NULL, IID_IBaseFilter, 
+                                       (void**)&amp;pFilter);
+if (SUCCEEDED(hr))
+{
+    // Use the filter. 
+    // Remember to release the IBaseFilter interface.
+}
+</code></pre>
+<p>For VCM codecs, each moniker represents one particular codec, even though all of the codecs are wrapped by the same AVI Compression filter. Calling <strong>BindToObject</strong> creates an instance of this filter, initialized for that codec. For this reason, you cannot call <strong>CoCreateInstance</strong> directly on the AVI Compression filter. You must go through the system device enumerator.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="recompressing-an-avi-file.html">Recompressing an AVI File</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Performance Optimizations (Direct3D 9)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Every developer who creates real-time applications that use 3D graphics is concerned about performance optimization. This section provides guidelines for getting the best performance from your code.
+ms.assetid: 074f848e-4a42-48a2-adf7-4026b8967413
+title: Performance Optimizations (Direct3D 9)
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Performance Optimizations (Direct3D 9)</h1>
+<p>Every developer who creates real-time applications that use 3D graphics is concerned about performance optimization. This section provides guidelines for getting the best performance from your code.</p>
+<ul>
+<li><a href="#general-performance-tips">General Performance Tips</a></li>
+<li><a href="#databases-and-culling">Databases and Culling</a></li>
+<li><a href="#batching-primitives">Batching Primitives</a></li>
+<li><a href="#lighting-tips">Lighting Tips</a></li>
+<li><a href="#texture-size">Texture Size</a></li>
+<li><a href="#matrix-transforms">Matrix Transforms</a></li>
+<li><a href="#using-dynamic-textures">Using Dynamic Textures</a></li>
+<li><a href="#using-dynamic-vertex-and-index-buffers">Using Dynamic Vertex and Index Buffers</a></li>
+<li><a href="#using-meshes">Using Meshes</a></li>
+<li><a href="#z-buffer-performance">Z-Buffer Performance</a></li>
+</ul>
+<h2>General Performance Tips</h2>
+<ul>
+<li>Clear only when you must.</li>
+<li>Minimize state changes and group the remaining state changes.</li>
+<li>Use smaller textures, if you can do so.</li>
+<li>Draw objects in your scene from front to back.</li>
+<li>Use triangle strips instead of lists and fans. For optimal vertex cache performance, arrange strips to reuse triangle vertices sooner, rather than later.</li>
+<li>Gracefully degrade special effects that require a disproportionate share of system resources.</li>
+<li>Constantly test your application's performance.</li>
+<li>Minimize vertex buffer switches.</li>
+<li>Use static vertex buffers where possible.</li>
+<li>Use one large static vertex buffer per FVF for static objects, rather than one per object.</li>
+<li>If your application needs random access into the vertex buffer in AGP memory, choose a vertex format size that is a multiple of 32 bytes. Otherwise, select the smallest appropriate format.</li>
+<li>Draw using indexed primitives. This can allow for more efficient vertex caching within hardware.</li>
+<li>If the depth buffer format contains a stencil channel, always clear the depth and stencil channels at the same time.</li>
+<li>Combine the shader instruction and the data output where possible. For example:
+<pre><code>// Rather than doing a multiply and add, and then output the data with 
+//   two instructions:
+mad r2, r1, v0, c0
+mov oD0, r2
+
+// Combine both in a single instruction, because this eliminates an  
+//   additional register copy.
+mad oD0, r1, v0, c0 
+</code></pre>
+</li>
+</ul>
+<h2>Databases and Culling</h2>
+<p>Building a reliable database of the objects in your world is key to excellent performance in Direct3D. It is more important than improvements to rasterization or hardware.</p>
+<p>You should maintain the lowest polygon count you can possibly manage. Design for a low polygon count by building low-polygon models from the start. Add polygons if you can do so without sacrificing performance later in the development process. Remember, the fastest polygons are the ones you don't draw.</p>
+<h2>Batching Primitives</h2>
+<p>To get the best rendering performance during execution, try to work with primitives in batches and keep the number of render-state changes as low as possible. For example, if you have an object with two textures, group the triangles that use the first texture and follow them with the necessary render state to change the texture. Then group all the triangles that use the second texture. The simplest hardware support for Direct3D is called with batches of render states and batches of primitives through the hardware abstraction layer (HAL). The more effectively the instructions are batched, the fewer HAL calls are performed during execution.</p>
+<h2>Lighting Tips</h2>
+<p>Because lights add a per-vertex cost to each rendered frame, you can improve performance significantly by being careful about how you use them in your application. Most of the following tips derive from the maxim, &quot;the fastest code is code that is never called.&quot;</p>
+<ul>
+<li>Use as few light sources as possible. To increase the overall lighting level, for example, use the ambient light instead of adding a new light source.</li>
+<li>Directional lights are more efficient than point lights or spotlights. For directional lights, the direction to the light is fixed and doesn't need to be calculated on a per-vertex basis.</li>
+<li>Spotlights can be more efficient than point lights, because the area outside the cone of light is calculated quickly. Whether spotlights are more efficient or not depends on how much of your scene is lit by the spotlight.</li>
+<li>Use the range parameter to limit your lights to only the parts of the scene you need to illuminate. All the light types exit fairly early when they are out of range.</li>
+<li>Specular highlights almost double the cost of a light. Use them only when you must. Set the D3DRS_SPECULARENABLE render state to 0, the default value, whenever possible. When defining materials, you must set the specular power value to zero to turn off specular highlights for that material; just setting the specular color to 0,0,0 is not enough.</li>
+</ul>
+<h2>Texture Size</h2>
+<p>Texture-mapping performance is heavily dependent on the speed of memory. There are a number of ways to maximize the cache performance of your application's textures.</p>
+<ul>
+<li>Keep the textures small. The smaller the textures are, the better chance they have of being maintained in the main CPU's secondary cache.</li>
+<li>Do not change the textures on a per-primitive basis. Try to keep polygons grouped in order of the textures they use.</li>
+<li>Use square textures whenever possible. Textures whose dimensions are 256x256 are the fastest. If your application uses four 128x128 textures, for example, try to ensure that they use the same palette and place them all into one 256x256 texture. This technique also reduces the amount of texture swapping. Of course, you should not use 256x256 textures unless your application requires that much texturing because, as mentioned, textures should be kept as small as possible.</li>
+</ul>
+<h2>Matrix Transforms</h2>
+<p>Direct3D uses the world and view matrices that you set to configure several internal data structures. Each time you set a new world or view matrix, the system recalculates the associated internal structures. Setting these matrices frequently - for example, thousands of times per frame - is computationally time-consuming. You can minimize the number of required calculations by concatenating your world and view matrices into a world-view matrix that you set as the world matrix, and then setting the view matrix to the identity. Keep cached copies of individual world and view matrices so that you can modify, concatenate, and reset the world matrix as needed. For clarity in this documentation, Direct3D samples rarely employ this optimization.</p>
+<h2>Using Dynamic Textures</h2>
+<p>To find out if the driver supports dynamic textures, check the D3DCAPS2_DYNAMICTEXTURES flag of the <a href="/windows/desktop/api/D3D9Caps/ns-d3d9caps-d3dcaps9"><strong>D3DCAPS9</strong></a> structure.</p>
+<p>Keep the following things in mind when working with dynamic textures.</p>
+<ul>
+<li>They cannot be managed. For example, their pool cannot be D3DPOOL_MANAGED.</li>
+<li>Dynamic textures can be locked, even if they are created in D3DPOOL_DEFAULT.</li>
+<li>D3DLOCK_DISCARD is a valid lock flag for dynamic textures.</li>
+</ul>
+<p>It is a good idea to create only one dynamic texture per format and possibly per size. Dynamic mipmaps, cubes, and volumes are not recommended because of the additional overhead in locking every level. For mipmaps, D3DLOCK_DISCARD is allowed only on the top level. All levels are discarded by locking just the top level. This behavior is the same for volumes and cubes. For cubes, the top level and face 0 are locked.</p>
+<p>The following pseudocode shows an example of using a dynamic texture.</p>
+<pre><code>DrawProceduralTexture(pTex)
+{
+    // pTex should not be very small because overhead of 
+    //   calling driver every D3DLOCK_DISCARD will not 
+    //   justify the performance gain. Experimentation is encouraged.
+    pTex-&gt;Lock(D3DLOCK_DISCARD);
+    &lt;Overwrite *entire* texture&gt;
+    pTex-&gt;Unlock();
+    pDev-&gt;SetTexture();
+    pDev-&gt;DrawPrimitive();
+}
+</code></pre>
+<h2>Using Dynamic Vertex and Index Buffers</h2>
+<p>Locking a static vertex buffer while the graphics processor is using the buffer can have a significant performance penalty. The lock call must wait until the graphics processor is finished reading vertex or index data from the buffer before it can return to the calling application, a significant delay. Locking and then rendering from a static buffer several times per frame also prevents the graphics processor from buffering rendering commands, since it must finish commands before returning the lock pointer. Without buffered commands, the graphics processor remains idle until after the application is finished filling the vertex buffer or index buffer and issues a rendering command.</p>
+<p>Ideally the vertex or index data would never change, however this is not always possible. There are many situations where the application needs to change vertex or index data every frame, perhaps even multiple times per frame. For these situations, the vertex or index buffer should be created with D3DUSAGE_DYNAMIC. This usage flag causes Direct3D to optimize for frequent lock operations. D3DUSAGE_DYNAMIC is only useful when the buffer is locked frequently; data that remains constant should be placed in a static vertex or index buffer.</p>
+<p>To receive a performance improvement when using dynamic vertex buffers, the application must call <a href="/windows/desktop/api"><strong>IDirect3DVertexBuffer9::Lock</strong></a> or <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3dindexbuffer9-lock"><strong>IDirect3DIndexBuffer9::Lock</strong></a> with the appropriate flags. D3DLOCK_DISCARD indicates that the application does not need to keep the old vertex or index data in the buffer. If the graphics processor is still using the buffer when lock is called with D3DLOCK_DISCARD, a pointer to a new region of memory is returned instead of the old buffer data. This allows the graphics processor to continue using the old data while the application places data in the new buffer. No additional memory management is required in the application; the old buffer is reused or destroyed automatically when the graphics processor is finished with it. Note that locking a buffer with D3DLOCK_DISCARD always discards the entire buffer, specifying a nonzero offset or limited size field does not preserve information in unlocked areas of the buffer.</p>
+<p>There are cases where the amount of data the application needs to store per lock is small, such as adding four vertices to render a sprite. D3DLOCK_NOOVERWRITE indicates that the application will not overwrite data already in use in the dynamic buffer. The lock call will return a pointer to the old data, allowing the application to add new data in unused regions of the vertex or index buffer. The application should not modify vertices or indices used in a draw operation as they might still be in use by the graphics processor. The application should then use D3DLOCK_DISCARD after the dynamic buffer is full to receive a new region of memory, discarding the old vertex or index data after the graphics processor is finished.</p>
+<p>The asynchronous query mechanism is useful to determine if vertices are still in use by the graphics processor. Issue a query of type D3DQUERYTYPE_EVENT after the last DrawPrimitive call that uses the vertices. The vertices are no longer in use when <a href="/windows/desktop/api"><strong>IDirect3DQuery9::GetData</strong></a> returns S_OK. Locking a buffer with D3DLOCK_DISCARD or no flags will always guarantee the vertices are synchronized properly with the graphics processor, however using lock without flags will incur the performance penalty described earlier. Other API calls such as <a href="/windows/desktop/api"><strong>IDirect3DDevice9::BeginScene</strong></a>, <a href="/windows/desktop/api"><strong>IDirect3DDevice9::EndScene</strong></a>, and <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-present"><strong>IDirect3DDevice9::Present</strong></a> do not guarantee the graphics processor is finished using vertices.</p>
+<p>Below are ways to use dynamic buffers and the proper lock flags.</p>
+<pre><code>    // USAGE STYLE 1
+    // Discard the entire vertex buffer and refill with thousands of vertices.
+    // Might contain multiple objects and/or require multiple DrawPrimitive 
+    //   calls separated by state changes, etc.
+ 
+    // Determine the size of data to be moved into the vertex buffer.
+    UINT nSizeOfData = nNumberOfVertices * m_nVertexStride;
+ 
+    // Discard and refill the used portion of the vertex buffer.
+    CONST DWORD dwLockFlags = D3DLOCK_DISCARD;
+    
+    // Lock the vertex buffer.
+    BYTE* pBytes;
+    if( FAILED( m_pVertexBuffer-&gt;Lock( 0, 0, &amp;pBytes, dwLockFlags ) ) )
+        return false;
+    
+    // Copy the vertices into the vertex buffer.
+    memcpy( pBytes, pVertices, nSizeOfData );
+    m_pVertexBuffer-&gt;Unlock();
+ 
+    // Render the primitives.
+    m_pDevice-&gt;DrawPrimitive( D3DPT_TRIANGLELIST, 0, nNumberOfVertices/3)
+</code></pre>
+<pre><code>    // USAGE STYLE 2
+    // Reusing one vertex buffer for multiple objects
+ 
+    // Determine the size of data to be moved into the vertex buffer.
+    UINT nSizeOfData = nNumberOfVertices * m_nVertexStride;
+ 
+    // No overwrite will be used if the vertices can fit into 
+    //   the space remaining in the vertex buffer.
+    DWORD dwLockFlags = D3DLOCK_NOOVERWRITE;
+    
+    // Check to see if the entire vertex buffer has been used up yet.
+    if( m_nNextVertexData &gt; m_nSizeOfVB - nSizeOfData )
+    {
+        // No space remains. Start over from the beginning 
+        //   of the vertex buffer.
+        dwLockFlags = D3DLOCK_DISCARD;
+        m_nNextVertexData = 0;
+    }
+    
+    // Lock the vertex buffer.
+    BYTE* pBytes;
+    if( FAILED( m_pVertexBuffer-&gt;Lock( (UINT)m_nNextVertexData, nSizeOfData, 
+               &amp;pBytes, dwLockFlags ) ) )
+        return false;
+    
+    // Copy the vertices into the vertex buffer.
+    memcpy( pBytes, pVertices, nSizeOfData );
+    m_pVertexBuffer-&gt;Unlock();
+ 
+    // Render the primitives.
+    m_pDevice-&gt;DrawPrimitive( D3DPT_TRIANGLELIST, 
+               m_nNextVertexData/m_nVertexStride, nNumberOfVertices/3)
+ 
+    // Advance to the next position in the vertex buffer.
+    m_nNextVertexData += nSizeOfData;
+</code></pre>
+<h2>Using Meshes</h2>
+<p>You can optimize meshes by using Direct3D indexed triangles instead of indexed triangle strips. The hardware will discover that 95 percent of successive triangles actually form strips and adjust accordingly. Many drivers do this for older hardware also.</p>
+<p>D3DX mesh objects can have each triangle, or face, tagged with a DWORD, called the attribute of that face. The semantics of the DWORD are user-defined. They are used by D3DX to classify the mesh into subsets. The application sets per-face attributes using the <a href="id3dxmesh--lockattributebuffer.html"><strong>ID3DXMesh::LockAttributeBuffer</strong></a> call. The <a href="id3dxmesh--optimize.html"><strong>ID3DXMesh::Optimize</strong></a> method has an option to group the mesh vertices and faces on attributes using the D3DXMESHOPT_ATTRSORT option. When this is done, the mesh object calculates an attribute table that can be obtained by the application by calling <a href="id3dxbasemesh--getattributetable.html"><strong>ID3DXBaseMesh::GetAttributeTable</strong></a>. This call returns 0 if the mesh is not sorted by attributes. There is no way for an application to set an attribute table because it is generated by the <strong>ID3DXMesh::Optimize</strong> method. The attribute sort is data sensitive, so if the application knows that a mesh is attribute sorted, it still needs to call <strong>ID3DXMesh::Optimize</strong> to generate the attribute table.</p>
+<p>The following topics describe the different attributes of a mesh.</p>
+<h3>Attribute ID</h3>
+<p>An attribute id is a value that associates a group of faces with an attribute group. This id describes which subset of faces <a href="id3dxbasemesh--drawsubset.html"><strong>ID3DXBaseMesh::DrawSubset</strong></a> should draw. Attribute ids are specified for the faces in the attribute buffer. The actual values of the attribute ids can be anything that fits in 32 bits, but it is common to use 0 to n where n is the number of attributes.</p>
+<h3>Attribute Buffer</h3>
+<p>The attribute buffer is an array of DWORDs (one per face) that specifies which attribute group each face belongs in. This buffer is initialized to zero on creation of a mesh, but is either filled by the load routines or must be filled by the user if more than one attribute with id 0 is desired. This buffer contains the information that is used to sort the mesh based on attributes in <a href="id3dxmesh--optimize.html"><strong>ID3DXMesh::Optimize</strong></a>. If no attribute table is present, <a href="id3dxbasemesh--drawsubset.html"><strong>ID3DXBaseMesh::DrawSubset</strong></a> scans this buffer to select the faces of the given attribute to draw.</p>
+<h3>Attribute Table</h3>
+<p>The attribute table is a structure owned and maintained by the mesh. The only way for one to be generated is by calling <a href="id3dxmesh--optimize.html"><strong>ID3DXMesh::Optimize</strong></a> with attribute sorting or stronger optimization enabled. The attribute table is used to quickly initiate a single draw primitive call to <a href="id3dxbasemesh--drawsubset.html"><strong>ID3DXBaseMesh::DrawSubset</strong></a>. The only other use is that progressing meshes also maintain this structure, so it is possible to see what faces and vertices are active at the current level of detail.</p>
+<h2>Z-Buffer Performance</h2>
+<p>Applications can increase performance when using z-buffering and texturing by ensuring that scenes are rendered from front to back. Textured z-buffered primitives are pretested against the z-buffer on a scan line basis. If a scan line is hidden by a previously rendered polygon, the system rejects it quickly and efficiently. Z-buffering can improve performance, but the technique is most useful when a scene draws the same pixels more than once. This is difficult to calculate exactly, but you can often make a close approximation. If the same pixels are drawn less than twice, you can achieve the best performance by turning z-buffering off and rendering the scene from back to front.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="programming-tips.html">Programming Tips</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

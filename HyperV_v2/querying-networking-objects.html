@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Querying networking objects</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following C# sample retrieves and displays physical and virtual network information for the specified switch.
+ms.assetid: 679168E2-C79F-4A7A-8C04-A309315CA670
+title: Querying networking objects
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Querying networking objects</h1>
+<p>The following C# sample retrieves and displays physical and virtual network information for the specified switch. This code is taken from the <a href="https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/Hyper-V/Networking">Hyper-V networking sample</a>.</p>
+<p>The command-line syntax to run this sample is:</p>
+<p><strong>NetworkingSamples.exe EnumerateSwitch</strong> <em>SwitchName</em></p>
+<p>where <em>SwitchName</em> is the name of the switch to display the information for. The switch name is contained in the <a href="msvm-virtualethernetswitch.html"><strong>Msvm_VirtualEthernetSwitch.ElementName</strong></a> property.</p>
+<pre lang="CSharp"><code>namespace Microsoft.Samples.HyperV.Networking
+{
+    using System;
+    using System.Management;
+    using System.Globalization;
+    using System.Collections.Generic;
+    using Microsoft.Samples.HyperV.Common;
+
+    static class EnumerateSwitchSample
+    {
+        /// &lt;summary&gt;
+        /// The type of network connection for a switch.
+        /// &lt;/summary&gt;
+        enum SwitchConnectionType
+        {
+            Private,
+            Internal,
+            ExternalOnly,
+            External
+        }
+
+        /// &lt;summary&gt;
+        /// The type of connection for a single port.
+        /// &lt;/summary&gt;
+        enum PortConnectionType
+        {
+            Nothing,
+            Internal,
+            External,
+            VirtualMachine
+        }
+
+        /// &lt;summary&gt;
+        /// Container for information about a port.
+        /// &lt;/summary&gt;
+        struct PortInfo
+        {
+            public PortConnectionType Type;
+            public string ConnectedName;
+            public List&lt;NetworkingUtilities.PortFeatureType&gt; FeatureList;
+        }
+
+        /// &lt;summary&gt;
+        /// Container for information about the switch.
+        /// &lt;/summary&gt;
+        struct SwitchInfo
+        {
+            public string Name;
+            public SwitchConnectionType Type;
+            public List&lt;PortInfo&gt; PortList;
+            public List&lt;NetworkingUtilities.SwitchFeatureType&gt; SwitchFeatureList;
+        }
+        
+        /// &lt;summary&gt;
+        /// Enumerates information about a switch and outputs it to the console. The information 
+        /// enumerated includes: the connection type of the switch, the connected virtual machines,
+        /// and the features of the switch's ports.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;switchName&quot;&gt;The name of the switch to enumerate.&lt;/param&gt;
+        static void
+        EnumerateSwitch(
+            string switchName)
+        {
+            ManagementScope scope = new ManagementScope(@&quot;root\virtualization\v2&quot;);
+            
+            //
+            // Initialize our SwitchInfo structure to hold information about the switch.
+            //
+            SwitchInfo ethernetSwitchInfo = new SwitchInfo();
+            ethernetSwitchInfo.Name = switchName;
+            ethernetSwitchInfo.Type = SwitchConnectionType.Private;
+            ethernetSwitchInfo.PortList = new List&lt;PortInfo&gt;();
+            ethernetSwitchInfo.SwitchFeatureList = new List&lt;NetworkingUtilities.SwitchFeatureType&gt;();
+
+            using (ManagementObject ethernetSwitch = NetworkingUtilities.FindEthernetSwitch(switchName, scope))
+            {
+                //
+                // Enumerate the switch's ports.
+                //
+                using (ManagementObjectCollection portCollection = ethernetSwitch.GetRelated(&quot;Msvm_EthernetSwitchPort&quot;,
+                    &quot;Msvm_SystemDevice&quot;,
+                    null, null, null, null, false, null))
+                {
+                    foreach (ManagementObject port in portCollection)
+                    using (port)
+                    {
+                        //
+                        // Initialize a PortInfo structure to hold information about this port.
+                        //
+                        PortInfo portInfo = new PortInfo();
+                        portInfo.Type = PortConnectionType.Nothing;
+                        portInfo.FeatureList = new List&lt;NetworkingUtilities.PortFeatureType&gt;();
+
+                        //
+                        // The port's connection settings are stored on its related 
+                        // Msvm_EthernetPortAllocationSettingData object.
+                        //
+                        using (ManagementObject portSettings = WmiUtilities.GetFirstObjectFromCollection(
+                            port.GetRelated(&quot;Msvm_EthernetPortAllocationSettingData&quot;,
+                                &quot;Msvm_ElementSettingData&quot;,
+                                null, null, null, null, false, null)))
+                        {
+                            //
+                            // Determine the port's connection type.
+                            //
+                            portInfo.Type = DeterminePortType(portSettings);
+
+                            if (portInfo.Type == PortConnectionType.VirtualMachine)
+                            {
+                                // Get the name of the connected virtual machine.
+                                using (ManagementObject virtualMachineSettings = WmiUtilities.GetFirstObjectFromCollection(
+                                    portSettings.GetRelated(&quot;Msvm_VirtualSystemSettingData&quot;,
+                                        &quot;Msvm_VirtualSystemSettingDataComponent&quot;,
+                                        null, null, null, null, false, null)))
+                                {
+                                    portInfo.ConnectedName = (string)virtualMachineSettings[&quot;ElementName&quot;];
+                                }
+                            }
+                            else if (portInfo.Type == PortConnectionType.External)
+                            {
+                                // Get the name of the external connection.
+                                using (ManagementObject externalAdapter = new ManagementObject(
+                                    ((string[])portSettings[&quot;HostResource&quot;])[0]))
+                                {
+                                    portInfo.ConnectedName = (string)externalAdapter[&quot;ElementName&quot;];
+                                }
+                            }
+
+                            //
+                            // Now determine which advanced properties are configured for this port. 
+                            // Each Feature has its own class definition and is related to the portSettings
+                            // through the Msvm_EthernetPortSettingDataComponent association.
+                            //
+                            using (ManagementObjectCollection portFeatureCollection =
+                                    portSettings.GetRelated(&quot;Msvm_EthernetSwitchPortFeatureSettingData&quot;,
+                                        &quot;Msvm_EthernetPortSettingDataComponent&quot;,
+                                        null, null, null, null, false, null))
+                            {
+                                foreach (ManagementObject portFeature in portFeatureCollection)
+                                    using (portFeature)
+                                    {
+                                        portInfo.FeatureList.Add(DeterminePortFeatureType(portFeature));
+                                    }
+                            }
+                        }
+
+                        ethernetSwitchInfo.PortList.Add(portInfo);
+                    }
+                }
+
+                //
+                // Then enumerate the switch's features.
+                //
+                using (ManagementObject ethernetSwitchSetting = WmiUtilities.GetFirstObjectFromCollection(
+                    ethernetSwitch.GetRelated(&quot;Msvm_VirtualEthernetSwitchSettingData&quot;,
+                        &quot;Msvm_SettingsDefineState&quot;,
+                        null, null, null, null, false, null)))
+                using (ManagementObjectCollection switchFeatures = ethernetSwitchSetting.GetRelated(
+                    &quot;Msvm_EthernetSwitchFeatureSettingData&quot;,
+                    &quot;Msvm_VirtualEthernetSwitchSettingDataComponent&quot;,
+                    null, null, null, null, false, null))
+                foreach (ManagementObject switchFeature in switchFeatures)
+                using (switchFeature)
+                {
+                    ethernetSwitchInfo.SwitchFeatureList.Add(DetermineSwitchFeatureType(switchFeature));
+                }
+            }
+
+            //
+            // Now that we have enumerated all of the switch's ports, we can determine the 
+            // switch's connection type.
+            //
+            ethernetSwitchInfo.Type = DetermineSwitchConnectionType(ethernetSwitchInfo.PortList);
+
+            //
+            // We now have all of the information we need - output it to the console.
+            //
+            OutputSwitchInfo(ethernetSwitchInfo);
+        }
+
+        /// &lt;summary&gt;
+        /// Determine the connection type of the port.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;portSettings&quot;&gt;The port configuration object.&lt;/param&gt;
+        /// &lt;returns&gt;The port's connection type.&lt;/returns&gt;
+        static PortConnectionType
+        DeterminePortType(
+            ManagementObject portSettings)
+        {
+            string[] hostResource = (string[])portSettings[&quot;HostResource&quot;];
+
+            if (hostResource != null &amp;&amp; hostResource.Length &gt; 0)
+            {
+                ManagementPath hostResourcePath = new ManagementPath(hostResource[0]);
+
+                if (string.Equals(hostResourcePath.ClassName, &quot;Msvm_ComputerSystem&quot;,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    //
+                    // The port is connected to the host computer system, which means that this 
+                    // is an internal connection.
+                    //
+                    return PortConnectionType.Internal;
+                }
+                else if (string.Equals(hostResourcePath.ClassName, &quot;Msvm_ExternalEthernetPort&quot;,
+                         StringComparison.OrdinalIgnoreCase))
+                {
+                    //
+                    // The port is connected to an external Ethernet adapter.
+                    //
+                    return PortConnectionType.External;
+                }
+            }
+
+            //
+            // If it wasn't connected to the internal or external network, determine if it 
+            // is connected to a virtual machine.
+            //
+            string parent = (string)portSettings[&quot;Parent&quot;];
+
+            if (!string.IsNullOrEmpty(parent))
+            {
+                ManagementPath parentPath = new ManagementPath(parent);
+
+                if (string.Equals(parentPath.ClassName, &quot;Msvm_SyntheticEthernetPortSettingData&quot;,
+                    StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(parentPath.ClassName, &quot;Msvm_EmulatedEthernetPortSettingData&quot;,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    return PortConnectionType.VirtualMachine;
+                }
+            }
+
+            //
+            // This port is not connected to anything.
+            //
+            return PortConnectionType.Nothing;
+        }
+
+        /// &lt;summary&gt;
+        /// Determines the type of the port feature.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;portFeature&quot;&gt;The port feature.&lt;/param&gt;
+        /// &lt;returns&gt;The feature's type.&lt;/returns&gt;
+        static NetworkingUtilities.PortFeatureType
+        DeterminePortFeatureType(
+            ManagementObject portFeature)
+        {
+            NetworkingUtilities.PortFeatureType type = NetworkingUtilities.PortFeatureType.Unknown;
+
+            string portFeatureClass = portFeature.Path.ClassName;
+            switch (portFeatureClass)
+            {
+                case &quot;Msvm_EthernetSwitchPortOffloadSettingData&quot;:
+                    type = NetworkingUtilities.PortFeatureType.Offload;
+                    break;
+
+                case &quot;Msvm_EthernetSwitchPortVlanSettingData&quot;:
+                    type = NetworkingUtilities.PortFeatureType.Vlan;
+                    break;
+
+                case &quot;Msvm_EthernetSwitchPortAclSettingData&quot;:
+                    type = NetworkingUtilities.PortFeatureType.Acl;
+                    break;
+
+                case &quot;Msvm_EthernetSwitchPortBandwidthSettingData&quot;:
+                    type = NetworkingUtilities.PortFeatureType.Bandwidth;
+                    break;
+
+                case &quot;Msvm_EthernetSwitchPortSecuritySettingData&quot;:
+                    type = NetworkingUtilities.PortFeatureType.Security;
+                    break;
+                    
+                case &quot;Msvm_EthernetSwitchPortProfileSettingData&quot;:
+                    type = NetworkingUtilities.PortFeatureType.Profile;
+                    break;
+            }
+
+            return type;
+        }
+
+        /// &lt;summary&gt;
+        /// Determines the type of the switch feature.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;switchFeature&quot;&gt;The switch feature.&lt;/param&gt;
+        /// &lt;returns&gt;The feature's type.&lt;/returns&gt;
+        static NetworkingUtilities.SwitchFeatureType
+        DetermineSwitchFeatureType(
+            ManagementObject switchFeature)
+        {
+            NetworkingUtilities.SwitchFeatureType type = NetworkingUtilities.SwitchFeatureType.Unknown;
+
+            string switchFeatureClass = switchFeature.Path.ClassName;
+            switch (switchFeatureClass)
+            {
+                case &quot;Msvm_VirtualEthernetSwitchBandwidthSettingData&quot;:
+                    type = NetworkingUtilities.SwitchFeatureType.Bandwidth;
+                    break;
+            }
+
+            return type;
+        }
+
+        /// &lt;summary&gt;
+        /// Determines the switch's connection type based upon the connection types of its ports.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;switchPorts&quot;&gt;The switch's ports.&lt;/param&gt;
+        /// &lt;returns&gt;The switch's connection type.&lt;/returns&gt;
+        static SwitchConnectionType
+        DetermineSwitchConnectionType(
+            List&lt;PortInfo&gt; switchPorts)
+        {
+            SwitchConnectionType type = SwitchConnectionType.Private;
+
+            bool internallyConnected = false;
+            bool externallyConnected = false;
+
+            //
+            // Loop through the switch's ports to see if there are any internal and/or external
+            // connections.
+            //
+            foreach (PortInfo portInfo in switchPorts)
+            {
+                if (portInfo.Type == PortConnectionType.Internal)
+                {
+                    internallyConnected = true;
+                }
+                else if (portInfo.Type == PortConnectionType.External)
+                {
+                    externallyConnected = true;
+                }
+            }
+
+            //
+            // Based on the internal and/or external connections of our ports, we can determine
+            // the switch's connection type.
+            //
+            if (internallyConnected &amp;&amp; externallyConnected)
+            {
+                type = SwitchConnectionType.External;
+            }
+            else if (internallyConnected)
+            {
+                type = SwitchConnectionType.Internal;
+            }
+            else if (externallyConnected)
+            {
+                type = SwitchConnectionType.ExternalOnly;
+            }
+
+            return type;
+        }
+
+        /// &lt;summary&gt;
+        /// Outputs the information gathered on the switch to the console.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;switchInfo&quot;&gt;The information gathered on the switch.&lt;/param&gt;
+        static void
+        OutputSwitchInfo(
+            SwitchInfo switchInfo)
+        {
+            Console.WriteLine(&quot;Successfully enumerated the ports and port features of the switch '{0}'\n&quot;,
+                switchInfo.Name);
+            Console.WriteLine(&quot;The switch's connection type is:&quot;);
+            Console.WriteLine(&quot;    {0}\n&quot;, switchInfo.Type);
+
+            //
+            // If the switch is connected to an external network, output the name of the network.
+            //
+            if (switchInfo.Type == SwitchConnectionType.External ||
+                switchInfo.Type == SwitchConnectionType.ExternalOnly)
+            {
+                Console.WriteLine(&quot;The switch is connected to the following network:&quot;);
+                foreach (PortInfo portInfo in switchInfo.PortList)
+                {
+                    if (portInfo.Type == PortConnectionType.External)
+                    {
+                        Console.WriteLine(&quot;    {0}&quot;, portInfo.ConnectedName);
+                    }
+                }
+                Console.WriteLine();
+            }
+
+            //
+            // Output the virtual machines that are currently connected to this switch.
+            //
+            Console.WriteLine(&quot;The switch is connected to the following virtual machines:&quot;);
+            
+            bool atLeastOneVirtualMachine = false;
+            foreach (string virtualMachineName in GetConnectedVirtualMachineList(switchInfo.PortList))
+            {
+                atLeastOneVirtualMachine = true;
+                Console.WriteLine(&quot;    {0}&quot;, virtualMachineName);
+            }
+
+            if (!atLeastOneVirtualMachine)
+            {
+                Console.WriteLine(&quot;    The switch is not connected to any virtual machines&quot;);
+            }
+
+            Console.WriteLine();
+
+            //
+            // Output the advanced features that have been configured for the switch.
+            //
+            Console.WriteLine(&quot;The switch has the following advanced features: &quot;);
+
+            if (switchInfo.SwitchFeatureList.Count &gt; 0)
+            {
+                foreach (NetworkingUtilities.SwitchFeatureType featureType in switchInfo.SwitchFeatureList)
+                {
+                    Console.WriteLine(&quot;    {0}&quot;, featureType.ToString());
+                }
+            }
+            else
+            {
+                Console.WriteLine(&quot;    The switch has no advanced features&quot;);
+            }
+
+            Console.WriteLine();
+
+            //
+            // Now output information about features for each port.
+            //
+            Console.WriteLine(&quot;The switch is connected to {0} ports.&quot;, switchInfo.PortList.Count);
+
+            if (switchInfo.PortList.Count &gt; 0)
+            {
+                Console.WriteLine(&quot;Outputting port features for each port:\n&quot;);
+
+                int count = 1;
+                foreach (PortInfo portInfo in switchInfo.PortList)
+                {
+                    switch (portInfo.Type)
+                    {
+                        case PortConnectionType.VirtualMachine:
+                            Console.WriteLine(&quot;    Port {0} connected to virtual machine '{1}' has the following features:&quot;,
+                                count, portInfo.ConnectedName);
+                            break;
+
+                        case PortConnectionType.External:
+                            Console.WriteLine(&quot;    Port {0} connected to the external network '{1}' has the following features:&quot;,
+                                count, portInfo.ConnectedName);
+                            break;
+
+                        case PortConnectionType.Internal:
+                            Console.WriteLine(&quot;    Port {0} connected to the internal network has the following features:&quot;,
+                                count);
+                            break;
+
+                        case PortConnectionType.Nothing:
+                            Console.WriteLine(&quot;    Port {0} not connected to anything has the following features:&quot;,
+                                count);
+                            break;
+                    }
+
+                    if (portInfo.FeatureList.Count &gt; 0)
+                    {
+                        foreach (NetworkingUtilities.PortFeatureType featureType in portInfo.FeatureList)
+                        {
+                            Console.WriteLine(&quot;       {0}&quot;, featureType.ToString());
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine(&quot;       The port has no advanced features&quot;);
+                    }
+
+                    count++;
+                    Console.WriteLine();
+                }
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Helper method called by OutputSwitchInfo in order to build up a sorted list of virtual
+        /// machine names that the switch is connected to.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;portList&quot;&gt;The ports of the switch.&lt;/param&gt;
+        /// &lt;returns&gt;The sorted list of virtual machines which are connected to the switch.&lt;/returns&gt;
+        static IEnumerable&lt;string&gt;
+        GetConnectedVirtualMachineList(
+            List&lt;PortInfo&gt; portList)
+        {
+            //
+            // The SortedSet class will both sort the list of virtual machine names and 
+            // ignore any duplicates.
+            //
+            SortedSet&lt;string&gt; virtualMachineNames = new SortedSet&lt;string&gt;(StringComparer.OrdinalIgnoreCase);
+
+            foreach (PortInfo portInfo in portList)
+            {
+                if (portInfo.Type == PortConnectionType.VirtualMachine &amp;&amp;
+                    !string.IsNullOrEmpty(portInfo.ConnectedName))
+                {
+                    virtualMachineNames.Add(portInfo.ConnectedName);
+                }
+            }
+
+            return virtualMachineNames;
+        }
+
+        /// &lt;summary&gt;
+        /// Entry point for the EnumerateSwitch sample.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;args&quot;&gt;The command line arguments.&lt;/param&gt;
+        internal static void
+        ExecuteSample(
+            string[] args)
+        {
+            if (args.Length == 0 || args[0] == &quot;/?&quot;)
+            {
+                Console.WriteLine(&quot;Usage: EnumerateSwitch SwitchName\n&quot;);
+                Console.WriteLine(&quot;Example: EnumerateSwitch MySwitch&quot;);
+                return;
+            }
+
+            try
+            {
+                EnumerateSwitch(args[0]);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(&quot;Failed to enumerate the switch. Error message details:\n&quot;);
+                Console.WriteLine(ex.Message);
+            }
+        }
+    }
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

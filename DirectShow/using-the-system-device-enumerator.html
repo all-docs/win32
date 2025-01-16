@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using the System Device Enumerator</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Using the System Device Enumerator
+ms.assetid: 70db139c-2c5b-4574-bec3-dfe758b16715
+title: Using the System Device Enumerator
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Using the System Device Enumerator</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>The System Device Enumerator provides a uniform way to enumerate, by category, the filters registered on a user's system. Moreover, it differentiates between individual hardware devices, even if the same filter supports them. This is particularly useful for devices that use the Windows Driver Model (WDM) and the KSProxy filter. For example, the user might have several WDM video capture devices, all supported by the same filter. The System Device Enumerator treats them as separate device instances.</p>
+<p>The System Device Enumerator works by creating an enumerator for a specific category, such as audio capture or video compression. The category enumerator returns a unique moniker for each device in the category. The category enumerator automatically includes any relevant Plug and Play devices in the category. For a list of categories, see <a href="filter-categories.html">Filter Categories</a>.</p>
+<p>To use the System Device Enumerator, do the following:</p>
+<ol>
+<li>Create the system device enumerator by calling <strong>CoCreateInstance</strong>. The class identifier (CLSID) is CLSID_SystemDeviceEnum.</li>
+<li>Obtain a category enumerator by calling <a href="/windows/desktop/api/Strmif/nf-strmif-icreatedevenum-createclassenumerator"><strong>ICreateDevEnum::CreateClassEnumerator</strong></a> with the CLSID of the desired category. This method returns an <strong>IEnumMoniker</strong> interface pointer. If the category is empty (or does not exist), the method returns S_FALSE rather than an error code. If so, the returned <strong>IEnumMoniker</strong> pointer is <strong>NULL</strong> and dereferencing it will cause an exception. Therefore, explicitly test for S_OK when you call <strong>CreateClassEnumerator</strong>, instead of calling the usual <strong>SUCCEEDED</strong> macro.</li>
+<li>Use the <strong>IEnumMoniker::Next</strong> method to enumerate each moniker. This method returns an <strong>IMoniker</strong> interface pointer. When the <strong>Next</strong> method reaches the end of the enumeration, it also returns S_FALSE, so again check for S_OK.</li>
+<li>To retrieve the friendly name of the device (for example, to display in the user interface), call the <strong>IMoniker::BindToStorage</strong> method.</li>
+<li>To create and initialize the DirectShow filter that manages the device, call <strong>IMoniker::BindToObject</strong> on the moniker. Call <a href="/windows/desktop/api/Strmif/nf-strmif-ifiltergraph-addfilter"><strong>IFilterGraph::AddFilter</strong></a> to add the filter to the graph.</li>
+</ol>
+<p>The following diagram illustrates this process.</p>
+<p><img src="images/sysdevenum.png" alt="enumerating devices" /></p>
+<p>The following example shows how to enumerate the video compressors installed on the user's system. For brevity, the example performs minimal error checking.</p>
+<pre lang="C++"><code>// Create the System Device Enumerator.
+HRESULT hr;
+ICreateDevEnum *pSysDevEnum = NULL;
+hr = CoCreateInstance(CLSID_SystemDeviceEnum, NULL, CLSCTX_INPROC_SERVER,
+    IID_ICreateDevEnum, (void **)&amp;pSysDevEnum);
+if (FAILED(hr))
+{
+    return hr;
+}
+
+// Obtain a class enumerator for the video compressor category.
+IEnumMoniker *pEnumCat = NULL;
+hr = pSysDevEnum-&gt;CreateClassEnumerator(CLSID_VideoCompressorCategory, &amp;pEnumCat, 0);
+
+if (hr == S_OK) 
+{
+    // Enumerate the monikers.
+    IMoniker *pMoniker = NULL;
+    ULONG cFetched;
+    while(pEnumCat-&gt;Next(1, &amp;pMoniker, &amp;cFetched) == S_OK)
+    {
+        IPropertyBag *pPropBag;
+        hr = pMoniker-&gt;BindToStorage(0, 0, IID_IPropertyBag, 
+            (void **)&amp;pPropBag);
+        if (SUCCEEDED(hr))
+        {
+            // To retrieve the filter's friendly name, do the following:
+            VARIANT varName;
+            VariantInit(&amp;varName);
+            hr = pPropBag-&gt;Read(L&quot;FriendlyName&quot;, &amp;varName, 0);
+            if (SUCCEEDED(hr))
+            {
+                // Display the name in your UI somehow.
+            }
+            VariantClear(&amp;varName);
+
+            // To create an instance of the filter, do the following:
+            IBaseFilter *pFilter;
+            hr = pMoniker-&gt;BindToObject(NULL, NULL, IID_IBaseFilter,
+                (void**)&amp;pFilter);
+            // Now add the filter to the graph. 
+            //Remember to release pFilter later.
+            pPropBag-&gt;Release();
+        }
+        pMoniker-&gt;Release();
+    }
+    pEnumCat-&gt;Release();
+}
+pSysDevEnum-&gt;Release();
+</code></pre>
+<p><strong>Device Monikers</strong></p>
+<p>For device monikers, you can pass the moniker to the <a href="/windows/desktop/api/Strmif/nf-strmif-ifiltergraph2-addsourcefilterformoniker"><strong>IFilterGraph2::AddSourceFilterForMoniker</strong></a> method to create a capture filter for the device. For example code, see the documentation for that method.</p>
+<p>The <strong>IMoniker::GetDisplayName</strong> method returns the display name of the moniker. Although the display name is readable, you would not typically display it to an end-user. Get the friendly name from the property bag instead, as described previously.</p>
+<p>The <strong>IMoniker::ParseDisplayName</strong> method or the <strong>MkParseDisplayName</strong> function can be used to create a default device moniker for a given filter category. Use a display name with the form <code>@device:*:{category-clsid}</code>, where <code>category-clsid</code> is the string representation of the category GUID. The default moniker is the first moniker returned by the device enumerator for that category.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

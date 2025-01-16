@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Receiving Input from the Math Input Control</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This section explains how to retrieve the MathML markup from the math input control using the Active Template Library (ATL) and the Component Object Model (COM).
+ms.assetid: 352d2a0c-8275-4fe4-b523-4c74126ffadf
+title: Receiving Input from the Math Input Control
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Receiving Input from the Math Input Control</h1>
+<p>This section explains how to retrieve the MathML markup from the math input control using the Active Template Library (ATL) and the Component Object Model (COM).</p>
+<p>To retrieve the recognized math equation from the math input control, you can override the behavior that happens when the insert button is pressed. To do this, you will need to set up an event handler that implements the various events that are supported by the <a href="/windows/win32/api/micaut/nn-micaut-_imathinputcontrolevents"><strong>_IMathInputControlEvents</strong></a> interface. Setting up the events handler involves the performing the following steps for the events you want to support (insert in this case).</p>
+<ul>
+<li><a href="#create-a-template-class-that-contains-event-sinks">Create a template class that contains event sinks</a></li>
+<li><a href="#set-up-the-event-handlers">Set up the event handlers</a></li>
+<li><a href="#inherit-the-event-handler-class-in-your-main-class">Inherit the event handler class in your main class</a></li>
+<li><a href="#initialize-your-class-to-inherit-the-event-sinks">Initialize your class to inherit the event sink(s)</a></li>
+</ul>
+<h2>Create a template class that contains event sinks</h2>
+<p>When you are implementing an event sink that uses the math input control, you must first specify a sink id. You must then create a template class that inherits from the event, event control handler, and math input control event interfaces. The following code shows how to set a sink id and create such a template class, CMathInputControlEventHandler, that inherits from the requisite interfaces. This template class also is set up to have a private unknown interface pointer that will be used to pass the math input control to it on initialization and the m_ulAdviseCount member to count the number of calls to advise / unadvise.</p>
+<pre><code>  
+#pragma once
+static const int MATHINPUTCONTROL_SINK_ID = 1 ;
+
+template &lt;class T&gt;
+class ATL_NO_VTABLE CMathInputControlEventHandler :
+    public IDispEventSimpleImpl&lt;MATHINPUTCONTROL_SINK_ID, CMathInputControlEventHandler&lt;T&gt;, &amp;__uuidof(_IMathInputControlEvents)&gt;
+{
+private:
+    IUnknown    *m_pUnknown;
+    ULONG m_ulAdviseCount;
+    CDialog *m_pMain;
+
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+The member <strong>m_pMain</strong> should be different in your implementation if you are not using a dialog.</p>
+</blockquote>
+<p>Â </p>
+<p>Now that you have the basic template class, you must give a forward declaration for the event handlers that you will be overriding and must then set up a sink map for the events you will be handling. The following code shows how to set up event handlers for the <a href="/previous-versions/windows/desktop/legacy/dd317352(v=vs.85)"><strong>Insert</strong></a> method, called when a user clicks the insert button on the math input control, and the <a href="/previous-versions/windows/desktop/legacy/dd317351(v=vs.85)"><strong>Close</strong></a> method, called when a user clicks the cancel button on the math input control.</p>
+<pre><code>  
+public:
+    static const _ATL_FUNC_INFO OnMICInsertInfo; // = {CC_STDCALL, VT_I4, 1, {VT_BSTR}};
+    static const _ATL_FUNC_INFO OnMICCloseInfo;  // = {CC_STDCALL, VT_I4, 0, {VT_EMPTY}};
+
+    BEGIN_SINK_MAP(CMathInputControlEventHandler)
+        SINK_ENTRY_INFO(MATHINPUTCONTROL_SINK_ID, __uuidof(_IMathInputControlEvents), DISPID_MICInsert, OnMICInsert, const_cast&lt;_ATL_FUNC_INFO*&gt;(&amp;OnMICInsertInfo))
+        SINK_ENTRY_INFO(MATHINPUTCONTROL_SINK_ID, __uuidof(_IMathInputControlEvents), DISPID_MICClose, OnMICClose, const_cast&lt;_ATL_FUNC_INFO*&gt;(&amp;OnMICCloseInfo))  
+    END_SINK_MAP()
+</code></pre>
+<p>Since you will be working with the math input control, it will be useful to set an internal reference to the relevant interface. The following utility function is created in the example class to set this reference.</p>
+<pre><code>    
+  HRESULT Initialize(IUnknown *pUnknown, CDialog *pMain)
+  {
+    m_pMain  = pMain;
+    m_pUnknown = pUnknown;
+    m_ulAdviseCount = 0;
+    return S_OK;
+  }
+  
+</code></pre>
+<h2>Set up the event handlers</h2>
+<p>Once you have set up the event sinks, you will need to create your implementations of the event sinks. In both of the methods in the following code example, the event sinks retrieve a handle to the math input control interface. In the <a href="/previous-versions/windows/desktop/legacy/dd317352(v=vs.85)"><strong>Insert</strong></a> function, the recognition result is displayed as MathML and the control is hidden. In the <a href="/previous-versions/windows/desktop/legacy/dd317351(v=vs.85)"><strong>Close</strong></a> function, the math input control is hidden.</p>
+<pre><code>  
+    // Methods
+    HRESULT __stdcall OnMICInsert( BSTR bstrRecoResult)
+    {
+        CComQIPtr&lt;IMathInputControl&gt; spMIC(m_pUnknown);
+        HRESULT hr=S_OK;
+        if (spMIC)
+        {           
+            MessageBox(NULL,bstrRecoResult,L&quot;Recognition Result&quot;,MB_OK);
+            hr = spMIC-&gt;Hide();
+            return hr;  
+        }
+        return E_FAIL;          
+    }
+
+    HRESULT __stdcall OnMICClose()
+    {
+        CComPtr&lt;IMathInputControl&gt; spMIC;
+        HRESULT hr = m_pUnknown-&gt;QueryInterface&lt;IMathInputControl&gt;(&amp;spMIC);
+        if (SUCCEEDED(hr))
+        {           
+            hr = spMIC-&gt;Hide();
+            return hr;  
+        }
+        return hr;                  
+    }
+};  
+</code></pre>
+<h2>Inherit the event handler class in your main class</h2>
+<p>After you have your template class implemented, you will need to inherit it into the class that you will be setting up your math input control in. For the purposes of this guide, this class is a dialog, CMIC_TEST_EVENTSDlg. In the dialog header, the requisite headers must be included and the template class you created must be inherited. The class you're inheriting within and the event handlers must have forward declarations so that the template can be implemented. The following code example shows how this is done.</p>
+<pre><code>#pragma once
+#include &lt;atlbase.h&gt;
+#include &lt;atlwin.h&gt;
+
+// include for MIC
+#include &quot;micaut.h&quot;
+
+// include for event sinks
+#include &lt;iacom.h&gt;
+#include &quot;mathinputcontroleventhandler.h&quot;
+
+class CMIC_TEST_EVENTSDlg;
+
+const _ATL_FUNC_INFO CMathInputControlEventHandler&lt;CMIC_TEST_EVENTSDlg&gt;::OnMICInsertInfo = {CC_STDCALL, VT_I4, 1, {VT_BSTR}};
+const _ATL_FUNC_INFO CMathInputControlEventHandler&lt;CMIC_TEST_EVENTSDlg&gt;::OnMICCloseInfo = {CC_STDCALL, VT_I4, 0, {VT_EMPTY}};
+
+// CMIC_TEST_EVENTSDlg dialog
+class CMIC_TEST_EVENTSDlg : public CDialog,
+    public CMathInputControlEventHandler&lt;CMIC_TEST_EVENTSDlg&gt;
+{
+  public:
+  CComPtr&lt;IMathInputControl&gt; m_spMIC; // Math Input Control
+
+  
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+The template type, <strong>CMIC_TEST_EventsDlg</strong>, will be different unless you have named your class the same as the example.</p>
+</blockquote>
+<p>Â </p>
+<h2>Initialize your class to inherit the event sink(s)</h2>
+<p>Once you have set up your class to inherit from the template class, you are ready to set it up to handle events. This will consist of initializing the class to have a handle to the math input control and the calling class. Additionally, the math input control to handle events from must be sent to the DispEventAdvise method that the CMathInputControlEventHandler example class inherits. The following code is called from the OnInitDialog method in the example class to perform these actions.</p>
+<pre><code>// includes for implementation
+#include &quot;micaut_i.c&quot;
+
+// include for event handler
+#include &quot;mathinputcontroleventhandler.h&quot;
+
+...
+
+OnInitDialog{
+  ...
+
+  // TODO: Add extra initialization here
+  CoInitialize(NULL);
+  HRESULT hr = g_spMIC.CoCreateInstance(CLSID_MathInputControl);
+  if (SUCCEEDED(hr)){
+    hr = CMathInputControlEventHandler&lt;CMIC_TEST_EVENTSDlg&gt;::Initialize(m_spMIC, this);
+      if (SUCCEEDED(hr)){
+        hr = CMathInputControlEventHandler&lt;CMIC_TEST_EVENTSDlg&gt;::DispEventAdvise(m_spMIC);            
+        if (SUCCEEDED(hr)){
+          hr = m_spMIC-&gt;Show();  
+        }
+      }
+    }
+  }  
+}
+  
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+The template type, CMIC_TEST_EventsDlg in this example, will be different unless you have named your class the same as the example.</p>
+</blockquote>
+<p>Â </p>
+<p>Â </p>
+<p>Â </p>
+</body>

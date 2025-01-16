@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Binding Output Nodes to Media Sinks</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Binding Output Nodes to Media Sinks
+ms.assetid: d4f93f34-0af1-431f-9333-70ea09691b64
+title: Binding Output Nodes to Media Sinks
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Binding Output Nodes to Media Sinks</h1>
+<p>This topic describes how to initialize the output nodes in a topology, if you are using the topology loader outside of the Media Session. An output node initially contains one of the following:</p>
+<ul>
+<li>An <a href="/windows/desktop/api/mfidl/nn-mfidl-imfstreamsink"><strong>IMFStreamSink</strong></a> pointer.</li>
+<li>An <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfactivate"><strong>IMFActivate</strong></a> pointer.</li>
+</ul>
+<p>In the latter case, the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfactivate"><strong>IMFActivate</strong></a> pointer must be converted to an <a href="/windows/desktop/api/mfidl/nn-mfidl-imfstreamsink"><strong>IMFStreamSink</strong></a> pointer before the topology loader resolves the topology. In most scenarios, the process works as follows:</p>
+<ol>
+<li>The application queues a partial topology on the Media Session.</li>
+<li>For all output nodes, the Media Session converts <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfactivate"><strong>IMFActivate</strong></a> pointers to <a href="/windows/desktop/api/mfidl/nn-mfidl-imfstreamsink"><strong>IMFStreamSink</strong></a> pointers. This process is called <em>binding</em> the output node to a media sink.</li>
+<li>The Media Session sends the modified topology to the <a href="/windows/desktop/api/mfidl/nf-mfidl-imftopoloader-load"><strong>IMFTopoLoader::Load</strong></a> method.</li>
+</ol>
+<p>However, if you are using the topology loader directly (outside of the media sesssion), your application must bind the output nodes prior to calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imftopoloader-load"><strong>IMFTopoLoader::Load</strong></a>. To bind an output node, do the following:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imftopologynode-getobject"><strong>IMFTopologyNode::GetObject</strong></a> to get the node's object pointer.</li>
+<li>Query the object pointer for the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfstreamsink"><strong>IMFStreamSink</strong></a> interface. If this call succeeds, there is nothing more to do, so skip the remaining steps.</li>
+<li>If the previous step failed, query the object pointer for the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfactivate"><strong>IMFActivate</strong></a> interface.</li>
+<li>Create the media sink by calling <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfactivate-activateobject"><strong>IMFActivate::ActivateObject</strong></a>. Specify <strong>IID_IMFMediaSink</strong> to get a pointer to the media sink's <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasink"><strong>IMFMediaSink</strong></a> interface.</li>
+<li>Query the node for the <a href="mf-toponode-streamid-attribute.html"><strong>MF_TOPONODE_STREAMID</strong></a> attribute. The value of this attribute is the identifier of the stream sink for this node. If the <strong>MF_TOPONODE_STREAMID</strong> attribute is not set, the default stream identifier is zero.</li>
+<li>The appropriate stream sink might already exist on the media sink. To check, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-getstreamsinkbyid"><strong>IMFMediaSink::GetStreamSinkById</strong></a> on the media sink. If the stream sink exists, the method returns a pointer to its <a href="/windows/desktop/api/mfidl/nn-mfidl-imfstreamsink"><strong>IMFStreamSink</strong></a> interface. If this call fails, try to add a new stream sink by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-addstreamsink"><strong>IMFMediaSink::AddStreamSink</strong></a>. If both calls fail, it means the media sink does not support the requested stream identifier, and this topology node is not configured correctly. Return an error code and skip the next step.</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imftopologynode-setobject"><strong>IMFTopologyNode::SetObject</strong></a>, passing in the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfstreamsink"><strong>IMFStreamSink</strong></a> pointer from the previous step. This call replaces the node's object pointer, so that the node contains a pointer to the stream sink, instead of a pointer to the activation object.</li>
+</ol>
+<p>The following code shows how to bind an output node.</p>
+<pre lang="C++"><code>// BindOutputNode
+// Sets the IMFStreamSink pointer on an output node.
+
+HRESULT BindOutputNode(IMFTopologyNode *pNode)
+{
+    IUnknown *pNodeObject = NULL;
+    IMFActivate *pActivate = NULL;
+    IMFStreamSink *pStream = NULL;
+    IMFMediaSink *pSink = NULL;
+
+    // Get the node's object pointer.
+    HRESULT hr = pNode-&gt;GetObject(&amp;pNodeObject);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    // The object pointer should be one of the following:
+    // 1. An activation object for the media sink.
+    // 2. The stream sink.
+
+    // If it's #2, then we're already done.
+
+    // First, check if it's an activation object.
+    hr = pNodeObject-&gt;QueryInterface(IID_PPV_ARGS(&amp;pActivate));
+
+    if (SUCCEEDED(hr))
+    {
+        DWORD dwStreamID = 0;
+
+        // The object pointer is an activation object. 
+        
+        // Try to create the media sink.
+        hr = pActivate-&gt;ActivateObject(IID_PPV_ARGS(&amp;pSink));
+
+        // Look up the stream ID. (Default to zero.)
+
+        if (SUCCEEDED(hr))
+        {
+           dwStreamID = MFGetAttributeUINT32(pNode, MF_TOPONODE_STREAMID, 0);
+        }
+
+        // Now try to get or create the stream sink.
+
+        // Check if the media sink already has a stream sink with the requested ID.
+
+        if (SUCCEEDED(hr))
+        {
+            hr = pSink-&gt;GetStreamSinkById(dwStreamID, &amp;pStream);
+            if (FAILED(hr))
+            {
+                // Try to add a new stream sink.
+                hr = pSink-&gt;AddStreamSink(dwStreamID, NULL, &amp;pStream);
+            }
+        }
+
+        // Replace the node's object pointer with the stream sink. 
+        if (SUCCEEDED(hr))
+        {
+            hr = pNode-&gt;SetObject(pStream);
+        }
+    }
+    else
+    {
+        // Not an activation object. Is it a stream sink?
+        hr = pNodeObject-&gt;QueryInterface(IID_PPV_ARGS(&amp;pStream));
+    }
+
+    SafeRelease(&amp;pNodeObject);
+    SafeRelease(&amp;pActivate);
+    SafeRelease(&amp;pStream);
+    SafeRelease(&amp;pSink);
+    return hr;
+}
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+This example uses the <a href="saferelease.html">SafeRelease</a> function to release interface pointers.</p>
+</blockquote>
+<p>Â </p>
+<p>The next example shows how to bind all of the output nodes in a topology. This example uses the <a href="/windows/desktop/api/mfidl/nf-mfidl-imftopology-getoutputnodecollection"><strong>IMFTopology::GetOutputNodeCollection</strong></a> method to get a collection of output nodes from the topology. Then it calls the function shown in the previous example on each of those nodes in turn.</p>
+<pre lang="C++"><code>// BindOutputNodes
+// Sets the IMFStreamSink pointers on all of the output nodes in a topology.
+
+HRESULT BindOutputNodes(IMFTopology *pTopology)
+{
+    DWORD cNodes = 0;
+
+    IMFCollection *pCol = NULL;
+    IUnknown *pUnk = NULL;
+    IMFTopologyNode *pNode = NULL;
+
+    // Get the collection of output nodes. 
+    HRESULT hr = pTopology-&gt;GetOutputNodeCollection(&amp;pCol);
+    
+    // Enumerate all of the nodes in the collection.
+    if (SUCCEEDED(hr))
+    {
+        hr = pCol-&gt;GetElementCount(&amp;cNodes);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        for (DWORD i = 0; i &lt; cNodes; i++)
+        {
+            hr = pCol-&gt;GetElement(i, &amp;pUnk);
+
+            if (FAILED(hr)) { break; }
+
+            hr = pUnk-&gt;QueryInterface(IID_IMFTopologyNode, (void**)&amp;pNode);
+
+            if (FAILED(hr)) { break; }
+
+            // Bind this node.
+            hr = BindOutputNode(pNode);
+
+            if (FAILED(hr)) { break; }
+        }
+    }
+
+    SafeRelease(&amp;pCol);
+    SafeRelease(&amp;pUnk);
+    SafeRelease(&amp;pNode);
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="advanced-topology-building.html">Advanced Topology Building</a></p>
+<!-- raw HTML omitted -->
+<p><a href="media-sinks.html">Media Sinks</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/mfidl/nn-mfidl-imftopoloader"><strong>IMFTopoLoader</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

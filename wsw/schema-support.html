@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Schema support</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Schema support
+description: WsUtil.exe supports the XSD schema specified at XML Schema.
+ms.assetid: 33096cda-9dbe-44d2-8d08-410bc33ae81c
+keywords:</p>
+<ul>
+<li>Schema support Web Services for Windows</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Schema support</h1>
+<p>WsUtil.exe supports the XSD schema specified at <a href="https://www.w3.org/XML/Schema">XML Schema</a>. xsd file and wsdl:type should be treated in the same category, with the exception in wsdl:type when a global element could be a parameter list. Wsutil.exe generates element descriptions for all global element definitions that can be used in serializer, with additional output for parameter structure specified in <a href="wsdl-support.html">WSDL support</a>.</p>
+<h2>XSD Schema Support Level</h2>
+<p>WsUtil.exe does not support the full extent of XSD schema. The current support level is defined in <a href="schema-support-level.html">Schema support level</a>.</p>
+<p>Identifier generation</p>
+<p>Element name or type name in the schema might not be valid C identifier, and the names are normalized to generated valid C names. Invalid C identifier characters are converted to the hex name, and an underscore '_' might be prefixed to the name if necessary. Anonymous types are named after the enclosing element name but prefixed with underscore &quot;_&quot; to avoid name collision. Global type names are preserved as it is after invalid characters are normalized. Nested anonymous types are prefixed with the parent type name.</p>
+<p>For every global element definition, wsutil.exe generates a <a href="/windows/desktop/api/WebServices/ns-webservices-ws_element_description"><strong>WS_ELEMENT_DESCRIPTION</strong></a> in the global description structure. For every global type definition, wsutil.exe generates a type description in the global description structure to be referenced by application.</p>
+<p>For each field in the structure, wsutil.exe generates a <a href="/windows/desktop/api/WebServices/ns-webservices-ws_field_description"><strong>WS_FIELD_DESCRIPTION</strong></a> embedded as part of the enclosure structure.</p>
+<h2>Simple Types</h2>
+<p>Value types, as listed in <a href="/windows/desktop/api/WebServices/ne-webservices-ws_value_type"><strong>WS_VALUE_TYPE</strong></a>, are treated as simple types. Notice that WS_VALUE_TYPE is really a subset of <a href="/windows/desktop/api/WebServices/ne-webservices-ws_type"><strong>WS_TYPE</strong></a>. It includes basic integral and float data types, as well as DECIMAL, WS_DATETIME, and UUID.</p>
+<p>In service model, in simple types are passed by value, while out and in,out simple types are passed by reference.</p>
+<p>Wsutil create simple element description like below for global element containing simple types.</p>
+<pre lang="syntax"><code>&lt;xs:schema xmlns:tns=&quot;http://Example.org&quot; elementFormDefault=&quot;qualified&quot; 
+targetNamespace=&quot;http://Example.org&quot; xmlns:xs=&quot;http://www.w3.org/2001/XMLSchema&quot;&gt;
+ &lt;xs:element name=&quot;helloworld&quot; type=&quot;xs:int&quot;&gt;&lt;/xs:element&gt;
+&lt;/xs:schema&gt;
+</code></pre>
+<p>Wsutil generates the element description below:</p>
+<pre lang="syntax"><code>...  // global elements
+{ // helloworld
+{
+(WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.helloworldTypeName,
+(WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.helloworldTypeNamespace,
+WS_INT32_TYPE,
+0,
+},
+}, // helloworld
+... 
+</code></pre>
+<p>This structure is generated as part of the global description structure generated in header file:</p>
+<pre lang="syntax"><code>typedef struct _example_wsdl
+{
+WS_ELEMENT_DESCRIPTION helloworld;
+} _example_wsdl;
+</code></pre>
+<h2>Arrays</h2>
+<p>Element with maxOccurs larger than 1, or sequence with only one item, and the child element has maxOccurs larger than 1, is treated as array. For an array element in schema, wsutil.exe generates two fields: one count field that does not go on wire, and one pointer field containing the array type.</p>
+<pre lang="syntax"><code>&lt;xs:schema xmlns:tns=&quot;http://Example.org&quot; elementFormDefault=&quot;qualified&quot; 
+targetNamespace=&quot;http://Example.org&quot; xmlns:xs=&quot;http://www.w3.org/2001/XMLSchema&quot;&gt;
+ &lt;xs:element name=&quot;SimpleArray&quot;&gt;
+  &lt;xs:complexType&gt;
+   &lt;xs:sequence&gt;
+    &lt;xs:element minOccurs=&quot;0&quot; maxOccurs=&quot;50&quot; name=&quot;a&quot; nillable=&quot;true&quot; type=&quot;xs:int&quot; /&gt;
+   &lt;/xs:sequence&gt;
+  &lt;/xs:complexType&gt;
+ &lt;/xs:element&gt;
+&lt;/xs:schema&gt;
+</code></pre>
+<p>Header file contains the C structure definition for the array, with field aCount specifying the count of the array.</p>
+<pre lang="syntax"><code>typedef struct SimpleArray
+{
+  unsigned int  aCount ;
+  int  * a;
+} SimpleArray;
+</code></pre>
+<p>Following is part of the LocalDefinition prototype describing the array:</p>
+<pre lang="syntax"><code>... // globalElement part of the LocalDefinitions.
+struct // SimpleArray
+{
+  struct // SimpleArray
+  {
+    WS_FIELD_DESCRIPTION a;
+    WS_FIELD_DESCRIPTION * SimpleArrayFields [1];
+    WS_STRUCT_DESCRIPTION structDesc;
+  } SimpleArraydescs; // SimpleArray
+  WS_ELEMENT_DESCRIPTION elementDesc;
+} SimpleArray;
+
+// Method with array parameters.
+  typedef HRESULT (CALLBACK *SimpleMethodCallback)(
+    const WS_OPERATION_CONTEXT* context,
+    unsigned int aCount,
+    int* a,
+    unsigned int *bCount,
+    int** b,
+    unsigned int* cCount,
+    int** c,
+    const WS_ASYNC_CONTEXT* asyncContext,
+    WS_ERROR* error);
+
+  HRESULT CALLBACK SimpleMethod (
+    WS_SERVICE_PROXY* serviceProxy,
+    WS_HEAP* heap,
+    unsigned int aCount,
+    int* a,
+    unsigned int *bCount,
+    int** b,
+    unsigned int* cCount,
+    int** c,
+    const WS_ASYNC_CONTEXT* asyncContext,
+    WS_ERROR* error);
+</code></pre>
+<p>Following is the generated definitions of the above descriptions, notice the WS_REPEATING_ELEMENT_FIELD_MAPPING which indicates the field as an array field.</p>
+<pre lang="syntax"><code>...
+{ // SimpleArray
+  {   // SimpleArray
+    { // field description for a
+      WS_REPEATING_ELEMENT_FIELD_MAPPING,
+      0,
+      0,
+      WS_INT32_TYPE,
+      0,
+      WsOffsetOf(SimpleArray, a),
+      0,
+      0,
+      WsOffsetOf(SimpleArray, aCount),
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.aLocalName,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.aNamespace,
+    },    // end of field description for a
+    {    // fields description for SimpleArray
+      (WS_FIELD_DESCRIPTION*)&amp;example_wsdlLocalDefinitions.globalElements.SimpleArray.SimpleArraydescs.a,
+    },
+    {
+      sizeof(SimpleArray),
+      __alignof(SimpleArray),
+      (WS_FIELD_DESCRIPTION**)example_wsdlLocalDefinitions.globalElements.SimpleArray.SimpleArraydescs.
+      SimpleArrayFields,
+      WsCountOf(example_wsdlLocalDefinitions.globalElements.SimpleArray.SimpleArraydescs.SimpleArrayFields),
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.SimpleArrayTypeName,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.aNamespace,
+    },   // struct description for SimpleArray
+  },    // SimpleArray
+  {
+    (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.SimpleArrayTypeName,
+    (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.aNamespace,
+    WS_STRUCT_TYPE,
+    (void *)&amp;example_wsdlLocalDefinitions.globalElements.SimpleArray.SimpleArraydescs.structDesc,
+  },
+}, // SimpleArray
+...
+</code></pre>
+<p>If the array is a parameter field in input/output message, there would be two actual parameters generated for the method. If the array is an out or in,out parameter, there would be one additional level of indirection for both fields in paramStruct.</p>
+<h2>Range on Array</h2>
+<p>We recommend the best practice of not specifying maxOccur=&quot;unbounded&quot; for arrays. Instead, a fixed integer number should be specified to set an upper bound of array counts allowed. range is supported for integral types, as well as strings, byte arrays, and generic arrays.</p>
+<h2>Heuristic for Wrapped as Opposed to Unwrapped array</h2>
+<p>Sometimes arrays are wrapped inside another structure to be embedded in a top level structure. In that case, we should remove the intermediate wrapper layer. WsUtil.exe generates the same prototype and descriptions as SimpleArray described above.</p>
+<pre lang="syntax"><code>&lt;xs:schema xmlns:tns=&quot;http://Example.org&quot; elementFormDefault=&quot;qualified&quot; 
+targetNamespace=&quot;http://Example.org&quot; xmlns:xs=&quot;http://www.w3.org/2001/XMLSchema&quot;&gt;
+ &lt;xs:complexType name=&quot;SimpleArray&quot;&gt;
+  &lt;xs:sequence&gt;
+   &lt;xs:element minOccurs=&quot;0&quot; maxOccurs=&quot;50&quot; name=&quot;aa&quot; type=&quot;xs:int&quot; /&gt;
+  &lt;/xs:sequence&gt;
+ &lt;/xs:complexType&gt;
+ &lt;xs:element name=&quot;SimpleArrayWrapper&quot;&gt;
+  &lt;xs:complexType&gt;
+   &lt;xs:sequence&gt;
+    &lt;xs:element name=&quot;SimpleArray&quot; type=&quot;tns:SimpleArray&quot; /&gt;
+   &lt;/xs:sequence&gt;
+  &lt;/xs:complexType&gt;
+ &lt;/xs:element&gt;
+&lt;/xs:schema&gt;
+</code></pre>
+<p>Wsutil detects that SimpleArrayWrapper is a wrapper around SimpleArray, and generates following structures only, with separate structure for SimpleArray</p>
+<pre lang="syntax"><code>typedef struct SimpleArrayWrapper
+{
+  unsigned int  SimpleArrayCount ;
+  int  * SimpleArray;
+} SimpleArrayWrapper;
+
+.. // global element inside the LocalDefinitions prototype
+struct // SimpleArrayWrapper
+{
+  struct // SimpleArrayWrapper
+  {
+    WS_FIELD_DESCRIPTION SimpleArray;
+    WS_FIELD_DESCRIPTION * SimpleArrayWrapperFields [1];
+    WS_STRUCT_DESCRIPTION structDesc;
+  } SimpleArrayWrapperdescs; // SimpleArrayWrapper
+  WS_ELEMENT_DESCRIPTION elementDesc;
+} SimpleArrayWrapper;
+...
+</code></pre>
+<p>wsutil.exe generates the following definitions for the matching prototype above, notices that in the field description, the wrapper name and wrapper namespace fields are filled in</p>
+<pre lang="syntax"><code>... // global element part of the LocalDefinitions structure:
+{ // SimpleArrayWrapper
+  {   // SimpleArrayWrapper
+    { // WS_FIELD_DESCRIPTION  for SimpleArray
+      WS_REPEATING_ELEMENT_FIELD_MAPPING,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.SimpleArrayWrapperName,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.SimpleArrayNamespace,
+      WS_INT32_TYPE,
+      0,
+      WsOffsetOf(SimpleArrayWrapper, SimpleArray),
+      0,
+      0,
+      WsOffsetOf(SimpleArrayWrapper, SimpleArrayCount),
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.SimpleArrayLocalName,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.SimpleArrayNamespace,
+    },    // end of field description for SimpleArray
+    {    // array of field descriptions for SimpleArrayWrapper
+      (WS_FIELD_DESCRIPTION *)&amp;example_wsdlLocalDefinitions.globalElements.SimpleArrayWrapper.SimpleArrayWrapperdescs.SimpleArray,
+    },
+    {  // WS_STRUCT_DESCRIPTION for SimpleArrayWrapper
+      sizeof(SimpleArrayWrapper),
+      __alignof(SimpleArrayWrapper),
+      (WS_FIELD_DESCRIPTION**)example_wsdlLocalDefinitions.globalElements.SimpleArrayWrapper.SimpleArrayWrapperdescs.SimpleArrayWrapperFields,
+      WsCountOf(example_wsdlLocalDefinitions.globalElements.SimpleArrayWrapper.SimpleArrayWrapperdescs.SimpleArrayWrapperFields),
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.SimpleArrayWrapperTypeName,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.SimpleArrayNamespace,
+    },   // struct description for SimpleArrayWrapper
+    },    // SimpleArrayWrapper
+  {  // WS_ELEMENT_DESCRIPTION for SimpleArrayWrapper
+    (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.SimpleArrayWrapperTypeName,
+    (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.SimpleArrayNamespace,
+    WS_STRUCT_TYPE,
+    (void *)&amp;example_wsdlLocalDefinitions.globalElements.SimpleArrayWrapper.SimpleArrayWrapperdescs.structDesc,
+  },
+}, // SimpleArrayWrapper
+</code></pre>
+<h2>Structures</h2>
+<p>A complexType with multiple elements in a sequence is a structure. For example,</p>
+<pre lang="syntax"><code>&lt;xs:schema xmlns:tns=&quot;http://Example.org&quot; elementFormDefault=&quot;qualified&quot; 
+targetNamespace=&quot;http://Example.org&quot; xmlns:xs=&quot;http://www.w3.org/2001/XMLSchema&quot;&gt;
+ &lt;xs:complexType name=&quot;StructType&quot;&gt;
+  &lt;xs:sequence&gt;
+   &lt;xs:element minOccurs=&quot;0&quot; name=&quot;FirstName&quot; nillable=&quot;true&quot; type=&quot;xs:string&quot; /&gt;
+   &lt;xs:element minOccurs=&quot;0&quot; name=&quot;LastName&quot; nillable=&quot;true&quot; type=&quot;xs:string&quot; /&gt;
+  &lt;/xs:sequence&gt;
+ &lt;/xs:complexType&gt;
+ &lt;xs:element name=&quot;StructType&quot; nillable=&quot;true&quot; type=&quot;tns:StructType&quot; /&gt;
+&lt;/xs:schema&gt;
+</code></pre>
+<p>Wsutil.exe generates a structure prototype as:</p>
+<pre lang="syntax"><code>struct StructType
+{
+  WS_STRING FirstName;
+  WS_STRING LastName;
+};
+
+// methods using structure parameters.
+typedef HRESULT (CALLBACK *SimpleMethodCallback) (
+  const WS_OPERATION_CONTEXT* context,
+  StructType* a,
+  StructType** b,
+  StructType** c,
+  const WS_ASYNC_CONTEXT* asyncContext,
+  WS_ERROR* error);
+
+HRESULT CALLBACK SimpleMethod (WS_SERVICE_PROXY* serviceProxy,
+  WS_HEAP* heap,
+  StructType* a,
+  StructType** b,
+  StructType** c,
+  const WS_ASYNC_CONTEXT* asyncContext,
+  WS_ERROR* error);
+</code></pre>
+<p>wsutil generates the following prototype for LocalDefinition:</p>
+<pre lang="syntax"><code>struct // StructType
+{
+  struct // StructType
+  {
+    WS_FIELD_DESCRIPTION FirstName;
+    WS_FIELD_DESCRIPTION LastName;
+    WS_FIELD_DESCRIPTION * StructTypeFields [2];
+    WS_STRUCT_DESCRIPTION structDesc;
+  } StructTypedescs; // StructType
+WS_ELEMENT_DESCRIPTION elementDesc;
+}
+</code></pre>
+<p>The definition for the structure looks like below, with two field descriptions in the structure.</p>
+<pre lang="syntax"><code>// global element inside LocalDefinitions.
+{ // StructType
+  {   // StructType
+    { // field description for FirstName
+      WS_ELEMENT_FIELD_MAPPING,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.FirstNameLocalName,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.FirstNameNamespace,
+      WS_STRING_TYPE,
+      0,
+      WsOffsetOf(StructType, FirstName),
+      0,
+      0,
+    },    // end of field description for FirstName
+    { // field description for LastName
+      WS_ELEMENT_FIELD_MAPPING,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.LastNameLocalName,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.FirstNameNamespace,
+      WS_STRING_TYPE,
+      0,
+      WsOffsetOf(StructType, LastName),
+      0,
+      0,
+    },    // end of field description for LastName
+    {    // fields description for StructType
+      (WS_FIELD_DESCRIPTION *)&amp;example_wsdlLocalDefinitions.globalElements.StructType.StructTypedescs.FirstName,
+      (WS_FIELD_DESCRIPTION *)&amp;example_wsdlLocalDefinitions.globalElements.StructType.StructTypedescs.LastName,
+    },
+    { // WS_STRUCT_DESCRIPTION for StructType
+      sizeof(StructType),
+      __alignof(StructType),
+      (WS_FIELD_DESCRIPTION**)example_wsdlLocalDefinitions.globalElements.StructType.StructTypedescs.StructTypeFields,
+      WsCountOf(example_wsdlLocalDefinitions.globalElements.StructType.StructTypedescs.StructTypeFields),
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.StructTypeTypeName,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.FirstNameNamespace,
+    },   // struct description for StructType
+  },    // StructType
+  {
+    (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.StructTypeTypeName,
+    (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.FirstNameNamespace,
+    WS_STRUCT_TYPE,
+    (void *)&amp;example_wsdlLocalDefinitions.globalElements.StructType.StructTypedescs.structDesc,
+  },
+}, // StructType
+</code></pre>
+<p>To support extensibility, embedded structures are always defined passed by reference. In service, all out or in,out structures are passed by double pointer to allow future extension of the structure, as well as allowing nillable structure.</p>
+<h2>Recursive Structures</h2>
+<p>Recursive structures are supported, and the embedded types is passed by reference. For the following wsdl:</p>
+<pre lang="syntax"><code>&lt;xs:schema xmlns:tns=&quot;http://Example.org&quot; elementFormDefault=&quot;qualified&quot; 
+targetNamespace=&quot;http://Example.org&quot; xmlns:xs=&quot;http://www.w3.org/2001/XMLSchema&quot;&gt;
+ &lt;xs:element name=&quot;SimpleMethod&quot;&gt;
+  &lt;xs:complexType&gt;
+   &lt;xs:sequence&gt;
+    &lt;xs:element minOccurs=&quot;0&quot; name=&quot;a&quot; type=&quot;xs:int&quot; /&gt;
+    &lt;xs:element minOccurs=&quot;0&quot; name=&quot;b&quot; type=&quot;tns:example&quot; /&gt;
+   &lt;/xs:sequence&gt;
+  &lt;/xs:complexType&gt;
+ &lt;/xs:element&gt;
+ &lt;xs:complexType name=&quot;example&quot;&gt;
+  &lt;xs:sequence&gt;
+   &lt;xs:element minOccurs=&quot;0&quot; name=&quot;d&quot; type=&quot;tns:example&quot; /&gt;
+   &lt;xs:element minOccurs=&quot;0&quot; name=&quot;c&quot; type=&quot;xs:int&quot; /&gt;
+  &lt;/xs:sequence&gt;
+ &lt;/xs:complexType&gt;
+&lt;/xs:schema&gt;
+</code></pre>
+<p>Wsutil generates the follow type definitions, as well as the type descriptions:</p>
+<pre lang="syntax"><code>typedef struct example
+{
+  struct example  * d;
+  int32   c;
+} example;
+
+typedef struct SimpleMethod
+{
+  unsigned __int32   a;
+  struct example  * b;
+} SimpleMethod;
+
+// global element part of the LocalDefinitions.
+...
+struct // SimpleMethod
+{
+  struct // SimpleMethod
+  {
+    WS_FIELD_DESCRIPTION a;
+    struct // example
+    {
+      WS_FIELD_DESCRIPTION d;
+      WS_FIELD_DESCRIPTION c;
+      WS_FIELD_DESCRIPTION * exampleFields [2];
+      WS_STRUCT_DESCRIPTION structDesc;
+    } exampledescs; // example
+    WS_FIELD_DESCRIPTION b;
+    WS_FIELD_DESCRIPTION * SimpleMethodFields [2];
+    WS_STRUCT_DESCRIPTION structDesc;
+  } SimpleMethoddescs; // SimpleMethod
+  WS_ELEMENT_DESCRIPTION elementDesc;
+} SimpleMethod;
+...
+</code></pre>
+<p>The definition is generated as below:</p>
+<pre lang="syntax"><code>{   // SimpleMethod
+  { // field description for a
+    WS_ELEMENT_FIELD_MAPPING,
+    (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.aLocalName,
+    (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.aNamespace,
+    WS_INT32_TYPE,
+    0,
+    WsOffsetOf(SimpleMethod, a),
+    0,
+    0,
+  },    // end of field description for a
+  {   // example
+    { // field description for d
+      WS_ELEMENT_FIELD_MAPPING,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.dLocalName,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.aNamespace,
+      WS_STRUCT_TYPE,
+      (WS_STRUCT_DESCRIPTION*)&amp;example_wsdlLocalDefinitions.globalElements.SimpleMethod.SimpleMethoddescs.structDesc,
+      WsOffsetOf(example, d),
+      WS_FIELD_POINTER,
+      0,
+    },    // end of field description for d
+    { // field description for c
+      WS_ELEMENT_FIELD_MAPPING,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.cLocalName,
+      (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.aNamespace,
+      WS_INT32_TYPE,
+      0,
+      WsOffsetOf(example, c),
+      0,
+      0,
+    },    // end of field description for c
+    {    // fields description for example
+      (WS_FIELD_DESCRIPTION *)&amp;example_wsdlLocalDefinitions.globalElements.SimpleMethod.SimpleMethoddescs.exampledescs.d,
+      (WS_FIELD_DESCRIPTION *)&amp;example_wsdlLocalDefinitions.globalElements.SimpleMethod.SimpleMethoddescs.exampledescs.c,
+    },
+  {
+    sizeof(example),
+    __alignof(example),
+    (WS_FIELD_DESCRIPTION**)example_wsdlLocalDefinitions.globalElements.SimpleMethod.SimpleMethoddescs.exampledescs.exampleFields,
+    WsCountOf(example_wsdlLocalDefinitions.globalElements.SimpleMethod.SimpleMethoddescs.exampledescs.exampleFields),
+    (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.exampleTypeName,
+    (WS_XML_STRING*)&amp;example_wsdlLocalDefinitions.dictionary.xmlStrings.aNamespace,
+  },   // struct description for example
+}
+</code></pre>
+<h2>Structure inheritence</h2>
+<p>wsutil supports complex type extension where one complex type is an extension to another complex type.</p>
+<pre lang="syntax"><code>&lt;s:schema xmlns:tns=&quot;http://Example.org&quot; elementFormDefault=&quot;qualified&quot; 
+targetNamespace=&quot;http://Example.org&quot; xmlns:s=&quot;http://www.w3.org/2001/XMLSchema&quot;&gt;
+ &lt;s:complexType name=&quot;LinkList&quot;&gt;
+  &lt;s:sequence&gt;
+   &lt;s:element minOccurs=&quot;0&quot; name=&quot;d&quot; type=&quot;tns:LinkList&quot; /&gt;
+   &lt;s:element minOccurs=&quot;0&quot; name=&quot;c&quot; type=&quot;s:int&quot; /&gt;
+  &lt;/s:sequence&gt;
+ &lt;/s:complexType&gt; 
+ &lt;s:element name=&quot;DerivedLinkList&quot;&gt;
+  &lt;s:complexType&gt;
+   &lt;s:complexContent&gt;
+    &lt;s:extension base=&quot;tns:LinkList&quot;&gt;
+     &lt;s:sequence&gt;
+      &lt;s:element name=&quot;derive1&quot; type=&quot;s:int&quot; /&gt;
+     &lt;/s:sequence&gt;
+    &lt;/s:extension&gt;
+   &lt;/s:complexContent&gt;
+  &lt;/s:complexType&gt;
+ &lt;/s:element&gt;
+&lt;/s:schema&gt;
+</code></pre>
+<p>The above xsd fragment indicates that DerivedLinkList derives from LinkList.</p>
+<p>Wsutil.exe generates helper routines for both C and C++ to make it easier for application to set up the type information of base type and derived types. In the following code, _WS_CPLUSPLUS macro is used to differentiate definition for C and C++ language:</p>
+<pre lang="syntax"><code>#if defined(_WS_CPLUSPLUS)
+typedef struct LinkList
+{
+  LinkList();
+  LinkList(WS_STRUCT_DESCRIPTION*);
+  struct _DerivedLinkList* WINAPI As_DerivedLinkList();
+  const struct _WS_STRUCT_DESCRIPTION* _type;
+  struct LinkList * d;
+  int  c;
+} LinkList;
+#endif
+
+#if !defined(_WS_CPLUSPLUS)
+typedef struct LinkList
+{
+  const struct _WS_STRUCT_DESCRIPTION* _type;
+  struct LinkList * d;
+  int  c;
+} LinkList;
+
+void WINAPI LinkList_Init(LinkList*);
+#endif
+
+#if defined(_WS_CPLUSPLUS)
+typedef struct _DerivedLinkList:LinkList
+{
+  _DerivedLinkList();
+  int  derive1;
+} _DerivedLinkList;
+#endif
+
+#if !defined(_WS_CPLUSPLUS)
+typedef struct _DerivedLinkList
+{
+  struct LinkList _base;
+  int  derive1;
+} _DerivedLinkList;
+
+struct _DerivedLinkList* WINAPI LinkList_As_DerivedLinkList(LinkList*);
+#endif
+</code></pre>
+<p>In C style helper, before serialiation, application calls wsutil generated routine LinkList_Init to initialize the structure and set the type description to LinkList type description. After deserialization, application can call LinkList_As_DerivedLinkList to get the derived type.</p>
+<p>To retrieve type information in runtime, wsutil generates the first field of base type with <a href="/windows/desktop/api/WebServices/ns-webservices-ws_struct_description"><strong>WS_STRUCT_DESCRIPTION</strong></a>* type and <a href="/windows/desktop/api/WebServices/ne-webservices-ws_field_mapping"><strong>WS_TYPE_ATTRIBUTE_FIELD_MAPPING</strong></a> field mapping to describe the xsi:type information. Application can directly set or check the field to determine the actual type of structures. For example, the following code set the type of the structure to be DrivedLinkList:</p>
+<pre lang="syntax"><code>_DerivedLinkList derivedLinkList;
+derivedLinkList._base._type = (WS_STRUCT_DESCRIPTION*)test_xsd.globalElements.DerivedLinkList.typeDescription;
+WsWriteType(
+    writer,
+    WS_ELEMENT_TYPE_MAPPING,
+    WS_STRUCT_TYPE,
+    (WS_STRUCT_DESCRIPTION*)test_xsd.globalElements.DerivedLinkList.typeDescription,
+    ...);
+</code></pre>
+<p>After the structure is deserialized, application can directly compares the type description to determine the deserialized type:</p>
+<pre lang="syntax"><code>if (derviedLinkList._base._type == (WS_STRUCT_DESCRIPTION*)test_xsd.globalElements.DerivedLinkList.typeDescription)
+{
+    // the deserialized type is of type _DerivedLinkList
+    ...
+}
+</code></pre>
+<p>wsutil generate class for both base structure and derived structure. The default constructor initialize the type and matching type description. The AsDerivedType routine helps to do safe type casting between types.</p>
+<pre lang="syntax"><code>  { // field description for typeOfLinkList
+  WS_TYPE_ATTRIBUTE_FIELD_MAPPING,
+  0,
+  0,
+  WS_DESCRIPTION_TYPE,
+  0,
+  WsOffsetOf(LinkList, typeOfLinkList),
+  0,
+  0,
+  },    // end of field description for typeOfLinkList        ...
+  {
+  sizeof(LinkList),
+  __alignof(LinkList),
+  (WS_FIELD_DESCRIPTION**)&amp;test_xsdLocalDefinitions.globalTypes.LinkListdescs.LinkListFields,
+WsCountOf(test_xsdLocalDefinitions.globalTypes.LinkListdescs.LinkListFields),
+(WS_XML_STRING*)&amp;test_xsdLocalDefinitions.dictionary.xmlStrings.LinkListTypeName,
+(WS_XML_STRING*)&amp;test_xsdLocalDefinitions.dictionary.xmlStrings.LinkListTypeNamespace,
+0,
+(WS_STRUCT_DESCRIPTION**)&amp;test_xsdLocalDefinitions.globalTypes.LinkListdescs.SubTypes,
+  1,
+  },   // struct description for LinkList
+</code></pre>
+<h2>nillable</h2>
+<p>nillable attribute is supported for strings, structs, and byte arrays. WS_FIELD_NILLABLE attribute will be added to fields with nillable attribute. The pointer will be set to <strong>NULL</strong> if an element is nillable. A nillable field in a structure is treated as a pointer. A parameter structure with nillable attribute will be passed by reference.</p>
+<h2>pointers</h2>
+<p>Value type must be passed by value or by reference for out parameters. Double pointer is not allowed except for out only structures.</p>
+<h2>Parameterless</h2>
+<p>Recall our prior discussion for the &quot;parameters&quot; name for the message part. If this is specified we will attempt to generate a combined frame for input and output message for the resulting service operation. If this is not specified the resulting service operation would then contain input and output messages as structs as parameters.</p>
+<pre lang="syntax"><code>&lt;wsdl:definitions xmlns:soap=&quot;http://schemas.xmlsoap.org/wsdl/soap/&quot; xmlns:wsu=&quot;http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd&quot; 
+xmlns:soapenc=&quot;http://schemas.xmlsoap.org/soap/encoding/&quot; xmlns:tns=&quot;http://Sapphire.org&quot; 
+xmlns:wsa=&quot;http://schemas.xmlsoap.org/ws/2004/08/addressing&quot; xmlns:wsp=&quot;http://schemas.xmlsoap.org/ws/2004/09/policy&quot; 
+xmlns:wsap=&quot;http://schemas.xmlsoap.org/ws/2004/08/addressing/policy&quot; xmlns:xs=&quot;http://www.w3.org/2001/XMLSchema&quot; 
+xmlns:msc=&quot;http://schemas.microsoft.com/ws/2005/12/wsdl/contract&quot; xmlns:wsaw=&quot;http://www.w3.org/2006/05/addressing/wsdl&quot; 
+xmlns:soap12=&quot;http://schemas.xmlsoap.org/wsdl/soap12/&quot; xmlns:wsa10=&quot;http://www.w3.org/2005/08/addressing&quot; 
+xmlns:wsx=&quot;http://schemas.xmlsoap.org/ws/2004/09/mex&quot; targetNamespace=&quot;http://Sapphire.org&quot; 
+xmlns:wsdl=&quot;http://schemas.xmlsoap.org/wsdl/&quot;&gt;
+ &lt;wsdl:message name=&quot;ISimpleService_SimpleMethod_InputMessage&quot;&gt;
+  &lt;wsdl:part name=&quot;noparameters&quot; element=&quot;tns:SimpleMethod&quot; /&gt;
+ &lt;/wsdl:message&gt;
+ &lt;wsdl:message name=&quot;ISimpleService_SimpleMethod_OutputMessage&quot;&gt;
+  &lt;wsdl:part name=&quot;noparameters&quot; element=&quot;tns:SimpleMethodResponse&quot; /&gt;
+ &lt;/wsdl:message&gt;
+&lt;/wsdl:definitions&gt;
+</code></pre>
+<p>Thus for our SimpleMethod operation the signature for the service and the client will look like.</p>
+<pre lang="syntax"><code>typedef HRESULT (CALLBACK *SimpleMethodCallback)
+  (const WS_OPERATION_CONTEXT* context,
+  SimpleMethodRequest* inMessage,
+  SimpleMethodResponse** outMessage,
+  const WS_ASYNC_CONTEXT* asyncContext,
+  WS_ERROR* error);
+
+HRESULT CALLBACK SimpleMethod (
+  WS_SERVICE_PROXY* serviceProxy,
+  WS_HEAP* heap,
+  SimpleMethodRequest* inMessage,
+  SimpleMethodResponse** outMessage,
+  const WS_ASYNC_CONTEXT* asyncContext,
+  WS_ERROR* error);
+</code></pre>
+<h2>Security</h2>
+<p>See security section in <a href="wsutil-compiler-tool.html">Wsutil Compiler tool</a> as well as <a href="serialization.html">Serialization</a></p>
+<p>Â </p>
+<p>Â </p>
+</body>

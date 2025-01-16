@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How-to re-encode a JPEG image with metadata</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example demonstrates how to re-encode an image and its metadata to a new file of the same format.
+ms.assetid: a7cfaa6d-e17d-458a-ae63-72963615bef8
+title: 'How-to re-encode a JPEG image with metadata'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How-to re-encode a JPEG image with metadata</h1>
+<p>The following example demonstrates how to re-encode an image and its metadata to a new file of the same format. In addition, this example adds metadata to demonstrate a single-item expression used by a query writer.</p>
+<p>This topic contains the following sections.</p>
+<ul>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#part-1-decode-an-image">Part 1: Decode an Image</a></li>
+<li><a href="#part-2-create-and-initialize-the-image-encoder">Part 2: Create and Initialize the Image Encoder</a></li>
+<li><a href="#part-3-copy-decoded-frame-information">Part 3: Copy Decoded Frame Information</a></li>
+<li><a href="#part-4-copy-the-metadata">Part 4: Copy the Metadata</a></li>
+<li><a href="#part-5-add-additional-metadata">Part 5: Add Additional Metadata</a></li>
+<li><a href="#part-6-finalize-the-encoded-image">Part 6: Finalize the Encoded Image</a></li>
+<li><a href="#jpeg-re-encode-example-code">JPEG Re-encode Example Code</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Prerequisites</h2>
+<p>To understand this topic, you should be familiar with the Windows Imaging Component (WIC) metadata system as described in the <a href="-wic-about-metadata.html">WIC Metadata Overview</a>. You should also be familiar with the WIC codec components as described in the <a href="-wic-about-windows-imaging-codec.html">Windows Imaging Component Overview</a>.</p>
+<h2>Part 1: Decode an Image</h2>
+<p>Before you can copy image data or metadata to a new image file, you must first create a decoder for the existing image that you want to re-encode. The following code demonstrates how to create a WIC decoder for the image file test.jpg.</p>
+<pre lang="C++"><code>    // Initialize COM.
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+    IWICImagingFactory *piFactory = NULL;
+    IWICBitmapDecoder *piDecoder = NULL;
+
+    // Create the COM imaging factory.
+    if (SUCCEEDED(hr))
+    {
+        hr = CoCreateInstance(CLSID_WICImagingFactory,
+        NULL, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&amp;piFactory));
+    }
+
+    // Create the decoder.
+    if (SUCCEEDED(hr))
+    {
+        hr = piFactory-&gt;CreateDecoderFromFilename(L&quot;test.jpg&quot;, NULL, GENERIC_READ,
+            WICDecodeMetadataCacheOnDemand, //For JPEG lossless decoding/encoding.
+            &amp;piDecoder);
+    }
+</code></pre>
+<p>The call to <strong>CreateDecoderFromFilename</strong> used the value WICDecodeMetadataCacheOnDemand from the <a href="/windows/desktop/api/Wincodec/ne-wincodec-wicdecodeoptions"><strong>WICDecodeOptions</strong></a> enumeration as the fourth parameter. This tells the decoder to cache the metadata when the metadata is needed, either by obtaining a query reader or by using the underlying metadata reader. Using this option enables you to retain the stream to the metadata, which is required for performing fast metadata encoding and enables lossless decoding and encoding of JPEG images. Alternatively, you could use the other <strong>WICDecodeOptions</strong> value, WICDecodeMetadataCacheOnLoad, which caches the embedded image metadata as soon as the image is loaded.</p>
+<h2>Part 2: Create and Initialize the Image Encoder</h2>
+<p>The following code demonstrates the creation of the encoder you will use to encode the image you previously decoded.</p>
+<pre lang="C++"><code>    // Variables used for encoding.
+    IWICStream *piFileStream = NULL;
+    IWICBitmapEncoder *piEncoder = NULL;
+    IWICMetadataBlockWriter *piBlockWriter = NULL;
+    IWICMetadataBlockReader *piBlockReader = NULL;
+
+    WICPixelFormatGUID pixelFormat = { 0 };
+    UINT count = 0;
+    double dpiX, dpiY = 0.0;
+    UINT width, height = 0;
+
+    // Create a file stream.
+    if (SUCCEEDED(hr))
+    {
+        hr = piFactory-&gt;CreateStream(&amp;piFileStream);
+    }
+
+    // Initialize our new file stream.
+    if (SUCCEEDED(hr))
+    {
+        hr = piFileStream-&gt;InitializeFromFilename(L&quot;test2.jpg&quot;, GENERIC_WRITE);
+    }
+
+    // Create the encoder.
+    if (SUCCEEDED(hr))
+    {
+        hr = piFactory-&gt;CreateEncoder(GUID_ContainerFormatJpeg, NULL, &amp;piEncoder);
+    }
+    // Initialize the encoder
+    if (SUCCEEDED(hr))
+    {
+        hr = piEncoder-&gt;Initialize(piFileStream,WICBitmapEncoderNoCache);
+    }
+</code></pre>
+<p>A WIC file stream piFileStream is created and initialized for writing to the image file &quot;test2.jpg&quot;. piFileStream is then used to initialize the encoder, informing the encoder where to write the image bits when the encoding is complete.</p>
+<h2>Part 3: Copy Decoded Frame Information</h2>
+<p>The following code copies each frame of an image to a new frame of the encoder. This copy includes size, resolution, and pixel format; all of which are necessary to create a valid frame.</p>
+<blockquote>
+<p>[!Note]<br />
+JPEG images will only have one frame and the loop below is not technically necessary but is included to demonstrate multi-frame usage for formats that support it.</p>
+</blockquote>
+<p>Â </p>
+<pre lang="C++"><code>    if (SUCCEEDED(hr))
+    {
+        hr = piDecoder-&gt;GetFrameCount(&amp;count);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Process each frame of the image.
+        for (UINT i=0; i&lt;count &amp;&amp; SUCCEEDED(hr); i++)
+        {
+            // Frame variables.
+            IWICBitmapFrameDecode *piFrameDecode = NULL;
+            IWICBitmapFrameEncode *piFrameEncode = NULL;
+            IWICMetadataQueryReader *piFrameQReader = NULL;
+            IWICMetadataQueryWriter *piFrameQWriter = NULL;
+
+            // Get and create the image frame.
+            if (SUCCEEDED(hr))
+            {
+                hr = piDecoder-&gt;GetFrame(i, &amp;piFrameDecode);
+            }
+            if (SUCCEEDED(hr))
+            {
+                hr = piEncoder-&gt;CreateNewFrame(&amp;piFrameEncode, NULL);
+            }
+
+            // Initialize the encoder.
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;Initialize(NULL);
+            }
+            // Get and set the size.
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameDecode-&gt;GetSize(&amp;width, &amp;height);
+            }
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;SetSize(width, height);
+            }
+            // Get and set the resolution.
+            if (SUCCEEDED(hr))
+            {
+                piFrameDecode-&gt;GetResolution(&amp;dpiX, &amp;dpiY);
+            }
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;SetResolution(dpiX, dpiY);
+            }
+            // Set the pixel format.
+            if (SUCCEEDED(hr))
+            {
+                piFrameDecode-&gt;GetPixelFormat(&amp;pixelFormat);
+            }
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;SetPixelFormat(&amp;pixelFormat);
+            }
+</code></pre>
+<p>The following code performs a quick check to determine whether the source and destination image formats are the same. This is needed as Part 4 shows an operation that is only supported when the source and destination format are the same.</p>
+<pre lang="C++"><code>            // Check that the destination format and source formats are the same.
+            bool formatsEqual = FALSE;
+            if (SUCCEEDED(hr))
+            {
+                GUID srcFormat;
+                GUID destFormat;
+
+                hr = piDecoder-&gt;GetContainerFormat(&amp;srcFormat);
+                if (SUCCEEDED(hr))
+                {
+                    hr = piEncoder-&gt;GetContainerFormat(&amp;destFormat);
+                }
+                if (SUCCEEDED(hr))
+                {
+                    if (srcFormat == destFormat)
+                        formatsEqual = true;
+                    else
+                        formatsEqual = false;
+                }
+            }
+</code></pre>
+<h2>Part 4: Copy the Metadata</h2>
+<blockquote>
+<p>[!Note]<br />
+The code in this section is valid only when the source and destination image formats are the same. You cannot copy all of an image's metadata in a single operation when encoding to a different image format.</p>
+</blockquote>
+<p>Â </p>
+<p>To preserve metadata while re-encoding an image to the same image format, there are methods available for copying all the metadata in a single operation. Each of these operations follows a similar pattern; each sets the decoded frame's metadata directly into the new frame being encoded. Note that this is done for each individual image frame.</p>
+<p>The preferred method for copying metadata is to initialize the new frame's block writer with the decoded frame's block reader. The following code demonstrates this method.</p>
+<pre lang="C++"><code>            if (SUCCEEDED(hr) &amp;&amp; formatsEqual)
+            {
+                // Copy metadata using metadata block reader/writer.
+                if (SUCCEEDED(hr))
+                {
+                    piFrameDecode-&gt;QueryInterface(IID_PPV_ARGS(&amp;piBlockReader));
+                }
+                if (SUCCEEDED(hr))
+                {
+                    piFrameEncode-&gt;QueryInterface(IID_PPV_ARGS(&amp;piBlockWriter));
+                }
+                if (SUCCEEDED(hr))
+                {
+                    piBlockWriter-&gt;InitializeFromBlockReader(piBlockReader);
+                }
+            }
+</code></pre>
+<p>In this example, you simply obtain the block reader and block writer from the source frame and destination frame, respectively. The block writer is then initialized from the block reader. This initializes the block writer with the pre-populated metadata of the block reader. To learn additional methods for copying metadata, see the Writing Metadata section in the <a href="-wic-codec-readingwritingmetadata.html">Overview of Reading and Writing Image Metadata</a>.</p>
+<p>Again, this operation works only when the source and destination images have the same format. This is because different image formats store the metadata blocks in different locations. For instance, both JPEG and Tagged Image File Format (TIFF) support Extensible Metadata Platform (XMP) metadata blocks. In JPEG images, the XMP block is at the root metadata block as illustrated in the <a href="-wic-about-metadata.html">WIC Metadata Overview</a>. However, in a TIFF image, the XMP block is embedded in the root IFD block.</p>
+<h2>Part 5: Add Additional Metadata</h2>
+<p>The following example demonstrates how to add metadata to the destination image. This is done by calling the query writer's <strong>SetMetadataByName</strong> method using a query expression and the data stored in a <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant">PROPVARIANT</a>.</p>
+<pre lang="C++"><code>            if(SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;GetMetadataQueryWriter(&amp;piFrameQWriter);
+            }
+            if (SUCCEEDED(hr))
+            {
+                // Add additional metadata.
+                PROPVARIANT    value;
+                value.vt = VT_LPWSTR;
+                value.pwszVal= L&quot;Metadata Test Image.&quot;;
+                hr = piFrameQWriter-&gt;SetMetadataByName(L&quot;/xmp/dc:title&quot;, &amp;value);
+            }
+</code></pre>
+<p>For more information on the query expression, see the <a href="-wic-codec-metadataquerylanguage.html">Metadata Query Language Overview</a>.</p>
+<h2>Part 6: Finalize the Encoded Image</h2>
+<p>The final steps for copying the image are to write the pixel data for the frame, commit the frame to the encoder, and commit the encoder. Committing the encoder writes the image stream to the file.</p>
+<pre lang="C++"><code>            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;WriteSource(
+                    static_cast&lt;IWICBitmapSource*&gt; (piFrameDecode),
+                    NULL); // Using NULL enables JPEG loss-less encoding.
+            }
+
+            // Commit the frame.
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;Commit();
+            }
+
+            if (piFrameDecode)
+            {
+                piFrameDecode-&gt;Release();
+            }
+
+            if (piFrameEncode)
+            {
+                piFrameEncode-&gt;Release();
+            }
+
+            if (piFrameQReader)
+            {
+                piFrameQReader-&gt;Release();
+            }
+
+            if (piFrameQWriter)
+            {
+                piFrameQWriter-&gt;Release();
+            }
+        }
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        piEncoder-&gt;Commit();
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        piFileStream-&gt;Commit(STGC_DEFAULT);
+    }
+
+    if (piFileStream)
+    {
+        piFileStream-&gt;Release();
+    }
+    if (piEncoder)
+    {
+        piEncoder-&gt;Release();
+    }
+    if (piBlockWriter)
+    {
+        piBlockWriter-&gt;Release();
+    }
+    if (piBlockReader)
+    {
+        piBlockReader-&gt;Release();
+    }
+</code></pre>
+<p>The frame's <strong>WriteSource</strong> method is used to write the pixel data for the image. Note that this is done after the metadata has been written. This is necessary to ensure that the metadata has enough space within the image file. After the pixel data is written, the frame is written to the stream using the frame's <strong>Commit</strong> method. After all frames have been processed, the encoder (and thus the image) is finalized using the encoder's <strong>Commit</strong> method.</p>
+<p>Once you commit the frame, you must release the COM objects created in the loop.</p>
+<h2>JPEG Re-encode Example Code</h2>
+<p>The following is the code from Parts 1 through 6 in one convienient block.</p>
+<pre lang="C++"><code>#include &lt;Windows.h&gt;
+#include &lt;Wincodecsdk.h&gt;
+
+int main()
+{
+    // Initialize COM.
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+    IWICImagingFactory *piFactory = NULL;
+    IWICBitmapDecoder *piDecoder = NULL;
+
+    // Create the COM imaging factory.
+    if (SUCCEEDED(hr))
+    {
+        hr = CoCreateInstance(CLSID_WICImagingFactory,
+        NULL, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&amp;piFactory));
+    }
+
+    // Create the decoder.
+    if (SUCCEEDED(hr))
+    {
+        hr = piFactory-&gt;CreateDecoderFromFilename(L&quot;test.jpg&quot;, NULL, GENERIC_READ,
+            WICDecodeMetadataCacheOnDemand, //For JPEG lossless decoding/encoding.
+            &amp;piDecoder);
+    }
+
+    // Variables used for encoding.
+    IWICStream *piFileStream = NULL;
+    IWICBitmapEncoder *piEncoder = NULL;
+    IWICMetadataBlockWriter *piBlockWriter = NULL;
+    IWICMetadataBlockReader *piBlockReader = NULL;
+
+    WICPixelFormatGUID pixelFormat = { 0 };
+    UINT count = 0;
+    double dpiX, dpiY = 0.0;
+    UINT width, height = 0;
+
+    // Create a file stream.
+    if (SUCCEEDED(hr))
+    {
+        hr = piFactory-&gt;CreateStream(&amp;piFileStream);
+    }
+
+    // Initialize our new file stream.
+    if (SUCCEEDED(hr))
+    {
+        hr = piFileStream-&gt;InitializeFromFilename(L&quot;test2.jpg&quot;, GENERIC_WRITE);
+    }
+
+    // Create the encoder.
+    if (SUCCEEDED(hr))
+    {
+        hr = piFactory-&gt;CreateEncoder(GUID_ContainerFormatJpeg, NULL, &amp;piEncoder);
+    }
+    // Initialize the encoder
+    if (SUCCEEDED(hr))
+    {
+        hr = piEncoder-&gt;Initialize(piFileStream,WICBitmapEncoderNoCache);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = piDecoder-&gt;GetFrameCount(&amp;count);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Process each frame of the image.
+        for (UINT i=0; i&lt;count &amp;&amp; SUCCEEDED(hr); i++)
+        {
+            // Frame variables.
+            IWICBitmapFrameDecode *piFrameDecode = NULL;
+            IWICBitmapFrameEncode *piFrameEncode = NULL;
+            IWICMetadataQueryReader *piFrameQReader = NULL;
+            IWICMetadataQueryWriter *piFrameQWriter = NULL;
+
+            // Get and create the image frame.
+            if (SUCCEEDED(hr))
+            {
+                hr = piDecoder-&gt;GetFrame(i, &amp;piFrameDecode);
+            }
+            if (SUCCEEDED(hr))
+            {
+                hr = piEncoder-&gt;CreateNewFrame(&amp;piFrameEncode, NULL);
+            }
+
+            // Initialize the encoder.
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;Initialize(NULL);
+            }
+            // Get and set the size.
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameDecode-&gt;GetSize(&amp;width, &amp;height);
+            }
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;SetSize(width, height);
+            }
+            // Get and set the resolution.
+            if (SUCCEEDED(hr))
+            {
+                piFrameDecode-&gt;GetResolution(&amp;dpiX, &amp;dpiY);
+            }
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;SetResolution(dpiX, dpiY);
+            }
+            // Set the pixel format.
+            if (SUCCEEDED(hr))
+            {
+                piFrameDecode-&gt;GetPixelFormat(&amp;pixelFormat);
+            }
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;SetPixelFormat(&amp;pixelFormat);
+            }
+
+            // Check that the destination format and source formats are the same.
+            bool formatsEqual = FALSE;
+            if (SUCCEEDED(hr))
+            {
+                GUID srcFormat;
+                GUID destFormat;
+
+                hr = piDecoder-&gt;GetContainerFormat(&amp;srcFormat);
+                if (SUCCEEDED(hr))
+                {
+                    hr = piEncoder-&gt;GetContainerFormat(&amp;destFormat);
+                }
+                if (SUCCEEDED(hr))
+                {
+                    if (srcFormat == destFormat)
+                        formatsEqual = true;
+                    else
+                        formatsEqual = false;
+                }
+            }
+
+            if (SUCCEEDED(hr) &amp;&amp; formatsEqual)
+            {
+                // Copy metadata using metadata block reader/writer.
+                if (SUCCEEDED(hr))
+                {
+                    piFrameDecode-&gt;QueryInterface(IID_PPV_ARGS(&amp;piBlockReader));
+                }
+                if (SUCCEEDED(hr))
+                {
+                    piFrameEncode-&gt;QueryInterface(IID_PPV_ARGS(&amp;piBlockWriter));
+                }
+                if (SUCCEEDED(hr))
+                {
+                    piBlockWriter-&gt;InitializeFromBlockReader(piBlockReader);
+                }
+            }
+
+            if(SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;GetMetadataQueryWriter(&amp;piFrameQWriter);
+            }
+            if (SUCCEEDED(hr))
+            {
+                // Add additional metadata.
+                PROPVARIANT    value;
+                value.vt = VT_LPWSTR;
+                value.pwszVal= L&quot;Metadata Test Image.&quot;;
+                hr = piFrameQWriter-&gt;SetMetadataByName(L&quot;/xmp/dc:title&quot;, &amp;value);
+            }
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;WriteSource(
+                    static_cast&lt;IWICBitmapSource*&gt; (piFrameDecode),
+                    NULL); // Using NULL enables JPEG loss-less encoding.
+            }
+
+            // Commit the frame.
+            if (SUCCEEDED(hr))
+            {
+                hr = piFrameEncode-&gt;Commit();
+            }
+
+            if (piFrameDecode)
+            {
+                piFrameDecode-&gt;Release();
+            }
+
+            if (piFrameEncode)
+            {
+                piFrameEncode-&gt;Release();
+            }
+
+            if (piFrameQReader)
+            {
+                piFrameQReader-&gt;Release();
+            }
+
+            if (piFrameQWriter)
+            {
+                piFrameQWriter-&gt;Release();
+            }
+        }
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        piEncoder-&gt;Commit();
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        piFileStream-&gt;Commit(STGC_DEFAULT);
+    }
+
+    if (piFileStream)
+    {
+        piFileStream-&gt;Release();
+    }
+    if (piEncoder)
+    {
+        piEncoder-&gt;Release();
+    }
+    if (piBlockWriter)
+    {
+        piBlockWriter-&gt;Release();
+    }
+    if (piBlockReader)
+    {
+        piBlockReader-&gt;Release();
+    }
+    return 0;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Conceptual</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-about-metadata.html">WIC Metadata Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-metadataquerylanguage.html">Metadata Query Language Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-readingwritingmetadata.html">Overview of Reading and Writing Image Metadata</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-metadatahandlers.html">Metadata Extensibility Overview</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

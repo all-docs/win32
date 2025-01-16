@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mouse movement</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Mouse movement
+description: Mouse movement
+ms.assetid: 54366E9B-470A-4155-8A5F-425BAC8AC1A5
+ms.topic: article
+ms.date: 05/26/2022</h2>
+<h1>Mouse movement</h1>
+<p>When the mouse moves, Windows posts a <a href="/windows/win32/inputdev/wm-mousemove"><strong>WM_MOUSEMOVE</strong></a> message. By default, <strong>WM_MOUSEMOVE</strong> goes to the window that contains the cursor. You can override this behavior by <em>capturing</em> the mouse, which is described in the next section.</p>
+<p>The <a href="/windows/win32/inputdev/wm-mousemove"><strong>WM_MOUSEMOVE</strong></a> message contains the same parameters as the messages for mouse clicks. The lowest 16 bits of <em>lParam</em> contain the x-coordinate, and the next 16 bits contain the y-coordinate. Use the <a href="/windows/win32/api/windowsx/nf-windowsx-get_x_lparam"><strong>GET_X_LPARAM</strong></a> and <a href="/windows/win32/api/windowsx/nf-windowsx-get_y_lparam"><strong>GET_Y_LPARAM</strong></a> macros to unpack the coordinates from <em>lParam</em>. The <em>wParam</em> parameter contains a bitwise <strong>OR</strong> of flags, indicating the state of the other mouse buttons plus the SHIFT and CTRL keys. The following code gets the mouse coordinates from <em>lParam</em>.</p>
+<pre lang="cpp"><code>int xPos = GET_X_LPARAM(lParam); 
+int yPos = GET_Y_LPARAM(lParam);
+</code></pre>
+<p>Remember that these coordinates are in pixels, not device-independent pixels (DIPs). Later in this topic, we will look at code that converts between the two units.</p>
+<p>A window can also receive a <a href="/windows/win32/inputdev/wm-mousemove"><strong>WM_MOUSEMOVE</strong></a> message if the position of the cursor changes relative to the window. For example, if the cursor is positioned over a window, and the user hides the window, the window receives <strong>WM_MOUSEMOVE</strong> messages even if the mouse did not move. One consequence of this behavior is that the mouse coordinates might not change between <strong>WM_MOUSEMOVE</strong> messages.</p>
+<h2>Capturing mouse movement outside the window</h2>
+<p>By default, a window stops receiving <a href="/windows/win32/inputdev/wm-mousemove"><strong>WM_MOUSEMOVE</strong></a> messages if the mouse moves past the edge of the client area. But for some operations, you might need to track the mouse position beyond this point. For example, a drawing program might enable the user to drag the selection rectangle beyond the edge of the window, as shown in the following diagram.</p>
+<p><img src="images/input01.png" alt="an illustration of mouse capture." /></p>
+<p>To receive mouse-move messages past the edge of the window, call the <a href="/windows/win32/api/winuser/nf-winuser-setcapture"><strong>SetCapture</strong></a> function. After this function is called, the window will continue to receive <a href="/windows/win32/inputdev/wm-mousemove"><strong>WM_MOUSEMOVE</strong></a> messages for as long as the user holds at least one mouse button down, even if the mouse moves outside the window. The capture window must be the foreground window, and only one window can be the capture window at a time. To release mouse capture, call the <a href="/windows/win32/api/winuser/nf-winuser-releasecapture"><strong>ReleaseCapture</strong></a> function.</p>
+<p>You would typically use <a href="/windows/win32/api/winuser/nf-winuser-setcapture"><strong>SetCapture</strong></a> and <a href="/windows/win32/api/winuser/nf-winuser-releasecapture"><strong>ReleaseCapture</strong></a> in the following way.</p>
+<ol>
+<li>When the user presses the left mouse button, call <a href="/windows/win32/api/winuser/nf-winuser-setcapture"><strong>SetCapture</strong></a> to start capturing the mouse.</li>
+<li>Respond to mouse-move messages.</li>
+<li>When the user releases the left mouse button, call <a href="/windows/win32/api/winuser/nf-winuser-releasecapture"><strong>ReleaseCapture</strong></a>.</li>
+</ol>
+<h2>Example: drawing circles</h2>
+<p>Let's extend the Circle program from <a href="module-3---windows-graphics.html">Module 3</a> by enabling the user to draw a circle with the mouse. Start with the <a href="direct2d-circle-sample.html">Direct2D Circle Sample</a> program. We will modify the code in this sample to add simple drawing. First, add a new member variable to the <code>MainWindow</code> class.</p>
+<pre lang="cpp"><code>D2D1_POINT_2F ptMouse;
+</code></pre>
+<p>This variable stores the mouse-down position while the user is dragging the mouse. In the <code>MainWindow</code> constructor, initialize the <em>ellipse</em> and <em>ptMouse</em> variables.</p>
+<pre lang="cpp"><code>    MainWindow() : pFactory(NULL), pRenderTarget(NULL), pBrush(NULL),
+        ellipse(D2D1::Ellipse(D2D1::Point2F(), 0, 0)),
+        ptMouse(D2D1::Point2F())
+    {
+    }
+</code></pre>
+<p>Remove the body of the <code>MainWindow::CalculateLayout</code> method; it's not required for this example.</p>
+<pre lang="cpp"><code>void CalculateLayout() { }
+</code></pre>
+<p>Next, declare message handlers for the left-button down, left-button up, and mouse-move messages.</p>
+<pre lang="cpp"><code>void OnLButtonDown(int pixelX, int pixelY, DWORD flags);
+void OnLButtonUp();
+void OnMouseMove(int pixelX, int pixelY, DWORD flags);
+</code></pre>
+<p>Mouse coordinates are given in physical pixels, but Direct2D expects device-independent pixels (DIPs). To handle high-DPI settings correctly, you must translate the pixel coordinates into DIPs. For more discussion about DPI, see <a href="dpi-and-device-independent-pixels.html">DPI and Device-Independent Pixels</a>. The following code shows a helper class that converts pixels into DIPs.</p>
+<pre lang="cpp"><code>class DPIScale
+{
+    static float scale;
+
+public:
+    static void Initialize(HWND hwnd)
+    {
+        float dpi = GetDpiForWindow(hwnd);
+        scale = dpi/96.0f;
+    }
+
+    template &lt;typename T&gt;
+    static D2D1_POINT_2F PixelsToDips(T x, T y)
+    {
+        return D2D1::Point2F(static_cast&lt;float&gt;(x) / scale, static_cast&lt;float&gt;(y) / scale);
+    }
+};
+
+float DPIScale::scale = 1.0f;
+</code></pre>
+<p>Call <strong>DPIScale::Initialize</strong> in your <a href="/windows/win32/winmsg/wm-create"><strong>WM_CREATE</strong></a> handler, after you create the Direct2D factory object.</p>
+<pre lang="cpp"><code>case WM_CREATE:
+    if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &amp;pFactory)))
+    {
+        return -1;  // Fail CreateWindowEx.
+    }
+    DPIScale::Initialize(hwnd);
+    return 0;
+</code></pre>
+<p>To get the mouse coordinates in DIPs from the mouse messages, do the following:</p>
+<ol>
+<li>Use the <a href="/windows/win32/api/windowsx/nf-windowsx-get_x_lparam"><strong>GET_X_LPARAM</strong></a> and <a href="/windows/win32/api/windowsx/nf-windowsx-get_y_lparam"><strong>GET_Y_LPARAM</strong></a> macros to get the pixel coordinates. These macros are defined in WindowsX.h, so remember to include that header in your project.</li>
+<li>Call <code>DPIScale::PixelsToDips</code> to convert pixels to DIPs.</li>
+</ol>
+<p>Now add the message handlers to your window procedure.</p>
+<pre lang="cpp"><code>case WM_LBUTTONDOWN: 
+    OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), (DWORD)wParam);
+    return 0;
+
+case WM_LBUTTONUP: 
+    OnLButtonUp();
+    return 0;
+
+case WM_MOUSEMOVE: 
+    OnMouseMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), (DWORD)wParam);
+    return 0;
+</code></pre>
+<p>Finally, implement the message handlers themselves.</p>
+<h3>Left button down</h3>
+<p>For the left-button down message, do the following:</p>
+<ol>
+<li>Call <a href="/windows/win32/api/winuser/nf-winuser-setcapture"><strong>SetCapture</strong></a> to begin capturing the mouse.</li>
+<li>Store the position of the mouse click in the <em>ptMouse</em> variable. This position defines the upper left corner of the bounding box for the ellipse.</li>
+<li>Reset the ellipse structure.</li>
+<li>Call <a href="/windows/win32/api/winuser/nf-winuser-invalidaterect"><strong>InvalidateRect</strong></a>. This function forces the window to be repainted.</li>
+</ol>
+<pre lang="cpp"><code>void MainWindow::OnLButtonDown(int pixelX, int pixelY, DWORD flags)
+{
+    SetCapture(m_hwnd);
+    ellipse.point = ptMouse = DPIScale::PixelsToDips(pixelX, pixelY);
+    ellipse.radiusX = ellipse.radiusY = 1.0f; 
+    InvalidateRect(m_hwnd, NULL, FALSE);
+}
+</code></pre>
+<h3>Mouse move</h3>
+<p>For the mouse-move message, check whether the left mouse button is down. If it is, recalculate the ellipse and repaint the window. In Direct2D, an ellipse is defined by the center point and x- and y-radii. We want to draw an ellipse that fits the bounding box defined by the mouse-down point (<em>ptMouse</em>) and the current cursor position (<em>x</em>, <em>y</em>), so a bit of arithmetic is needed to find the width, height, and position of the ellipse.</p>
+<p>The following code recalculates the ellipse and then calls <a href="/windows/win32/api/winuser/nf-winuser-invalidaterect"><strong>InvalidateRect</strong></a> to repaint the window.</p>
+<p><img src="images/input02.png" alt="Diagram that shows an ellipse with x and y radiuses." /></p>
+<pre lang="cpp"><code>void MainWindow::OnMouseMove(int pixelX, int pixelY, DWORD flags)
+{
+    if (flags &amp; MK_LBUTTON) 
+    { 
+        const D2D1_POINT_2F dips = DPIScale::PixelsToDips(pixelX, pixelY);
+
+        const float width = (dips.x - ptMouse.x) / 2;
+        const float height = (dips.y - ptMouse.y) / 2;
+        const float x1 = ptMouse.x + width;
+        const float y1 = ptMouse.y + height;
+
+        ellipse = D2D1::Ellipse(D2D1::Point2F(x1, y1), width, height);
+
+        InvalidateRect(m_hwnd, NULL, FALSE);
+    }
+}
+</code></pre>
+<h3>Left button up</h3>
+<p>For the left-button-up message, simply call <a href="/windows/win32/api/winuser/nf-winuser-releasecapture"><strong>ReleaseCapture</strong></a> to release the mouse capture.</p>
+<pre lang="cpp"><code>void MainWindow::OnLButtonUp()
+{
+    ReleaseCapture(); 
+}
+</code></pre>
+<h2>Next</h2>
+<ul>
+<li><a href="other-mouse-operations.html">Other Mouse Operations</a></li>
+</ul>
+</body>

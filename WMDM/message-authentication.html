@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Message Authentication</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Message Authentication
+description: Message Authentication
+ms.assetid: 6cb49f6b-e303-4840-9343-9891e75e07a4
+keywords:</p>
+<ul>
+<li>Windows Media Device Manager,message authentication</li>
+<li>Device Manager,message authentication</li>
+<li>desktop applications,message authentication</li>
+<li>service providers,message authentication</li>
+<li>programming guide,message authentication</li>
+<li>message authentication</li>
+<li>message authentication code (MAC)</li>
+<li>MAC (message authentication code)
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Message Authentication</h1>
+<p>Message authentication is a process that enables applications and service providers to verify that data passed between them has not been tampered with. Windows Media Device Manager allows applications and service providers to perform message authentication by using message authentication codes (MACs). Here is how MAC authentication works:</p>
+<p>The data sender, usually the service provider, passes one or more pieces of data through a one-way cryptographic function that produces a single signature, the MAC, for all the data. The sender then sends all the signed pieces of data together with the MAC to the receiver (usually the application). The receiver passes the data through the same cryptographic function to generate a MAC and compares it to the MAC that was sent. If the MAC matches, the data has not been modified.</p>
+<p>To perform MAC authentication, the application or service provider requires an encryption key and a matching certificate. For information on where to get these, see <a href="tools-for-development.html">Tools for Development</a>.</p>
+<p>The following steps describe how data is signed by the sender, and later checked by the receiver. In Windows Media Device Manager, the service provider uses the <a href="csecurechannelserver-class.html">CSecureChannelServer</a> class to generate MACs, and the application uses the <a href="csecurechannelclient-class.html">CSecureChannelClient</a> class. Both classes provide identical functions with identical parameters, so the following steps apply to both classes.</p>
+<p>The sender (typically the service provider):</p>
+<ol>
+<li>Get the data to be signed.</li>
+<li>Create a new MAC handle by calling <strong>MACInit</strong>.</li>
+<li>Add a piece of data to be signed to the handle by calling <strong>MACUpdate</strong>. This function accepts the previously created handle, plus a piece of data that must be signed.</li>
+<li>Repeat step 3 with each additional piece of data that must be signed. It does not matter in what order data is added to the MAC.</li>
+<li>Copy the MAC from the handle to a new byte buffer by calling <strong>MACFinal</strong>. This function accepts the MAC handle and a buffer that you allocate, and copies the MAC from the handle into the provided buffer.</li>
+</ol>
+<p>When performing MAC authentication, it is important that both the sender and the receiver are putting the same data into the MAC. For the application methods that provide a MAC, typically all parameters are included in the MAC value (except for the MAC itself, of course). For example, consider the <strong>IWMDMOperation::TransferObjectData</strong> method:</p>
+<p><code>HRESULT TransferObjectData(BYTE* pData, DWORD* pdwSize, BYTE[WMDM_MAC_LENGTH] abMac);</code></p>
+<p>In this method, the MAC would include <em>pData</em> and <em>pdwSize</em>. If you do not include both the parameters, the MAC you create will not match the MAC passed to <em>abMac</em>. A service provider must be sure to put all the required parameters in the application method into the MAC value.</p>
+<p>The following C++ code demonstrates creating a MAC in a service provider's implementation of <a href="/windows/desktop/api/mswmdm/nf-mswmdm-imdspstorageglobals-getserialnumber"><strong>IMDSPStorageGlobals::GetSerialNumber</strong></a>.</p>
+<pre lang="C++"><code>HRESULT CMyDevice::GetSerialNumber(
+    PWMDMID pSerialNumber, 
+    BYTE abMac[WMDM_MAC_LENGTH])
+{
+    HRESULT hr;
+
+    // g_pSecureChannelServer is a global CSecureChannelServer object
+    // created earlier.
+
+    // Standard check that the CSecureChannelServer was authenticated previously.
+    if ( !(g_pSecureChannelServer-&gt;fIsAuthenticated()) )
+    {
+        return WMDM_E_NOTCERTIFIED;
+    }
+
+    // Call a helper function to get the device serial number.
+    hr = UtilGetSerialNumber(m_wcsName, pSerialNumber, TRUE);
+    if(hr == HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED))
+    {
+        hr = WMDM_E_NOTSUPPORTED;
+    }
+
+    if(hr == S_OK)
+    {
+        // Create the MAC handle.
+        HMAC hMAC;
+        hr = g_pSecureChannelServer-&gt;MACInit(&amp;hMAC);
+        if(FAILED(hr))
+            return hr;
+
+        // Add the serial number to the MAC.
+        g_pSecureChannelServer-&gt;MACUpdate(hMAC, (BYTE*)(pSerialNumber), sizeof(WMDMID));
+        if(FAILED(hr))
+            return hr;
+
+        // Get the created MAC value from the handle.
+        g_pSecureChannelServer-&gt;MACFinal(hMAC, abMac);
+        if(FAILED(hr))
+            return hr;
+    }
+
+    return hr;
+}
+</code></pre>
+<p>The receiver (typically the application):</p>
+<p>If the receiver has not implemented the <a href="/windows/desktop/api/mswmdm/nn-mswmdm-iwmdmoperation3"><strong>IWMDMOperation3</strong></a> interface, it should perform the same steps as the sender, and then compare the two MAC values. The following C++ code example shows how an application would check the MAC received in a call to <a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmstorageglobals-getserialnumber"><strong>IWMDMStorageGlobals::GetSerialNumber</strong></a> to ensure that the serial number was not tampered with in transit.</p>
+<pre lang="C++"><code>//
+// Get and verify the serial number.
+//
+WMDMID serialNumber;
+BYTE receivedMAC[WMDM_MAC_LENGTH];
+hr = pIWMDMDevice-&gt;GetSerialNumber(&amp;serialNumber, receivedMAC);
+
+// Check the MAC to guarantee the serial number has not been tampered with.
+if (hr == S_OK)
+{
+    // Initialize a MAC handle, 
+    // add all parameters to the MAC,
+    // and retrieve the calculated MAC value.
+    // m_pSAC is a global CSecureChannelClient object created earlier.
+    HMAC hMAC;
+    BYTE calculatedMAC[WMDM_MAC_LENGTH];
+    hr = m_pSAC-&gt;MACInit(&amp;hMAC);
+    if(FAILED(hr))
+        return hr;
+
+    hr = m_pSAC-&gt;MACUpdate(hMAC, (BYTE*)(&amp;serialNumber), sizeof(serialNumber));
+    if(FAILED(hr))
+        return hr;
+
+    hr = m_pSAC-&gt;MACFinal(hMAC, (BYTE*)calculatedMAC);
+    if(FAILED(hr))
+        return hr;
+
+    // If the two MAC values match, the MAC is authentic. 
+    if (memcmp(calculatedMAC, receivedMAC, sizeof(calculatedMAC)) == 0)
+    {
+        // The MAC is authentic; print the serial number.
+        CHAR* serialNumberBuffer = 
+            new CHAR[serialNumber.SerialNumberLength + 1];
+        ZeroMemory(serialNumberBuffer, 
+            (serialNumber.SerialNumberLength + 1) * sizeof(CHAR));
+        memcpy(serialNumberBuffer, serialNumber.pID, 
+            serialNumber.SerialNumberLength * sizeof(CHAR));
+        // TODO: Display the serial number.
+        delete serialNumberBuffer;
+    }
+    else
+    {
+        // TODO: Display a message indicating that the serial number MAC 
+        // does not match.
+    }
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-secure-authenticated-channels.html"><strong>Using Secure Authenticated Channels</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

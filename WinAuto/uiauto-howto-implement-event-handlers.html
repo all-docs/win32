@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Implement Event Handlers</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: How to Implement Event Handlers
+description: This topic contains example code that shows how to implement interfaces that enable clients to receive and handle Microsoft UI Automation events.
+ms.assetid: 6b6549b8-795b-45a8-8fef-59842cc990e4
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to Implement Event Handlers</h1>
+<p>This topic contains example code that shows how to implement interfaces that enable clients to receive and handle Microsoft UI Automation events. It discusses the following topics:</p>
+<ul>
+<li><a href="#handling-general-ui-automation-events">Handling General UI Automation Events</a></li>
+<li><a href="#handling-focus-changed-events">Handling Focus-Changed Events</a></li>
+<li><a href="#handling-property-changed-events">Handling Property-Changed Events</a></li>
+<li><a href="#handling-structure-changed-events">Handling Structure-Changed Events</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Handling General UI Automation Events</h2>
+<p>The following code example is a MicrosoftÂ Windows console application that implements a UI Automation event handler for general UI Automation events. This example handles creation and destruction events for tooltips and other windows.</p>
+<pre lang="C++"><code>// Defines an event handler for general UI Automation events. It listens for
+// tooltip and window creation and destruction events. 
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;UIAutomation.h&gt;
+
+class EventHandler:
+    public IUIAutomationEventHandler
+{
+private:
+    LONG _refCount;
+
+public:
+    int _eventCount;
+
+    // Constructor.
+    EventHandler(): _refCount(1), _eventCount(0) 
+    {
+    }
+
+    // IUnknown methods.
+    ULONG STDMETHODCALLTYPE AddRef() 
+    {
+        ULONG ret = InterlockedIncrement(&amp;_refCount);
+        return ret;
+    }
+
+    ULONG STDMETHODCALLTYPE Release() 
+    {
+        ULONG ret = InterlockedDecrement(&amp;_refCount);
+        if (ret == 0) 
+        {
+            delete this;
+            return 0;
+        }
+        return ret;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppInterface) 
+    {
+        if (riid == __uuidof(IUnknown)) 
+            *ppInterface=static_cast&lt;IUIAutomationEventHandler*&gt;(this);
+        else if (riid == __uuidof(IUIAutomationEventHandler)) 
+            *ppInterface=static_cast&lt;IUIAutomationEventHandler*&gt;(this);
+        else 
+        {
+            *ppInterface = NULL;
+            return E_NOINTERFACE;
+        }
+        this-&gt;AddRef();
+        return S_OK;
+    }
+
+    // IUIAutomationEventHandler methods
+    HRESULT STDMETHODCALLTYPE HandleAutomationEvent(IUIAutomationElement * pSender, EVENTID eventID)
+    {
+        _eventCount++;
+        switch (eventID) 
+        {
+            case UIA_ToolTipOpenedEventId:
+                wprintf(L&quot;&gt;&gt; Event ToolTipOpened Received! (count: %d)\n&quot;, _eventCount);
+                break;
+            case UIA_ToolTipClosedEventId:
+                wprintf(L&quot;&gt;&gt; Event ToolTipClosed Received! (count: %d)\n&quot;, _eventCount);
+                break;
+            case UIA_Window_WindowOpenedEventId:
+                wprintf(L&quot;&gt;&gt; Event WindowOpened Received! (count: %d)\n&quot;, _eventCount);
+                break;
+            case UIA_Window_WindowClosedEventId:
+                wprintf(L&quot;&gt;&gt; Event WindowClosed Received! (count: %d)\n&quot;, _eventCount);
+                break;
+            default:
+                wprintf(L&quot;&gt;&gt; Event (%d) Received! (count: %d)\n&quot;, eventID, _eventCount);
+                break;
+        }
+        return S_OK;
+    }
+};
+
+int main(int argc, char* argv[])
+{
+    HRESULT hr;
+    int ret = 0;
+    IUIAutomationElement* pTargetElement = NULL;
+    EventHandler* pEHTemp = NULL;
+
+    CoInitializeEx(NULL,COINIT_MULTITHREADED);
+    IUIAutomation* pAutomation = NULL;
+    hr = CoCreateInstance(__uuidof(CUIAutomation), NULL,CLSCTX_INPROC_SERVER, __uuidof(IUIAutomation), (void**)&amp;pAutomation);
+    if(FAILED(hr) || pAutomation==NULL) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+    // Use root element for listening to window and tooltip creation and destruction.
+    hr = pAutomation-&gt;GetRootElement(&amp;pTargetElement);
+    if (FAILED(hr) || pTargetElement==NULL) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    pEHTemp = new EventHandler();
+    if (pEHTemp == NULL) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    wprintf(L&quot;-Adding Event Handlers.\n&quot;);
+    hr = pAutomation-&gt;AddAutomationEventHandler(UIA_ToolTipOpenedEventId, pTargetElement, TreeScope_Subtree, NULL, (IUIAutomationEventHandler*) pEHTemp);
+    if (FAILED(hr)) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+    hr = pAutomation-&gt;AddAutomationEventHandler(UIA_ToolTipClosedEventId, pTargetElement, TreeScope_Subtree, NULL, (IUIAutomationEventHandler*) pEHTemp);
+    if (FAILED(hr)) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+    hr = pAutomation-&gt;AddAutomationEventHandler(UIA_Window_WindowOpenedEventId, pTargetElement, TreeScope_Subtree, NULL, (IUIAutomationEventHandler*) pEHTemp);
+    if (FAILED(hr)) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+    hr = pAutomation-&gt;AddAutomationEventHandler(UIA_Window_WindowClosedEventId, pTargetElement, TreeScope_Subtree, NULL, (IUIAutomationEventHandler*) pEHTemp);
+    if (FAILED(hr)) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    wprintf(L&quot;-Press any key to remove event handlers and exit\n&quot;);
+    getchar();
+
+    wprintf(L&quot;-Removing Event Handlers.\n&quot;);
+
+cleanup:
+    // Remove event handlers, release resources, and terminate
+    if (pAutomation != NULL) 
+    {
+        hr = pAutomation-&gt;RemoveAllEventHandlers();
+        if (FAILED(hr))
+            ret = 1;
+        pAutomation-&gt;Release();
+    }
+
+    if (pEHTemp != NULL) 
+        pEHTemp-&gt;Release();
+
+    if (pTargetElement != NULL) 
+        pTargetElement-&gt;Release();
+
+    CoUninitialize();
+    return ret;
+}
+</code></pre>
+<h2>Handling Focus-Changed Events</h2>
+<p>The following code example is a Windows console application that implements a handler for focus-changed events.</p>
+<pre lang="C++"><code>// Defines an event handler for focus changed events and starts
+// listening to them.
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;UIAutomation.h&gt;
+
+class EventHandler:
+    public IUIAutomationFocusChangedEventHandler
+{
+private:
+    LONG _refCount;
+
+public:
+    int _eventCount;
+
+    //Constructor.
+    EventHandler(): _refCount(1), _eventCount(0) 
+    {
+    }
+
+    //IUnknown methods.
+    ULONG STDMETHODCALLTYPE AddRef() 
+    {
+        ULONG ret = InterlockedIncrement(&amp;_refCount);
+        return ret;
+    }
+
+    ULONG STDMETHODCALLTYPE Release() 
+    {
+        ULONG ret = InterlockedDecrement(&amp;_refCount);
+        if (ret == 0) 
+        {
+            delete this;
+            return 0;
+        }
+        return ret;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppInterface) 
+    {
+        if (riid == __uuidof(IUnknown))
+            *ppInterface = static_cast&lt;IUIAutomationFocusChangedEventHandler*&gt;(this);
+        else if(riid == __uuidof(IUIAutomationFocusChangedEventHandler)) 
+            *ppInterface=static_cast&lt;IUIAutomationFocusChangedEventHandler*&gt;(this);
+        else 
+        {
+            *ppInterface = NULL;
+            return E_NOINTERFACE;
+        }
+        this-&gt;AddRef();
+        return S_OK;
+    }
+
+    // IUIAutomationFocusChangedEventHandler methods.
+    HRESULT STDMETHODCALLTYPE HandleFocusChangedEvent(IUIAutomationElement * pSender) 
+    {
+        _eventCount++;
+        wprintf(L&quot;&gt;&gt; FocusChangedEvent Received! (count: %d)\n&quot;, _eventCount);
+        return S_OK;
+    }
+};
+
+int main(int argc, char* argv[]) 
+{
+    HRESULT hr;
+    int ret = 0;
+    EventHandler* pEHTemp = NULL;
+
+    CoInitializeEx(NULL,COINIT_MULTITHREADED);
+    IUIAutomation* pAutomation = NULL;
+    hr = CoCreateInstance(__uuidof(CUIAutomation), NULL,CLSCTX_INPROC_SERVER, __uuidof(IUIAutomation), (void**)&amp;pAutomation);
+    if (FAILED(hr) || pAutomation == NULL)
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    pEHTemp = new EventHandler();
+    if (pEHTemp == NULL)
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    wprintf(L&quot;-Adding Event Handlers.\n&quot;);
+    hr = pAutomation-&gt;AddFocusChangedEventHandler(NULL, (IUIAutomationFocusChangedEventHandler*) pEHTemp); 
+    if (FAILED(hr)) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    wprintf(L&quot;-Press any key to remove event handler and exit\n&quot;);
+    getchar();
+
+    wprintf(L&quot;-Removing Event Handlers.\n&quot;);
+    hr = pAutomation-&gt;RemoveFocusChangedEventHandler((IUIAutomationFocusChangedEventHandler*) pEHTemp);
+    if (FAILED(hr)) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    // Release resources and terminate.
+cleanup:
+    if (pEHTemp != NULL) 
+        pEHTemp-&gt;Release();
+
+    if (pAutomation != NULL) 
+        pAutomation-&gt;Release();
+
+    CoUninitialize();
+    return ret;
+}
+</code></pre>
+<h2>Handling Property-Changed Events</h2>
+<p>The following code example is a Windows console application that implements a handler for property-changed events.</p>
+<pre lang="C++"><code>// Defines an event handler for property-changed events, and listens for
+// ToggleState property changes on the element specifies by the user.
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;UIAutomation.h&gt;
+
+class EventHandler:
+    public IUIAutomationPropertyChangedEventHandler
+{
+private:
+    LONG _refCount;
+
+public:
+    int _eventCount;
+
+    //Constructor.
+    EventHandler(): _refCount(1), _eventCount(0) 
+    {
+    }
+
+    //IUnknown methods.
+    ULONG STDMETHODCALLTYPE AddRef() 
+    {
+        ULONG ret = InterlockedIncrement(&amp;_refCount);
+        return ret;
+    }
+
+    ULONG STDMETHODCALLTYPE Release() 
+    {
+        ULONG ret = InterlockedDecrement(&amp;_refCount);
+        if (ret == 0) 
+        {
+            delete this;
+            return 0;
+        }
+        return ret;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppInterface) 
+    {
+        if (riid == __uuidof(IUnknown))
+            *ppInterface=static_cast&lt;IUIAutomationPropertyChangedEventHandler*&gt;(this);
+        else if (riid == __uuidof(IUIAutomationPropertyChangedEventHandler)) 
+            *ppInterface=static_cast&lt;IUIAutomationPropertyChangedEventHandler*&gt;(this);
+        else 
+        {
+            *ppInterface = NULL;
+            return E_NOINTERFACE;
+        }
+        this-&gt;AddRef();
+        return S_OK;
+    }
+
+    // IUIAutomationPropertyChangedEventHandler methods.
+    HRESULT STDMETHODCALLTYPE HandlePropertyChangedEvent(IUIAutomationElement* pSender, PROPERTYID propertyID, VARIANT newValue) 
+    {
+        _eventCount++;
+        if (propertyID == UIA_ToggleToggleStatePropertyId) 
+            wprintf(L&quot;&gt;&gt; Property ToggleState changed! &quot;);
+        else 
+            wprintf(L&quot;&gt;&gt; Property (%d) changed! &quot;, propertyID);
+
+        if (newValue.vt == VT_I4) 
+            wprintf(L&quot;(0x%0.8x) &quot;, newValue.lVal);
+
+        wprintf(L&quot;(count: %d)\n&quot;, _eventCount);
+        return S_OK;
+    }
+};
+
+int main(int argc, char* argv[]) 
+{
+    HRESULT hr;
+    int ret = 0;
+    IUIAutomationElement* pTargetElement = NULL;
+    EventHandler* pEHTemp = NULL;
+
+    CoInitializeEx(NULL,COINIT_MULTITHREADED);
+
+    IUIAutomation* pAutomation = NULL;
+    hr = CoCreateInstance(__uuidof(CUIAutomation), NULL, CLSCTX_INPROC_SERVER, __uuidof(IUIAutomation), (void**)&amp;pAutomation);
+    if (FAILED(hr) || pAutomation==NULL) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    wprintf(L&quot;-Use the mouse to point to the element you want to listen from.\n&quot;);
+    Sleep(3000);
+
+    // Make this application dots-per-inch (DPI) aware.
+    SetProcessDPIAware();
+
+    // Get mouse cursor position and get element from point.
+    POINT pt;
+    GetPhysicalCursorPos(&amp;pt);
+    hr = pAutomation-&gt;ElementFromPoint(pt, &amp;pTargetElement);
+    if (FAILED(hr) || pTargetElement==NULL) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    pEHTemp = new EventHandler();
+    if (pEHTemp == NULL) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    PROPERTYID pPIDProperties[] = { UIA_ToggleToggleStatePropertyId };
+
+    wprintf(L&quot;-Adding Event Handler.\n&quot;);
+    hr = pAutomation-&gt;AddPropertyChangedEventHandlerNativeArray(pTargetElement, TreeScope_Subtree, NULL, (IUIAutomationPropertyChangedEventHandler*) pEHTemp, pPIDProperties, sizeof(pPIDProperties) / sizeof(pPIDProperties[0]));
+    if (FAILED(hr)) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    wprintf(L&quot;-Press any key to remove event handler and exit\n&quot;);
+    getchar();
+
+    wprintf(L&quot;-Removing Event Handler.\n&quot;);
+    hr = pAutomation-&gt;RemovePropertyChangedEventHandler(pTargetElement, (IUIAutomationPropertyChangedEventHandler*) pEHTemp);
+    if (FAILED(hr)) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    // Release resources and terminate.
+cleanup:
+    if (pEHTemp != NULL) 
+        pEHTemp-&gt;Release();
+
+    if (pTargetElement != NULL) 
+        pTargetElement-&gt;Release();
+
+    if (pAutomation != NULL) 
+        pAutomation-&gt;Release();
+
+    CoUninitialize();
+    return ret;
+}
+</code></pre>
+<h2>Handling Structure-Changed Events</h2>
+<p>The following code example is a Windows console application that implements a handler for structure-changed events.</p>
+<pre lang="C++"><code>// Defines an event handler for structure-changed events, and 
+// listens for them on the element specifies by the user.
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;UIAutomation.h&gt;
+
+class EventHandler:
+    public IUIAutomationStructureChangedEventHandler
+{
+private:
+    LONG _refCount;
+
+public:
+    int _eventCount;
+
+    // Constructor.
+    EventHandler(): _refCount(1), _eventCount(0) 
+    {
+    }
+
+    // IUnknown methods.
+    ULONG STDMETHODCALLTYPE AddRef() 
+    {
+        ULONG ret = InterlockedIncrement(&amp;_refCount);
+        return ret;
+    }
+
+    ULONG STDMETHODCALLTYPE Release() 
+    {
+        ULONG ret = InterlockedDecrement(&amp;_refCount);
+        if (ret == 0) 
+        {
+            delete this;
+            return 0;
+        }
+        return ret;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppInterface) 
+    {
+        if (riid == __uuidof(IUnknown))
+            *ppInterface=static_cast&lt;IUIAutomationStructureChangedEventHandler*&gt;(this);
+        else if (riid == __uuidof(IUIAutomationStructureChangedEventHandler)) 
+            *ppInterface=static_cast&lt;IUIAutomationStructureChangedEventHandler*&gt;(this);
+        else 
+        {
+            *ppInterface = NULL;
+            return E_NOINTERFACE;
+        }
+        this-&gt;AddRef();
+        return S_OK;
+    }
+
+    // IUIAutomationStructureChangedEventHandler methods
+    HRESULT STDMETHODCALLTYPE HandleStructureChangedEvent(IUIAutomationElement* pSender, StructureChangeType changeType, SAFEARRAY* pRuntimeID) {
+        _eventCount++;
+        switch (changeType) 
+        {
+            case StructureChangeType_ChildAdded:
+                wprintf(L&quot;&gt;&gt; Structure Changed: ChildAdded! (count: %d)\n&quot;, _eventCount);
+                break;
+            case StructureChangeType_ChildRemoved:
+                wprintf(L&quot;&gt;&gt; Structure Changed: ChildRemoved! (count: %d)\n&quot;, _eventCount);
+                break;
+            case StructureChangeType_ChildrenInvalidated:
+                wprintf(L&quot;&gt;&gt; Structure Changed: ChildrenInvalidated! (count: %d)\n&quot;, _eventCount);
+                break;
+            case StructureChangeType_ChildrenBulkAdded:
+                wprintf(L&quot;&gt;&gt; Structure Changed: ChildrenBulkAdded! (count: %d)\n&quot;, _eventCount);
+                break;
+            case StructureChangeType_ChildrenBulkRemoved:
+                wprintf(L&quot;&gt;&gt; Structure Changed: ChildrenBulkRemoved! (count: %d)\n&quot;, _eventCount);
+                break;
+            case StructureChangeType_ChildrenReordered:
+                wprintf(L&quot;&gt;&gt; Structure Changed: ChildrenReordered! (count: %d)\n&quot;, _eventCount);
+                break;
+        }
+        return S_OK;
+    }
+};
+
+int main(int argc, char* argv[]) 
+{
+    HRESULT hr;
+    int ret = 0;
+    IUIAutomationElement* pTargetElement = NULL;
+    EventHandler* pEHTemp = NULL;
+
+    CoInitializeEx(NULL,COINIT_MULTITHREADED);
+
+    IUIAutomation* pAutomation=NULL;
+    hr = CoCreateInstance(__uuidof(CUIAutomation), NULL, CLSCTX_INPROC_SERVER, __uuidof(IUIAutomation), (void**)&amp;pAutomation);
+    if (FAILED(hr) || pAutomation == NULL) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    wprintf(L&quot;-Use the mouse to point to the element you want to listen from.\n&quot;);
+    Sleep(3000);
+
+    // Make this application dots-per-inch (DPI) aware.
+    SetProcessDPIAware();
+
+    // Get mouse cursor position and get element from point.
+    POINT pt;
+    GetPhysicalCursorPos(&amp;pt);
+    hr = pAutomation-&gt;ElementFromPoint(pt, &amp;pTargetElement);
+    if (FAILED(hr) || pTargetElement == NULL) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    pEHTemp = new EventHandler();
+    if (pEHTemp == NULL) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    wprintf(L&quot;-Adding Event Handler.\n&quot;);
+    hr = pAutomation-&gt;AddStructureChangedEventHandler(pTargetElement, TreeScope_Subtree, NULL, (IUIAutomationStructureChangedEventHandler*) pEHTemp);
+    if (FAILED(hr)) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    wprintf(L&quot;-Press any key to remove event handler and exit\n&quot;);
+    getchar();
+
+    wprintf(L&quot;-Removing Event Handler.\n&quot;);
+    hr = pAutomation-&gt;RemoveStructureChangedEventHandler(pTargetElement, (IUIAutomationStructureChangedEventHandler*) pEHTemp);
+    if (FAILED(hr)) 
+    {
+        ret = 1;
+        goto cleanup;
+    }
+
+    // Release resources and terminate.
+cleanup:
+    if (pEHTemp != NULL) 
+        pEHTemp-&gt;Release();
+
+    if (pTargetElement != NULL) 
+        pTargetElement-&gt;Release();
+
+    if (pAutomation != NULL) 
+        pAutomation-&gt;Release();
+
+    CoUninitialize();
+    return ret;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Conceptual</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="uiauto-eventsforclients.html">Subscribing to UI Automation Events</a></p>
+<!-- raw HTML omitted -->
+<p><a href="uiauto-howto-topics-for-uiautomation-clients.html">How-To Topics for UI Automation Clients</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

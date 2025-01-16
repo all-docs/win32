@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 5: Handle Media Session Events</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic is step 5 of the tutorial How to Play Media Files with Media Foundation.
+ms.assetid: db9b896f-6f56-47b1-b129-331c984e0b16
+title: 'Step 5: Handle Media Session Events'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Step 5: Handle Media Session Events</h1>
+<p>This topic is step 5 of the tutorial <a href="how-to-play-unprotected-media-files.html">How to Play Media Files with Media Foundation</a>. The complete code is shown in the topic <a href="media-session-playback-example.html">Media Session Playback Example</a>.</p>
+<p>For background on this topic, read <a href="media-event-generators.html">Media Event Generators</a>. This topic contains the following sections:</p>
+<ul>
+<li><a href="#getting-session-events">Getting Session Events</a></li>
+<li><a href="#mesessiontopologystatus">MESessionTopologyStatus</a></li>
+<li><a href="#meendofpresentation">MEEndOfPresentation</a></li>
+<li><a href="#menewpresentation">MENewPresentation</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Getting Session Events</h2>
+<p>To get events from the Media Session, the CPlayer object calls the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaeventgenerator-begingetevent"><strong>IMFMediaEventGenerator::BeginGetEvent</strong></a> method, as shown in <a href="step-4--create-the-media-session.html">Step 4: Create the Media Session</a>. This method is asynchronous, meaning it returns to the caller immediately. When the next session event occurs, the Media Session calls the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>IMFAsyncCallback::Invoke</strong></a> method of the CPlayer object.</p>
+<p>It is important to remember that <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>Invoke</strong></a> gets called from a worker thread, not from the application thread. Therefore, the implementation of <strong>Invoke</strong> must be multithread-safe. One approach would be to protect the member data with a critical section. However, the <code>CPlayer</code> class shows an alternative approach:</p>
+<ol>
+<li>In the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>Invoke</strong></a> method, the CPlayer object posts a <strong>WM_APP_PLAYER_EVENT</strong> message to the application. The message parameter is an <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaevent"><strong>IMFMediaEvent</strong></a> pointer.</li>
+<li>The application receives the <strong>WM_APP_PLAYER_EVENT</strong> message.</li>
+<li>The application calls the <code>CPlayer::HandleEvent</code> method, passing in the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaevent"><strong>IMFMediaEvent</strong></a> pointer.</li>
+<li>The <code>HandleEvent</code> method responds to the event.</li>
+</ol>
+<p>The following code shows the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>Invoke</strong></a> method:</p>
+<pre lang="C++"><code>//  Callback for the asynchronous BeginGetEvent method.
+
+HRESULT CPlayer::Invoke(IMFAsyncResult *pResult)
+{
+    MediaEventType meType = MEUnknown;  // Event type
+
+    IMFMediaEvent *pEvent = NULL;
+
+    // Get the event from the event queue.
+    HRESULT hr = m_pSession-&gt;EndGetEvent(pResult, &amp;pEvent);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Get the event type. 
+    hr = pEvent-&gt;GetType(&amp;meType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    if (meType == MESessionClosed)
+    {
+        // The session was closed. 
+        // The application is waiting on the m_hCloseEvent event handle. 
+        SetEvent(m_hCloseEvent);
+    }
+    else
+    {
+        // For all other events, get the next event in the queue.
+        hr = m_pSession-&gt;BeginGetEvent(this, NULL);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+    }
+
+    // Check the application state. 
+        
+    // If a call to IMFMediaSession::Close is pending, it means the 
+    // application is waiting on the m_hCloseEvent event and
+    // the application's message loop is blocked. 
+
+    // Otherwise, post a private window message to the application. 
+
+    if (m_state != Closing)
+    {
+        // Leave a reference count on the event.
+        pEvent-&gt;AddRef();
+
+        PostMessage(m_hwndEvent, WM_APP_PLAYER_EVENT, 
+            (WPARAM)pEvent, (LPARAM)meType);
+    }
+
+done:
+    SafeRelease(&amp;pEvent);
+    return S_OK;
+}
+</code></pre>
+<p>The <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>Invoke</strong></a> method performs the following steps:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaeventgenerator-endgetevent"><strong>IMFMediaEventGenerator::EndGetEvent</strong></a> to get the event. This method returns a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaevent"><strong>IMFMediaEvent</strong></a> interface.</li>
+<li>Call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaevent-gettype"><strong>IMFMediaEvent::GetType</strong></a> to get the event code.</li>
+<li>If the event code is <a href="mesessionclosed.html">MESessionClosed</a>, call SetEvent to set the <em>m_hCloseEvent</em> event. The reason for this step is explained in <a href="step-7--shut-down-the-media-session.html">Step 7: Shut Down the Media Session</a>, and also in the code comments.</li>
+<li>For all other event codes, call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaeventgenerator-begingetevent"><strong>IMFMediaEventGenerator::BeginGetEvent</strong></a> to request the next event.</li>
+<li>Post a <strong>WM_APP_PLAYER_EVENT</strong> message to the window.</li>
+</ol>
+<p>The following code shows the HandleEvent method, which is called when the application receives the <strong>WM_APP_PLAYER_EVENT</strong> message:</p>
+<pre lang="C++"><code>HRESULT CPlayer::HandleEvent(UINT_PTR pEventPtr)
+{
+    HRESULT hrStatus = S_OK;            
+    MediaEventType meType = MEUnknown;  
+
+    IMFMediaEvent *pEvent = (IMFMediaEvent*)pEventPtr;
+
+    if (pEvent == NULL)
+    {
+        return E_POINTER;
+    }
+
+    // Get the event type.
+    HRESULT hr = pEvent-&gt;GetType(&amp;meType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Get the event status. If the operation that triggered the event 
+    // did not succeed, the status is a failure code.
+    hr = pEvent-&gt;GetStatus(&amp;hrStatus);
+
+    // Check if the async operation succeeded.
+    if (SUCCEEDED(hr) &amp;&amp; FAILED(hrStatus)) 
+    {
+        hr = hrStatus;
+    }
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    switch(meType)
+    {
+    case MESessionTopologyStatus:
+        hr = OnTopologyStatus(pEvent);
+        break;
+
+    case MEEndOfPresentation:
+        hr = OnPresentationEnded(pEvent);
+        break;
+
+    case MENewPresentation:
+        hr = OnNewPresentation(pEvent);
+        break;
+
+    default:
+        hr = OnSessionEvent(pEvent, meType);
+        break;
+    }
+
+done:
+    SafeRelease(&amp;pEvent);
+    return hr;
+}
+</code></pre>
+<p>This method calls <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaevent-gettype"><strong>IMFMediaEvent::GetType</strong></a> to get the event type and <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaevent-getstatus"><strong>IMFMediaEvent::GetStatus</strong></a> to get the success of failure code associated with the event. The next action taken depends on the event code.</p>
+<h2>MESessionTopologyStatus</h2>
+<p>The <a href="mesessiontopologystatus.html">MESessionTopologyStatus</a> event signals a change in the status of the topology. The <a href="mf-event-topology-status-attribute.html"><strong>MF_EVENT_TOPOLOGY_STATUS</strong></a> attribute of the event object contains the status. For this example, the only value of interest is <strong>MF_TOPOSTATUS_READY</strong>, which indicates that playback is ready to start.</p>
+<pre lang="C++"><code>HRESULT CPlayer::OnTopologyStatus(IMFMediaEvent *pEvent)
+{
+    UINT32 status; 
+
+    HRESULT hr = pEvent-&gt;GetUINT32(MF_EVENT_TOPOLOGY_STATUS, &amp;status);
+    if (SUCCEEDED(hr) &amp;&amp; (status == MF_TOPOSTATUS_READY))
+    {
+        SafeRelease(&amp;m_pVideoDisplay);
+
+        // Get the IMFVideoDisplayControl interface from EVR. This call is
+        // expected to fail if the media file does not have a video stream.
+
+        (void)MFGetService(m_pSession, MR_VIDEO_RENDER_SERVICE, 
+            IID_PPV_ARGS(&amp;m_pVideoDisplay));
+
+        hr = StartPlayback();
+    }
+    return hr;
+}
+</code></pre>
+<p>The <code>CPlayer::StartPlayback</code> method is shown in <a href="step-6--control-playback.html">Step 6: Control Playback</a>.</p>
+<p>This example also calls <a href="/windows/desktop/api/mfidl/nf-mfidl-mfgetservice"><strong>MFGetService</strong></a> to get the <a href="/windows/desktop/api/evr/nn-evr-imfvideodisplaycontrol"><strong>IMFVideoDisplayControl</strong></a> interface from the <a href="enhanced-video-renderer.html">Enhanced Video Renderer</a> (EVR). This interface is needed to handle repainting and resizing the video window, also shown in <a href="step-6--control-playback.html">Step 6: Control Playback</a>.</p>
+<h2>MEEndOfPresentation</h2>
+<p>The <a href="meendofpresentation.html">MEEndOfPresentation</a> event signals that playback has reached the end of the file. The Media Session automatically switches back to the stopped state.</p>
+<pre lang="C++"><code>//  Handler for MEEndOfPresentation event.
+HRESULT CPlayer::OnPresentationEnded(IMFMediaEvent *pEvent)
+{
+    // The session puts itself into the stopped state automatically.
+    m_state = Stopped;
+    return S_OK;
+}
+</code></pre>
+<h2>MENewPresentation</h2>
+<p>The <a href="menewpresentation.html">MENewPresentation</a> event signals the start of a new presentation. The event data is an <a href="/windows/desktop/api/mfidl/nn-mfidl-imfpresentationdescriptor"><strong>IMFPresentationDescriptor</strong></a> pointer for the new presentation.</p>
+<p>In many cases, you will not receive this event at all. If you do, use the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfpresentationdescriptor"><strong>IMFPresentationDescriptor</strong></a> pointer to create a new playback topology, as shown in <a href="step-3--open-a-media-file.html">Step 3: Open a Media File</a>. Then queue the new topology on the Media Session.</p>
+<pre lang="C++"><code>//  Handler for MENewPresentation event.
+//
+//  This event is sent if the media source has a new presentation, which 
+//  requires a new topology. 
+
+HRESULT CPlayer::OnNewPresentation(IMFMediaEvent *pEvent)
+{
+    IMFPresentationDescriptor *pPD = NULL;
+    IMFTopology *pTopology = NULL;
+
+    // Get the presentation descriptor from the event.
+    HRESULT hr = GetEventObject(pEvent, &amp;pPD);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Create a partial topology.
+    hr = CreatePlaybackTopology(m_pSource, pPD,  m_hwndVideo,&amp;pTopology);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Set the topology on the media session.
+    hr = m_pSession-&gt;SetTopology(0, pTopology);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    m_state = OpenPending;
+
+done:
+    SafeRelease(&amp;pTopology);
+    SafeRelease(&amp;pPD);
+    return S_OK;
+}
+</code></pre>
+<p>Next: <a href="step-6--control-playback.html">Step 6: Control Playback</a></p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="audio-video-playback.html">Audio/Video Playback</a></p>
+<!-- raw HTML omitted -->
+<p><a href="how-to-play-unprotected-media-files.html">How to Play Media Files with Media Foundation</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

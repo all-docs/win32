@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 1: Creating a Transactional Component</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: 'Step 1: Creating a Transactional Component'
+ms.assetid: 9ab9ac2d-bf1d-419c-8f6b-e2ee80a4bf20
+title: 'Step 1: Creating a Transactional Component'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Step 1: Creating a Transactional Component</h1>
+<h2>Objectives</h2>
+<p>In this step, you will learn the following:</p>
+<ul>
+<li>How to write a transactional component in Microsoft Visual Basic</li>
+<li>What the default settings for COM+ services are</li>
+<li>How to configure COM+ services</li>
+</ul>
+<h2>Description</h2>
+<p>The UpdateAuthorAddress component, the component to be created in this section, updates the address of an existing author in the Pubs database. The Pubs database is a sample database that ships with Microsoft SQL Server. It contains publishing information such as author names, addresses, and book titles.</p>
+<blockquote>
+<p>[!Note]<br />
+Pubs is the data store that is used throughout this primer.</p>
+</blockquote>
+<p>Â </p>
+<p>Because UpdateAuthorAddress updates a data store, it is advisable to include the work in a transaction, as shown in the following illustration, so that when a client calls the component, COM+ automatically starts a transaction and enlists the database (resource manager) in that transaction. (For detailed information about transactions in COM+, see <a href="com--transactions.html">COM+ Transactions</a>.)</p>
+<p><img src="images/d5a47e03-c07e-4db3-b328-111ca9e50bef.png" alt="Diagram that shows a COM+ transaction with UpdateAuthorAddress." /></p>
+<p>To make UpdateAuthorAddress a transactional component, the following steps are required:</p>
+<ol>
+<li>
+<p>The component must be written. For extra protection, a subroutine is added, verifying that COM+ created the object in a transaction. Also, basic error handling is included in the component to simplify error recovery. Transaction verification and error handling enhance the reliability of the component. (See Step 1 Sample Code for a complete listing of the UpdateAuthorAddress component.)</p>
+</li>
+<li>
+<p>After adding the component to a COM+ application and installing the application, the transaction attribute must be set to <strong>Required</strong>, which guarantees that COM+ creates each UpdateAuthorAddress object in a transaction. For instructions on how to set the transaction attribute for a component, see <a href="setting-the-transaction-attribute.html">Setting the Transaction Attribute</a>.</p>
+<blockquote>
+<p>[!Note]<br />
+Setting the transaction attribute on a component defines how COM+ creates each object with regard to transactions. Transaction attribute values are <strong>Ignored</strong>, <strong>Not Supported</strong>, <strong>Supported</strong>, <strong>Required</strong>, and <strong>Requires New</strong>. The <strong>Required</strong> value is not one of a component's default attribute values.</p>
+</blockquote>
+<p>Â </p>
+</li>
+</ol>
+<p>COM+ binds the transaction service with just-in-time (JIT) activation and concurrency. When you declare a component to be transactional, COM+ also enforces JIT activation and concurrency protection (synchronization).</p>
+<h2>Sample code</h2>
+<p>The UpdateAuthorAddress component opens a connection to the Pubs database, allowing the user to modify an author's name, address, or contract status. It also calls a second component, which is discussed in <a href="step-2--extending-a-transaction-across-multiple-components.html">Step 2: Extending a Transaction Across Multiple Components</a>.</p>
+<p>To use the following code in a Microsoft Visual Basic project, open a new ActiveX.dll project and add references to the Microsoft ActiveX Data Objects Library and the COM+ Services Type Library.</p>
+<blockquote>
+<p>[!Note]<br />
+The sample code in this primer is for purposes of illustration and may not be the most efficient for actual staging and production.</p>
+</blockquote>
+<p>Â </p>
+<pre lang="VB"><code>Option Explicit
+'
+'  Purpose:   This class is used for updating an author's address.
+'
+'  Notes:     IMPT:  This component implicitly assumes that it will 
+'             always run in a transaction. Undefined results may 
+'             otherwise occur.
+'
+
+'----------------------------------------------------------
+'  VerifyInTxn subroutine
+'      Verifies that this component is in a transaction.
+'      Throws an error if it is not.
+'
+Private Sub VerifyInTxn()
+  If Not GetObjectContext.IsInTransaction Then
+    ' Transactions turned off. 
+    Err.Raise 99999, &quot;This component&quot;, &quot;I need a transaction!&quot;
+  End If
+  ' Component is in a transaction.
+End Sub
+
+'----------------------------------------------------------
+'  UpdateAuthorAddress subroutine
+'      Procedure to update an author's address.
+'
+Public Sub UpdateAuthorAddress( _
+                        ByVal strAuthorID As String, _
+                        ByVal strPhone As String, _
+                       ByVal strAddress As String, _
+                        ByVal strCity As String, _
+                        ByVal strState As String, _
+                        ByVal strZip As String)
+  ' Handle any errors.
+  On Error GoTo UnexpectedError
+  
+  ' Verify that component is in a transaction.
+  VerifyInTxn
+  
+  ' Get object context.
+  Dim objcontext As COMSVCSLib.ObjectContext
+  Set objcontext = GetObjectContext
+  
+  ' Get the IContextState object.
+  Dim contextstate As COMSVCSLib.IContextState
+  Set contextstate = objcontext
+  
+  ' Validate the new address information.
+  ' The ValidateAuthorAddress function is described in Step 2.
+  Dim oValidateAuthAddr As Object
+  Dim bValidAddr As Boolean
+  Set oValidateAuthAddr = _
+    CreateObject(&quot;ComplusPrimer.ValidateAuthorAddress&quot;) 
+  bValidAddr = oValidateAuthAddr.ValidateAuthorAddress( _
+    strAddress, strCity, strState, strZip)
+  If Not bValidAddr Then
+    Err.Raise 99999, &quot;The UpdateAuthorAddress component&quot;, _
+      &quot;The address of the author is incorrect!&quot;
+  End If
+  
+  ' Open the connection to the database.
+  Dim conn As ADODB.Connection
+  Set conn = CreateObject(&quot;ADODB.Connection&quot;)
+
+  ' Specify the OLE DB provider.
+  conn.Provider = &quot;SQLOLEDB&quot;
+
+  ' Connect using Windows Authentication.
+  Dim strProv As String
+  strProv = &quot;Server=MyDBServer;Database=pubs;Trusted_Connection=yes&quot;
+
+  ' Open the database.
+  conn.Open strProv
+
+  ' Execute the query.
+  conn.Execute &quot;update authors set phone= '&quot; &amp; strPhone &amp; &quot;'&quot; &amp; _
+               &quot; set address= '&quot; &amp; strAddress &amp; &quot;'&quot; &amp; _
+               &quot; set city= '&quot; &amp; strCity &amp; &quot;'&quot; &amp; _
+               &quot; set state= '&quot; &amp; strState &amp; &quot;'&quot; &amp; _
+               &quot; set zip= '&quot; &amp; strZip &amp; &quot;'&quot; &amp; _
+               &quot; where au_id = '&quot; &amp; strAuthorID &amp; &quot;'&quot;
+               
+  ' Close the connection.
+  conn.Close
+  
+  ' Get rid of the connection.
+  Set conn = Nothing
+                 
+  ' Everything works--commit the transaction.
+  contextstate.SetMyTransactionVote TxCommit
+  contextstate.SetDeactivateOnReturn True
+  Exit Sub
+  
+UnexpectedError:
+  ' There's an error.
+  contextstate.SetMyTransactionVote TxAbort
+  contextstate.SetDeactivateOnReturn True
+End Sub
+
+</code></pre>
+<h2>Summary</h2>
+<ul>
+<li>COM+ assigns default attribute values. You can reconfigure most service attributes.</li>
+<li>Setting a component's transaction attribute to <strong>Required</strong> guarantees that COM+ must create each instance of that component in a transaction but doesn't necessarily start a new transaction.</li>
+<li>Verifying the presence of a transaction confirms that the component's transaction attribute value wasn't inadvertently reset to a non-transactional value, such as <strong>Ignore</strong> or <strong>Not Supported</strong>.</li>
+<li>Handling errors makes your component more reliable and easier to troubleshoot.</li>
+<li>COM+ enforces <a href="com--just-in-time-activation.html">JIT activation</a> and <a href="com--synchronization.html">concurrency protection</a> services for transactional components.</li>
+<li>Closing the database connection when you are done with it allows another component in the same transaction to reuse the connection from the connection pool. (Connection pooling should not be confused with <a href="com--object-pooling.html">object pooling</a>.)</li>
+</ul>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="step-2--extending-a-transaction-across-multiple-components.html">Step 2: Extending a Transaction Across Multiple Components</a></p>
+<!-- raw HTML omitted -->
+<p><a href="step-3--reusing-components.html">Step 3: Reusing Components</a></p>
+<!-- raw HTML omitted -->
+<p><a href="com--just-in-time-activation.html">COM+ Just-in-Time Activation</a></p>
+<!-- raw HTML omitted -->
+<p><a href="com--synchronization.html">COM+ Synchronization</a></p>
+<!-- raw HTML omitted -->
+<p><a href="configuring-transactions.html">Configuring Transactions</a></p>
+<!-- raw HTML omitted -->
+<p><a href="creating-com--applications.html">Creating COM+ Applications</a></p>
+<!-- raw HTML omitted -->
+<p><a href="setting-the-transaction-attribute.html">Setting the Transaction Attribute</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

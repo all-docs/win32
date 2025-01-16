@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rendering Events</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Rendering Events
+description: To display an event, you must call the EvtRender function to render it in a displayable form.
+ms.assetid: fc763669-1fbc-4183-a4ff-577a7954d1ca
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Rendering Events</h1>
+<p>To display an event, you must call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtrender"><strong>EvtRender</strong></a> function to render it in a displayable form. You can render the event as an XML string or you can render one or more values from the event. An event can also contain messages strings (for example, the event's message string, the channel's message string, or the provider's message string). To get one of the message strings from the event, call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtformatmessage"><strong>EvtFormatMessage</strong></a> function. For more details on getting a message string from the event, see <a href="formatting-event-messages.html">Formatting Event Messages</a>.</p>
+<p>To render the event as an XML string, call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtrender"><strong>EvtRender</strong></a> function. However, if you want to render specific pieces of the event, you must first call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtcreaterendercontext"><strong>EvtCreateRenderContext</strong></a> to specify the pieces of the event that you want to render. You can render specific values from the event, the values from the user data or event data section of the event, or the values from the system-related properties of the event. For details on the components of an event, see <a href="eventschema-schema.html">Event Schema</a>.</p>
+<p>The following example shows how to render an event as an XML string.</p>
+<pre lang="C++"><code>DWORD PrintEvent(EVT_HANDLE hEvent)
+{
+    DWORD status = ERROR_SUCCESS;
+    DWORD dwBufferSize = 0;
+    DWORD dwBufferUsed = 0;
+    DWORD dwPropertyCount = 0;
+    LPWSTR pRenderedContent = NULL;
+
+    // The EvtRenderEventXml flag tells EvtRender to render the event as an XML string.
+    if (!EvtRender(NULL, hEvent, EvtRenderEventXml, dwBufferSize, pRenderedContent, &amp;dwBufferUsed, &amp;dwPropertyCount))
+    {
+        if (ERROR_INSUFFICIENT_BUFFER == (status = GetLastError()))
+        {
+            dwBufferSize = dwBufferUsed;
+            pRenderedContent = (LPWSTR)malloc(dwBufferSize);
+            if (pRenderedContent)
+            {
+                EvtRender(NULL, hEvent, EvtRenderEventXml, dwBufferSize, pRenderedContent, &amp;dwBufferUsed, &amp;dwPropertyCount);
+            }
+            else
+            {
+                wprintf(L&quot;malloc failed\n&quot;);
+                status = ERROR_OUTOFMEMORY;
+                goto cleanup;
+            }
+        }
+
+        if (ERROR_SUCCESS != (status = GetLastError()))
+        {
+            wprintf(L&quot;EvtRender failed with %d\n&quot;, GetLastError());
+            goto cleanup;
+        }
+    }
+
+    wprintf(L&quot;\n\n%s&quot;, pRenderedContent);
+
+cleanup:
+
+    if (pRenderedContent)
+        free(pRenderedContent);
+
+    return status;
+}
+</code></pre>
+<p>The following example shows how to render the properties values from the system section of the event. To render the user data or event data properties of the event, replace the EvtRenderContextSystem flag with the EvtRenderContextUser flag when creating the rendering context.</p>
+<pre lang="C++"><code>DWORD PrintEventSystemData(EVT_HANDLE hEvent)
+{
+    DWORD status = ERROR_SUCCESS;
+    EVT_HANDLE hContext = NULL;
+    DWORD dwBufferSize = 0;
+    DWORD dwBufferUsed = 0;
+    DWORD dwPropertyCount = 0;
+    PEVT_VARIANT pRenderedValues = NULL;
+    WCHAR wsGuid[50];
+    LPWSTR pwsSid = NULL;
+    ULONGLONG ullTimeStamp = 0;
+    ULONGLONG ullNanoseconds = 0;
+    SYSTEMTIME st;
+    FILETIME ft;
+
+    // Identify the components of the event that you want to render. In this case,
+    // render the system section of the event.
+    hContext = EvtCreateRenderContext(0, NULL, EvtRenderContextSystem);
+    if (NULL == hContext)
+    {
+        wprintf(L&quot;EvtCreateRenderContext failed with %lu\n&quot;, status = GetLastError());
+        goto cleanup;
+    }
+
+    // When you render the user data or system section of the event, you must specify
+    // the EvtRenderEventValues flag. The function returns an array of variant values 
+    // for each element in the user data or system section of the event. For user data
+    // or event data, the values are returned in the same order as the elements are 
+    // defined in the event. For system data, the values are returned in the order defined
+    // in the EVT_SYSTEM_PROPERTY_ID enumeration.
+    if (!EvtRender(hContext, hEvent, EvtRenderEventValues, dwBufferSize, pRenderedValues, &amp;dwBufferUsed, &amp;dwPropertyCount))
+    {
+        if (ERROR_INSUFFICIENT_BUFFER == (status = GetLastError()))
+        {
+            dwBufferSize = dwBufferUsed;
+            pRenderedValues = (PEVT_VARIANT)malloc(dwBufferSize);
+            if (pRenderedValues)
+            {
+                EvtRender(hContext, hEvent, EvtRenderEventValues, dwBufferSize, pRenderedValues, &amp;dwBufferUsed, &amp;dwPropertyCount);
+            }
+            else
+            {
+                wprintf(L&quot;malloc failed\n&quot;);
+                status = ERROR_OUTOFMEMORY;
+                goto cleanup;
+            }
+        }
+
+        if (ERROR_SUCCESS != (status = GetLastError()))
+        {
+            wprintf(L&quot;EvtRender failed with %d\n&quot;, GetLastError());
+            goto cleanup;
+        }
+    }
+
+    // Print the values from the System section of the element.
+    wprintf(L&quot;Provider Name: %s\n&quot;, pRenderedValues[EvtSystemProviderName].StringVal);
+    if (NULL != pRenderedValues[EvtSystemProviderGuid].GuidVal)
+    {
+        StringFromGUID2(*(pRenderedValues[EvtSystemProviderGuid].GuidVal), wsGuid, sizeof(wsGuid)/sizeof(WCHAR));
+        wprintf(L&quot;Provider Guid: %s\n&quot;, wsGuid);
+    }
+    else 
+    {
+        wprintf(L&quot;Provider Guid: NULL&quot;);
+    }
+
+
+    DWORD EventID = pRenderedValues[EvtSystemEventID].UInt16Val;
+    if (EvtVarTypeNull != pRenderedValues[EvtSystemQualifiers].Type)
+    {
+        EventID = MAKELONG(pRenderedValues[EvtSystemEventID].UInt16Val, pRenderedValues[EvtSystemQualifiers].UInt16Val);
+    }
+    wprintf(L&quot;EventID: %lu\n&quot;, EventID);
+
+    wprintf(L&quot;Version: %u\n&quot;, (EvtVarTypeNull == pRenderedValues[EvtSystemVersion].Type) ? 0 : pRenderedValues[EvtSystemVersion].ByteVal);
+    wprintf(L&quot;Level: %u\n&quot;, (EvtVarTypeNull == pRenderedValues[EvtSystemLevel].Type) ? 0 : pRenderedValues[EvtSystemLevel].ByteVal);
+    wprintf(L&quot;Task: %hu\n&quot;, (EvtVarTypeNull == pRenderedValues[EvtSystemTask].Type) ? 0 : pRenderedValues[EvtSystemTask].UInt16Val);
+    wprintf(L&quot;Opcode: %u\n&quot;, (EvtVarTypeNull == pRenderedValues[EvtSystemOpcode].Type) ? 0 : pRenderedValues[EvtSystemOpcode].ByteVal);
+    wprintf(L&quot;Keywords: 0x%I64x\n&quot;, pRenderedValues[EvtSystemKeywords].UInt64Val);
+
+    ullTimeStamp = pRenderedValues[EvtSystemTimeCreated].FileTimeVal;
+    ft.dwHighDateTime = (DWORD)((ullTimeStamp &gt;&gt; 32) &amp; 0xFFFFFFFF);
+    ft.dwLowDateTime = (DWORD)(ullTimeStamp &amp; 0xFFFFFFFF);
+
+    FileTimeToSystemTime(&amp;ft, &amp;st);
+    ullNanoseconds = (ullTimeStamp % 10000000) * 100; // Display nanoseconds instead of milliseconds for higher resolution
+    wprintf(L&quot;TimeCreated SystemTime: %02d/%02d/%02d %02d:%02d:%02d.%I64u)\n&quot;, 
+        st.wMonth, st.wDay, st.wYear, st.wHour, st.wMinute, st.wSecond, ullNanoseconds);
+
+    wprintf(L&quot;EventRecordID: %I64u\n&quot;, pRenderedValues[EvtSystemEventRecordId].UInt64Val);
+
+    if (EvtVarTypeNull != pRenderedValues[EvtSystemActivityID].Type)
+    {
+        StringFromGUID2(*(pRenderedValues[EvtSystemActivityID].GuidVal), wsGuid, sizeof(wsGuid)/sizeof(WCHAR));
+        wprintf(L&quot;Correlation ActivityID: %s\n&quot;, wsGuid);
+    }
+
+    if (EvtVarTypeNull != pRenderedValues[EvtSystemRelatedActivityID].Type)
+    {
+        StringFromGUID2(*(pRenderedValues[EvtSystemRelatedActivityID].GuidVal), wsGuid, sizeof(wsGuid)/sizeof(WCHAR));
+        wprintf(L&quot;Correlation RelatedActivityID: %s\n&quot;, wsGuid);
+    }
+
+    wprintf(L&quot;Execution ProcessID: %lu\n&quot;, pRenderedValues[EvtSystemProcessID].UInt32Val);
+    wprintf(L&quot;Execution ThreadID: %lu\n&quot;, pRenderedValues[EvtSystemThreadID].UInt32Val);
+    wprintf(L&quot;Channel: %s\n&quot;, (EvtVarTypeNull == pRenderedValues[EvtSystemChannel].Type) ? L&quot;&quot; : pRenderedValues[EvtSystemChannel].StringVal);
+    wprintf(L&quot;Computer: %s\n&quot;, pRenderedValues[EvtSystemComputer].StringVal);
+
+    if (EvtVarTypeNull != pRenderedValues[EvtSystemUserID].Type)
+    {
+        if (ConvertSidToStringSid(pRenderedValues[EvtSystemUserID].SidVal, &amp;pwsSid))
+        {
+            wprintf(L&quot;Security UserID: %s\n&quot;, pwsSid);
+            LocalFree(pwsSid);
+        }
+    }
+
+cleanup:
+
+    if (hContext)
+        EvtClose(hContext);
+
+    if (pRenderedValues)
+        free(pRenderedValues);
+
+    return status;
+}
+</code></pre>
+<p>The following example shows how to render the specific values from the event. Use an XPath expression to specify the specific node or attribute to retrieve. You can specify one or more expressions to retrieve one or more values.</p>
+<pre lang="C++"><code>DWORD PrintEventValues(EVT_HANDLE hEvent)
+{
+    DWORD status = ERROR_SUCCESS;
+    EVT_HANDLE hContext = NULL;
+    DWORD dwBufferSize = 0;
+    DWORD dwBufferUsed = 0;
+    DWORD dwPropertyCount = 0;
+    PEVT_VARIANT pRenderedValues = NULL;
+    LPWSTR ppValues[] = {L&quot;Event/System/Provider/@Name&quot;, L&quot;Event/System/Channel&quot;};
+    DWORD count = sizeof(ppValues)/sizeof(LPWSTR);
+
+    // Identify the components of the event that you want to render. In this case,
+    // render the provider's name and channel from the system section of the event.
+    // To get user data from the event, you can specify an expression such as
+    // L&quot;Event/EventData/Data[@Name=\&quot;&lt;data name goes here&gt;\&quot;]&quot;.
+    hContext = EvtCreateRenderContext(count, (LPCWSTR*)ppValues, EvtRenderContextValues);
+    if (NULL == hContext)
+    {
+        wprintf(L&quot;EvtCreateRenderContext failed with %lu\n&quot;, status = GetLastError());
+        goto cleanup;
+    }
+
+    // The function returns an array of variant values for each element or attribute that
+    // you want to retrieve from the event. The values are returned in the same order as 
+    // you requested them.
+    if (!EvtRender(hContext, hEvent, EvtRenderEventValues, dwBufferSize, pRenderedValues, &amp;dwBufferUsed, &amp;dwPropertyCount))
+    {
+        if (ERROR_INSUFFICIENT_BUFFER == (status = GetLastError()))
+        {
+            dwBufferSize = dwBufferUsed;
+            pRenderedValues = (PEVT_VARIANT)malloc(dwBufferSize);
+            if (pRenderedValues)
+            {
+                EvtRender(hContext, hEvent, EvtRenderEventValues, dwBufferSize, pRenderedValues, &amp;dwBufferUsed, &amp;dwPropertyCount);
+            }
+            else
+            {
+                wprintf(L&quot;malloc failed\n&quot;);
+                status = ERROR_OUTOFMEMORY;
+                goto cleanup;
+            }
+        }
+
+        if (ERROR_SUCCESS != (status = GetLastError()))
+        {
+            wprintf(L&quot;EvtRender failed with %d\n&quot;, GetLastError());
+            goto cleanup;
+        }
+    }
+
+    // Print the selected values.
+    wprintf(L&quot;\nProvider Name: %s\n&quot;, pRenderedValues[0].StringVal);
+    wprintf(L&quot;Channel: %s\n&quot;, (EvtVarTypeNull == pRenderedValues[1].Type) ? L&quot;&quot; : pRenderedValues[1].StringVal);
+
+cleanup:
+
+    if (hContext)
+        EvtClose(hContext);
+
+    if (pRenderedValues)
+        free(pRenderedValues);
+
+    return status;
+}
+</code></pre>
+</body>

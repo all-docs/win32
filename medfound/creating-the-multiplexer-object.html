@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating the Multiplexer Object</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Creating the Multiplexer Object
+ms.assetid: a5adc40c-abb4-4012-b6f2-eb871eaed7b9
+title: Creating the Multiplexer Object
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Creating the Multiplexer Object</h1>
+<p>The ASF multiplexer is a WMContainer layer object that works with the <a href="asf-file-structure.html">ASF Data Object</a> and gives an application the ability to generate ASF data packets for media streams.</p>
+<p>The multiplexer object exposes the <a href="/windows/desktop/api/wmcontainer/nn-wmcontainer-imfasfmultiplexer"><strong>IMFASFMultiplexer</strong></a> interface. To create the multiplexer, call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-mfcreateasfmultiplexer"><strong>MFCreateASFMultiplexer</strong></a>. This function returns a pointer to an empty object. If the application is writing a new ASF file, the application must initialize the multiplexer with a ContentInfo object. To do this, call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-initialize"><strong>IMFASFMultiplexer::Initialize</strong></a>. The specified ContentInfo object represents the ASF Header Object of the new file. For information about creating and initializing the ContentInfo object for a new file, see <a href="initializing-the-contentinfo-object-of-a-new-asf-file.html">Initializing the ContentInfo Object of a New ASF File</a>.</p>
+<p>The <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-initialize"><strong>Initialize</strong></a> method parses the ContentInfo object to collect stream configuration information such as the number of streams, packet size, preroll. Optionally, the multiplexer might also need leaky bucket parameters, and the payload extension units. This information is required in order to generate data packets that match the requirements defined in the ASF Header Object. The <strong>Initialize</strong> method configures the multiplexer based on the media type and configuration settings of the streams. For example, if a stream is configured to have payload extensions (see <a href="creating-and-configuring-asf-streams.html">Creating and Configuring ASF Streams</a>), and then the multiplexer is configured to add those values to the generated data packets.</p>
+<p>The <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-initialize"><strong>Initialize</strong></a> method also gets a handle to the initial data object that was created during the creation of the ContentInfo object for writing. During data packet generation, the multiplexer adds packets to the data object and updates it appropriately. After the multiplexer generates all the data packets, it updates the supplied ContentInfo object so that certain values, such as number of data packets, are updated.</p>
+<p>The following code example shows how to create a multiplexer and initialize it with a ContentInfo object.</p>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+// CreateOutputGenerators
+//
+// Creates the ASF mux and the ASF Content Info object for the 
+// output file.
+//-------------------------------------------------------------------
+
+HRESULT CreateOutputGenerators(
+    IMFASFProfile *pProfile, 
+    IMFASFContentInfo **ppContentInfo, 
+    IMFASFMultiplexer **ppMux
+    )
+{
+    IMFASFContentInfo *pContentInfo = NULL;
+    IMFASFMultiplexer *pMux = NULL;
+
+    // Use the ASF profile to create the ContentInfo object.
+    HRESULT hr = MFCreateASFContentInfo(&amp;pContentInfo);
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pContentInfo-&gt;SetProfile(pProfile);
+    }
+
+    // Create the ASF Multiplexer object.
+    if (SUCCEEDED(hr))
+    {
+        hr = MFCreateASFMultiplexer(&amp;pMux);
+    }
+    
+    // Initialize it using the new ContentInfo object.
+    if (SUCCEEDED(hr))
+    {
+        hr = pMux-&gt;Initialize(pContentInfo);
+    }
+
+    // Return the pointers to the caller.
+    if (SUCCEEDED(hr))
+    {
+        *ppContentInfo = pContentInfo;
+        (*ppContentInfo)-&gt;AddRef();
+
+        *ppMux = pMux;
+        (*ppMux)-&gt;AddRef();
+    }
+
+    SafeRelease(&amp;pContentInfo);
+    SafeRelease(&amp;pMux);
+
+    return hr;
+}
+</code></pre>
+<p>To see this function used in a complete application, see <a href="tutorial--copying-asf-streams-from-one-file-to-another.html">Tutorial: Copying ASF Streams from One File to Another</a>.</p>
+<h2>Multiplexer Initialization and Leaky Bucket Settings</h2>
+<p>The <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-initialize"><strong>IMFASFMultiplexer::Initialize</strong></a> method configures the multiplexer to determine the leaky bucket data flow. To configure these parameters, make sure that the following property values are set on the specified ContentInfo object. For information about setting these properties, see <a href="setting-properties-in-the-contentinfo-object.html">Setting Properties in the ContentInfo Object</a>.</p>
+<ul>
+<li>
+<p><a href="mfpkey-asfmediasink-autoadjust-bitrate-property.html"><strong>MFPKEY_ASFMEDIASINK_AUTOADJUST_BITRATE</strong></a> property: This indicates whether the multiplexer needs to adjust the bit rate automatically, to maintain the data flow in the leaky bucket. This setting can be changed by the application by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-setflags"><strong>IMFASFMultiplexer::SetFlags</strong></a> and passing the <strong>MFASF_MULTIPLEXER_AUTOADJUST_BITRATE</strong> flag.</p>
+</li>
+<li>
+<p><a href="mfpkey-asfmediasink-base-sendtime-property.html"><strong>MFPKEY_ASFMEDIASINK_BASE_SENDTIME</strong></a> property: The send time indicates when the payload inside the leaky bucket will be released. Send times must be equal to or earlier than the presentation time because the payload must have time to get to the destination before the presentation time.</p>
+<p>This property value is the first send time. The multiplexer uses this value to calculate the subsequent send times to ensure that data flows through the bucket steadily. If the <strong>MFASF_MULTIPLEXER_AUTOADJUST_BITRATE</strong> flag has been set on the multiplexer, the multiplexer will adjust the bit rate so that the payload is sent out when the buffer window is close to being full. If the flag is not set, the multiplexer fails to generate data packets due to bandwidth overrun.</p>
+</li>
+</ul>
+<p>The multiplexer obtains stream configuration information from the ASF profile associated with the ContentInfo object specified in the <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-initialize"><strong>Initialize</strong></a> method. The stream configuration information includes leaky bucket parameters. This value is required by the multiplexer to generate data packets.</p>
+<p>To specify the leaky bucket parameters, set the values in the <a href="mf-asfstreamconfig-leakybucket1-attribute.html"><strong>MF_ASFSTREAMCONFIG_LEAKYBUCKET1</strong></a> attribute on the stream configuration object that represents the stream in the profile. To use the buffer window value, which is used by the encoder, call <a href="../wmformat/iwmcodecleakybucket-getbuffersizebits.html"><strong>IWMCodecLeakyBucket::GetBufferSizeBits</strong></a>. The actual buffer window value is known only after setting the output media type of the encoder. For information about setting the output media type, see <a href="media-type-negotiation-on-the-encoder.html">Media Type Negotiation on the Encoder</a>.</p>
+<blockquote>
+<p>[!Note]<br />
+The leaky bucket values used by the encoder might be different in the ContentInfo object that was provided by the ASF Profile that was used to create the multiplexer.</p>
+</blockquote>
+<p>Â </p>
+<p>The <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-initialize"><strong>Initialize</strong></a> method updates the ContentInfo object so that the correct values are reflected in the final ASF Header Object.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="asf-multiplexer.html">ASF Multiplexer</a></p>
+<!-- raw HTML omitted -->
+<p><a href="generating-new-asf-data-packets.html">Generating New ASF Data Packets</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

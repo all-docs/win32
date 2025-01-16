@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Case Study: MPEG-1 Media Source</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic takes an in-depth look at the MPEG-1 Media Source SDK Sample.
+ms.assetid: d392f30c-c963-4eb3-add2-1bb986919c0b
+title: 'Case Study: MPEG-1 Media Source'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Case Study: MPEG-1 Media Source</h1>
+<p>In Microsoft Media Foundation, the object that introduces media data into the data pipeline is called a <em>media source</em>. This topic takes an in-depth look at the <a href="mpeg1source-sample.html">MPEG-1 Media Source</a> SDK Sample.</p>
+<ul>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#c-classes-used-in-the-mpeg-1-source">C++ Classes Used in the MPEG-1 Source</a></li>
+<li><a href="#byte-stream-handler">Byte-Stream Handler</a></li>
+<li><a href="#presentation-descriptor">Presentation Descriptor</a></li>
+<li><a href="#streaming-states">Streaming States</a>
+<ul>
+<li><a href="#start">Start</a></li>
+<li><a href="#pause">Pause</a></li>
+<li><a href="#stop">Stop</a></li>
+</ul>
+</li>
+<li><a href="#sample-requests">Sample Requests</a></li>
+<li><a href="#end-of-stream">End of Stream</a></li>
+<li><a href="#asynchronous-operations">Asynchronous Operations</a>
+<ul>
+<li><a href="#operation-queue">Operation Queue</a></li>
+</ul>
+</li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Prerequisites</h2>
+<p>Before reading this topic you should understand the following Media Foundation concepts:</p>
+<ul>
+<li><a href="media-source-object-model.html">Media Source Object Model</a></li>
+<li><a href="asynchronous-callback-methods.html">Asynchronous Callback Methods</a>.</li>
+<li><a href="work-queues.html">Work Queues</a></li>
+<li><a href="media-event-generators.html">Media Event Generators</a></li>
+<li><a href="media-buffers.html">Media Buffers</a></li>
+<li><a href="media-samples.html">Media Samples</a></li>
+<li><a href="media-types.html">Media Types</a></li>
+</ul>
+<p>You should also have a basic understanding of the Media Foundation architecture, particularly the role of media sources in the pipeline. (For more information, see <a href="media-sources.html">Media Sources</a>.)</p>
+<p>In addition, you may want to read the topic <a href="writing-a-custom-media-source.html">Writing a Custom Media Source</a>, which gives a more general overview of the steps described here.</p>
+<p>This topic does not reproduce all of the code from the SDK sample, because the sample is fairly large.</p>
+<h2>C++ Classes Used in the MPEG-1 Source</h2>
+<p>The sample MPEG-1 source is implemented with the following C++ classes:</p>
+<ul>
+<li><code>MPEG1ByteStreamHandler</code>. Implements the byte-stream handler for the media source. Given a byte stream, the byte-stream handler creates an instance of the source.</li>
+<li><code>MPEG1Source</code>. Implements the media source.</li>
+<li><code>MPEG1Stream</code>. Implements the media stream objects. The media source creates one <code>MPEG1Stream</code> object for every audio or video stream in the MPEG-1 bitstream.</li>
+<li><code>Parser</code>. Parses the MPEG-1 bitstream. For the most part, the details of this class are not relevant to the Media Foundation APIs.</li>
+<li>SourceOp, OpQueue: These two classes manage asynchronous operations in the media source. (See <a href="#asynchronous-operations">Asynchronous Operations</a>).</li>
+</ul>
+<p>Other miscellaneous helper classes are described later in the topic.</p>
+<h2>Byte-Stream Handler</h2>
+<p>The <em>byte-stream</em> handler is the object that creates the media source. The byte-stream handler is created by the source resolver; applications do not interact directly with the byte-stream handler. The source resolver discovers the byte-stream handler by looking in the registry. Handler are registered by file name extension or MIME type. For the MPEG-1 source, the byte-stream handler is registered for the &quot;.mpg&quot; file name extension.</p>
+<blockquote>
+<p>[!Note]<br />
+If you want to support custom URL schemes, you can also write a <em>scheme handler</em>. The MPEG-1 source is designed for local files, and Media Foundation already provides a scheme handler for &quot;file://&quot; URLs.</p>
+</blockquote>
+<p>Â </p>
+<p>The byte-stream handler implements the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfbytestreamhandler"><strong>IMFByteStreamHandler</strong></a> interface. This interface has two most important methods that must be implemented:</p>
+<ul>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfbytestreamhandler-begincreateobject"><strong>BeginCreateObject</strong></a>. Starts an asynchronous operation to create the media source.</li>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfbytestreamhandler-endcreateobject"><strong>EndCreateObject</strong></a>. Completes the asynchronous call.</li>
+</ul>
+<p>Two other methods are optional and not implemented in the SDK sample:</p>
+<ul>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfbytestreamhandler-cancelobjectcreation"><strong>CancelObjectCreation</strong></a>. Cancels the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfbytestreamhandler-begincreateobject"><strong>BeginCreateObject</strong></a> method. This method is useful for a network source that might have a high latency at startup.</li>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfbytestreamhandler-getmaxnumberofbytesrequiredforresolution"><strong>GetMaxNumberOfBytesRequiredForResolution</strong></a>. Gets the maximum number of bytes that the handler will read from the source stream. Implement this method if you know how much data the byte-stream handler before it can create the media source. Otherwise, simply return <strong>E_NOTIMPL</strong>.</li>
+</ul>
+<p>Here is the implementation of the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfbytestreamhandler-begincreateobject"><strong>BeginCreateObject</strong></a> method:</p>
+<pre lang="C++"><code>HRESULT MPEG1ByteStreamHandler::BeginCreateObject(
+        /* [in] */ IMFByteStream *pByteStream,
+        /* [in] */ LPCWSTR pwszURL,
+        /* [in] */ DWORD dwFlags,
+        /* [in] */ IPropertyStore *pProps,
+        /* [out] */ IUnknown **ppIUnknownCancelCookie,  // Can be NULL
+        /* [in] */ IMFAsyncCallback *pCallback,
+        /* [in] */ IUnknown *punkState                  // Can be NULL
+        )
+{
+    if (pByteStream == NULL)
+    {
+        return E_POINTER;
+    }
+
+    if (pCallback == NULL)
+    {
+        return E_POINTER;
+    }
+
+    if ((dwFlags &amp; MF_RESOLUTION_MEDIASOURCE) == 0)
+    {
+        return E_INVALIDARG;
+    }
+
+    HRESULT hr = S_OK;
+
+    IMFAsyncResult *pResult = NULL;
+    MPEG1Source    *pSource = NULL;
+
+    // Create an instance of the media source.
+    hr = MPEG1Source::CreateInstance(&amp;pSource);
+
+    // Create a result object for the caller's async callback.
+    if (SUCCEEDED(hr))
+    {
+        hr = MFCreateAsyncResult(NULL, pCallback, punkState, &amp;pResult);
+    }
+
+    // Start opening the source. This is an async operation.
+    // When it completes, the source will invoke our callback
+    // and then we will invoke the caller's callback.
+    if (SUCCEEDED(hr))
+    {
+        hr = pSource-&gt;BeginOpen(pByteStream, this, NULL);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        if (ppIUnknownCancelCookie)
+        {
+            *ppIUnknownCancelCookie = NULL;
+        }
+
+        m_pSource = pSource;
+        m_pSource-&gt;AddRef();
+
+        m_pResult = pResult;
+        m_pResult-&gt;AddRef();
+    }
+
+// cleanup
+    SafeRelease(&amp;pSource);
+    SafeRelease(&amp;pResult);
+    return hr;
+}
+</code></pre>
+<p>The method performs the following steps:</p>
+<ol>
+<li>Creates a new instance of the <code>MPEG1Source</code> object.</li>
+<li>Create an asynchronous result object. This object is used later to invoke the source resolver's callback method.</li>
+<li>Calls <code>MPEG1Source::BeginOpen</code>, an asynchronous method defined in the <code>MPEG1Source</code> class.</li>
+<li>Sets <em>ppIUnknownCancelCookie</em> to <strong>NULL</strong>, which informs the caller that <a href="/windows/desktop/api/mfidl/nf-mfidl-imfbytestreamhandler-cancelobjectcreation"><strong>CancelObjectCreation</strong></a> is not supported.</li>
+</ol>
+<p>The <code>MPEG1Source::BeginOpen</code> method does the actual work of reading the byte stream and initializing the <code>MPEG1Source</code> object. This method is not part of the public API. You can define any mechanism between the handler and the media source that suits your needs. Putting most of the logic into the media source keeps the byte-stream handler relatively simple.</p>
+<p>Briefly, <code>BeginOpen</code> does the following:</p>
+<ol>
+<li>Calls <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfbytestream-getcapabilities"><strong>IMFByteStream::GetCapabilities</strong></a> to verify that the source byte stream is both readable and seekable.</li>
+<li>Calls <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfbytestream-beginread"><strong>IMFByteStream::BeginRead</strong></a> to start an asynchronous I/O request.</li>
+</ol>
+<p>The rest of the initialization occurs asynchronously. The media source reads enough data from the stream to parse the MPEG-1 sequence headers. Then it creates a <em>presentation descriptor</em>, which is the object used to describe the audio and video streams in the file. (For more information, see <a href="#presentation-descriptor">Presentation Descriptor</a>.) When the <code>BeginOpen</code> operation completes, the byte-stream handler invokes the source resolver's callback method. At that point, the source resolver calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfbytestreamhandler-endcreateobject"><strong>IMFByteStreamHandler::EndCreateObject</strong></a>. The <strong>EndCreateObject</strong> method returns the status of the operation.</p>
+<pre lang="C++"><code>HRESULT MPEG1ByteStreamHandler::EndCreateObject(
+        /* [in] */ IMFAsyncResult *pResult,
+        /* [out] */ MF_OBJECT_TYPE *pObjectType,
+        /* [out] */ IUnknown **ppObject)
+{
+    if (pResult == NULL || pObjectType == NULL || ppObject == NULL)
+    {
+        return E_POINTER;
+    }
+
+    HRESULT hr = S_OK;
+
+    *pObjectType = MF_OBJECT_INVALID;
+    *ppObject = NULL;
+
+    hr = pResult-&gt;GetStatus();
+
+    if (SUCCEEDED(hr))
+    {
+        *pObjectType = MF_OBJECT_MEDIASOURCE;
+
+        assert(m_pSource != NULL);
+
+        hr = m_pSource-&gt;QueryInterface(IID_PPV_ARGS(ppObject));
+    }
+
+    SafeRelease(&amp;m_pSource);
+    SafeRelease(&amp;m_pResult);
+    return hr;
+}
+</code></pre>
+<p>If an error occurs at any time during this process, the callback is invoked with an error status code.</p>
+<h2>Presentation Descriptor</h2>
+<p>The presentation descriptor describes the contents of the MPEG-1 file, including the following information:</p>
+<ul>
+<li>The number of the streams.</li>
+<li>The format of each stream.</li>
+<li>Stream identifiers.</li>
+<li>The selection status of each stream (selected or deselected).</li>
+</ul>
+<p>In terms of the Media Foundation architecture, the presentation descriptor contains one or more <em>stream descriptors</em>. Each stream descriptor contains a <em>media type handler</em>, which is used to get or set media types on the stream. Media Foundation provides stock implementations for the presentation descriptor and stream descriptor; these are suitable for most media sources.</p>
+<p>To create a presentation descriptor, perform the following steps:</p>
+<ol>
+<li>For each stream:
+<ol>
+<li>Provide a stream ID and an array of possible media types. If the stream supports more than one media type, order the list of media types by preference, if any. (Put the optimal type first, and the least optimal type last.)</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatestreamdescriptor"><strong>MFCreateStreamDescriptor</strong></a> to create the stream descriptor.</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamdescriptor-getmediatypehandler"><strong>IMFStreamDescriptor::GetMediaTypeHandler</strong></a> on the newly created stream descriptor.</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediatypehandler-setcurrentmediatype"><strong>IMFMediaTypeHandler::SetCurrentMediaType</strong></a> to set the default format for the stream. If there is more than one media type, you should generally set the first type in the list.</li>
+</ol>
+</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatepresentationdescriptor"><strong>MFCreatePresentationDescriptor</strong></a> and pass in the array of stream descriptor pointers.</li>
+<li>For each stream, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfpresentationdescriptor-selectstream"><strong>IMFPresentationDescriptor::SelectStream</strong></a> or <a href="/windows/desktop/api/mfidl/nf-mfidl-imfpresentationdescriptor-deselectstream"><strong>DeselectStream</strong></a> to set the default selection state. If there is more than one stream of the same type (audio or video), only one should be selected by default.</li>
+</ol>
+<p>The <code>MPEG1Source</code> object creates the presentation descriptor in its <code>InitPresentationDescriptor</code> method:</p>
+<pre lang="C++"><code>HRESULT MPEG1Source::InitPresentationDescriptor()
+{
+    HRESULT hr = S_OK;
+    DWORD cStreams = 0;
+
+    assert(m_pPresentationDescriptor == NULL);
+    assert(m_state == STATE_OPENING);
+
+    if (m_pHeader == NULL)
+    {
+        return E_FAIL;
+    }
+
+    // Get the number of streams, as declared in the MPEG-1 header, skipping
+    // any streams with an unsupported format.
+    for (DWORD i = 0; i &lt; m_pHeader-&gt;cStreams; i++)
+    {
+        if (IsStreamTypeSupported(m_pHeader-&gt;streams[i].type))
+        {
+            cStreams++;
+        }
+    }
+
+    // How many streams do we actually have?
+    if (cStreams &gt; m_streams.GetCount())
+    {
+        // Keep reading data until we have seen a packet for each stream.
+        return S_OK;
+    }
+
+    // We should never create a stream we don't support.
+    assert(cStreams == m_streams.GetCount());
+
+    // Ready to create the presentation descriptor.
+
+    // Create an array of IMFStreamDescriptor pointers.
+    IMFStreamDescriptor **ppSD =
+            new (std::nothrow) IMFStreamDescriptor*[cStreams];
+
+    if (ppSD == NULL)
+    {
+        hr = E_OUTOFMEMORY;
+        goto done;
+    }
+
+    ZeroMemory(ppSD, cStreams * sizeof(IMFStreamDescriptor*));
+
+    // Fill the array by getting the stream descriptors from the streams.
+    for (DWORD i = 0; i &lt; cStreams; i++)
+    {
+        hr = m_streams[i]-&gt;GetStreamDescriptor(&amp;ppSD[i]);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+    }
+
+    // Create the presentation descriptor.
+    hr = MFCreatePresentationDescriptor(cStreams, ppSD,
+        &amp;m_pPresentationDescriptor);
+
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Select the first video stream (if any).
+    for (DWORD i = 0; i &lt; cStreams; i++)
+    {
+        GUID majorType = GUID_NULL;
+
+        hr = GetStreamMajorType(ppSD[i], &amp;majorType);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        if (majorType == MFMediaType_Video)
+        {
+            hr = m_pPresentationDescriptor-&gt;SelectStream(i);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+            break;
+        }
+    }
+
+    // Switch state from &quot;opening&quot; to stopped.
+    m_state = STATE_STOPPED;
+
+    // Invoke the async callback to complete the BeginOpen operation.
+    hr = CompleteOpen(S_OK);
+
+done:
+    // clean up:
+    if (ppSD)
+    {
+        for (DWORD i = 0; i &lt; cStreams; i++)
+        {
+            SafeRelease(&amp;ppSD[i]);
+        }
+        delete [] ppSD;
+    }
+    return hr;
+}
+</code></pre>
+<p>The application gets the presentation descriptor by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-createpresentationdescriptor"><strong>IMFMediaSource::CreatePresentationDescriptor</strong></a>. This method creates a shallow copy of the presentation descriptor by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfpresentationdescriptor-clone"><strong>IMFPresentationDescriptor::Clone</strong></a>. (The copy contains pointers to the original stream descriptors.) The application can use the presentation descriptor to set the media type, select a stream, or deselect a stream.</p>
+<p>Optionally, presentation descriptors and stream descriptors can contain attributes that give additional information about the source. For a list such attributes, see the following topics:</p>
+<ul>
+<li><a href="presentation-descriptor-attributes.html">Presentation Descriptor Attributes</a></li>
+<li><a href="stream-descriptor-attributes.html">Stream Descriptor Attributes</a></li>
+</ul>
+<p>One attribute deserves special mention: The <a href="mf-pd-duration-attribute.html"><strong>MF_PD_DURATION</strong></a> attribute contains the total duration of the source. Set this attribute if you know the duration up front; for example, the duration might be specified in the file headers, depending on the file format. The application might display this value, or use it to set a progress bar or seek bar.</p>
+<h2>Streaming States</h2>
+<p>A media source defines the following states:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Started</td>
+<td>The source accepts and processes sample requests.</td>
+</tr>
+<tr>
+<td>Paused</td>
+<td>The source accepts sample requests, but does not process them. Requests are queued until the source is started.</td>
+</tr>
+<tr>
+<td>Stopped.</td>
+<td>The source rejects sample requests.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h3>Start</h3>
+<p>The <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>IMFMediaSource::Start</strong></a> method starts the media source. It takes the following parameters:</p>
+<ul>
+<li>A presentation descriptor.</li>
+<li>A time-format GUID.</li>
+<li>A start position.</li>
+</ul>
+<p>The application must obtain the presentation descriptor by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatepresentationdescriptor"><strong>CreatePresentationDescriptor</strong></a> on the source. There is no defined mechanism for validating a presentation descriptor. If the application specifies the wrong presentation descriptor, the results are undefined.</p>
+<p>The time-format GUID specifies how to interpret the starting position. The standard format is 100-nanosecond (ns) units, indicated by GUID_NULL. Every media source must support 100-ns units. Optionally, a source can support other units of time, such as frame number or time code. However, there is no standard way to query a media source for the list of time formats it supports.</p>
+<p>The start position is given as a <strong>PROPVARIANT</strong>, allowing for different data types depending on the time format. For 100-ns, the <strong>PROPVARIANT</strong> type is either <strong>VT_I8</strong> or <strong>VT_EMPTY</strong>. If <strong>VT_I8</strong>, the <strong>PROPVARIANT</strong> contains the start position in 100-ns units. The value <strong>VT_EMPTY</strong> has the special meaning &quot;start at the current position.&quot;</p>
+<p>Implement the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>Start</strong></a> method as follows:</p>
+<ol>
+<li>Validate parameters and state:
+<ul>
+<li>Check for <strong>NULL</strong> parameters.</li>
+<li>Check the time-format GUID. If the value is invalid, return <strong>MF_E_UNSUPPORTED_TIME_FORMAT</strong>.</li>
+<li>Check the data type of the <strong>PROPVARIANT</strong> that holds the start position.</li>
+<li>Validate the start position. If invalid, return <strong>MF_E_INVALIDREQUEST</strong>.</li>
+<li>If the source has been shut down, return <strong>MF_E_SHUTDOWN</strong>.</li>
+</ul>
+</li>
+<li>If no error occurs in step 1, queue an asynchronous operation. Everything after this step occurs on a work-queue thread.</li>
+<li>For each stream:
+<ol>
+<li>
+<p>Check if the stream is already active from a previous <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>Start</strong></a> request.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfpresentationdescriptor-getstreamdescriptorbyindex"><strong>IMFPresentationDescriptor::GetStreamDescriptorByIndex</strong></a> to check whether the application selected or deselected the stream.</p>
+</li>
+<li>
+<p>If a previously selected stream is now deselected, flush any undelivered samples for that stream.</p>
+</li>
+<li>
+<p>If the stream is active, the media source (not the stream) sends one of the following events:</p>
+<ul>
+<li>It sends <a href="meupdatedstream.html">MEUpdatedStream</a> if the stream was previously active.</li>
+<li>Otherwise, it sends <a href="menewstream.html">MENewStream</a>.</li>
+</ul>
+<p>For both events, the event data is the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediastream"><strong>IMFMediaStream</strong></a> pointer for the stream.</p>
+</li>
+<li>
+<p>If the source is restarting from the paused state, there might be pending sample requests. If so, deliver these now.</p>
+</li>
+<li>
+<p>If the source is seeking to a new position, each stream object sends an <a href="mestreamseeked.html">MEStreamSeeked</a> event. Otherwise, each stream sends an <a href="mestreamstarted.html">MEStreamStarted</a> event.</p>
+</li>
+</ol>
+</li>
+<li>If the source is seeking to a new position, the media source sends an <a href="mesourceseeked.html">MESourceSeeked</a> event. Otherwise, it sends an <a href="mesourcestarted.html">MESourceStarted</a> event.</li>
+</ol>
+<p>If an error occurs at any time after step 2, the source sends an <a href="mesourcestarted.html">MESourceStarted</a> event with an error code. This alerts the application that the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>Start</strong></a> method failed asynchronously.</p>
+<p>The following code shows steps 1â€“2:</p>
+<pre lang="C++"><code>HRESULT MPEG1Source::Start(
+        IMFPresentationDescriptor* pPresentationDescriptor,
+        const GUID* pguidTimeFormat,
+        const PROPVARIANT* pvarStartPos
+    )
+{
+
+    HRESULT hr = S_OK;
+    SourceOp *pAsyncOp = NULL;
+
+    // Check parameters.
+
+    // Start position and presentation descriptor cannot be NULL.
+    if (pvarStartPos == NULL || pPresentationDescriptor == NULL)
+    {
+        return E_INVALIDARG;
+    }
+
+    // Check the time format.
+    if ((pguidTimeFormat != NULL) &amp;&amp; (*pguidTimeFormat != GUID_NULL))
+    {
+        // Unrecognized time format GUID.
+        return MF_E_UNSUPPORTED_TIME_FORMAT;
+    }
+
+    // Check the data type of the start position.
+    if ((pvarStartPos-&gt;vt != VT_I8) &amp;&amp; (pvarStartPos-&gt;vt != VT_EMPTY))
+    {
+        return MF_E_UNSUPPORTED_TIME_FORMAT;
+    }
+
+    EnterCriticalSection(&amp;m_critSec);
+
+    // Check if this is a seek request. This sample does not support seeking.
+
+    if (pvarStartPos-&gt;vt == VT_I8)
+    {
+        // If the current state is STOPPED, then position 0 is valid.
+        // Otherwise, the start position must be VT_EMPTY (current position).
+
+        if ((m_state != STATE_STOPPED) || (pvarStartPos-&gt;hVal.QuadPart != 0))
+        {
+            hr = MF_E_INVALIDREQUEST;
+            goto done;
+        }
+    }
+
+    // Fail if the source is shut down.
+    hr = CheckShutdown();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Fail if the source was not initialized yet.
+    hr = IsInitialized();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Perform a basic check on the caller's presentation descriptor.
+    hr = ValidatePresentationDescriptor(pPresentationDescriptor);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // The operation looks OK. Complete the operation asynchronously.
+    hr = SourceOp::CreateStartOp(pPresentationDescriptor, &amp;pAsyncOp);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pAsyncOp-&gt;SetData(*pvarStartPos);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = QueueOperation(pAsyncOp);
+
+done:
+    SafeRelease(&amp;pAsyncOp);
+    LeaveCriticalSection(&amp;m_critSec);
+    return hr;
+}
+</code></pre>
+<p>The remaining steps are shown in the next example:</p>
+<pre lang="C++"><code>HRESULT MPEG1Source::DoStart(StartOp *pOp)
+{
+    assert(pOp-&gt;Op() == SourceOp::OP_START);
+
+    IMFPresentationDescriptor *pPD = NULL;
+    IMFMediaEvent  *pEvent = NULL;
+
+    HRESULT     hr = S_OK;
+    LONGLONG    llStartOffset = 0;
+    BOOL        bRestartFromCurrentPosition = FALSE;
+    BOOL        bSentEvents = FALSE;
+
+    hr = BeginAsyncOp(pOp);
+
+    // Get the presentation descriptor from the SourceOp object.
+    // This is the PD that the caller passed into the Start() method.
+    // The PD has already been validated.
+    if (SUCCEEDED(hr))
+    {
+        hr = pOp-&gt;GetPresentationDescriptor(&amp;pPD);
+    }
+
+    // Because this sample does not support seeking, the start
+    // position must be 0 (from stopped) or &quot;current position.&quot;
+
+    // If the sample supported seeking, we would need to get the
+    // start position from the PROPVARIANT data contained in pOp.
+
+    if (SUCCEEDED(hr))
+    {
+        // Select/deselect streams, based on what the caller set in the PD.
+        // This method also sends the MENewStream/MEUpdatedStream events.
+        hr = SelectStreams(pPD, pOp-&gt;Data());
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        m_state = STATE_STARTED;
+
+        // Queue the &quot;started&quot; event. The event data is the start position.
+        hr = m_pEventQueue-&gt;QueueEventParamVar(
+            MESourceStarted,
+            GUID_NULL,
+            S_OK,
+            &amp;pOp-&gt;Data()
+            );
+    }
+
+    if (FAILED(hr))
+    {
+        // Failure. Send the error code to the application.
+
+        // Note: It's possible that QueueEvent itself failed, in which case it
+        // is likely to fail again. But there is no good way to recover in
+        // that case.
+
+        (void)m_pEventQueue-&gt;QueueEventParamVar(
+            MESourceStarted, GUID_NULL, hr, NULL);
+    }
+
+    CompleteAsyncOp(pOp);
+
+    SafeRelease(&amp;pEvent);
+    SafeRelease(&amp;pPD);
+    return hr;
+}
+</code></pre>
+<h3>Pause</h3>
+<p>The <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-pause"><strong>IMFMediaSource::Pause</strong></a> method pauses the media source. Implement this method as follows:</p>
+<ol>
+<li>Queue an asynchronous operation.</li>
+<li>Each active stream sends an <a href="mestreampaused.html">MEStreamPaused</a> event.</li>
+<li>The media source sends an <a href="mesourcepaused.html">MESourcePaused</a> event.</li>
+</ol>
+<p>While paused, the source queues sample requests without processing them. (See <a href="#sample-requests">Sample Requests</a>.)</p>
+<h3>Stop</h3>
+<p>The <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-stop"><strong>IMFMediaSource::Stop</strong></a> method stops the media source. Implement this method as follows:</p>
+<ol>
+<li>Queue an asynchronous operation.</li>
+<li>Each active stream sends an <a href="mestreamstopped.html">MEStreamStopped</a> event.</li>
+<li>Clear all queued samples and sample requests.</li>
+<li>The media source sends an <a href="mesourcestopped.html">MESourceStopped</a> event.</li>
+</ol>
+<p>While stopped, the source rejects all requests for samples.</p>
+<p>If the source is stopped while an I/O request is in progress, the I/O request might complete after the source enters the stopped state. In that case, the source should discard the result of that I/O request.</p>
+<h2>Sample Requests</h2>
+<p>Media Foundation use a <em>pull</em> model, in which the pipeline requests samples from the media source. This differs from the model used by DirectShow, in which the sources &quot;pushes&quot; samples.</p>
+<p>To request a new sample, the Media Foundation pipeline calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediastream-requestsample"><strong>IMFMediaStream::RequestSample</strong></a>. This method takes an <strong>IUnknown</strong> pointer that represents a <em>token</em> object. The implementation of the token object is up to the caller; it simply provides a way for the caller to track sample requests. The token parameter can also be <strong>NULL</strong>.</p>
+<p>Assuming the source uses asynchronous I/O requests to read data, sample generation will not be synchronized with sample requests. To synchronize sample requests with sample generation, a media source does the following:</p>
+<ol>
+<li>Request tokens are placed on a queue.</li>
+<li>As samples are generated, they are placed on a second queue.</li>
+<li>The media source completes a sample request by pulling a request token from the first queue and a sample from the second queue.</li>
+<li>The media source sends an MEMediaSample event. The event contains a pointer to the sample, and the sample contains a pointer to the token.</li>
+</ol>
+<p>The following diagram shows the relationship between the <a href="memediasample.html">MEMediaSample</a> event, the sample, and the request token.</p>
+<p><img src="images/mediasourceimpl01.png" alt="diagram showing memediasample and a sample queue pointing to imfsample; imfsample and the request queue point to iunknown" /></p>
+<p>The example MPEG-1 source implements this process as follows:</p>
+<ol>
+<li>The <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediastream-requestsample"><strong>RequestSample</strong></a> method puts the request on a FIFO queue.</li>
+<li>As I/O requests are completed, the media source creates new samples and puts them on a second FIFO queue. (This queue has a maximum size, to prevent the source from reading too far ahead.)</li>
+<li>Whenever both of these queues have at least one item (one request and one sample), the media source completes the first request from the request queue by sending out the first sample from the sample queue.</li>
+<li>To deliver a sample, the stream object (not the source object) sends an <a href="memediasample.html">MEMediaSample</a> event.
+<ul>
+<li>The event data is a pointer to the sample's <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfsample"><strong>IMFSample</strong></a> interface.</li>
+<li>If the request included a token, attach the token to the sample by setting the <a href="mfsampleextension-token-attribute.html"><strong>MFSampleExtension_Token</strong></a> attribute on the sample.</li>
+</ul>
+</li>
+</ol>
+<p>At this point, there are three possibilities:</p>
+<ul>
+<li>There is another sample in the sample queue, but no matching request.</li>
+<li>There is a request, but no sample.</li>
+<li>Both queues are empty; there are no samples and no requests.</li>
+</ul>
+<p>If the sample queue is empty, the source checks for the end of the stream (see <a href="#end-of-stream">End of Stream</a>). Otherwise, it starts another I/O request for data. If any error occurs during this process, the stream sends an <a href="meerror.html">MEError</a> event.</p>
+<p>The following code implements the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediastream-requestsample"><strong>IMFMediaStream::RequestSample</strong></a> method:</p>
+<pre lang="C++"><code>HRESULT MPEG1Stream::RequestSample(IUnknown* pToken)
+{
+    HRESULT hr = S_OK;
+    IMFMediaSource *pSource = NULL;
+
+    // Hold the media source object's critical section.
+    SourceLock lock(m_pSource);
+
+    hr = CheckShutdown();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    if (m_state == STATE_STOPPED)
+    {
+        hr = MF_E_INVALIDREQUEST;
+        goto done;
+    }
+
+    if (!m_bActive)
+    {
+        // If the stream is not active, it should not get sample requests.
+        hr = MF_E_INVALIDREQUEST;
+        goto done;
+    }
+
+    if (m_bEOS &amp;&amp; m_Samples.IsEmpty())
+    {
+        // This stream has already reached the end of the stream, and the
+        // sample queue is empty.
+        hr = MF_E_END_OF_STREAM;
+        goto done;
+    }
+
+    hr = m_Requests.InsertBack(pToken);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Dispatch the request.
+    hr = DispatchSamples();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+done:
+    if (FAILED(hr) &amp;&amp; (m_state != STATE_SHUTDOWN))
+    {
+        // An error occurred. Send an MEError even from the source,
+        // unless the source is already shut down.
+        hr = m_pSource-&gt;QueueEvent(MEError, GUID_NULL, hr, NULL);
+    }
+    return hr;
+}
+</code></pre>
+<p>The <code>DispatchSamples</code> method pulls samples from the sample queue, matches them with pending sample requests, and queues <a href="memediasample.html">MEMediaSample</a> events:</p>
+<pre lang="C++"><code>HRESULT MPEG1Stream::DispatchSamples()
+{
+    HRESULT hr = S_OK;
+    BOOL bNeedData = FALSE;
+    BOOL bEOS = FALSE;
+
+    SourceLock lock(m_pSource);
+
+    // An I/O request can complete after the source is paused, stopped, or
+    // shut down. Do not deliver samples unless the source is running.
+    if (m_state != STATE_STARTED)
+    {
+        return S_OK;
+    }
+
+    IMFSample *pSample = NULL;
+    IUnknown  *pToken = NULL;
+
+    // Deliver as many samples as we can.
+    while (!m_Samples.IsEmpty() &amp;&amp; !m_Requests.IsEmpty())
+    {
+        // Pull the next sample from the queue.
+        hr = m_Samples.RemoveFront(&amp;pSample);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        // Pull the next request token from the queue. Tokens can be NULL.
+        hr = m_Requests.RemoveFront(&amp;pToken);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        if (pToken)
+        {
+            // Set the token on the sample.
+            hr = pSample-&gt;SetUnknown(MFSampleExtension_Token, pToken);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+        }
+
+        // Send an MEMediaSample event with the sample.
+        hr = m_pEventQueue-&gt;QueueEventParamUnk(
+            MEMediaSample, GUID_NULL, S_OK, pSample);
+
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        SafeRelease(&amp;pSample);
+        SafeRelease(&amp;pToken);
+    }
+
+    if (m_Samples.IsEmpty() &amp;&amp; m_bEOS)
+    {
+        // The sample queue is empty AND we have reached the end of the source
+        // stream. Notify the pipeline by sending the end-of-stream event.
+
+        hr = m_pEventQueue-&gt;QueueEventParamVar(
+            MEEndOfStream, GUID_NULL, S_OK, NULL);
+
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        // Notify the source. It will send the end-of-presentation event.
+        hr = m_pSource-&gt;QueueAsyncOperation(SourceOp::OP_END_OF_STREAM);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+    }
+    else if (NeedsData())
+    {
+        // The sample queue is empty; the request queue is not empty; and we
+        // have not reached the end of the stream. Ask for more data.
+        hr = m_pSource-&gt;QueueAsyncOperation(SourceOp::OP_REQUEST_DATA);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+    }
+
+done:
+    if (FAILED(hr) &amp;&amp; (m_state != STATE_SHUTDOWN))
+    {
+        // An error occurred. Send an MEError even from the source,
+        // unless the source is already shut down.
+        m_pSource-&gt;QueueEvent(MEError, GUID_NULL, hr, NULL);
+    }
+
+    SafeRelease(&amp;pSample);
+    SafeRelease(&amp;pToken);
+    return S_OK;
+}
+</code></pre>
+<p>The <code>DispatchSamples</code> method is called in the following circumstances:</p>
+<ul>
+<li>Inside the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediastream-requestsample"><strong>RequestSample</strong></a> method.</li>
+<li>When the media source restarts from the paused state.</li>
+<li>When an I/O request completes.</li>
+</ul>
+<h2>End of Stream</h2>
+<p>When a stream has no more data, and all of the samples for that stream have been delivered, the stream objects sends an <a href="meendofstream.html">MEEndOfStream</a> event.</p>
+<p>When all of the active streams are done, the media source sends an <a href="meendofpresentation.html">MEEndOfPresentation</a> event.</p>
+<h2>Asynchronous Operations</h2>
+<p>Perhaps the hardest part of writing a media source is understanding the Media Foundation asynchronous model.</p>
+<p>All of the methods on a media source that control streaming are asynchronous. In each case, the method does some initial validation, such as checking parameters. The source then dispatches the rest of the work to a work queue. After the operation completes, the media source sends an event back to the caller, through the media source's <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a> interface. It is therefore important to understand work queues.</p>
+<p>To put an item on a work queue, you can call either <a href="/windows/desktop/api/mfapi/nf-mfapi-mfputworkitem"><strong>MFPutWorkItem</strong></a> or <a href="/windows/desktop/api/mfapi/nf-mfapi-mfputworkitemex"><strong>MFPutWorkItemEx</strong></a>. The MPEG-1 source happens to use <strong>MFPutWorkItem</strong>, but the two functions do the same thing. The <strong>MFPutWorkItem</strong> function takes the following parameters:</p>
+<ul>
+<li>A <strong>DWORD</strong> value that identifies the work queue. You can create a private work queue or use <strong>MFASYNC_CALLBACK_QUEUE_STANDARD</strong>.</li>
+<li>A pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasynccallback"><strong>IMFAsyncCallback</strong></a> interface. This callback interface is invoked to perform the work.</li>
+<li>An optional state object, which must implement <strong>IUnknown</strong>.</li>
+</ul>
+<p>The work queue is serviced by one or more worker threads that continuously pull the next work item from the queue and invoke the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>IMFAsyncCallback::Invoke</strong></a> method of the callback interface.</p>
+<p>Work items are not guaranteed to execute in the same order that you put them on the queue. Remember that more than one thread can service the same work queue, so <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>Invoke</strong></a> calls can overlap or occur out of order. Therefore, it is up to the media source to maintain the correct internal state, by submitting work queue items in the right order. Only when the previous operation is complete does the source start the next operation.</p>
+<p>To represent pending operations, the MPEG-1 source defines a class named <code>SourceOp</code>:</p>
+<pre lang="C++"><code>// Represents a request for an asynchronous operation.
+
+class SourceOp : public IUnknown
+{
+public:
+
+    enum Operation
+    {
+        OP_START,
+        OP_PAUSE,
+        OP_STOP,
+        OP_REQUEST_DATA,
+        OP_END_OF_STREAM
+    };
+
+    static HRESULT CreateOp(Operation op, SourceOp **ppOp);
+    static HRESULT CreateStartOp(IMFPresentationDescriptor *pPD, SourceOp **ppOp);
+
+    // IUnknown
+    STDMETHODIMP QueryInterface(REFIID iid, void** ppv);
+    STDMETHODIMP_(ULONG) AddRef();
+    STDMETHODIMP_(ULONG) Release();
+
+    SourceOp(Operation op);
+    virtual ~SourceOp();
+
+    HRESULT SetData(const PROPVARIANT&amp; var);
+
+    Operation Op() const { return m_op; }
+    const PROPVARIANT&amp; Data() { return m_data;}
+
+protected:
+    long        m_cRef;     // Reference count.
+    Operation   m_op;
+    PROPVARIANT m_data;     // Data for the operation.
+};
+</code></pre>
+<p>The <code>Operation</code> enumeration identifies which operation is pending. The class also contains a <strong>PROPVARIANT</strong> to convey any additional data for the operation.</p>
+<h3>Operation Queue</h3>
+<p>To serialize operations, the media source maintains a queue of <code>SourceOp</code> objects. It uses a helper class to manage the queue:</p>
+<pre lang="C++"><code>template &lt;class OP_TYPE&gt;
+class OpQueue : public IUnknown
+{
+public:
+
+    typedef ComPtrList&lt;OP_TYPE&gt;   OpList;
+
+    HRESULT QueueOperation(OP_TYPE *pOp);
+
+protected:
+
+    HRESULT ProcessQueue();
+    HRESULT ProcessQueueAsync(IMFAsyncResult *pResult);
+
+    virtual HRESULT DispatchOperation(OP_TYPE *pOp) = 0;
+    virtual HRESULT ValidateOperation(OP_TYPE *pOp) = 0;
+
+    OpQueue(CRITICAL_SECTION&amp; critsec)
+        : m_OnProcessQueue(this, &amp;OpQueue::ProcessQueueAsync),
+          m_critsec(critsec)
+    {
+    }
+
+    virtual ~OpQueue()
+    {
+    }
+
+protected:
+    OpList                  m_OpQueue;         // Queue of operations.
+    CRITICAL_SECTION&amp;       m_critsec;         // Protects the queue state.
+    AsyncCallback&lt;OpQueue&gt;  m_OnProcessQueue;  // ProcessQueueAsync callback.
+};
+</code></pre>
+<p>The <code>OpQueue</code> class is designed to be inherited by the component that performs asynchronous work items. The <em>OP_TYPE</em> template parameter is the object type used to represent work items in the queueâ€”in this case, <em>OP_TYPE</em> will be <code>SourceOp</code>. The <code>OpQueue</code> class implements the following methods:</p>
+<ul>
+<li><code>QueueOperation</code> puts a new item on the queue.</li>
+<li><code>ProcessQueue</code> dispatches the next operation from the queue. This method is asynchronous.</li>
+<li><code>ProcessQueueAsync</code> completes the asynchronous <code>ProcessQueue</code> method.</li>
+</ul>
+<p>Another two methods must be implemented by the derived class:</p>
+<ul>
+<li><code>ValidateOperation</code> checks whether it is valid to perform a specified operation, given the current state of the media source.</li>
+<li><code>DispatchOperation</code> carries out the asynchronous work item.</li>
+</ul>
+<p>The operation queue is used as follows:</p>
+<ol>
+<li>The Media Foundation pipeline calls an asynchronous method on the media source, such as <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>IMFMediaSource::Start</strong></a>.</li>
+<li>The asynchronous method calls <code>QueueOperation</code>, which puts the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>Start</strong></a> operation on the queue and calls <code>ProcessQueue</code> (in the form of a <code>SourceOp</code> object).</li>
+<li><code>ProcessQueue</code> calls <a href="/windows/desktop/api/mfapi/nf-mfapi-mfputworkitem"><strong>MFPutWorkItem</strong></a>.</li>
+<li>The work-queue thread calls <code>ProcessQueueAsync</code>.</li>
+<li>The <code>ProcessQueueAsync</code> method calls <code>ValidateOperation</code> and <code>DispatchOperation</code>.</li>
+</ol>
+<p>The following code queues a new operation on the MPEG-1 source:</p>
+<pre lang="C++"><code>template &lt;class OP_TYPE&gt;
+HRESULT OpQueue&lt;OP_TYPE&gt;::QueueOperation(OP_TYPE *pOp)
+{
+    HRESULT hr = S_OK;
+
+    EnterCriticalSection(&amp;m_critsec);
+
+    hr = m_OpQueue.InsertBack(pOp);
+    if (SUCCEEDED(hr))
+    {
+        hr = ProcessQueue();
+    }
+
+    LeaveCriticalSection(&amp;m_critsec);
+    return hr;
+}
+</code></pre>
+<p>The following code processes the queue:</p>
+<pre lang="C++"><code>template &lt;class OP_TYPE&gt;
+HRESULT OpQueue&lt;OP_TYPE&gt;::ProcessQueue()
+{
+    HRESULT hr = S_OK;
+    if (m_OpQueue.GetCount() &gt; 0)
+    {
+        hr = MFPutWorkItem(
+            MFASYNC_CALLBACK_QUEUE_STANDARD,    // Use the standard work queue.
+            &amp;m_OnProcessQueue,                  // Callback method.
+            NULL                                // State object.
+            );
+    }
+    return hr;
+}
+</code></pre>
+<p>The <code>ValidateOperation</code> method checks whether the MPEG-1 source can dispatch the next operation in the queue. If another operation is in progress, <code>ValidateOperation</code> returns <strong>MF_E_NOTACCEPTING</strong>. This ensures that <code>DispatchOperation</code> is not called while there is another operation pending.</p>
+<pre lang="C++"><code>HRESULT MPEG1Source::ValidateOperation(SourceOp *pOp)
+{
+    if (m_pCurrentOp != NULL)
+    {
+        return MF_E_NOTACCEPTING;
+    }
+    return S_OK;
+}
+</code></pre>
+<p>The DispatchOperation method switches on the operation type:</p>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+// DispatchOperation
+//
+// Performs the asynchronous operation indicated by pOp.
+//
+// NOTE:
+// This method implements the pure-virtual OpQueue::DispatchOperation
+// method. It is always called from a work-queue thread.
+//-------------------------------------------------------------------
+
+HRESULT MPEG1Source::DispatchOperation(SourceOp *pOp)
+{
+    EnterCriticalSection(&amp;m_critSec);
+
+    HRESULT hr = S_OK;
+
+    if (m_state == STATE_SHUTDOWN)
+    {
+        LeaveCriticalSection(&amp;m_critSec);
+
+        return S_OK; // Already shut down, ignore the request.
+    }
+
+    switch (pOp-&gt;Op())
+    {
+
+    // IMFMediaSource methods:
+
+    case SourceOp::OP_START:
+        hr = DoStart((StartOp*)pOp);
+        break;
+
+    case SourceOp::OP_STOP:
+        hr = DoStop(pOp);
+        break;
+
+    case SourceOp::OP_PAUSE:
+        hr = DoPause(pOp);
+        break;
+
+    // Operations requested by the streams:
+
+    case SourceOp::OP_REQUEST_DATA:
+        hr = OnStreamRequestSample(pOp);
+        break;
+
+    case SourceOp::OP_END_OF_STREAM:
+        hr = OnEndOfStream(pOp);
+        break;
+
+    default:
+        hr = E_UNEXPECTED;
+    }
+
+    if (FAILED(hr))
+    {
+        StreamingError(hr);
+    }
+
+    LeaveCriticalSection(&amp;m_critSec);
+    return hr;
+}
+</code></pre>
+<p>To summarize:</p>
+<ol>
+<li>The pipeline calls an asynchronous method, such as <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>IMFMediaSource::Start</strong></a>.</li>
+<li>The asynchronous method calls <code>OpQueue::QueueOperation</code>, passing in a pointer to a <code>SourceOp</code> object.</li>
+<li>The <code>QueueOperation</code> method puts the operation on the <em>m_OpQueue</em> queue and calls <code>OpQueue::ProcessQueue</code>.</li>
+<li>The <code>ProcessQueue</code> method calls <a href="/windows/desktop/api/mfapi/nf-mfapi-mfputworkitem"><strong>MFPutWorkItem</strong></a>. From this point, everything happens on a Media Foundation work-queue thread. The asynchronous method returns to the caller.</li>
+<li>The work-queue thread calls the <code>OpQueue::ProcessQueueAsync</code> method.</li>
+<li>The <code>ProcessQueueAsync</code> method calls <code>MPEG1Source:ValidateOperation</code> to validate the operation.</li>
+<li>The <code>ProcessQueueAsync</code> method calls <code>MPEG1Source::DispatchOperation</code> to process the operation.</li>
+</ol>
+<p>There are several benefits to this design:</p>
+<ul>
+<li>Methods are asynchronous, so they do not block the calling application's thread.</li>
+<li>Operations are dispatched on a Media Foundation work-queue thread, which is shared among pipeline components. Therefore, the media source does not create its own thread, reducing the total number of threads that are created.</li>
+<li>The media source does not block while waiting for operations to complete. This reduces the chance that a media source will accidentally cause a deadlock, and helps to reduce context switching.</li>
+<li>The media source can use asynchronous I/O to read the source file (by calling <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfbytestream-beginread"><strong>IMFByteStream::BeginRead</strong></a>). The media source does not need to block while waiting for I/O routine complete.</li>
+</ul>
+<p>If you follow the pattern shown in the SDK sample, you can focus on the particular details of your media source.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="media-sources.html">Media Sources</a></p>
+<!-- raw HTML omitted -->
+<p><a href="writing-a-custom-media-source.html">Writing a Custom Media Source</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

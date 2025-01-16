@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MetadataExchangeSample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: MetadataExchangeSample
+description: This example shows how to use service host for hosting a PurchaseOrder service over TCP. The service also supports WS-MetadataExchange.
+ms.assetid: 8f14e6a8-ccb9-4556-b04f-df08c6c80adf
+keywords:</p>
+<ul>
+<li>MetadataExchangeSample Windows Web Services API</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>MetadataExchangeSample</h1>
+<p>This example shows how to use service host for hosting a PurchaseOrder service over TCP. The service also supports WS-MetadataExchange.</p>
+<ul>
+<li><a href="#mexservicecpp">MexService.cpp</a></li>
+<li><a href="#purchaseorderwsdl">PurchaseOrder.wsdl</a></li>
+<li><a href="#makefile">Makefile</a></li>
+</ul>
+<h2>MexService.cpp</h2>
+<pre lang="C++"><code>//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;string.h&quot;
+#include &lt;strsafe.h&gt;
+#include &quot;PurchaseOrder.wsdl.h&quot;
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+HANDLE closeServer = NULL;  
+
+
+static const WCHAR ExpectedShipDate [] = L&quot;1/1/2006&quot;;
+static const WCHAR OrderStatusString [] = L&quot;Pending&quot;;
+
+static WS_XML_STRING serviceName = WS_XML_STRING_VALUE(&quot;PurchaseOrderService&quot;);
+static WS_XML_STRING serviceNamespace = WS_XML_STRING_VALUE(&quot;http://example.org&quot;);
+
+static WS_XML_STRING portName = WS_XML_STRING_VALUE(&quot;IPurchaseOrder&quot;);
+static WS_XML_STRING bindingName = WS_XML_STRING_VALUE(&quot;PurchaseOrderBinding&quot;);
+static WS_XML_STRING bindingNs = WS_XML_STRING_VALUE(&quot;http://example.org&quot;);
+
+// The WSDL document used by this example
+const static WS_XML_STRING wsdl = WS_XML_STRING_VALUE(
+&quot;&lt;wsdl:definitions &quot;
+&quot;    xmlns:soap='http://schemas.xmlsoap.org/wsdl/soap/' &quot;
+&quot;    xmlns:wsu='http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd' &quot;
+&quot;    xmlns:soapenc='http://schemas.xmlsoap.org/soap/encoding/' &quot;
+&quot;    xmlns:tns='http://example.org' xmlns:wsa='http://schemas.xmlsoap.org/ws/2004/08/addressing' &quot;
+&quot;    xmlns:wsp='http://schemas.xmlsoap.org/ws/2004/09/policy' &quot;
+&quot;    xmlns:wsap='http://schemas.xmlsoap.org/ws/2004/08/addressing/policy' &quot;
+&quot;    xmlns:xsd='http://www.w3.org/2001/XMLSchema' &quot;
+&quot;    xmlns:msc='http://schemas.microsoft.com/ws/2005/12/wsdl/contract' &quot;
+&quot;    xmlns:wsaw='http://www.w3.org/2006/05/addressing/wsdl' &quot;
+&quot;    xmlns:soap12='http://schemas.xmlsoap.org/wsdl/soap12/' xmlns:wsa10='http://www.w3.org/2005/08/addressing' &quot;
+&quot;    xmlns:wsx='http://schemas.xmlsoap.org/ws/2004/09/mex' xmlns:wsdl='http://schemas.xmlsoap.org/wsdl/' &quot;
+&quot;    targetNamespace='http://example.org'&gt;&quot;
+&quot;  &lt;wsp:Policy wsu:Id='NetTcpBinding_HelloService_policy'&gt;&quot;
+&quot;   &lt;wsp:ExactlyOne&gt;&quot;
+&quot;      &lt;wsp:All&gt;&quot;
+&quot;       &lt;msb:BinaryEncoding xmlns:msb='http://schemas.microsoft.com/ws/06/2004/mspolicy/netbinary1'/&gt;&quot;
+&quot;       &lt;wsaw:UsingAddressing/&gt;&quot;
+&quot;      &lt;/wsp:All&gt;&quot;
+&quot;   &lt;/wsp:ExactlyOne&gt;&quot;
+&quot;  &lt;/wsp:Policy&gt;&quot;
+&quot;  &lt;wsdl:types&gt;&quot;
+&quot;    &lt;xsd:schema targetNamespace='http://example.org/Imports'&gt;&quot;
+&quot;      &lt;xsd:import namespace='http://example.org' /&gt;&quot;
+&quot;    &lt;/xsd:schema&gt;&quot;
+&quot;  &lt;/wsdl:types&gt;&quot;
+&quot;  &lt;wsdl:message name='PurchaseOrder'&gt;&quot;
+&quot;        &lt;wsdl:part name='parameters' element='tns:PurchaseOrderType'/&gt;&quot;
+&quot;  &lt;/wsdl:message&gt;&quot;
+&quot;  &lt;wsdl:message name='OrderConfirmation'&gt;&quot;
+&quot;        &lt;wsdl:part name='parameters' element='tns:OrderConfirmationType'/&gt;&quot;
+&quot;  &lt;/wsdl:message&gt;&quot;
+&quot;  &lt;wsdl:message name='GetOrderStatus'&gt;&quot;
+&quot;        &lt;wsdl:part name='parameters' element='tns:GetOrderStatusType'/&gt;&quot;
+&quot;  &lt;/wsdl:message&gt;&quot;
+&quot;  &lt;wsdl:message name='GetOrderStatusResponse'&gt;&quot;
+&quot;     &lt;wsdl:part name='parameters' element='tns:GetOrderStatusResponseType'/&gt;&quot;
+&quot;  &lt;/wsdl:message&gt;&quot;
+&quot;  &lt;wsdl:portType name='IPurchaseOrder'&gt;&quot;
+&quot;    &lt;wsdl:operation name='Order'&gt;&quot;
+&quot;       &lt;wsdl:input message='tns:PurchaseOrder' wsaw:Action='http://example.org/purchaseorder'/&gt;&quot;
+&quot;       &lt;wsdl:output message='tns:OrderConfirmation' wsaw:Action='http://example.org/orderconfirmation'/&gt;&quot;
+&quot;    &lt;/wsdl:operation&gt;&quot;
+&quot;    &lt;wsdl:operation name='OrderStatus'&gt;&quot;
+&quot;       &lt;wsdl:input message='tns:GetOrderStatus' wsaw:Action='http://example.org/getorderstatus'/&gt;&quot;
+&quot;       &lt;wsdl:output message='tns:GetOrderStatusResponse' wsaw:Action='http://example.org/getorderstatusresponse'/&gt;&quot;
+&quot;     &lt;/wsdl:operation&gt;&quot;
+&quot;  &lt;/wsdl:portType&gt;&quot;
+&quot; &lt;wsdl:binding name='PurchaseOrderBinding' type='tns:IPurchaseOrder'&gt;&quot;
+&quot;  &lt;wsp:PolicyReference URI='#NetTcpBinding_HelloService_policy'/&gt;&quot;
+&quot;  &lt;soap12:binding transport='http://schemas.microsoft.com/soap/tcp'/&gt;&quot;
+&quot;        &lt;wsdl:operation name='Order'&gt;&quot;
+&quot;            &lt;soap12:operation soapAction='http://example.org/purchaseorder' style='document'/&gt;&quot;
+&quot;            &lt;wsdl:input&gt;&quot;
+&quot;                &lt;soap12:body use='literal'/&gt;&quot;
+&quot;            &lt;/wsdl:input&gt;&quot;
+&quot;            &lt;wsdl:output&gt;&quot;
+&quot;                &lt;soap12:body use='literal'/&gt;&quot;
+&quot;            &lt;/wsdl:output&gt;&quot;
+&quot;        &lt;/wsdl:operation&gt;&quot;
+&quot;        &lt;wsdl:operation name='OrderStatus'&gt;&quot;
+&quot;            &lt;soap12:operation soapAction='http://example.org/getorderstatus' style='document'/&gt;&quot;
+&quot;            &lt;wsdl:input&gt;&quot;
+&quot;                &lt;soap12:body use='literal'/&gt;&quot;
+&quot;            &lt;/wsdl:input&gt;&quot;
+&quot;            &lt;wsdl:output&gt;&quot;
+&quot;                &lt;soap12:body use='literal'/&gt;&quot;
+&quot;            &lt;/wsdl:output&gt;&quot;
+&quot;        &lt;/wsdl:operation&gt;&quot;
+&quot;    &lt;/wsdl:binding&gt;&quot;
+&quot;&lt;/wsdl:definitions&gt;&quot;
+);
+
+static const WS_XML_STRING xsd = WS_XML_STRING_VALUE(
+&quot;&lt;xsd:schema xmlns:tns='http://example.org'&quot;
+&quot;elementFormDefault='qualified' &quot;
+&quot;targetNamespace='http://example.org' &quot;
+&quot;xmlns:xsd='http://www.w3.org/2001/XMLSchema'&gt;&quot;
+&quot;&lt;xsd:element name='PurchaseOrderType'&gt;&quot;
+&quot;&lt;xsd:complexType&gt;&quot;
+&quot;&lt;xsd:sequence&gt;&quot;
+&quot;&lt;xsd:element minOccurs='0' name='quantity' type='xsd:int'/&gt;&quot;
+&quot;&lt;xsd:element minOccurs='0' name='productName' type='xsd:string'/&gt;&quot;
+&quot;&lt;/xsd:sequence&gt;&quot;
+&quot;&lt;/xsd:complexType&gt;&quot;
+&quot;&lt;/xsd:element&gt;&quot;
+&quot;&lt;xsd:element name='OrderConfirmationType'&gt;&quot;
+&quot;&lt;xsd:complexType&gt;&quot;
+&quot;&lt;xsd:sequence&gt;&quot;
+&quot;&lt;xsd:element minOccurs='0' name='orderID' type='xsd:unsignedInt'/&gt;&quot;
+&quot;&lt;xsd:element minOccurs='0' name='expectedShipDate' type='xsd:string'/&gt;&quot;
+&quot;&lt;/xsd:sequence&gt;&quot;
+&quot;&lt;/xsd:complexType&gt;&quot;
+&quot;&lt;/xsd:element&gt;&quot;
+&quot;&lt;xsd:element name='GetOrderStatusType'&gt;&quot;
+&quot;&lt;xsd:complexType&gt;&quot;
+&quot;&lt;xsd:sequence&gt;&quot;
+&quot;&lt;xsd:element minOccurs='0' name='orderID' type='xsd:unsignedInt'/&gt;&quot;
+&quot;&lt;/xsd:sequence&gt;&quot;
+&quot;&lt;/xsd:complexType&gt;&quot;
+&quot;&lt;/xsd:element&gt;&quot;
+&quot;&lt;xsd:element name='GetOrderStatusResponseType'&gt;&quot;
+&quot;&lt;xsd:complexType&gt;&quot;
+&quot;&lt;xsd:sequence&gt;&quot;
+&quot;&lt;xsd:element minOccurs='0' name='orderID' type='xsd:unsignedInt'/&gt;&quot;
+&quot;&lt;xsd:element minOccurs='0' name='status' type='xsd:string'/&gt;&quot;
+&quot;&lt;/xsd:sequence&gt;&quot;
+&quot;&lt;/xsd:complexType&gt;&quot;
+&quot;&lt;/xsd:element&gt;&quot;
+&quot;&lt;/xsd:schema&gt;&quot;
+);
+
+static const WS_STRING wsdlDocumentName = WS_STRING_VALUE(L&quot;wsdl&quot;);
+static const WS_STRING xsdDocumentName = WS_STRING_VALUE(L&quot;xsd&quot;);
+static const WS_SERVICE_METADATA_DOCUMENT wsdlDocument =
+{
+    (WS_XML_STRING*)&amp;wsdl,
+    (WS_STRING*)&amp;wsdlDocumentName
+};
+
+static const WS_SERVICE_METADATA_DOCUMENT xsdDocument =
+{
+    (WS_XML_STRING*)&amp;xsd,
+    (WS_STRING*)&amp;xsdDocumentName
+};
+
+static const WS_SERVICE_METADATA_DOCUMENT* metadataDocuments[] =
+{
+    &amp;wsdlDocument,
+    &amp;xsdDocument
+};
+
+                
+HRESULT CALLBACK PurchaseOrderImpl(
+    const WS_OPERATION_CONTEXT* context,
+    int quantity, 
+    WS_STRING productName, 
+    unsigned int* orderID,
+    WS_STRING* expectedShipDate, 
+    const WS_ASYNC_CONTEXT* asyncContext,
+    WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    WS_HEAP* heap = NULL;
+    HRESULT hr = NOERROR;
+    
+    wprintf(L&quot;%ld, %.*s\n&quot;, 
+        quantity, 
+        productName.length,
+        productName.chars);
+    fflush(stdout);
+    
+    hr = WsGetOperationContextProperty(context, WS_OPERATION_CONTEXT_PROPERTY_HEAP, &amp;heap, sizeof(heap), error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    
+    hr = WsAlloc(heap, sizeof(ExpectedShipDate), (void**)&amp;expectedShipDate-&gt;chars, error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    
+    hr = StringCbCopyW(expectedShipDate-&gt;chars, sizeof(ExpectedShipDate), ExpectedShipDate);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    
+    *orderID = 123;
+    expectedShipDate-&gt;length = (ULONG)wcslen(ExpectedShipDate);
+    
+    return NOERROR;
+}
+
+
+HRESULT CALLBACK GetOrderStatusImpl(
+    const WS_OPERATION_CONTEXT* context,
+    unsigned int* orderID,
+    WS_STRING* status, 
+    const WS_ASYNC_CONTEXT* asyncContext,
+    WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    WS_HEAP* heap = NULL;
+    HRESULT hr = NOERROR;
+    
+    *orderID = *orderID;
+    
+    hr = WsGetOperationContextProperty(context, WS_OPERATION_CONTEXT_PROPERTY_HEAP, &amp;heap, sizeof(heap), error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    
+    hr = WsAlloc(heap, sizeof(OrderStatusString), (void**)&amp;status-&gt;chars, error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    
+    hr = StringCbCopyW(status-&gt;chars, sizeof(OrderStatusString), OrderStatusString);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    
+    status-&gt;length = (ULONG)wcslen(OrderStatusString);
+    
+    return NOERROR;
+}
+
+ULONG numberOfSession = 0;
+HRESULT CALLBACK CloseChannelCallback(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in const WS_ASYNC_CONTEXT* asyncContext)
+{
+    UNREFERENCED_PARAMETER(context);
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    if (InterlockedIncrement(&amp;numberOfSession) == 2)
+    {
+        SetEvent(closeServer);
+    }
+    return NOERROR;
+}
+
+static const PurchaseOrderBindingFunctionTable purchaseOrderFunctions = {PurchaseOrderImpl, GetOrderStatusImpl};
+
+// Method contract for the service
+static const WS_SERVICE_CONTRACT purchaseOrderContract = 
+{
+    &amp;PurchaseOrder_wsdl.contracts.PurchaseOrderBinding, // comes from the generated header.
+    NULL, // for not specifying the default contract
+    &amp;purchaseOrderFunctions // specified by the user
+};
+
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_SERVICE_HOST* host = NULL;
+    WS_SERVICE_ENDPOINT serviceEndpoint = {0};
+    const WS_SERVICE_ENDPOINT* serviceEndpoints[1];
+    serviceEndpoints[0] = &amp;serviceEndpoint;
+    WS_ERROR* error = NULL;
+    HANDLE serverStartedEvent = NULL;
+    WS_SERVICE_PROPERTY serviceProperties[1];
+    WS_SERVICE_METADATA serviceMetadata = {0};
+    WS_SERVICE_ENDPOINT_PROPERTY serviceEndpointProperties[4];
+    WS_SERVICE_PROPERTY_CLOSE_CALLBACK closeCallbackProperty = {CloseChannelCallback};
+    WS_SERVICE_ENDPOINT_METADATA endpointMetadata = {0};
+    WS_METADATA_EXCHANGE_TYPE metadataExchangeType = WS_METADATA_EXCHANGE_TYPE_MEX;
+    
+    // Configure Port on the endpoint for Mex
+    endpointMetadata.portName = &amp;portName;
+    endpointMetadata.bindingName = &amp;bindingName;
+    endpointMetadata.bindingNs = &amp;bindingNs;                    
+    
+    serviceEndpointProperties[0].id = WS_SERVICE_ENDPOINT_PROPERTY_CLOSE_CHANNEL_CALLBACK;
+    serviceEndpointProperties[0].value = &amp;closeCallbackProperty;
+    serviceEndpointProperties[0].valueSize = sizeof(closeCallbackProperty);
+    
+    // Specifying Port on the endpoint.
+    serviceEndpointProperties[1].id = WS_SERVICE_ENDPOINT_PROPERTY_METADATA;
+    serviceEndpointProperties[1].value = &amp;endpointMetadata;
+    serviceEndpointProperties[1].valueSize = sizeof(endpointMetadata);
+    
+    // Marking the endpoint to service WS-MetadataExchnage Requests
+    serviceEndpointProperties[2].id = WS_SERVICE_ENDPOINT_PROPERTY_METADATA_EXCHANGE_TYPE;
+    serviceEndpointProperties[2].value = &amp;metadataExchangeType;
+    serviceEndpointProperties[2].valueSize = sizeof(metadataExchangeType);
+    
+    WS_STRING mexPrefix = WS_STRING_VALUE(L&quot;mex&quot;);
+    // Marking the endpoint to service WS-MetadataExchnage Requests
+    serviceEndpointProperties[3].id = WS_SERVICE_ENDPOINT_PROPERTY_METADATA_EXCHANGE_URL_SUFFIX;
+    serviceEndpointProperties[3].value = &amp;mexPrefix;
+    serviceEndpointProperties[3].valueSize = sizeof(mexPrefix);
+    
+    serviceEndpoint.address.url.chars = L&quot;net.tcp://localhost/example&quot;; // address given as uri
+    serviceEndpoint.address.url.length = (ULONG)wcslen(serviceEndpoint.address.url.chars);
+    serviceEndpoint.channelBinding = WS_TCP_CHANNEL_BINDING; // channel binding for the endpoint
+    serviceEndpoint.channelType = WS_CHANNEL_TYPE_DUPLEX_SESSION; // the channel type
+    serviceEndpoint.contract = (WS_SERVICE_CONTRACT*)&amp;purchaseOrderContract;  // the contract
+    serviceEndpoint.properties = serviceEndpointProperties;
+    serviceEndpoint.propertyCount = WsCountOf(serviceEndpointProperties);
+        
+    // Specifying WSDL document
+    serviceMetadata.documentCount = WsCountOf(metadataDocuments);
+    serviceMetadata.documents = (WS_SERVICE_METADATA_DOCUMENT**) metadataDocuments;
+    
+    // Initializing name of the service
+    serviceMetadata.serviceName = &amp;serviceName;
+    
+    // Note that this should concide be the target namespace of the wsdl document 
+    serviceMetadata.serviceNs = &amp;serviceNamespace;
+    
+    // Specifying metadata document
+    serviceProperties[0].id = WS_SERVICE_PROPERTY_METADATA;
+    serviceProperties[0].value =  &amp;serviceMetadata;
+    serviceProperties[0].valueSize = sizeof(serviceMetadata);
+    
+    
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // Create Event object for closing the server
+    closeServer = CreateEvent(
+        NULL, 
+        TRUE, 
+        FALSE, 
+        NULL);
+    if (closeServer == NULL)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto Exit;
+    }   
+    // Creating a service host
+    hr = WsCreateServiceHost(
+        serviceEndpoints, 
+        1, 
+        serviceProperties, 
+        WsCountOf(serviceProperties), 
+        &amp;host, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // WsOpenServiceHost to start the listeners in the service host 
+    hr = WsOpenServiceHost(
+            host, 
+            NULL, 
+            error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // Create an event to synchronize the client and server processes.
+    serverStartedEvent = CreateEventW(
+        NULL, 
+        TRUE, 
+        FALSE, 
+        L&quot;WebServicesExampleServerStartedEvent&quot;);
+    if (NULL == serverStartedEvent)
+    {
+        wprintf(
+            L&quot;Failed to create the client-server synchronization event (errorCode=0x%lx).\n&quot;,
+            GetLastError());
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto Exit;
+    }
+    // Server is started, set the event to signal the clients.
+    if (!SetEvent(
+            serverStartedEvent))
+    {
+        wprintf(
+            L&quot;Failed to set the client-server synchronization event (errorCode=0x%lx).\n&quot;, 
+            GetLastError());
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto Exit;
+    }
+    WaitForSingleObject(closeServer, INFINITE);
+    // Close the service host
+    hr = WsCloseServiceHost(host, NULL, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    if (host != NULL)
+    {
+        WsFreeServiceHost(host);
+    }
+    if (NULL != serverStartedEvent)
+    {
+        CloseHandle(serverStartedEvent);
+    }
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    if (closeServer != NULL)
+    {
+        CloseHandle(closeServer);
+    }
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+
+
+</code></pre>
+<h2>PurchaseOrder.wsdl</h2>
+<pre lang="syntax"><code>&lt;wsdl:definitions 
+    xmlns:soap=&quot;http://schemas.xmlsoap.org/wsdl/soap/&quot; 
+    xmlns:tns=&quot;http://example.org&quot; 
+    xmlns:xsd=&quot;http://www.w3.org/2001/XMLSchema&quot; 
+    xmlns:wsaw=&quot;http://www.w3.org/2006/05/addressing/wsdl&quot; 
+    xmlns:soap12=&quot;http://schemas.xmlsoap.org/wsdl/soap12/&quot; 
+    xmlns:wsdl=&quot;http://schemas.xmlsoap.org/wsdl/&quot; 
+    targetNamespace=&quot;http://example.org&quot;&gt;
+    &lt;wsdl:types&gt;
+        &lt;xsd:schema targetNamespace=&quot;http://example.org&quot; elementFormDefault=&quot;qualified&quot;&gt;
+            &lt;xsd:element name=&quot;PurchaseOrderType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;quantity&quot; type=&quot;xsd:int&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;productName&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;OrderConfirmationType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;expectedShipDate&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;GetOrderStatusType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;GetOrderStatusResponseType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;status&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;OrderNotFoundFaultType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+        &lt;/xsd:schema&gt;
+    &lt;/wsdl:types&gt;
+    &lt;wsdl:message name=&quot;PurchaseOrder&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:PurchaseOrderType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;OrderConfirmation&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:OrderConfirmationType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;GetOrderStatus&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetOrderStatusType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;GetOrderStatusResponse&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetOrderStatusResponseType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;OrderNotFoundFault&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:OrderNotFoundFaultType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:portType name=&quot;IPurchaseOrder&quot;&gt;
+        &lt;wsdl:operation name=&quot;Order&quot;&gt;
+            &lt;wsdl:input message=&quot;tns:PurchaseOrder&quot; wsaw:Action=&quot;http://example.org/purchaseorder&quot;/&gt;
+            &lt;wsdl:output message=&quot;tns:OrderConfirmation&quot; wsaw:Action=&quot;http://example.org/orderconfirmation&quot;/&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;OrderStatus&quot;&gt;
+            &lt;wsdl:input message=&quot;tns:GetOrderStatus&quot; wsaw:Action=&quot;http://example.org/getorderstatus&quot;/&gt;
+            &lt;wsdl:output message=&quot;tns:GetOrderStatusResponse&quot; wsaw:Action=&quot;http://example.org/getorderstatusresponse&quot;/&gt;
+            &lt;wsdl:fault name=&quot;OrderNotFound&quot; message=&quot;tns:OrderNotFoundFault&quot; wsaw:Action=&quot;http://example.org/ordernotfound&quot;/&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:portType&gt;
+    &lt;wsdl:binding name=&quot;PurchaseOrderBinding&quot; type=&quot;tns:IPurchaseOrder&quot;&gt;
+        &lt;soap:binding transport=&quot;http://schemas.xmlsoap.org/soap/http&quot;/&gt;
+        &lt;wsdl:operation name=&quot;Order&quot;&gt;
+            &lt;soap:operation soapAction=&quot;http://example.org/purchaseorder&quot; style=&quot;document&quot;/&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;OrderStatus&quot;&gt;
+            &lt;soap:operation soapAction=&quot;http://example.org/getorderstatus&quot; style=&quot;document&quot;/&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:output&gt;
+            &lt;wsdl:fault name=&quot;OrderNotFound&quot;&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:fault&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:binding&gt;
+    &lt;wsdl:service name=&quot;PurchaseOrderService&quot;&gt;
+        &lt;wsdl:port name=&quot;IPurchaseOrder&quot; binding=&quot;tns:PurchaseOrderBinding&quot;&gt;
+            &lt;soap:address location=&quot;http://example.org/IPurchaseOrder&quot;/&gt;
+        &lt;/wsdl:port&gt;
+    &lt;/wsdl:service&gt;
+&lt;/wsdl:definitions&gt;
+</code></pre>
+<h2>Makefile</h2>
+<pre lang="syntax"><code>!include &lt;Win32.Mak&gt;
+
+EXTRA_LIBS = WebServices.lib rpcrt4.lib Iphlpapi.lib
+
+all: $(OUTDIR) $(OUTDIR)\WsMexService.exe
+
+&quot;$(OUTDIR)&quot; :
+    if not exist &quot;$(OUTDIR)/$(NULL)&quot; mkdir &quot;$(OUTDIR)&quot;
+    
+$(OUTDIR)\PurchaseOrder.wsdl.c: PurchaseOrder.wsdl
+     Wsutil.exe /wsdl:PurchaseOrder.wsdl /string:WS_STRING /out:$(OUTDIR)
+    
+
+$(OUTDIR)\PurchaseOrder.wsdl.obj: $(OUTDIR)\PurchaseOrder.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; $(OUTDIR)\PurchaseOrder.wsdl.c
+
+$(OUTDIR)\MexService.obj: MexService.cpp $(OUTDIR)\PurchaseOrder.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; MexService.cpp
+
+$(OUTDIR)\WsMexService.exe: $(OUTDIR)\MexService.obj $(OUTDIR)\PurchaseOrder.wsdl.obj
+    $(link) $(ldebug) $(conlflags) $(conlibsmt) $(EXTRA_LIBS) -out:$(OUTDIR)\WsMexService.exe $(OUTDIR)\MexService.obj $(OUTDIR)\PurchaseOrder.wsdl.obj /PDB:$(OUTDIR)\WsMexService.PDB
+
+clean:
+    $(CLEANUP)
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

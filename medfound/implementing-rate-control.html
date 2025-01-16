@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementing Rate Control</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how custom pipeline objects can support variable playback rates, including reverse playback. For information about using rate control from an application, see Rate Control.
+ms.assetid: 077678db-ca5a-423b-9430-93497113d639
+title: Implementing Rate Control
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Implementing Rate Control</h1>
+<p>This topic describes how custom pipeline objects can support variable playback rates, including reverse playback. For information about using rate control from an application, see <a href="rate-control.html">Rate Control</a>.</p>
+<p>This topic contains the following sections:</p>
+<ul>
+<li><a href="#media-sources">Media Sources</a></li>
+<li><a href="#media-foundation-transforms">Media Foundation Transforms</a>
+<ul>
+<li><a href="#reverse-playback">Reverse Playback</a></li>
+</ul>
+</li>
+<li><a href="#media-sinks">Media Sinks</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<p>If you are writing a Microsoft Media Foundation pipeline object (a media source, transform, or media sink), you might need to support variable playback rates. To do so, implement the following interfaces:</p>
+<ol>
+<li>Implement the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfgetservice"><strong>IMFGetService</strong></a> interface.</li>
+<li>Support the <strong>MF_RATE_CONTROL_SERVICE</strong> service. (See <a href="service-interfaces.html">Service Interfaces</a>.)</li>
+<li>Implement the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a> interface, which gets the playback rates supported by the object.</li>
+<li>Implement the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratecontrol"><strong>IMFRateControl</strong></a> interface, which gets or sets the playback rate.</li>
+</ol>
+<h2>Media Sources</h2>
+<p>If a media source supports rate control, it should implement both <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a> and <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratecontrol"><strong>IMFRateControl</strong></a>. Otherwise, the Media Session reports that the minimum and maximum playback rate is 1.0, regardless of what other components are in the pipeline.</p>
+<p>The playback rate does not affect the presentation times of the samples, so the media source should not adjust its time stamps. Instead, the presentation clock runs at a faster or slower speed. For reverse playback, the source delivers samples in reverse order, with decreasing time stamps.</p>
+<p>The <em>fThin</em> parameter of the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfratecontrol-setrate"><strong>IMFRateControl::SetRate</strong></a> method indicates whether media source should <em>thin</em> the content. Thinning applies primarily to video streams. In thinned mode, the source drops delta frames and deliver only key frames. At very high playback rates, the source might skip some key frames (for example, deliver every other key frame).</p>
+<p>The source does not have to drop audio samples in thinned mode. At very high playback rates, however, the source might not be able to read data fast enough to fill the pipeline's sample requests. In that case, the source might need to drop some audio data. If so, it should attempt to deliver audio samples that are close in time to the video samples (assuming that the source has both types of stream).</p>
+<p>When a stream transitions between thinned and non-thinned mode, it sends an <a href="mestreamthinmode.html">MEStreamThinMode</a> event.</p>
+<p>When the media source completes a call to <a href="/windows/desktop/api/mfidl/nf-mfidl-imfratecontrol-setrate"><strong>SetRate</strong></a>, it sends the <a href="mesourceratechanged.html">MESourceRateChanged</a> event.</p>
+<p>During reverse playback:</p>
+<ul>
+<li>The media source delivers samples in reverse order, without adjusting the time stamps.</li>
+<li>Time stamps within a stream should monotonically decrease.</li>
+<li>The beginning of the content is considered the end of the stream. After each media stream delivers the first sample in the stream (that is, presentation time = 0), it sends the <a href="meendofstream.html">MEEndOfStream</a> event.</li>
+</ul>
+<h2>Media Foundation Transforms</h2>
+<p>In general, a Media Foundation transform (MFT) does not need explicit support for rate control, unless the MFT implements non-thinned reverse playback.</p>
+<p>If an MFT does not implement the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a> interface, the Media Session assumes the following:</p>
+<ul>
+<li>The MFT supports arbitary playback rates for forward playback, both thinned and non-thinned.</li>
+<li>The MFT supports thinned reverse playback, but does not support non-thinned reverse playback.</li>
+</ul>
+<p>If either of these conditions is not true, the MFT should implement <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a> and <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratecontrol"><strong>IMFRateControl</strong></a>.</p>
+<h3>Reverse Playback</h3>
+<p>The Media Session can play in reverse even if one or more transforms in the pipeline do not explicitly support reverse playback.</p>
+<p>If an MFT does not expose the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a> interface, the Media Session uses <em>thinning</em> for reverse playback, as follows:</p>
+<ul>
+<li>
+<p>The Media Session sends key frames to the MFT in the usual way, by calling <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processinput"><strong>IMFTransform::ProcessInput</strong></a>.</p>
+</li>
+<li>
+<p>The Media Session drops delta frames and replaces them with <a href="mestreamtick.html">MEStreamTick</a> events.</p>
+</li>
+<li>
+<p>Between each sample, the Media Session flushes the MFT, to avoid any errors caused by the fact that the time stamps are decreasing.</p>
+</li>
+</ul>
+<p>A sample is considered a key frame if it has the <a href="mfsampleextension-cleanpoint-attribute.html">MFSampleExtension_CleanPoint</a> attribute set to <strong>TRUE</strong>, and is considered a delta frame if this attribute is <strong>FALSE</strong> or not set.</p>
+<p>If the MFT implements <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a>, the Media Session uses this interface to discover whether the MFT supports non-thinned reverse playback. If the MFT supports non-thinned reverse playback, the Media Session delivers all of the samples, in reverse order, without dropping samples or flushing the MFT.</p>
+<p>If an MFT supports non-thinned reverse playback, it should implement the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratecontrol"><strong>IMFRateControl</strong></a> interface. The Media Session will use this interface to notify the MFT when reverse playback occurs. At that point, the MFT must be prepared for the time stamps to decrease and for delta frames to arrive in reverse order. A decoder will typically need to buffer samples until it has received an entire group of pictures (GOP), then decode the entire GOP and output the decoded frames in the correct (reverse) order.</p>
+<h2>Media Sinks</h2>
+<p>If a media sink is <em>rateless</em>, the Media Session assumes that media sink can handle any playback rate. The media sink does not need to implement <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a>. (A rateless media sink returns the MEDIASINK_RATELESS flag from the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-getcharacteristics"><strong>IMFMediaSink::GetCharacteristics</strong></a> method.)</p>
+<p>Otherwise, a media sink should implement <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a> if it can handle playback rates other than 1.0.</p>
+<p>Media sinks should not implement <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratecontrol"><strong>IMFRateControl</strong></a>. When the playback rate changes, the presentation clock calls the media sink's <a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclocksetrate"><strong>IMFClockStateSink::OnClockSetRate</strong></a> method.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="rate-control.html">Rate Control</a></p>
+<!-- raw HTML omitted -->
+<p><a href="seeking--fast-forward--and-reverse-play.html">Seeking, Fast Forward, and Reverse Play</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

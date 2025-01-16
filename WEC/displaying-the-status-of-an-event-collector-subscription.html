@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Displaying the Status of an Event Collector Subscription</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Displaying the Status of an Event Collector Subscription
+description: You can display the status of an Event Collector subscription. The status includes the availability of the subscription, the last error that occurred for the subscription, the time of the last error, and the next time the subscription will be retried.
+ms.assetid: e1c3c3ed-2f7c-433d-a51d-66c2abd2e961
+ms.tgt_platform: multiple
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Displaying the Status of an Event Collector Subscription</h1>
+<p>You can display the status of an Event Collector subscription. The status includes the availability of the subscription, the last error that occurred for the subscription, the time of the last error, and the next time the subscription will be retried.</p>
+<blockquote>
+<p>[!Note]</p>
+<p>You can use this example to display the status of a subscription or you can type the following command at the command prompt:</p>
+<p><strong>wecutil gr</strong> <em>SubscriptionName</em></p>
+</blockquote>
+<p>Â </p>
+<p>You will need the name of a subscription to display its status. To list the names of current subscriptions on a local computer, you can use the C++ example in shown in <a href="listing-event-collector-subscriptions.html">Listing Event Collector Subscriptions</a>, or you can type the following command at the command prompt:</p>
+<p><strong>wecutil es</strong></p>
+<p>The following example follows a procedure to display the status of an Event Collector subscription:</p>
+<p><strong>To display the status of an Event Collector subscription</strong></p>
+<ol>
+<li>Open the subscription by providing the subscription name and access rights as parameters to the <a href="/windows/desktop/api/Evcoll/nf-evcoll-ecopensubscription"><strong>EcOpenSubscription</strong></a> function. For more information about access rights, see <a href="windows-event-collector-constants.html"><strong>Windows Event Collector Constants</strong></a>.</li>
+<li>Get the status of the subscription by calling the <a href="/windows/desktop/api/Evcoll/nf-evcoll-ecgetsubscriptionruntimestatus"><strong>EcGetSubscriptionRunTimeStatus</strong></a> function (do not specify an event source when calling the function).</li>
+<li>Get the event sources array of the subscription by calling the <a href="/windows/desktop/api/Evcoll/nf-evcoll-ecgetsubscriptionruntimestatus"><strong>EcGetSubscriptionRunTimeStatus</strong></a> function and passing in the EcSubscriptionRunTimeStatusEventSources flag.</li>
+<li>Get the status information for each event source by calling the <a href="/windows/desktop/api/Evcoll/nf-evcoll-ecgetsubscriptionruntimestatus"><strong>EcGetSubscriptionRunTimeStatus</strong></a> function and passing in the event source name. For more information about the status information that can be retrieved, see the <a href="/windows/desktop/api/Evcoll/ne-evcoll-ec_subscription_runtime_status_info_id"><strong>EC_SUBSCRIPTION_RUNTIME_STATUS_INFO_ID</strong></a> enumeration.</li>
+<li>Print the status information for the subscription.</li>
+<li>Close the subscription by calling the <a href="/windows/desktop/api/Evcoll/nf-evcoll-ecclose"><strong>EcClose</strong></a> function.</li>
+</ol>
+<p>The following C++ code example shows how to display the status of an Event Collector subscription.</p>
+<pre lang="C++"><code>#include &lt;iostream&gt;
+using namespace std;
+#include &lt;windows.h&gt;
+#include &lt;EvColl.h&gt;
+#include &lt;vector&gt;
+#include &lt;string&gt;
+#include &lt;strsafe.h&gt;
+#pragma comment(lib, &quot;wecapi.lib&quot;)
+
+
+// Track Runtime Status
+typedef struct _RUNTIME_STATUS
+{
+    std::wstring ActiveStatus;
+    DWORD LastError;
+    std::wstring LastErrorMessage;
+    std::wstring NextRetryTime;
+
+} RUNTIME_STATUS;
+
+// Subscription Information
+
+DWORD GetStatus(LPCWSTR subscriptionName, 
+    LPCWSTR eventSource, 
+    EC_SUBSCRIPTION_RUNTIME_STATUS_INFO_ID statusInfoID, 
+    DWORD flags, 
+    std::vector&lt;BYTE&gt;&amp; buffer, 
+    PEC_VARIANT&amp; vStatus);
+
+std::wstring ConvertEcDateTime( ULONGLONG code );
+
+
+
+void __cdecl wmain()
+{
+    LPVOID lpwszBuffer;
+    DWORD dwEventSourceCount, dwRetVal = ERROR_SUCCESS;
+    std::vector&lt;BYTE&gt; buffer;
+    std::vector&lt;BYTE&gt; eventSourceBuffer;
+    std::vector&lt;BYTE&gt;::iterator sourceNameIterator;
+    PEC_VARIANT vStatus, vEventSources;
+    EC_HANDLE hSubscription;
+    LPCWSTR lpSubname = L&quot;TestSubscription&quot;;
+    RUNTIME_STATUS runtimeStatus;
+    std::wstring eventSource;
+
+    // Step 1: Open the Event Collector subscription.
+    hSubscription = EcOpenSubscription(lpSubname, 
+        EC_READ_ACCESS, 
+        EC_OPEN_EXISTING);
+    if (!hSubscription)
+    {
+        dwRetVal = GetLastError();
+        goto Cleanup;
+    }
+
+    // Get the status values for the entire subscription.
+    dwRetVal = GetStatus(lpSubname, NULL, 
+        EcSubscriptionRunTimeStatusActive,
+        0,
+        buffer,
+        vStatus);
+    if (ERROR_SUCCESS != dwRetVal) {
+        goto Cleanup;
+    }
+    wprintf(L&quot;\nEvent Subscription: %s\n&quot;,  lpSubname);
+    
+    // Convert the status value to text.
+    switch (vStatus-&gt;UInt32Val)
+    {
+        case EcRuntimeStatusActiveStatusActive:
+            runtimeStatus.ActiveStatus = L&quot;Active&quot;;
+            break;
+        case EcRuntimeStatusActiveStatusDisabled:
+            runtimeStatus.ActiveStatus = L&quot;Disabled&quot;;
+            break;
+        case EcRuntimeStatusActiveStatusInactive:
+            runtimeStatus.ActiveStatus = L&quot;Inactive&quot;;
+            break;
+        case EcRuntimeStatusActiveStatusTrying:
+            runtimeStatus.ActiveStatus = L&quot;Trying&quot;;
+            break;
+        default:
+            runtimeStatus.ActiveStatus = L&quot;Unknown Status&quot;;
+        break;
+    }
+    wprintf(L&quot;Runtime Status: %s\n&quot;, runtimeStatus.ActiveStatus.c_str());
+    
+    dwRetVal = GetStatus(lpSubname, NULL, 
+        EcSubscriptionRunTimeStatusLastError,
+        0,
+        buffer,
+        vStatus);
+    if (ERROR_SUCCESS != dwRetVal) {
+        goto Cleanup;
+    }
+    wprintf(L&quot;Last Error: %u\n&quot;, vStatus-&gt;UInt32Val);
+        
+    
+
+    // Step 2: Get the event sources array to query for event source status.
+    dwRetVal = GetStatus(lpSubname, NULL, 
+        EcSubscriptionRunTimeStatusEventSources, 
+        0,
+        eventSourceBuffer, 
+        vEventSources);
+    if (ERROR_SUCCESS != dwRetVal){
+        goto Cleanup;
+    }
+
+    // Ensure that a handle to the event sources array has been obtained.
+    if (vEventSources-&gt;Type != EcVarTypeNull &amp;&amp; 
+        vEventSources-&gt;Type != (EcVarTypeString | EC_VARIANT_TYPE_ARRAY) )
+    {
+        dwRetVal = ERROR_INVALID_DATA;
+        goto Cleanup;
+    }
+
+    dwEventSourceCount = vEventSources-&gt;Count;
+    
+    // Step 3: Get the status of each event source.
+    for (DWORD I = 0; I &lt; dwEventSourceCount ; I++)
+    {
+        eventSource = vEventSources-&gt;StringArr[I];
+
+        // Get the status of the subscription event source.
+        dwRetVal = GetStatus(lpSubname, 
+            eventSource.c_str(),
+            EcSubscriptionRunTimeStatusActive, 
+            0, 
+            buffer, 
+            vStatus);
+        if (ERROR_SUCCESS != dwRetVal)
+        {
+            goto Cleanup;
+        }
+        if (vStatus-&gt;Type != EcVarTypeUInt32)
+        {
+            dwRetVal = ERROR_INVALID_DATA;
+            goto Cleanup;
+        }
+
+        // Convert the status value to text.
+        switch (vStatus-&gt;UInt32Val)
+        {
+            case EcRuntimeStatusActiveStatusActive:
+                runtimeStatus.ActiveStatus = L&quot;Active&quot;;
+                break;
+            case EcRuntimeStatusActiveStatusDisabled:
+                runtimeStatus.ActiveStatus = L&quot;Disabled&quot;;
+                break;
+            case EcRuntimeStatusActiveStatusInactive:
+                runtimeStatus.ActiveStatus = L&quot;Inactive&quot;;
+                break;
+            case EcRuntimeStatusActiveStatusTrying:
+                runtimeStatus.ActiveStatus = L&quot;Trying&quot;;
+                break;
+            default:
+                runtimeStatus.ActiveStatus = L&quot;Unknown Status&quot;;
+            break;
+        }
+
+        // Get the last error that occurred for the subscription.
+        dwRetVal = GetStatus(lpSubname, 
+            eventSource.c_str(), 
+            EcSubscriptionRunTimeStatusLastError, 
+            0, 
+            buffer, 
+            vStatus);
+        if(ERROR_SUCCESS != dwRetVal)
+        {
+            goto Cleanup;
+        }
+        if (vStatus-&gt;Type != EcVarTypeUInt32)
+        {
+            dwRetVal = ERROR_INVALID_DATA;
+            goto Cleanup;
+        }
+        
+        runtimeStatus.LastError = vStatus-&gt;UInt32Val;
+
+        // Get the error message for the last error.
+        dwRetVal = GetStatus(lpSubname, 
+            eventSource.c_str(), 
+            EcSubscriptionRunTimeStatusLastErrorMessage, 
+            0, 
+            buffer, 
+            vStatus);
+
+        if (ERROR_SUCCESS != dwRetVal)
+        {
+            goto Cleanup;
+        }
+        if (vStatus-&gt;Type != EcVarTypeNull &amp;&amp; vStatus-&gt;Type != EcVarTypeString)
+        {
+            dwRetVal = ERROR_INVALID_DATA;
+            goto Cleanup;
+        }
+          
+        if (vStatus-&gt;Type != EcVarTypeNull)
+        {
+            runtimeStatus.LastErrorMessage = vStatus-&gt;StringVal;
+        }
+        else
+        {
+            runtimeStatus.LastErrorMessage = L&quot;&quot;;
+        }
+
+        // Get the time when the subscription will be retried.
+        dwRetVal = GetStatus( lpSubname, 
+            eventSource.c_str(), 
+            EcSubscriptionRunTimeStatusNextRetryTime, 
+            0, 
+            buffer, 
+            vStatus);
+
+        if( ERROR_SUCCESS != dwRetVal)
+        {
+            goto Cleanup;
+        }
+         
+        if (vStatus-&gt;Type != EcVarTypeNull &amp;&amp; vStatus-&gt;Type != EcVarTypeDateTime)
+        {
+            dwRetVal = ERROR_INVALID_DATA;
+            goto Cleanup;
+        }
+          
+        if( vStatus-&gt;Type != EcVarTypeNull)
+        {
+            runtimeStatus.NextRetryTime = ConvertEcDateTime(vStatus-&gt;DateTimeVal);
+        }
+        else
+        {
+            runtimeStatus.NextRetryTime = L&quot;&quot;;
+        }
+
+        // Step 4: Print the status information.
+        wprintf(L&quot;\nEventSource[%u]\n&quot;,  I);
+        wprintf(L&quot;    Address: %s\n&quot;, eventSource.c_str());
+        wprintf(L&quot;    Runtime Status: %s\n&quot;, runtimeStatus.ActiveStatus.c_str());
+        wprintf(L&quot;    Last Error: %u\n&quot;, runtimeStatus.LastError);
+         
+        if( 0 != runtimeStatus.LastError )
+        {
+            wprintf(L&quot;    Last Error Message: %s\n&quot;, runtimeStatus.LastErrorMessage.c_str());
+        }
+        else
+        {
+            wprintf(L&quot;    Last Error Message: No Error\n&quot;);
+        }
+         
+        wprintf(L&quot;    Next Retry Time: %s\n&quot;, runtimeStatus.NextRetryTime.c_str());
+    }
+
+    Cleanup:
+
+       // Step 5: Close the subscription.
+       if(hSubscription)
+           EcClose(hSubscription);
+   
+       if (dwRetVal != ERROR_SUCCESS)
+       {
+            FormatMessageW( FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+                NULL,
+                dwRetVal,
+                0,
+                (LPWSTR) &amp;lpwszBuffer,
+                0,
+                NULL);
+            
+            if (!lpwszBuffer)
+            {
+                wprintf(L&quot;Failed to FormatMessage.  Operation Error Code: %u.&quot; \
+                    L&quot;Error Code from FormatMessage: %u\n&quot;, dwRetVal, GetLastError());
+                return;
+            }
+
+            wprintf(L&quot;\nFailed to Perform Operation.\nError Code: %u\n&quot; \
+                L&quot;Error Message: %s\n&quot;, dwRetVal, lpwszBuffer);
+
+            LocalFree(lpwszBuffer);
+        }
+}
+
+// Get the information for the specified EC_SUBSCRIPTION_RUNTIME_STATUS_INFO_ID
+DWORD GetStatus(LPCWSTR subscriptionName, 
+    LPCWSTR eventSource, 
+    EC_SUBSCRIPTION_RUNTIME_STATUS_INFO_ID statusInfoID, 
+    DWORD flags, 
+    std::vector&lt;BYTE&gt;&amp; buffer, 
+    PEC_VARIANT&amp; vStatus)
+{
+    DWORD dwBufferSize, dwRetVal = ERROR_SUCCESS;
+    buffer.clear();
+    buffer.resize(sizeof(EC_VARIANT));
+    
+    if ( !EcGetSubscriptionRunTimeStatus( subscriptionName,
+        statusInfoID,
+        eventSource,
+        flags,
+        (DWORD) buffer.size(),
+        (PEC_VARIANT) &amp;buffer[0],
+        &amp;dwBufferSize))
+    {
+        dwRetVal = GetLastError();
+
+        if( ERROR_INSUFFICIENT_BUFFER ==  dwRetVal)
+        {
+            dwRetVal = ERROR_SUCCESS;
+            buffer.resize(dwBufferSize);
+            if(!EcGetSubscriptionRunTimeStatus( subscriptionName,
+                statusInfoID,
+                eventSource,
+                flags,
+                (DWORD) buffer.size(),
+                (PEC_VARIANT) &amp;buffer[0],
+                &amp;dwBufferSize))
+            {
+                dwRetVal = GetLastError();
+            }
+        }
+    }
+
+    if ( ERROR_SUCCESS == dwRetVal)
+    {
+        vStatus = (PEC_VARIANT) &amp;buffer[0];
+    }
+    else
+    {
+        vStatus = NULL;
+    }
+
+    return dwRetVal;
+}
+
+std::wstring ConvertEcDateTime( ULONGLONG code )
+{
+    FILETIME ft;
+    SYSTEMTIME utcTime;
+    SYSTEMTIME localTime; 
+    std::wstring timeString;
+    std::vector&lt;WCHAR&gt; buffer(30);
+
+    timeString = L&quot;Error- Failed to Convert Date Time to String&quot;;
+
+    ft.dwHighDateTime = (DWORD)((code &gt;&gt; 32) &amp; 0xFFFFFFFF);
+    ft.dwLowDateTime = (DWORD)(code &amp; 0xFFFFFFFF);
+
+    if( !FileTimeToSystemTime( &amp;ft, &amp;utcTime) )
+    {
+        return timeString;
+    }
+
+    if(!SystemTimeToTzSpecificLocalTime(NULL, &amp;utcTime, &amp;localTime))
+    {
+        return timeString;
+    }
+
+    HRESULT hr = StringCchPrintfW((LPWSTR) &amp;buffer[0], 
+        buffer.size(), 
+        L&quot;%4.4hd-%2.2hd-%2.2hdT%2.2hd:%2.2hd:%2.2hd.%3.3hdZ&quot;,
+        localTime.wYear,
+        localTime.wMonth,
+        localTime.wDay,
+        localTime.wHour,
+        localTime.wMinute,
+        localTime.wSecond,
+        localTime.wMilliseconds);
+
+    if (FAILED(hr)) 
+    {
+        return timeString;
+    }
+
+    timeString = (LPWSTR) &amp;buffer[0];
+
+    return timeString;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="listing-event-collector-subscriptions.html">Listing Event Collector Subscriptions</a></p>
+<!-- raw HTML omitted -->
+<p><a href="windows-event-collector-reference.html">Windows Event Collector Reference</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

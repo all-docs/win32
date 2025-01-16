@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Client-side Service Operations</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Client-side Service Operations
+ms.assetid: 9d6e2441-91de-4108-b1c4-282fbca5fe7c
+description: &quot;Learn more about: Client-side Service Operations&quot;
+keywords:</p>
+<ul>
+<li>Client Side Service Operations Web Services for Windows</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Client-side Service Operations</h1>
+<p>The following is the layout of a client-side service operation:</p>
+<ul>
+<li><a href="ws-service-proxy.html">WS_SERVICE_PROXY</a>* serviceProxy: The <a href="service-proxy.html">service proxy</a> for the call.</li>
+<li><a href="ws-heap.html">WS_HEAP</a>* heap: A required heap used for body serialization and deserialization of the <a href="ws-message.html">WS_MESSAGE</a>.</li>
+<li>Service Operations Parameters: Parameters pertaining to the service operation.</li>
+<li><a href="/windows/desktop/api/WebServices/ns-webservices-ws_call_property"><strong>Call Properties and their count</strong></a>: An array of call properties.</li>
+<li><a href="/windows/desktop/api/WebServices/ns-webservices-ws_call_property"><strong>Call</strong></a> property count: The count of call properties.</li>
+<li><a href="/windows/desktop/api/WebServices/ns-webservices-ws_async_context"><strong>WS_ASYNC_CONTEXT</strong></a> asyncContext: Async context for executing the call asynchronously.</li>
+<li><a href="ws-error.html">WS_ERROR</a> error: Rich error object.</li>
+</ul>
+<h3>Signature for Client-side Service Operations</h3>
+<pre lang="syntax"><code>typedef HRESULT(CALLBACK *ICalculator_Add)(WS_SERVICE_PROXY* serviceProxy, 
+                                           WS_HEAP* heap, 
+                                           ULONG a, ULONG b, ULONG* result, 
+                                           const WS_CALL_PROPERTY* callProperties, 
+                                           const ULONG callPropertyCount, 
+                                           const WS_ASYNC_CONTEXT* asyncContext, 
+                                           WS_ERROR* error);
+</code></pre>
+<h3>Memory Considerations for Client-side Service Operations</h3>
+<p>The call to the service operation takes a <a href="ws-heap.html">WS_HEAP</a>* as parameter. This is a required parameter used for serialization/deserialization of message bodies to parameters.</p>
+<p>The application must call <a href="/windows/desktop/api/WebServices/nf-webservices-wsresetheap"><strong>WsResetHeap</strong></a> whether the call succeeded or not. If the call succeeded and it has outgoing parameters, the application should call <strong>WsResetHeap</strong> immediately after it is finished with the outgoing parameters.</p>
+<p>The application should allocate memory for in and out parameters with <a href="/windows/desktop/api/WebServices/nf-webservices-wsalloc"><strong>WsAlloc</strong></a>. The service proxy may need to reallocate them so provided pointers will be overwritten. An attempt to free such memory will cause the application to crash.</p>
+<h3>Client-side Service Operation and WS_HEAP</h3>
+<pre lang="syntax"><code>HRESULT hr = IProcessOrder_ProcessOrder(serviceProxy, heap, orderNumber, &amp;orderReceipt, NULL, 0, NULL, error);
+if(FAILED(hr))
+    goto error;
+hr = ProcessReceipt(orderReceipt);
+WsResetHeap(heap);
+if(FAILED(hr))
+    goto error;
+hr = IProcessOrder_CompleteOrder(serviceProxy, heap, orderNumber, &amp;orderMemo, NULL, 0, NULL, error);
+if(FAILED(hr))
+    goto error;
+hr = ProcessMemo(orderMemo);
+WsResetHeap(heap);
+if(FAILED(hr))
+    goto error;
+</code></pre>
+<h3>Error parameter</h3>
+<p>The application should always pass in the error parameter to:</p>
+<ul>
+<li>Get rich error information if a failure occurs during the service operation call.</li>
+<li>Get the fault object if the service returned back a fault. The fault is contained in the error object. In this case, the <strong>HRESULT</strong> value returned from the service operation is <strong>WS_E_ENDPOINT_FAULT_RECEIVED</strong> (see <a href="windows-web-services-return-values.html">Windows Web Services Return Values</a>).</li>
+</ul>
+<h3>Call Properties for Client-side Service Operations</h3>
+<p>Call properties allow an application to specify custom settings for a given call. Currently, only one call property is available with the service model, <a href="/windows/desktop/api/WebServices/ne-webservices-ws_call_property_id"><strong>WS_CALL_PROPERTY_CALL_ID</strong></a>.</p>
+<pre lang="syntax"><code>WS_CALL_PROPERTY callProperties[1] = {0};
+callProperties[0].id = WS_CALL_PROPERTY_CALL_ID;
+callProperties[0].value = 5;
+
+HRESULT hr = IProcessOrder_ProcessOrder(serviceProxy, heap, orderNumber, &amp;orderReceipt,  callProperties, WsCountOf(callProperties), NULL, error);
+if(FAILED(hr))
+    goto error;
+//:
+//:
+hr = IProcessOrder_CompleteOrder(serviceProxy, heap, orderNumber, &amp;orderReceipt, callProperties, WsCountOf(callProperties), NULL, error);
+if(FAILED(hr))
+    goto error;
+
+//:
+//:
+//:
+// On a separate thread 
+// In this case both the calls belong to call group 5, and will abandon as a result of the call to WsAbandonCall. 
+hr = WsAbandonCall(serviceProxy, 5, error);
+</code></pre>
+<h3>Abandoning a Call</h3>
+<p>It is often desirable to abandon the results of a call in order to relinquish the control back to the application, such that the actual call completion is handled by the infrastructure. Service proxy provides this facility through <a href="/windows/desktop/api/WebServices/nf-webservices-wsabandoncall"><strong>WsAbandonCall</strong></a>.</p>
+<p>Note that the control to the caller may not be given back immediately, the only guarantee that the service proxy runtime gives is that it would not wait for any I/O bound operation to complete before it gives control back to the caller.</p>
+<p>Calls on a client side service operation can be abandoned by means of a call to <a href="/windows/desktop/api/WebServices/nf-webservices-wsabandoncall"><strong>WsAbandonCall</strong></a>. It takes a service proxy and a call id. A call Id is given as part of a call properties on a service operation.</p>
+<p>If the call Id is 0, then the service proxy will abandon all pending calls at that instance.</p>
+<h3>Call Timeouts</h3>
+<p>By default a service proxy has a 30 second timeout for every call. The timeout on a call can be changed by <a href="/windows/desktop/api/WebServices/ne-webservices-ws_proxy_property_id"><strong>WS_PROXY_PROPERTY_CALL_TIMEOUT</strong></a> service proxy property when creating a service proxy through <a href="/windows/desktop/api/WebServices/nf-webservices-wscreateserviceproxy"><strong>WsCreateServiceProxy</strong></a>.</p>
+<p>After a timeout is reached, the call is abandoned.</p>
+<h3>Return Values</h3>
+<p>All success <strong>HRESULT</strong> values must be treated as success, and all failure values must be treated as failures. The following are some of the <strong>HRESULT</strong> values that an application can expect:</p>
+<ul>
+<li><strong>WS_S_ASYNC</strong>: Call will be completed asynchronously.</li>
+<li>NOERROR: Call completed successfully.</li>
+<li><strong>WS_E_OPERATION_ABANDONED</strong>: The call has been abandoned. The error object contains the reason for abandon.</li>
+<li><strong>WS_E_INVALID_OPERATION</strong>: The service proxy is not in an appropriate state to make a call, check the service proxy state to figure out the state of the service proxy.</li>
+</ul>
+<p>For a complete list of return values, see <a href="windows-web-services-return-values.html">Windows Web Services Return Values</a>.</p>
+<h3>Code Examples</h3>
+<p>For code examples, see the following:</p>
+<ul>
+<li><a href="callabandonexample.html">CallAbandonExample</a></li>
+<li><a href="/windows/desktop/api/WebServices/nf-webservices-wsabandoncall"><strong>WsAbandonCall</strong></a></li>
+</ul>
+<p>Â </p>
+<p>Â </p>
+</body>

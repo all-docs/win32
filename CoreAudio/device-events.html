@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Device Events (Core Audio APIs)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Device Events
+ms.assetid: b31500d6-a79d-4e6e-878e-6bd77055f1ad
+title: Device Events (Core Audio APIs)
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Device Events (Core Audio APIs)</h1>
+<p>A device event notifies clients of a change in the status of an <a href="audio-endpoint-devices.html">audio endpoint device</a> in the system. The following are examples of device events:</p>
+<ul>
+<li>The user enables or disables an audio endpoint device from Device Manager or from the Windows multimedia control panel, Mmsys.cpl.</li>
+<li>The user adds an audio adapter to the system or removes an audio adapter from the system.</li>
+<li>The user plugs an audio endpoint device into an audio jack with jack-presence detection, or removes an audio endpoint device from such a jack.</li>
+<li>The user changes the <a href="device-roles.html">device role</a> that is assigned to a device.</li>
+<li>The value of a <a href="device-properties.html">property of a device</a> changes.</li>
+</ul>
+<p>The addition or removal of an audio adapter generates device events for all of the audio endpoint devices that connect to the adapter. The first four items in the preceding list are examples of device state changes. For more information about the device states of audio endpoint devices, see <a href="device-state-xxx-constants.html">DEVICE_STATE_XXX Constants</a>. For more information about jack-presence detection, see <a href="audio-endpoint-devices.html">Audio Endpoint Devices</a>.</p>
+<p>A client can register to be notified when device events occur. In response to these notifications, the client can dynamically change the way that it uses a particular device, or select a different device to use for a particular purpose.</p>
+<p>For example, if an application is playing an audio track through a set of USB speakers, and the user disconnects the speakers from the USB connector, the application receives a device-event notification. In response to the event, if the application detects that a set of desktop speakers is connected to the integrated audio adapter on the system motherboard, the application can resume playing the audio track through the desktop speakers. In this example, the transition from USB speakers to desktop speakers occurs automatically, without requiring the user to intervene by explicitly redirecting the application.</p>
+<p>To register to receive device notifications, a client calls the <a href="/windows/desktop/api/Mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-registerendpointnotificationcallback"><strong>IMMDeviceEnumerator::RegisterEndpointNotificationCallback</strong></a> method. When the client no longer requires notifications, it cancels them by calling the <a href="/windows/desktop/api/Mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-unregisterendpointnotificationcallback"><strong>IMMDeviceEnumerator::UnregisterEndpointNotificationCallback</strong></a> method. Both methods take an input parameter, named <em>pClient</em>, that is a pointer to an <a href="/windows/desktop/api/Mmdeviceapi/nn-mmdeviceapi-immnotificationclient"><strong>IMMNotificationClient</strong></a> interface instance.</p>
+<p>The <strong>IMMNotificationClient</strong> interface is implemented by a client. The interface contains several methods, each of which serves as a callback routine for a particular type of device event. When a device event occurs in an audio endpoint device, the MMDevice module calls the appropriate method in the <strong>IMMNotificationClient</strong> interface of every client that is currently registered to receive device-event notifications. These calls pass a description of the event to the clients. For more information, see <a href="/windows/desktop/api/Mmdeviceapi/nn-mmdeviceapi-immnotificationclient"><strong>IMMNotificationClient Interface</strong></a>.</p>
+<p>A client that is registered to receive device-event notifications will receive notifications of all types of device events that occur in all of the audio endpoint devices in the system. If a client is interested only in certain event types or in certain devices, then the methods in its <strong>IMMNotificationClient</strong> implementation should filter the events appropriately.</p>
+<p>The Windows SDK provides samples that include several implementations for the <a href="/windows/desktop/api/Mmdeviceapi/nn-mmdeviceapi-immnotificationclient"><strong>IMMNotificationClient Interface</strong></a>. For more information, see <a href="sdk-samples-that-use-the-core-audio-apis.html">SDK Samples That Use the Core Audio APIs</a>.</p>
+<p>The following code example shows a possible implementation of the <strong>IMMNotificationClient</strong> interface:</p>
+<pre lang="C++"><code>//-----------------------------------------------------------
+// Example implementation of IMMNotificationClient interface.
+// When the status of audio endpoint devices change, the
+// MMDevice module calls these methods to notify the client.
+//-----------------------------------------------------------
+
+#define SAFE_RELEASE(punk)  \
+              if ((punk) != NULL)  \
+                { (punk)-&gt;Release(); (punk) = NULL; }
+
+class CMMNotificationClient : public IMMNotificationClient
+{
+    LONG _cRef;
+    IMMDeviceEnumerator *_pEnumerator;
+
+    // Private function to print device-friendly name
+    HRESULT _PrintDeviceName(LPCWSTR  pwstrId);
+
+public:
+    CMMNotificationClient() :
+        _cRef(1),
+        _pEnumerator(NULL)
+    {
+    }
+
+    ~CMMNotificationClient()
+    {
+        SAFE_RELEASE(_pEnumerator)
+    }
+
+    // IUnknown methods -- AddRef, Release, and QueryInterface
+
+    ULONG STDMETHODCALLTYPE AddRef()
+    {
+        return InterlockedIncrement(&amp;_cRef);
+    }
+
+    ULONG STDMETHODCALLTYPE Release()
+    {
+        ULONG ulRef = InterlockedDecrement(&amp;_cRef);
+        if (0 == ulRef)
+        {
+            delete this;
+        }
+        return ulRef;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(
+                                REFIID riid, VOID **ppvInterface)
+    {
+        if (IID_IUnknown == riid)
+        {
+            AddRef();
+            *ppvInterface = (IUnknown*)this;
+        }
+        else if (__uuidof(IMMNotificationClient) == riid)
+        {
+            AddRef();
+            *ppvInterface = (IMMNotificationClient*)this;
+        }
+        else
+        {
+            *ppvInterface = NULL;
+            return E_NOINTERFACE;
+        }
+        return S_OK;
+    }
+
+    // Callback methods for device-event notifications.
+
+    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(
+                                EDataFlow flow, ERole role,
+                                LPCWSTR pwstrDeviceId)
+    {
+        char  *pszFlow = &quot;?????&quot;;
+        char  *pszRole = &quot;?????&quot;;
+
+        _PrintDeviceName(pwstrDeviceId);
+
+        switch (flow)
+        {
+        case eRender:
+            pszFlow = &quot;eRender&quot;;
+            break;
+        case eCapture:
+            pszFlow = &quot;eCapture&quot;;
+            break;
+        }
+
+        switch (role)
+        {
+        case eConsole:
+            pszRole = &quot;eConsole&quot;;
+            break;
+        case eMultimedia:
+            pszRole = &quot;eMultimedia&quot;;
+            break;
+        case eCommunications:
+            pszRole = &quot;eCommunications&quot;;
+            break;
+        }
+
+        printf(&quot;  --&gt;New default device: flow = %s, role = %s\n&quot;,
+               pszFlow, pszRole);
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR pwstrDeviceId)
+    {
+        _PrintDeviceName(pwstrDeviceId);
+
+        printf(&quot;  --&gt;Added device\n&quot;);
+        return S_OK;
+    };
+
+    HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR pwstrDeviceId)
+    {
+        _PrintDeviceName(pwstrDeviceId);
+
+        printf(&quot;  --&gt;Removed device\n&quot;);
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(
+                                LPCWSTR pwstrDeviceId,
+                                DWORD dwNewState)
+    {
+        char  *pszState = &quot;?????&quot;;
+
+        _PrintDeviceName(pwstrDeviceId);
+
+        switch (dwNewState)
+        {
+        case DEVICE_STATE_ACTIVE:
+            pszState = &quot;ACTIVE&quot;;
+            break;
+        case DEVICE_STATE_DISABLED:
+            pszState = &quot;DISABLED&quot;;
+            break;
+        case DEVICE_STATE_NOTPRESENT:
+            pszState = &quot;NOTPRESENT&quot;;
+            break;
+        case DEVICE_STATE_UNPLUGGED:
+            pszState = &quot;UNPLUGGED&quot;;
+            break;
+        }
+
+        printf(&quot;  --&gt;New device state is DEVICE_STATE_%s (0x%8.8x)\n&quot;,
+               pszState, dwNewState);
+
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(
+                                LPCWSTR pwstrDeviceId,
+                                const PROPERTYKEY key)
+    {
+        _PrintDeviceName(pwstrDeviceId);
+
+        printf(&quot;  --&gt;Changed device property &quot;
+               &quot;{%8.8x-%4.4x-%4.4x-%2.2x%2.2x-%2.2x%2.2x%2.2x%2.2x%2.2x%2.2x}#%d\n&quot;,
+               key.fmtid.Data1, key.fmtid.Data2, key.fmtid.Data3,
+               key.fmtid.Data4[0], key.fmtid.Data4[1],
+               key.fmtid.Data4[2], key.fmtid.Data4[3],
+               key.fmtid.Data4[4], key.fmtid.Data4[5],
+               key.fmtid.Data4[6], key.fmtid.Data4[7],
+               key.pid);
+        return S_OK;
+    }
+};
+
+// Given an endpoint ID string, print the friendly device name.
+HRESULT CMMNotificationClient::_PrintDeviceName(LPCWSTR pwstrId)
+{
+    HRESULT hr = S_OK;
+    IMMDevice *pDevice = NULL;
+    IPropertyStore *pProps = NULL;
+    PROPVARIANT varString;
+
+    CoInitialize(NULL);
+    PropVariantInit(&amp;varString);
+
+    if (_pEnumerator == NULL)
+    {
+        // Get enumerator for audio endpoint devices.
+        hr = CoCreateInstance(__uuidof(MMDeviceEnumerator),
+                              NULL, CLSCTX_INPROC_SERVER,
+                              __uuidof(IMMDeviceEnumerator),
+                              (void**)&amp;_pEnumerator);
+    }
+    if (hr == S_OK)
+    {
+        hr = _pEnumerator-&gt;GetDevice(pwstrId, &amp;pDevice);
+    }
+    if (hr == S_OK)
+    {
+        hr = pDevice-&gt;OpenPropertyStore(STGM_READ, &amp;pProps);
+    }
+    if (hr == S_OK)
+    {
+        // Get the endpoint device's friendly-name property.
+        hr = pProps-&gt;GetValue(PKEY_Device_FriendlyName, &amp;varString);
+    }
+    printf(&quot;----------------------\nDevice name: \&quot;%S\&quot;\n&quot;
+           &quot;  Endpoint ID string: \&quot;%S\&quot;\n&quot;,
+           (hr == S_OK) ? varString.pwszVal : L&quot;null device&quot;,
+           (pwstrId != NULL) ? pwstrId : L&quot;null ID&quot;);
+
+    PropVariantClear(&amp;varString);
+
+    SAFE_RELEASE(pProps)
+    SAFE_RELEASE(pDevice)
+    CoUninitialize();
+    return hr;
+}
+</code></pre>
+<p>The CMMNotificationClient class in the preceding code example is an implementation of the <strong>IMMNotificationClient</strong> interface. Because <strong>IMMNotificationClient</strong> inherits from <strong>IUnknown</strong>, the class definition contains implementations of the <strong>IUnknown</strong> methods <strong>AddRef</strong>, <strong>Release</strong>, and <strong>QueryInterface</strong>. The remaining public methods in the class definition are specific to the <strong>IMMNotificationClient</strong> interface. These methods are:</p>
+<ul>
+<li><strong>OnDefaultDeviceChanged</strong>, which is called when the user changes the device role of an audio endpoint device.</li>
+<li><strong>OnDeviceAdded</strong>, which is called when the user adds an audio endpoint device to the system.</li>
+<li><strong>OnDeviceRemoved</strong>, which is called when the user removes an audio endpoint device from the system.</li>
+<li><strong>OnDeviceStateChanged</strong>, which is called when the device state of an audio endpoint device changes. (For more information about device states, see <a href="device-state-xxx-constants.html">DEVICE_STATE_ XXX Constants</a>.)</li>
+<li><strong>OnPropertyValueChanged</strong>, which is called when the value of a property of an audio endpoint device changes.</li>
+</ul>
+<p>Each of these methods takes an input parameter, <em>pwstrDeviceId</em>, that is a pointer to an endpoint ID string. The string identifies the audio endpoint device in which the device event occurred.</p>
+<p>In the preceding code example, _PrintDeviceName is a private method in the CMMNotificationClient class that prints the friendly name of the device. _PrintDeviceName takes the endpoint ID string as an input parameter. It passes the string to the <a href="/windows/desktop/api/Mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdevice"><strong>IMMDeviceEnumerator::GetDevice</strong></a> method. <strong>GetDevice</strong> creates an endpoint device object to represent the device and provides the <a href="/windows/desktop/api/Mmdeviceapi/nn-mmdeviceapi-immdevice"><strong>IMMDevice</strong></a> interface to that object. Next, _PrintDeviceName calls the <a href="/windows/desktop/api/Mmdeviceapi/nf-mmdeviceapi-immdevice-openpropertystore"><strong>IMMDevice::OpenPropertyStore</strong></a> method to retrieve the <strong>IPropertyStore</strong> interface to the device's property store. Finally, _PrintDeviceName calls the <strong>IPropertyStore::GetItem</strong> method to obtain the friendly-name property of the device. For more information about <strong>IPropertyStore</strong>, see the Windows SDK documentation.</p>
+<p>In addition to device events, clients can register to receive notifications of audio-session events and endpoint-volume events. For more information, see <a href="/windows/desktop/api/Audiopolicy/nn-audiopolicy-iaudiosessionevents"><strong>IAudioSessionEvents Interface</strong></a> and <a href="/windows/desktop/api/Endpointvolume/nn-endpointvolume-iaudioendpointvolumecallback"><strong>IAudioEndpointVolumeCallback Interface</strong></a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="audio-endpoint-devices.html">Audio Endpoint Devices</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

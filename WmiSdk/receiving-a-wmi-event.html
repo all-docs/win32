@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Receiving a WMI Event</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>description: WMI contains an event infrastructure that produces notifications about changes in WMI data and services. WMI event classes provide notification when specific events occur.
+ms.assetid: 347808a7-0f7b-4687-93f4-bea55c96795a
+ms.tgt_platform: multiple
+title: Receiving a WMI Event
+ms.topic: article
+ms.date: 05/31/2018
+topic_type:</p>
+<ul>
+<li>kbArticle
+api_name:
+api_type:
+api_location:</li>
+</ul>
+<hr />
+<h1>Receiving a WMI Event</h1>
+<p>WMI contains an event infrastructure that produces notifications about changes in WMI data and services. WMI <a href="gloss-e.html"><em>event classes</em></a> provide notification when specific events occur.</p>
+<p>The following sections are discussed in this topic:</p>
+<ul>
+<li><a href="#event-queries">Event Queries</a></li>
+<li><a href="#example">Example</a></li>
+<li><a href="#event-consumers">Event Consumers</a></li>
+<li><a href="#providing-events">Providing Events</a></li>
+<li><a href="#subscription-quotas">Subscription Quotas</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Event Queries</h2>
+<p>You can create a <a href="receiving-synchronous-and-semisynchronous-event-notifications.html">semisynchronous</a> or <a href="receiving-asynchronous-event-notifications.html"><strong>asynchronous</strong></a> query to monitor changes to event logs, process creation, service status, computer availability or disk drive free space, and other entities or events. In scripting, the <a href="swbemservices-execnotificationquery.html"><strong>SWbemServices.ExecNotificationQuery</strong></a> method is used to subscribe to events. In C++, <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-execnotificationquery"><strong>IWbemServices::ExecNotificationQuery</strong></a> is used. For more information, see <a href="calling-a-method.html">Calling a Method</a>.</p>
+<p>Notification of a change in the standard WMI data model is called an <a href="gloss-i.html"><em>intrinsic event</em></a>. <a href="--instancecreationevent.html"><strong>__InstanceCreationEvent</strong></a> or <a href="--namespacedeletionevent.html"><strong>__NamespaceDeletionEvent</strong></a> are examples of intrinsic events. Notification of a change that a provider makes to define a provider event is called an <a href="gloss-e.html"><em>extrinsic event</em></a>. For example, the <a href="/previous-versions/windows/desktop/regprov/system-registry-provider">System Registry Provider</a>, <a href="/windows/desktop/CIMWin32Prov/power-management-event-provider">Power Management Event Provider</a>, and <a href="/windows/desktop/CIMWin32Prov/win32-provider">Win32 Provider</a> define their own events. For more information, see <a href="determining-the-type-of-event-to-receive.html">Determining the Type of Event to Receive</a>.</p>
+<h2>Example</h2>
+<p>The following script code example is a query for the intrinsic <a href="--instancecreationevent.html"><strong>__InstanceCreationEvent</strong></a> of the event class <a href="/previous-versions/windows/desktop/eventlogprov/win32-ntlogevent"><strong>Win32_NTLogEvent</strong></a>. You can run this program in the background and when there is an event, a message appears. If you close the <strong>Waiting for events</strong> dialog box, the program stops waiting for events. Be aware that the <strong>SeSecurityPrivilege</strong> must be enabled.</p>
+<pre lang="VB"><code>Sub SINK_OnObjectReady(objObject, objAsyncContext)
+    WScript.Echo (objObject.TargetInstance.Message)
+End Sub
+
+Set objWMIServices = GetObject( _
+    &quot;WinMgmts:{impersonationLevel=impersonate, (security)}&quot;) 
+
+' Create the event sink object that receives the events
+Set sink = WScript.CreateObject(&quot;WbemScripting.SWbemSink&quot;,&quot;SINK_&quot;)
+ 
+' Set up the event selection. SINK_OnObjectReady is called when
+' a Win32_NTLogEvent event occurs
+objWMIServices.ExecNotificationQueryAsync sink,&quot;SELECT * FROM __InstanceCreationEvent &quot; &amp; &quot;WHERE TargetInstance ISA 'Win32_NTLogEvent' &quot;
+
+WScript.Echo &quot;Waiting for events&quot;
+</code></pre>
+<pre lang="PowerShell"><code>
+# Define event Query
+$query = &quot;SELECT * FROM __InstanceCreationEvent 
+          WHERE TargetInstance ISA 'Win32_NTLogEvent' &quot;
+
+&lt;# Register for event - also specify an action that
+displays the log event when the event fires.#&gt;
+
+Register-WmiEvent -Source Demo1 -Query $query -Action {
+                Write-Host &quot;Log Event occured&quot;
+                $global:myevent = $event
+                Write-Host &quot;EVENT MESSAGE&quot;
+                Write-Host $event.SourceEventArgs.NewEvent.TargetInstance.Message}
+&lt;# So wait #&gt;
+&quot;Waiting for events&quot;
+</code></pre>
+<p>The following VBScript code example shows the extrinsic event <a href="registering-for-system-registry-events.html">__RegistryValueChangeEvent</a> that the registry provider defines. The script creates a temporary consumer by using the call to <a href="swbemservices-execnotificationqueryasync.html"><strong>SWbemServices.ExecNotificationQueryAsync</strong></a>, and only receives events when the script is running. The following script runs indefinitely until the computer is rebooted, WMI is stopped, or the script is stopped. To stop the script manually, use Task Manager to stop the process. To stop it programmatically, use the <a href="/windows/desktop/CIMWin32Prov/terminate-method-in-class-win32-process"><strong>Terminate</strong></a> method in the Win32_Process class. For more information, see <a href="setting-security-on-an-asynchronous-call.html">Setting Security on an Asynchronous Call</a>.</p>
+<pre lang="VB"><code>strComputer = &quot;.&quot;
+
+Set objWMIServices=GetObject( _
+    &quot;winmgmts:{impersonationLevel=impersonate}!\\&quot; &amp; strComputer &amp; &quot;\root\default&quot;)
+
+set objSink = WScript.CreateObject(&quot;WbemScripting.SWbemSink&quot;,&quot;SINK_&quot;)
+
+
+objWMIServices.ExecNotificationQueryAsync objSink, _
+    &quot;Select * from RegistryValueChangeEvent Where Hive = 'HKEY_LOCAL_MACHINE' and KeyPath = 'SYSTEM\\ControlSet001\\Control' and ValueName = 'CurrentUser'&quot;
+
+WScript.Echo &quot;Waiting for events...&quot;
+
+While (True) 
+     WScript.Sleep (1000)
+Wend
+
+ 
+WScript.Echo &quot;Listening for Registry Change Events...&quot; &amp; vbCrLf 
+
+While(True) 
+    WScript.Sleep 1000 
+Wend 
+
+Sub SINK_OnObjectReady(wmiObject, wmiAsyncContext) 
+    WScript.Echo &quot;Received Registry Value Change Event&quot; &amp; vbCrLf &amp; wmiObject.GetObjectText_() 
+End Sub
+</code></pre>
+<h2>Event Consumers</h2>
+<p>You can monitor or consume events using the following consumers while a script or application is running:</p>
+<ul>
+<li>
+<p>Temporary event consumers</p>
+<p>A <a href="gloss-t.html"><em>temporary consumer</em></a> is a WMI client application that receives a WMI event. WMI includes a unique interface that use to specify the events for WMI to send to a client application. A temporary event consumer is considered temporary because it only works when specifically loaded by a user. For more information, see <a href="receiving-events-for-the-duration-of-your-application.html">Receiving Events for the Duration of Your Application</a>.</p>
+</li>
+<li>
+<p>Permanent event consumers</p>
+<p>A <a href="gloss-p.html"><em>permanent consumer</em></a> is a COM object that can receive a WMI event at all times. A permanent event consumer uses a set of persistent objects and filters to capture a WMI event. Like a temporary event consumer, you set up a series of WMI objects and filters that capture a WMI event. When an event occurs that matches a filter, WMI loads the permanent event consumer and notifies it about the event. Because a permanent consumer is implemented in the WMI repository and is an executable file that is registered in WMI, the permanent event consumer operates and receives events after it is created and even after a reboot of the operating system as long as WMI is running. For more information, see <a href="receiving-events-at-all-times.html">Receiving Events at All Times</a>.</p>
+</li>
+</ul>
+<p>Scripts or applications that receive events have special security considerations. For more information, see <a href="securing-wmi-events.html">Securing WMI Events</a>.</p>
+<p>An application or script can use a built-in WMI event provider that supplies <a href="standard-consumer-classes.html">standard consumer classes</a>. Each standard consumer class responds to an event with a different action by sending an email message or executing a script. You do not have to write provider code to use a standard consumer class to create a permanent event consumer. For more information, see <a href="monitoring-and-responding-to-events-with-standard-consumers.html">Monitoring and Responding to Events with Standard Consumers</a>.</p>
+<h2>Providing Events</h2>
+<p>An event provider is a COM component that sends an event to WMI. You can create an event provider to send an event in a C++ or C# application. Most event providers manage an object for WMI, for example, an application or hardware item. For more information, see <a href="writing-an-event-provider.html">Writing an Event Provider</a>.</p>
+<p>A timed or repeating event is an event that occurs at a predetermined time.</p>
+<p>WMI provides the following ways to create timed or repeating events for your applications:</p>
+<ul>
+<li>The standard Microsoft event infrastructure.</li>
+<li>A specialized timer class.</li>
+</ul>
+<p>For more information, see <a href="receiving-a-timed-or-repeating-event.html">Receiving a Timed or Repeating Event</a>. When you write an event provider, consider the security information identified in <a href="providing-events-securely.html">Providing Events Securely</a>.</p>
+<p>It is recommended that permanent event subscriptions be compiled into the \root\subscription namespace. For more information, see <a href="implementing-cross-namespace-permanent-event-subscriptions.html">Implementing Cross-Namespace Permanent Event Subscriptions</a>.</p>
+<h2>Subscription Quotas</h2>
+<p>Polling for events can degrade performance for providers that support queries over huge data sets. Additionally, any user that has read access to a namespace with dynamic providers can perform a denial of service (DoS) attack. WMI maintains quotas for all of the users combined and for each event consumer in the single instance of <a href="--arbitratorconfiguration.html"><strong>__ArbitratorConfiguration</strong></a> located in the \root namespace. These quotas are global rather than for each namespace. You cannot change the quotas.</p>
+<p>WMI currently enforces quotas using the properties of <a href="--arbitratorconfiguration.html"><strong>__ArbitratorConfiguration</strong></a>. Each quota has a per user and a total version that includes all users combined, not per namespace. The following table lists the quotas that apply to the <strong>__ArbitratorConfiguration</strong> properties.</p>
+<table>
+<thead>
+<tr>
+<th>Total/PerUser</th>
+<th>Quota</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TemporarySubscriptionsTotal<!-- raw HTML omitted --> TemporarySubscriptionsPerUser<!-- raw HTML omitted --></td>
+<td>10,000<!-- raw HTML omitted --> 1,000<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>PermanentSubscriptionsTotal<!-- raw HTML omitted --> PermanentSubscriptionsPerUser<!-- raw HTML omitted --></td>
+<td>10,000<!-- raw HTML omitted --> 1,000<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>PollingInstructionsTotal<!-- raw HTML omitted --> PollingInstructionsPerUser<!-- raw HTML omitted --></td>
+<td>10,000<!-- raw HTML omitted --> 1,000<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>PollingMemoryTotal<!-- raw HTML omitted --> PollingMemoryPerUser<!-- raw HTML omitted --></td>
+<td>10,000,000 (0x989680) bytes<!-- raw HTML omitted --> 5,000,000 (0x4CB40) bytes<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>An administrator or a user with <strong>FULL_WRITE</strong> permission in the namespace can modify the singleton instance of <a href="--arbitratorconfiguration.html"><strong>__ArbitratorConfiguration</strong></a>. WMI tracks the per-user quota.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-wmi.html">Using WMI</a></p>
+<!-- raw HTML omitted -->
+</body>

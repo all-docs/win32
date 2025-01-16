@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Uploading different types of resources</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Uploading different types of resources
+description: Shows how to use one buffer to upload both constant buffer data and vertex buffer data to the GPU, and how to properly sub-allocate and place data within buffers.
+ms.assetid: 255B0482-21D6-4276-8009-3F3891879CA1
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Uploading different types of resources</h1>
+<p>Shows how to use one buffer to upload both constant buffer data and vertex buffer data to the GPU, and how to properly sub-allocate and place data within buffers. The use of a single buffer increases memory usage flexibility, and provides applications with tighter control over memory usage. Also shows the differences between the Direct3D 11 and Direct3D 12 models for uploading different types of resources.</p>
+<h2>Upload different types of resources</h2>
+<p>In Direct3D 12, you create one buffer to accommodate different types of resource data for uploading, and you copy resource data to the same buffer in a similar way for different resource data. Individual views are then created to bind those resource data to the graphics pipeline in the Direct3D 12 resource binding model.</p>
+<p>In Direct3D 11, you create separate buffers for different types of resource data (note the different <code>BindFlags</code> used in the Direct3D 11 sample code below), explicitly binding each resource buffer to the graphics pipeline, and update the resource data with different methods based on different resource types.</p>
+<p>In both Direct3D 12 and Direct3D 11, you should use upload resources only where the CPU will write the data once, and the GPU will read it once.</p>
+<p>In some cases,</p>
+<ul>
+<li>the GPU will read the data multiple times, or</li>
+<li>the GPU won't read the data linearly, or</li>
+<li>the rendering is significantly GPU-limited already.</li>
+</ul>
+<p>In those cases, the better option might be to use <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copytextureregion"><strong>ID3D12GraphicsCommandList::CopyTextureRegion</strong></a> or <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copybufferregion"><strong>ID3D12GraphicsCommandList::CopyBufferRegion</strong></a> to copy the upload buffer data to a default resource.</p>
+<p>A default resource can reside in physical video memory on discrete GPUs.</p>
+<h3>Code Example: Direct3D 11</h3>
+<pre lang="cpp"><code>// Direct3D 11: Separate buffers for each resource type.
+
+void main()
+{
+    // ...
+
+    // Create a constant buffer.
+    float constantBufferData[] = ...;
+
+    D3D11_BUFFER_DESC constantBufferDesc = {0};  
+    constantBufferDesc.ByteWidth = sizeof(constantBufferData);  
+    constantBufferDesc.Usage = D3D11_USAGE_DYNAMIC;  
+    constantBufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;  
+    constantBufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;  
+
+    ComPtr&lt;ID3D11Buffer&gt; constantBuffer;
+    d3dDevice-&gt;CreateBuffer(  
+        &amp;constantBufferDesc,  
+        NULL,
+        &amp;constantBuffer  
+        );
+
+    // Create a vertex buffer.
+    float vertexBufferData[] = ...;
+
+    D3D11_BUFFER_DESC vertexBufferDesc = { 0 };
+    vertexBufferDesc.ByteWidth = sizeof(vertexBufferData);
+    vertexBufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+    vertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+    ComPtr&lt;ID3D11Buffer&gt; vertexBuffer;
+    d3dDevice-&gt;CreateBuffer(
+        &amp;vertexBufferDesc,
+        NULL,
+        &amp;vertexBuffer
+        );
+
+    // ...
+}
+
+void DrawFrame()
+{
+    // ...
+
+    // Bind buffers to the graphics pipeline.
+    d3dDeviceContext-&gt;VSSetConstantBuffers(0, 1, constantBuffer.Get());
+    d3dDeviceContext-&gt;IASetVertexBuffers(0, 1, vertexBuffer.Get(), ...);
+
+    // Update the constant buffer.
+    D3D11_MAPPED_SUBRESOURCE mappedResource;  
+    d3dDeviceContext-&gt;Map(
+        constantBuffer.Get(),
+        0, 
+        D3D11_MAP_WRITE_DISCARD,
+        0,
+        &amp;mappedResource
+        );
+    memcpy(mappedResource.pData, constantBufferData,
+        sizeof(contatnBufferData));
+    d3dDeviceContext-&gt;Unmap(constantBuffer.Get(), 0);  
+
+    // Update the vertex buffer.
+    d3dDeviceContext-&gt;UpdateSubresource(
+        vertexBuffer.Get(),
+        0,
+        NULL,
+        vertexBufferData,
+        sizeof(vertexBufferData),
+        0
+    );
+
+    // ...
+}
+</code></pre>
+<h3>Code Example: Direct3D 12</h3>
+<pre lang="cpp"><code>// Direct3D 12: One buffer to accommodate different types of resources
+
+ComPtr&lt;ID3D12Resource&gt; m_spUploadBuffer;
+UINT8* m_pDataBegin = nullptr;    // starting position of upload buffer
+UINT8* m_pDataCur = nullptr;      // current position of upload buffer
+UINT8* m_pDataEnd = nullptr;      // ending position of upload buffer
+
+void main()
+{
+    //
+    // Initialize an upload buffer
+    //
+
+    InitializeUploadBuffer(64 * 1024);
+
+    // ...
+}
+
+void DrawFrame()
+{
+    // ...
+
+    // Set vertices data to the upload buffer.
+
+    float vertices[] = ...;
+    UINT verticesOffset = 0;
+    ThrowIfFailed(
+        SetDataToUploadBuffer(
+            vertices, sizeof(float), sizeof(vertices) / sizeof(float),
+            sizeof(float), 
+            verticesOffset
+            ));
+
+    // Set constant data to the upload buffer.
+
+    float constants[] = ...;
+    UINT constantsOffset = 0;
+    ThrowIfFailed(
+        SetDataToUploadBuffer(
+            constants, sizeof(float), sizeof(constants) / sizeof(float), 
+            D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT, 
+            constantsOffset
+            ));
+
+    // Create vertex buffer views for the new binding model.
+
+    D3D12_VERTEX_BUFFER_VIEW vertexBufferViewDesc = {
+        m_spUploadBuffer-&gt;GetGPUVirtualAddress() + verticesOffset,
+        sizeof(vertices), // size
+        sizeof(float) * 4,  // stride
+    };
+
+    commandList-&gt;IASetVertexBuffers( 
+        0,
+        1,
+        &amp;vertexBufferViewDesc,
+        ));
+
+    // Create constant buffer views for the new binding model.
+
+    D3D12_CONSTANT_BUFFER_VIEW_DESC constantBufferViewDesc = {
+        m_spUploadBuffer-&gt;GetGPUVirtualAddress() + constantsOffset,
+        sizeof(constants) // size
+         };
+
+    d3dDevice-&gt;CreateConstantBufferView(
+        &amp;constantBufferViewDesc,
+        ...
+        ));
+
+    // Continue command list building and execution ...
+}
+
+//
+// Create an upload buffer and keep it always mapped.
+//
+
+HRESULT InitializeUploadBuffer(SIZE_T uSize)
+{
+    HRESULT hr = d3dDevice-&gt;CreateCommittedResource(
+         &amp;CD3DX12_HEAP_PROPERTIES( D3D12_HEAP_TYPE_UPLOAD ),    
+               D3D12_HEAP_FLAG_NONE, 
+               &amp;CD3DX12_RESOURCE_DESC::Buffer( uSize ), 
+               D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,  
+               IID_PPV_ARGS( &amp;m_spUploadBuffer ) );
+
+    if (SUCCEEDED(hr))
+    {
+        void* pData;
+        //
+        // No CPU reads will be done from the resource.
+        //
+        CD3DX12_RANGE readRange(0, 0);
+        m_spUploadBuffer-&gt;Map( 0, &amp;readRange, &amp;pData ); 
+        m_pDataCur = m_pDataBegin = reinterpret_cast&lt; UINT8* &gt;( pData );
+        m_pDataEnd = m_pDataBegin + uSize;
+    }
+    return hr;
+}
+
+//
+// Sub-allocate from the buffer, with offset aligned.
+//
+
+HRESULT SuballocateFromBuffer(SIZE_T uSize, UINT uAlign)
+{
+    m_pDataCur = reinterpret_cast&lt; UINT8* &gt;(
+        Align(reinterpret_cast&lt; SIZE_T &gt;(m_pDataCur), uAlign)
+        );
+
+    return (m_pDataCur + uSize &gt; m_pDataEnd) ? E_INVALIDARG : S_OK;
+}
+
+//
+// Place and copy data to the upload buffer.
+//
+
+HRESULT SetDataToUploadBuffer(
+    const void* pData, 
+    UINT bytesPerData, 
+    UINT dataCount, 
+    UINT alignment, 
+    UINT&amp; byteOffset
+    )
+{
+    SIZE_T byteSize = bytesPerData * dataCount;
+    HRESULT hr = SuballocateFromBuffer(byteSize, alignment);
+    if (SUCCEEDED(hr))
+    {
+        byteOffset = UINT(m_pDataCur - m_pDataBegin);
+        memcpy(m_pDataCur, pData, byteSize); 
+        m_pDataCur += byteSize;
+    }
+    return hr;
+}
+
+//
+// Align uLocation to the next multiple of uAlign.
+//
+
+UINT Align(UINT uLocation, UINT uAlign)
+{
+    if ( (0 == uAlign) || (uAlign &amp; (uAlign-1)) )
+    {
+        ThrowException(&quot;non-pow2 alignment&quot;);
+    }
+
+    return ( (uLocation + (uAlign-1)) &amp; ~(uAlign-1) );
+}
+</code></pre>
+<p>Note the use of the helper structures <a href="cd3dx12-heap-properties.html"><strong>CD3DX12_HEAP_PROPERTIES</strong></a> and <a href="cd3dx12-resource-desc.html"><strong>CD3DX12_RESOURCE_DESC</strong></a>.</p>
+<h2>Constants</h2>
+<p>To set constants, vertices, and indexes within an upload or readback heap, use the following APIs.</p>
+<ul>
+<li><a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-createconstantbufferview"><strong>ID3D12Device::CreateConstantBufferView</strong></a></li>
+<li><a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-iasetvertexbuffers"><strong>ID3D12GraphicsCommandList::IASetVertexBuffers</strong></a></li>
+<li><a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-iasetindexbuffer"><strong>ID3D12GraphicsCommandList::IASetIndexBuffer</strong></a></li>
+</ul>
+<h2>Resources</h2>
+<p>Resources are the Direct3D concept that abstracts the usage of GPU physical memory. Resources require GPU virtual address space to access physical memory. Resource creation is free-threaded.</p>
+<p>There are three types of resources with respect to virtual address creation and flexibility in Direct3D 12.</p>
+<h3>Committed resources</h3>
+<p>Committed resources are the most common idea of Direct3D resources over the generations. Creating such a resource allocates virtual address range, an implicit heap large enough to fit the whole resource, and commits the virtual address range to the physical memory encapsulated by the heap. The implicit heap properties must be passed to match functional parity with previous Direct3D versions. Refer to <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-createcommittedresource"><strong>ID3D12Device::CreateCommittedResource</strong></a>.</p>
+<h3>Reserved resources</h3>
+<p>Reserved resources are equivalent to Direct3D 11 tiled resources. On their creation, only a virtual address range is allocated, and not mapped to any heap. The application will map such resources to heaps later. The capabilities of such resources are currently unchanged from Direct3D 11, as they can be mapped to a heap at a 64KB tile granularity with <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12commandqueue-updatetilemappings"><strong>UpdateTileMappings</strong></a>. Refer to <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-createreservedresource"><strong>ID3D12Device::CreateReservedResource</strong></a>.</p>
+<h3>Placed resources</h3>
+<p>New for Direct3D 12, you can create heaps separate from resources. Afterward, you can locate multiple resources within a single heap. You can do that without creating tiled or reserved resources, enabling the capabilities for all resource types able to be created directly by your application. Multiple resources might overlap, and you must use the <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ID3D12GraphicsCommandList::ResourceBarrier</strong></a> to re-use physical memory correctly. Refer to <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-createplacedresource"><strong>ID3D12Device::CreatePlacedResource</strong></a>.</p>
+<h2>Resource size reflection</h2>
+<p>You must use resource size reflection to understand how much space textures with unknown texture layouts require in heaps. Buffers are also supported, but mostly as a convenience.</p>
+<p>You should be aware of major alignment discrepancies, to help pack resources more densely.</p>
+<p>For example, a single-element array with a one-byte-buffer returns a <em>Size</em> of 64KB, and an <em>Alignment</em> of 64KB, because buffers can be only 64KB-aligned.</p>
+<p>Also, a three element array with two single-texel 64KB aligned textures and a single-texel 4MB aligned texture reports differing sizes based on the order of the array. If the 4MB aligned textures is in the middle, then the resulting <em>Size</em> is 12MB. Otherwise, the resulting Size is 8MB. The Alignment returned would always be 4MB, the superset of all alignments in the resource array.</p>
+<p>Reference the following APIs.</p>
+<ul>
+<li><a href="/windows/win32/api/d3d12/ns-d3d12-d3d12_resource_allocation_info"><strong>D3D12_RESOURCE_ALLOCATION_INFO</strong></a></li>
+<li><a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-getresourceallocationinfo(uint_uint_constd3d12_resource_desc)"><strong>GetResourceAllocationInfo</strong></a></li>
+</ul>
+<h2>Buffer alignment</h2>
+<p>Buffer alignment restrictions have not changed from Direct3D 11, notably:</p>
+<ul>
+<li>4 MB for multi-sample textures.</li>
+<li>64 KB for single-sample textures and buffers.</li>
+</ul>
+<h2>Related topics</h2>
+<ul>
+<li><a href="large-buffers.html">Suballocation within buffers</a></li>
+</ul>
+</body>

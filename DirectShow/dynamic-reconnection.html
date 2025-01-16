@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dynamic Reconnection</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Dynamic Reconnection
+ms.assetid: 5b777f64-6b62-48dd-8eae-6603582a452a
+title: Dynamic Reconnection
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Dynamic Reconnection</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>In most DirectShow filters, pins cannot be reconnected while the graph is actively streaming data. The application must stop the graph before reconnecting the pins. However, some filters do support pin reconnections while the graph is running, a process known as dynamic reconnection. This can be done either by the application, or by a filter in the graph.</p>
+<p>As an example, consider the graph in the following illustration.</p>
+<p><img src="images/dyngraph.png" alt="dynamic graph-building diagram" /></p>
+<p>One scenario for dynamic reconnection might be to remove Filter 2 from the graph, while the graph is running, and replace it with another filter. For this scenario to work, the following must be true:</p>
+<ul>
+<li>The input pin on Filter 3 (pin D) must support the <a href="/windows/desktop/api/Strmif/nn-strmif-ipinconnection"><strong>IPinConnection</strong></a> interface. This interface enables the pin to be reconnected without stopping the filter.</li>
+<li>The output pin on Filter 1 (pin A) must be able to block the flow of media data while the reconnection occurs. No data can travel between pin A and pin D during the reconnection. Generally, this means the output pin must support the <a href="/windows/desktop/api/Strmif/nn-strmif-ipinflowcontrol"><strong>IPinFlowControl</strong></a> interface. However, if Filter 1 is the filter that initiates the reconnection, it might have some internal mechanism to block its own data flow.</li>
+</ul>
+<p>The dynamic reconnection will involve the following steps:</p>
+<ol>
+<li>Block the data stream from pin A.</li>
+<li>Reconnect pin A to pin D, possibly through a new intermediate filter.</li>
+<li>Unblock pin A so that data starts to flow again.</li>
+</ol>
+<p><strong>Step 1. Block the Data Stream</strong></p>
+<p>To block the data stream, call <a href="/windows/desktop/api/Strmif/nf-strmif-ipinflowcontrol-block"><strong>IPinFlowControl::Block</strong></a> on pin A. This method can be called either asynchronously or synchronously. To call the method <em>asynchronously</em>, create a Win32 event object and pass the event handle to the <strong>Block</strong> method. The method will return immediately. Wait for the event to be signaled, using a function such as <strong>WaitForSingleObject</strong>. The pin signals the event when it has blocked the data flow. For example:</p>
+<pre lang="C++"><code>// Create an event
+HANDLE hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+if (hEvent != NULL)
+{
+    // Block the data flow.
+    hr = pFlowControl-&gt;Block(AM_PIN_FLOW_CONTROL_BLOCK, hEvent); 
+    if (SUCCEEDED(hr))
+    {
+        // Wait for the pin to finish.
+        DWORD dwRes = WaitForSingleObject(hEvent, dwMilliseconds);
+    }
+}
+</code></pre>
+<p>To call the method <em>synchronously</em>, simply pass the value <strong>NULL</strong> instead of the event handle. Now the method will block until the operation completes. This may not happen until the pin is ready to deliver a new sample. If the filter is paused, this can take an arbitrary length of time. Therefore, do not make the synchronous call from your main application thread. Use a worker thread, or else call the method asynchronously.</p>
+<p><strong>Step 2. Reconnect the Pins</strong></p>
+<p>To reconnect the pins, query the Filter Graph Manager for the <strong>IGraphConfig</strong> interface and call either <a href="/windows/desktop/api/Strmif/nf-strmif-igraphconfig-reconnect"><strong>IGraphConfig::Reconnect</strong></a> or <a href="/windows/desktop/api/Strmif/nf-strmif-igraphconfig-reconfigure"><strong>IGraphConfig::Reconfigure</strong></a>. The <strong>Reconnect</strong> method is simpler to use; it does the following:</p>
+<ul>
+<li>Stops the intermediate filters (Filter 2 in the example) and removes them from the graph.</li>
+<li>Adds new intermediate filters, if needed.</li>
+<li>Connects all the pins.</li>
+<li>Pauses or runs any new filters, to match the state of the graph.</li>
+</ul>
+<p>The <strong>Reconnect</strong> method has several optional parameters that can be used to specify the media type for the pin connection and the intermediate filter to use. For example:</p>
+<pre lang="C++"><code>pGraph-&gt;AddFilter(pNewFilter, L&quot;New Filter for the Graph&quot;);
+pConfig-&gt;Reconnect(
+    pPinA,      // Reconnect this output pin...
+    pPinD,      // ... to this input pin.
+    pMediaType, // Use this media type.
+    pNewFilter, // Connect them through this filter.
+    NULL, 
+    0);     
+</code></pre>
+<p>For details, consult the reference page. If the <strong>Reconnect</strong> method is not flexible enough, you can use the <strong>Reconfigure</strong> method, which calls an application-defined callback method to reconnect the pins. To use this method, implement the <a href="/windows/desktop/api/Strmif/nn-strmif-igraphconfigcallback"><strong>IGraphConfigCallback</strong></a> interface in your application.</p>
+<p>Before calling <strong>Reconfigure</strong>, block the data flow from the output pin, as described previously. Then push any data that is still pending in the section of the graph that you are reconnecting, as follows:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-ipinconnection-notifyendofstream"><strong>IPinConnection::NotifyEndOfStream</strong></a> on the input pin furthest downstream in the reconnection chain (pin D in the example). Pass in a handle to a Win32 event.</li>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-endofstream"><strong>IPin::EndOfStream</strong></a> on the input pin that is immediately downstream from the output pin where you blocked the data flow. (In this example, the data flow was blocked at pin A, so you would call <strong>EndOfStream</strong> on pin B.)</li>
+<li>Wait for the event to be signaled. The input pin (pin D) signals the event when it receives the end-of-stream notification. This indicates that no data is traveling between the pins, and that the caller can safely reconnect the pins.</li>
+</ol>
+<p>Note that the <strong>IGraphConfig::Reconnect</strong> method automatically handles the previous steps. You only need to perform these steps if you are using the <strong>Reconfigure</strong> method.</p>
+<p>After the data is pushed through the graph, call <strong>Reconfigure</strong> and pass a pointer to your <strong>IGraphConfigCallback</strong> callback interface. The Filter Graph Manager will call the <a href="/windows/desktop/api/Strmif/nf-strmif-igraphconfigcallback-reconfigure"><strong>IGraphConfigCallback::Reconfigure</strong></a> method that you have provided.</p>
+<p><strong>Step 3. Unblock the Data Flow</strong></p>
+<p>After you have reconnected the pins, unblock the data flow by calling <strong>IPinFlowControl::Block</strong> with a value of zero for the first parameter.</p>
+<blockquote>
+<p>[!Note]<br />
+If a dynamic reconnection is performed by a filter, there are some threading issues that you must be aware of. If the Filter Graph Manager tries to stop the filter, it can deadlock, because the graph waits for the filter to stop, while at the same time the filter may be waiting for data to be pushed through the graph. To prevent the possible deadlock, some of the methods described in this section take a handle to a Win32 event. The filter should signal the event if the Filter Graph Manager attempts to stop the filter. For more information, see <a href="/windows/desktop/api/Strmif/nn-strmif-igraphconfig"><strong>IGraphConfig</strong></a> and <a href="/windows/desktop/api/Strmif/nn-strmif-ipinconnection"><strong>IPinConnection</strong></a>.</p>
+</blockquote>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="dynamic-graph-building.html">Dynamic Graph Building</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

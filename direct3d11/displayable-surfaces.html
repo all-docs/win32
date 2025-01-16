@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Displayable surfaces</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Displayable surfaces
+description: The displayable surfaces feature means that buffers that are presented may have varying properties, and you may present them in any order.
+ms.topic: article
+ms.date: 04/30/2024</h2>
+<h1>Displayable surfaces</h1>
+<p>Before displayable surfaces, presentation was generally done by creating a swap chain of buffers with identical properties, which were then cycled (flipped) through repeatedly, in order, to be presented to the screen. If you wanted to change the properties of a buffer to be presented, then you had to destroy that swap chain, and create a new one with all the buffers updated to the same new properties.</p>
+<p>The displayable surfaces feature adds new operating system (OS) behavior that eliminates those restrictions (but it requires driver support in order to behave properly). Specifically, the feature means that buffers that are presented may have varying properties, and you may present them in any order.</p>
+<p>The displayable surfaces (and flexible presentation) features, and their APIs, were introduced in Windows 11 (Build 10.0.22000.194). The functionality is enabled on supported drivers, beginning with WDDM 3.0 drivers, enabling enhanced presentation scenarios for Direct3D 11.</p>
+<h2>Check for support, and use displayable surfaces</h2>
+<p>To determine whether the displayable surfaces feature is available on a system, call <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11device-checkfeaturesupport"><strong>ID3D11Device::CheckFeatureSupport</strong></a>. Pass <a href="/windows/win32/api/d3d11/ne-d3d11-d3d11_feature"><strong>D3D11_FEATURE::D3D11_FEATURE_DISPLAYABLE</strong></a>, and receive a <a href="/windows/win32/api/d3d11/ns-d3d11-d3d11_feature_data_displayable"><strong>D3D11_FEATURE_DATA_DISPLAYABLE</strong></a> structure.</p>
+<p>The <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11device-createtexture2d"><strong>ID3D11Device::CreateTexture2D</strong></a> API supports <a href="/windows/win32/api/d3d11/ne-d3d11-d3d11_resource_misc_flag"><strong>D3D11_RESOURCE_MISC_FLAG::D3D11_RESOURCE_MISC_SHARED_DISPLAYABLE</strong></a>, which you can use in the <a href="/windows/win32/api/d3d11/ns-d3d11-d3d11_texture2d_desc">D3D11_TEXTURE2D_DESC::MiscFlags</a> member of the structure that you pass to <strong>CreateTexture2D</strong> in the <em>pDesc</em> parameter.</p>
+<p>Textures with <strong>D3D11_RESOURCE_MISC_SHARED_DISPLAYABLE</strong> are restricted to an array size of 1, and to 1 mip level.</p>
+<p>When you use the <a href="/windows/win32/api/d3d11/ne-d3d11-d3d11_resource_misc_flag"><strong>D3D11_RESOURCE_MISC_SHARED_DISPLAYABLE</strong></a> flag on the texture, you can show the texture on any active output (including multiple outputs simultaneously). Depending on the scenario, the texture might end up being consumed by the compositor (DWM), scanned out, or bound to various parts of the pipeline—potentially all simultaneously. For example, a capture texture from a camera might be shown on two displays, and a thumbnail of it shown on a third display, all at the same time—and all from the same allocation with no additional copies. In the case where a displayable surface is to be scanned out on multiple displays, the OS will coordinate the collection of flip completes from the involved outputs before alerting your application that the surface is released back to it—no coordination of flip completion is required from the driver.</p>
+<p>To present a displayable texture to the screen, you can use the <a href="/windows/win32/comp_swapchain/comp-swapchain-portal">Composition Swapchain API</a>. By using displayable surfaces rather than plain surfaces, the system is able to optimize presentation in some situations to bypass the system compositor and scanout the surfaces directly which reduces GPU/CPU overhead as well as overall latency. This is similar to using DXGI swapchains with the &quot;flip&quot; presentation modes. See <a href="https://devblogs.microsoft.com/directx/dxgi-flip-model/">For best performance, use DXGI flip model</a> for more information.</p>
+<p>Such textures as described above must be displayable for flexible presentation use. These textures are not required to have the same properties—for example, formats and sizes can differ, and these textures must be able to be displayed in arbitrary order (&quot;out-of-order presentation&quot;). Presentation will occur using the existing <strong>Present1</strong> DDI, with its existing calling patterns. For example, consider a pool of six buffers, three that are 720p (A, B, and C) and three that are 4K (D, E, and F): a valid presentation order could be A-&gt;E-&gt;C-&gt;B-&gt;F-&gt;E-&gt;D-&gt;C.</p>
+<h2>Formats</h2>
+<p>The <a href="/windows/win32/api/d3d11/ne-d3d11-d3d11_resource_misc_flag"><strong>D3D11_RESOURCE_MISC_SHARED_DISPLAYABLE</strong></a> flag  is supported for the following formats in Direct3D 11:</p>
+<ul>
+<li><a href="/windows/win32/api/dxgiformat/ne-dxgiformat-dxgi_format"><strong>DXGI_FORMAT::DXGI_FORMAT_B8G8R8A8_UNORM</strong></a></li>
+<li><strong>DXGI_FORMAT_R8G8B8A8_UNORM</strong></li>
+<li><strong>DXGI_FORMAT_R16G16B16A16_FLOAT</strong></li>
+<li><strong>DXGI_FORMAT_R10G10B10A2_UNORM</strong></li>
+<li><strong>DXGI_FORMAT_NV12</strong></li>
+<li><strong>DXGI_FORMAT_YUY2</strong></li>
+</ul>
+<p>A driver might also, optionally, support the following formats:</p>
+<ul>
+<li><strong>DXGI_FORMAT_P010</strong></li>
+</ul>
+<p>You can use the following code example to check for displayable surfaces support for the optional formats above. The example involves calling <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11device-checkfeaturesupport">ID3D11Device::CheckFeatureSupport</a>, and checking for <a href="/windows/win32/api/d3d11/ne-d3d11-d3d11_feature">D3D11_FEATURE_FORMAT_SUPPORT2</a>.</p>
+<pre lang="cpp"><code>D3D11_FEATURE_DATA_FORMAT_SUPPORT2 FormatSupport2;
+FormatSupport2.InFormat = DXGI_FORMAT_P010;
+if (SUCCEEDED (hr = GetDevice()-&gt;CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT2, &amp;FormatSupport2, sizeof(FormatSupport2))))
+{
+    if (FormatSupport2.OutFormatSupport2 &amp; D3D11_FORMAT_SUPPORT2_DISPLAYABLE)
+    {
+        // optional displayable format is supported
+    }
+}
+</code></pre>
+<h2>Flags</h2>
+<p>Shareable formats already generally support the following bind flags: <a href="/windows/win32/api/d3d11/ne-d3d11-d3d11_bind_flag"><strong>D3D11_BIND_FLAG::D3D11_BIND_SHADER_RESOURCE</strong></a>, <strong>D3D11_BIND_UNORDERED_ACCESS</strong>, <strong>D3D11_BIND_RENDER_TARGET</strong>, and <strong>D3D11_BIND_DECODER</strong>.</p>
+<p>Existing supported usages of shared resources with the <strong>D3D11_BIND_VIDEO_ENCODER</strong> flag are extended to also support the <strong>D3D11_RESOURCE_MISC_SHARED_DISPLAYABLE</strong> flag being added in these cases. Existing restrictions related to use of shared resources with <strong>D3D11_BIND_VIDEO_ENCODER</strong> are maintained.</p>
+<p><strong>D3D11_BIND_VIDEO_ENCODER</strong> and <strong>D3D11_BIND_SHADER_RESOURCE</strong> were previously mutually exclusive, except when combined with certain other bind flags. The exception has been extended to allow <strong>D3D11_BIND_VIDEO_ENCODER</strong> and <strong>D3D11_BIND_SHADER_RESOURCE</strong> to be used together when <strong>D3D11_RESOURCE_MISC_SHARED_DISPLAYABLE</strong> is used.</p>
+<p>The <strong>D3D11_RESOURCE_MISC_HW_PROTECTED</strong> flag is supported with the <strong>D3D11_RESOURCE_MISC_SHARED_DISPLAYABLE</strong> flag.</p>
+<h2>Related topics</h2>
+<ul>
+<li><a href="/win32/desktop-src/comp_swapchain/comp-swapchain-portal">Composition swapchain</a></li>
+<li><a href="https://devblogs.microsoft.com/directx/dxgi-flip-model/">For best performance, use DXGI flip model</a></li>
+</ul>
+</body>

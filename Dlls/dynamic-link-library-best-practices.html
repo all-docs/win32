@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dynamic-Link Library Best Practices</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Creating DLLs presents a number of challenges for developers.
+ms.assetid: 44EFC4B5-7A2F-43A6-914E-D4EB7446AC35
+title: Dynamic-Link Library Best Practices
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Dynamic-Link Library Best Practices</h1>
+<p>**Updated: **</p>
+<ul>
+<li>May 17, 2006</li>
+</ul>
+<p><strong>Important APIs</strong></p>
+<ul>
+<li><a href="dllmain.html"><strong>DllMain</strong></a></li>
+<li><a href="/windows/desktop/api/LibLoaderAPI/nf-libloaderapi-loadlibraryexa"><strong>LoadLibraryEx</strong></a></li>
+<li><a href="/windows/desktop/api/processthreadsapi/nf-processthreadsapi-createprocessa"><strong>CreateProcess</strong></a></li>
+</ul>
+<p>Creating DLLs presents a number of challenges for developers. DLLs do not have system-enforced versioning. When multiple versions of a DLL exist on a system, the ease of being overwritten coupled with the lack of a versioning schema creates dependency and API conflicts. Complexity in the development environment, the loader implementation, and the DLL dependencies has created fragility in load order and application behavior. Lastly, many applications rely on DLLs and have complex sets of dependencies that must be honored for the applications to function properly. This document provides guidelines for DLL developers to help in building more robust, portable, and extensible DLLs.</p>
+<p>Improper synchronization within <a href="dllmain.html"><strong>DllMain</strong></a> can cause an application to deadlock or access data or code in an uninitialized DLL. Calling certain functions from within <strong>DllMain</strong> causes such problems.</p>
+<p><img src="images/fig1.png" alt="what happens when a library is loaded" /></p>
+<h2>General Best Practices</h2>
+<p><a href="dllmain.html"><strong>DllMain</strong></a> is called while the loader-lock is held. Therefore, significant restrictions are imposed on the functions that can be called within <strong>DllMain</strong>. As such, <strong>DllMain</strong> is designed to perform minimal initialization tasks, by using a small subset of the MicrosoftÂ® WindowsÂ® API. You cannot call any function in <strong>DllMain</strong> that directly or indirectly tries to acquire the loader lock. Otherwise, you will introduce the possibility that your application deadlocks or crashes. An error in a <strong>DllMain</strong> implementation can jeopardize the entire process and all of its threads.</p>
+<p>The ideal <a href="dllmain.html"><strong>DllMain</strong></a> would be just an empty stub. However, given the complexity of many applications, this is generally too restrictive. A good rule of thumb for <strong>DllMain</strong> is to postpone as much initialization as possible. Lazy initialization increases robustness of the application because this initialization is not performed while the loader lock is held. Also, lazy initialization enables you to safely use much more of the Windows API.</p>
+<p>Some initialization tasks cannot be postponed. For example, a DLL that depends on a configuration file should fail to load if the file is malformed or contains garbage. For this type of initialization, the DLL should attempt the action and fail quickly rather than waste resources by completing other work.</p>
+<p>You should never perform the following tasks from within <a href="dllmain.html"><strong>DllMain</strong></a>:</p>
+<ul>
+<li>Call <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya"><strong>LoadLibrary</strong></a> or <a href="/windows/desktop/api/LibLoaderAPI/nf-libloaderapi-loadlibraryexa"><strong>LoadLibraryEx</strong></a> (either directly or indirectly). This can cause a deadlock or a crash.</li>
+<li>Call <a href="/windows/desktop/api/winnls/nf-winnls-getstringtypea"><strong>GetStringTypeA</strong></a>, <a href="/windows/win32/api/stringapiset/nf-stringapiset-getstringtypeexw"><strong>GetStringTypeEx</strong></a>, or <a href="/windows/desktop/api/stringapiset/nf-stringapiset-getstringtypew"><strong>GetStringTypeW</strong></a> (either directly or indirectly). This can cause a deadlock or a crash.</li>
+<li>Synchronize with other threads. This can cause a deadlock.</li>
+<li>Acquire a synchronization object that is owned by code that is waiting to acquire the loader lock. This can cause a deadlock.</li>
+<li>Initialize COM threads by using <a href="/windows/desktop/api/combaseapi/nf-combaseapi-coinitializeex"><strong>CoInitializeEx</strong></a>. Under certain conditions, this function can call <a href="/windows/desktop/api/LibLoaderAPI/nf-libloaderapi-loadlibraryexa"><strong>LoadLibraryEx</strong></a>.</li>
+<li>Call the registry functions.</li>
+<li>Call <a href="/windows/desktop/api/processthreadsapi/nf-processthreadsapi-createprocessa"><strong>CreateProcess</strong></a>. Creating a process can load another DLL.</li>
+<li>Call <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-freelibraryandexitthread"><strong>ExitThread</strong></a>. Exiting a thread during DLL detach can cause the loader lock to be acquired again, causing a deadlock or a crash.</li>
+<li>Call <a href="/windows/desktop/api/processthreadsapi/nf-processthreadsapi-createthread"><strong>CreateThread</strong></a>. Creating a thread can work if you do not synchronize with other threads, but it is risky.</li>
+<li>Call <a href="/windows/win32/api/shlobj_core/nf-shlobj_core-shgetfolderpathw"><strong>ShGetFolderPathW</strong></a>. Calling shell/known folder APIs can result in thread synchronization, and can therefore cause deadlocks.</li>
+<li>Create a named pipe or other named object (Windows 2000 only). In Windows 2000, named objects are provided by the Terminal Services DLL. If this DLL is not initialized, calls to the DLL can cause the process to crash.</li>
+<li>Use the memory management function from the dynamic C Run-Time (CRT). If the CRT DLL is not initialized, calls to these functions can cause the process to crash.</li>
+<li>Call functions in User32.dll or Gdi32.dll. Some functions load another DLL, which may not be initialized.</li>
+<li>Use managed code.</li>
+</ul>
+<p>The following tasks are safe to perform within <strong>DllMain</strong>:</p>
+<ul>
+<li>Initialize static data structures and members at compile time.</li>
+<li>Create and initialize synchronization objects.</li>
+<li>Allocate memory and initialize dynamic data structures (avoiding the functions listed above.)</li>
+<li>Set up thread local storage (TLS).</li>
+<li>Open, read from, and write to files.</li>
+<li>Call functions in Kernel32.dll (except the functions that are listed above).</li>
+<li>Set global pointers to NULL, putting off the initialization of dynamic members. In Microsoft Windows Vistaâ„¢, you can use the one-time initialization functions to ensure that a block of code is executed only once in a multithreaded environment.</li>
+</ul>
+<h2>Deadlocks Caused by Lock Order Inversion</h2>
+<p>When you are implementing code that uses multiple synchronization objects such as locks, it is vital to respect lock order. When it is necessary to acquire more than one lock at a time, you must define an explicit precedence that is called a lock hierarchy or lock order. For example, if lock A is acquired before lock B somewhere in the code, and lock B is acquired before lock C elsewhere in the code, then the lock order is A, B, C and this order should be followed throughout the code. Lock order inversion occurs when the locking order is not followedâ€”for example, if lock B is acquired before lock A. Lock order inversion can cause deadlocks that are difficult to debug. To avoid such problems, all threads must acquire locks in the same order.</p>
+<p>It is important to note that the loader calls <a href="dllmain.html"><strong>DllMain</strong></a> with the loader lock already acquired, so the loader lock should have the highest precedence in the locking hierarchy. Also note that code only has to acquire the locks it requires for proper synchronization; it does not have to acquire every single lock that is defined in the hierarchy. For example, if a section of code requires only locks A and C for proper synchronization, then the code should acquire lock A before it acquires lock C; it is not necessary for the code to also acquire lock B. Furthermore, DLL code cannot explicitly acquire the loader lock. If the code must call an API such as <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulefilenamea"><strong>GetModuleFileName</strong></a> that can indirectly acquire the loader lock and the code must also acquire a private lock, then the code should call <strong>GetModuleFileName</strong> before it acquires lock P, thus ensuring that load order is respected.</p>
+<p>Figure 2 is an example that illustrates lock order inversion. Consider a DLL whose main thread contains <a href="dllmain.html"><strong>DllMain</strong></a>. The library loader acquires the loader lock L and then calls into <strong>DllMain</strong>. The main thread creates synchronization objects A, B, and G to serialize access to its data structures and then tries to acquire lock G. A worker thread that has already successfully acquired lock G then calls a function such as GetModuleHandle that attempts to acquire the loader lock L. Thus, the worker thread is blocked on L and the main thread is blocked on G, resulting in a deadlock.</p>
+<p><img src="images/fig2.png" alt="deadlock caused by lock order inversion" /></p>
+<p>To prevent deadlocks that are caused by lock order inversion, all threads should attempt to acquire synchronization objects in the defined load order at all times.</p>
+<h2>Best Practices for Synchronization</h2>
+<p>Consider a DLL that creates worker threads as part of its initialization. Upon DLL cleanup, it is necessary to synchronize with all the worker threads to ensure that the data structures are in a consistent state and then terminate the worker threads. Today, there is no straightforward way to completely solve the problem of cleanly synchronizing and shutting down DLLs in a multithreaded environment. This section describes the current best practices for thread synchronizing during DLL shutdown.</p>
+<p>Thread Synchronization in <a href="dllmain.html"><strong>DllMain</strong></a> during Process Exit</p>
+<ul>
+<li>By the time <a href="dllmain.html"><strong>DllMain</strong></a> is called at process exit, all the processâ€™s threads have been forcibly cleaned up and there is a chance that the address space is inconsistent. Synchronization is not required in this case. In other words, the ideal DLL_PROCESS_DETACH handler is empty.</li>
+<li>Windows Vista ensures that core data structures (environment variables, current directory, process heap, and so on) are in a consistent state. However, other data structures can be corrupted, so cleaning memory is not safe.</li>
+<li>Persistent state that needs to be saved must be flushed to permanent storage.</li>
+</ul>
+<p>Thread Synchronization in <strong>DllMain</strong> for DLL_THREAD_DETACH during DLL Unload</p>
+<ul>
+<li>When the DLL is unloaded, the address space is not thrown away. Therefore, the DLL is expected to perform a clean shutdown. This includes thread synchronization, open handles, persistent state, and allocated resources.</li>
+<li>Thread synchronization is tricky because waiting on threads to exit in <a href="dllmain.html"><strong>DllMain</strong></a> can cause a deadlock. For example, DLL A holds the loader lock. It signals thread T to exit and waits for the thread to exit. Thread T exits and the loader tries to acquire the loader lock to call into DLL Aâ€™s <strong>DllMain</strong> with DLL_THREAD_DETACH. This causes a deadlock. To minimize the risk of a deadlock:
+<ul>
+<li>DLL A gets a DLL_THREAD_DETACH message in its <a href="dllmain.html"><strong>DllMain</strong></a> and sets an event for thread T, signaling it to exit.</li>
+<li>Thread T finishes its current task, brings itself to a consistent state, signals DLL A, and waits infinitely. Note that the consistency-checking routines should follow the same restrictions as <a href="dllmain.html"><strong>DllMain</strong></a> to avoid deadlocking.</li>
+<li>DLL A terminates T, knowing that it is in a consistent state.</li>
+</ul>
+</li>
+</ul>
+<p>If a DLL is unloaded after all its threads have been created, but before they begin executing, the threads may crash. If the DLL created threads in its <strong>DllMain</strong> as part of its initialization, some threads may not have finished initialization and their DLL_THREAD_ATTACH message is still waiting to be delivered to the DLL. In this situation, if the DLL is unloaded, it will begin terminating threads. However, some threads may be blocked behind the loader lock. Their DLL_THREAD_ATTACH messages are processed after the DLL has been unmapped, causing the process to crash.</p>
+<h2>Recommendations</h2>
+<p>The following are recommended guidelines:</p>
+<ul>
+<li>Use Application Verifier to catch the most common errors in <a href="dllmain.html"><strong>DllMain</strong></a>.</li>
+<li>If using a private lock inside <a href="dllmain.html"><strong>DllMain</strong></a>, define a locking hierarchy and use it consistently. The loader lock must be at the bottom of this hierarchy.</li>
+<li>Verify that no calls depend on another DLL that may not have been fully loaded yet.</li>
+<li>Perform simple initializations statically at compile time, rather than in <a href="dllmain.html"><strong>DllMain</strong></a>.</li>
+<li>Defer any calls in <a href="dllmain.html"><strong>DllMain</strong></a> that can wait until later.</li>
+<li>Defer initialization tasks that can wait until later. Certain error conditions must be detected early so that the application can handle errors gracefully. However, there are tradeoffs between this early detection and the loss of robustness that can result from it. Deferring initialization is often best.</li>
+</ul>
+<p>Â </p>
+<p>Â </p>
+</body>

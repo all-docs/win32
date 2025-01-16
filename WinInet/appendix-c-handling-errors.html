@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Handling Errors (Windows Internet)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Handling Errors (Windows Internet)
+description: The GetLastError function retrieves the last error code for all of the WinINet functions.
+ms.assetid: ee619803-b2a3-4a99-a3e6-120e147843f7
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Handling Errors (Windows Internet)</h1>
+<p>The <a href="/windows/desktop/api/errhandlingapi/nf-errhandlingapi-getlasterror"><strong>GetLastError</strong></a> function retrieves the last error code for all of the WinINet functions. If <a href="wininet-errors.html"><strong>ERROR_INTERNET_EXTENDED_ERROR</strong></a> is returned, there is a string or buffer that contains a detailed error message. Call the <a href="/windows/desktop/api/Wininet/nf-wininet-internetgetlastresponseinfoa"><strong>InternetGetLastResponseInfo</strong></a> function to retrieve the extended error text.</p>
+<p>To get the error text for an error, call the <a href="/windows/desktop/api/winbase/nf-winbase-formatmessage"><strong>FormatMessage</strong></a> function, passing it an <strong>HMODULE</strong> handle to Wininet.dll, which can be obtained using the <a href="/windows/desktop/api/libloaderapi/nf-libloaderapi-getmodulehandlea">GetModuleHandle</a> function.</p>
+<p>The following is an example of an error-handling function.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &quot;strsafe.h&quot;
+#include &quot;wininet.h&quot;
+#include &lt;stdlib.h&gt;
+#pragma comment(lib, &quot;wininet.lib&quot;)
+#pragma comment(lib, &quot;user32.lib&quot;)
+
+#define  INET_ERR_OUT_MSG_BOX_BUFFER_SIZE      512
+#define  INET_ERR_OUT_FORMAT_BUFFER_SIZE       256
+
+#ifdef  _UNICODE
+#define _itot _itow_s
+#else
+#define _itot _itoa_s
+#endif
+
+// Forward declaration of helper function
+void WINAPI addLastErrorToMsg( LPTSTR szMsgBuffer, DWORD dwSize );
+
+// Function for displaying Internet Error information in a message box
+BOOL WINAPI InternetErrorOut(
+                              HWND hWnd,
+                              DWORD dwError,
+                              LPCTSTR szFailingFunctionName )
+{
+  HANDLE hProcHeap;
+  TCHAR  szMsgBoxBuffer[INET_ERR_OUT_MSG_BOX_BUFFER_SIZE],
+         szFormatBuffer[INET_ERR_OUT_FORMAT_BUFFER_SIZE],
+         szConnectiveText[]  = { TEXT( &quot;\nAdditional Information: &quot; )},
+        *szExtErrMsg         = NULL,
+        *szCombinedErrMsg    = NULL;
+  DWORD  dwInetError,
+         dwBaseLength,
+         dwExtLength = 0;
+
+  if( ( hProcHeap = GetProcessHeap( ) ) == NULL )
+  {
+    StringCchCopy( szMsgBoxBuffer, INET_ERR_OUT_MSG_BOX_BUFFER_SIZE, 
+      TEXT( &quot;Call to GetProcessHeap( ) failed...&quot; ) ); 
+    goto InetErrorOutError_1;
+  }
+
+  dwBaseLength = FormatMessage(
+    FORMAT_MESSAGE_FROM_HMODULE,             // dwFlags
+    GetModuleHandle( TEXT(&quot;wininet.dll&quot;) ),  // lpSource
+    dwError,                                 // dwMessageId
+    0,                                       // dwLanguageId
+    (LPTSTR)szFormatBuffer,                  // lpBuffer
+    INET_ERR_OUT_FORMAT_BUFFER_SIZE,         // nSize
+    NULL );                                  // * arguments
+
+  if( !dwBaseLength )
+  {
+    StringCchCopy( szMsgBoxBuffer, INET_ERR_OUT_MSG_BOX_BUFFER_SIZE, 
+                   TEXT( &quot;Call to FormatMessage( ) failed...&quot; ) ); 
+    addLastErrorToMsg( szMsgBoxBuffer, 
+                       INET_ERR_OUT_MSG_BOX_BUFFER_SIZE );
+    goto InetErrorOutError_1;
+  }
+
+  if( FAILED( StringCchPrintf( szMsgBoxBuffer, 
+                INET_ERR_OUT_MSG_BOX_BUFFER_SIZE,
+                TEXT( &quot;%s error; code: %d\nDescription: %s\n&quot; ),
+                szFailingFunctionName, dwError, szFormatBuffer ) ) )
+  {
+    StringCchCopy( szMsgBoxBuffer, INET_ERR_OUT_MSG_BOX_BUFFER_SIZE, 
+      TEXT( &quot;Call to StringCchPrintf( ) failed...\n&quot; ) ); 
+    goto InetErrorOutError_1;
+  }
+
+  StringCchLength( szMsgBoxBuffer, INET_ERR_OUT_MSG_BOX_BUFFER_SIZE,
+                (size_t*) &amp;dwBaseLength );
+  // Adjust base-length value to count the number of bytes:
+  dwBaseLength *= sizeof( TCHAR );
+
+  if( dwError == ERROR_INTERNET_EXTENDED_ERROR )
+  {
+    InternetGetLastResponseInfo( &amp;dwInetError, NULL, &amp;dwExtLength );
+    // Adjust the extended-length value to a byte count 
+    // that includes the terminating null:
+    ++dwExtLength *= sizeof( TCHAR );
+    if( ( szExtErrMsg = (TCHAR*)HeapAlloc( hProcHeap, 0, dwExtLength)) 
+         == NULL )
+    {
+      StringCchCat( szMsgBoxBuffer, INET_ERR_OUT_MSG_BOX_BUFFER_SIZE, 
+        TEXT(&quot;\nFailure: Could not allocate buffer for addional details.&quot;)); 
+      addLastErrorToMsg( szMsgBoxBuffer, 
+                         INET_ERR_OUT_MSG_BOX_BUFFER_SIZE );
+      goto InetErrorOutError_1;
+    }
+
+    if( !InternetGetLastResponseInfo( &amp;dwInetError, 
+                                      szExtErrMsg, 
+                                      &amp;dwExtLength ) )
+    {
+      StringCchCat( szMsgBoxBuffer, INET_ERR_OUT_MSG_BOX_BUFFER_SIZE, 
+        TEXT( &quot;\nCall to InternetGetLastResponseInfo( ) failed--&quot; ) ); 
+      addLastErrorToMsg( szMsgBoxBuffer, 
+                         INET_ERR_OUT_MSG_BOX_BUFFER_SIZE );
+      goto InetErrorOutError_2;
+    }
+    dwBaseLength += dwExtLength + sizeof( szConnectiveText );
+  }
+
+  if( ( szCombinedErrMsg = (TCHAR*)HeapAlloc( hProcHeap, 0, 
+                                              dwBaseLength + sizeof(TCHAR) ) ) 
+                         == NULL )
+  {
+    StringCchCat( szMsgBoxBuffer, INET_ERR_OUT_MSG_BOX_BUFFER_SIZE, 
+      TEXT( &quot;\nFailure: Could not allocate final output buffer.&quot; ) ); 
+    addLastErrorToMsg( szMsgBoxBuffer, 
+                       INET_ERR_OUT_MSG_BOX_BUFFER_SIZE );
+    goto InetErrorOutError_2;
+  }
+
+  if( FAILED( StringCchCopy( szCombinedErrMsg, 
+                dwBaseLength, szMsgBoxBuffer ) ) ||
+      ( dwExtLength &amp;&amp; 
+        ( FAILED( StringCchCat( szCombinedErrMsg, 
+                    dwBaseLength, szConnectiveText ) ) ||
+          FAILED( StringCchCat( szCombinedErrMsg, 
+                    dwBaseLength, szExtErrMsg ) ) ) ) )
+  {
+    StringCchCat( szMsgBoxBuffer, INET_ERR_OUT_MSG_BOX_BUFFER_SIZE, 
+      TEXT( &quot;\nFailure: Could not assemble final message.&quot; ) ); 
+    goto InetErrorOutError_3;
+  }
+
+  MessageBox( hWnd, 
+    szCombinedErrMsg, 
+    TEXT( &quot;Internet Error Message&quot; ),
+    MB_OK | MB_ICONERROR );
+  HeapFree( hProcHeap, 0, szExtErrMsg );
+  HeapFree( hProcHeap, 0, szCombinedErrMsg );
+
+  return( TRUE );
+
+InetErrorOutError_3:
+  HeapFree( hProcHeap, 0, szCombinedErrMsg );
+InetErrorOutError_2:
+  HeapFree( hProcHeap, 0, szExtErrMsg );
+InetErrorOutError_1:
+  MessageBox( hWnd,
+    (LPCTSTR) szMsgBoxBuffer,
+    TEXT( &quot;InternetErrorOut( ) Failed&quot; ),
+    MB_OK | MB_ICONERROR );
+  return( FALSE );
+}
+
+
+void WINAPI addLastErrorToMsg( LPTSTR szMsgBuffer, DWORD dwSize )
+{
+  TCHAR szNumberBuffer[32];
+
+  _itot( GetLastError( ), szNumberBuffer, 10 );
+  StringCchCat( szMsgBuffer, dwSize, 
+        TEXT( &quot;\n   System Error number: &quot; ) ); 
+  StringCchCat( szMsgBuffer, dwSize, szNumberBuffer );
+  StringCchCat( szMsgBuffer, dwSize, TEXT( &quot;.\n&quot; ) ); 
+}
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+WinINet does not support server implementations. In addition, it should not be used from a service. For server implementations or services use <a href="/windows/desktop/WinHttp/winhttp-start-page">Microsoft Windows HTTP Services (WinHTTP)</a>.</p>
+</blockquote>
+<p>Â </p>
+<p>Â </p>
+<p>Â </p>
+</body>

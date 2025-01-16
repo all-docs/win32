@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WriteRead Sample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: WriteRead Sample
+description: The WriteRead.cpp creates a property set, writes a property, closes and reopens the property set, and reads back the property.
+ms.assetid: c5807dd9-2928-497b-9446-729dcaeebc8a
+keywords:</p>
+<ul>
+<li>Structured Storage Strctd Stg , samples, WriteRead
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>WriteRead Sample</h1>
+<p>The WriteRead.cpp creates a property set, writes a property, closes and reopens the property set, and reads back the property. This sample application creates the file &quot;WriteRead.stg&quot; in the current directory. It creates property sets in a structure storage file, but a one-line change causes it to create NTFS file system property sets.</p>
+<pre lang="C++"><code>//+===================================================================
+//
+//      To build:
+//      cl /GX WriteRead.cpp
+//
+//+===================================================================
+
+
+#define WIN32_LEAN_AND_MEAN
+#define UNICODE
+#define _UNICODE
+
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;ole2.h&gt;
+
+// Implicitly link ole32.dll
+#pragma comment( lib, &quot;ole32.lib&quot; )
+
+
+// From uuidgen.exe:
+const FMTID fmtid = { /* d170df2e-1117-11d2-aa01-00805ffe11b8 */
+    0xd170df2e,
+    0x1117,
+    0x11d2,
+    {0xaa, 0x01, 0x00, 0x80, 0x5f, 0xfe, 0x11, 0xb8}
+  };
+
+
+EXTERN_C void wmain()
+{
+   HRESULT hr = S_OK;
+   IPropertySetStorage *pPropSetStg = NULL;
+   IPropertyStorage *pPropStg = NULL;
+   WCHAR *pwszError = L&quot;&quot;;
+   PROPSPEC propspec; 
+   PROPVARIANT propvarWrite; 
+   PROPVARIANT propvarRead;
+
+   try
+   {
+
+        // Create a file and a property set within it.
+
+        hr = StgCreateStorageEx( L&quot;WriteRead.stg&quot;,
+                   STGM_CREATE|STGM_SHARE_EXCLUSIVE|STGM_READWRITE,
+                   STGFMT_STORAGE,
+                   // STGFMT_STORAGE =&gt; Structured Storage 
+                                     // property sets
+                   // STGFMT_FILE    =&gt; NTFS file system 
+                                     // property sets
+                   0, NULL, NULL,
+                   IID_IPropertySetStorage,
+                   reinterpret_cast&lt;void**&gt;(&amp;pPropSetStg) );
+        if( FAILED(hr) ) throw L&quot;Failed StgCreateStorageEx&quot;;
+
+        hr = pPropSetStg-&gt;Create( fmtid, NULL, PROPSETFLAG_DEFAULT, 
+                    STGM_CREATE|STGM_READWRITE|STGM_SHARE_EXCLUSIVE,
+                    &amp;pPropStg );
+        if( FAILED(hr) ) throw L&quot;Failed IPropertySetStorage::Create&quot;;
+
+        // Write a Unicode string property to the property set
+
+        propspec.ulKind = PRSPEC_LPWSTR;
+        propspec.lpwstr = L&quot;Property Name&quot;;
+
+        propvarWrite.vt = VT_LPWSTR;
+        propvarWrite.pwszVal = L&quot;Property Value&quot;;
+
+        hr = pPropStg-&gt;WriteMultiple( 1, &amp;propspec, &amp;propvarWrite, 
+                                      PID_FIRST_USABLE );
+        if( FAILED(hr) ) 
+            throw L&quot;Failed IPropertyStorage::WriteMultiple&quot;;
+
+        // Not required, but give the property set a friendly 
+        // name.
+
+        PROPID propidDictionary = PID_DICTIONARY;
+        WCHAR *pwszFriendlyName = 
+                     L&quot;Write/Read Properties Sample Property Set&quot;;
+        hr = pPropStg-&gt;WritePropertyNames( 1, &amp;propidDictionary, 
+                                           &amp;pwszFriendlyName );
+        if( FAILED(hr) ) 
+            throw L&quot;Failed IPropertyStorage::WritePropertyNames&quot;;
+
+        // Commit changes to the property set.
+
+        hr = pPropStg-&gt;Commit(STGC_DEFAULT);
+        if( FAILED(hr) ) 
+            throw L&quot;Failed IPropertyStorage::Commit&quot;;
+
+        // Close and reopen everything.
+        // By using the STGFMT_ANY flag in the StgOpenStorageEx call,
+        // it does not matter if this is a Structured Storage 
+        // property set or an NTFS file system property set 
+        // (for more information see the StgCreateStorageEx 
+        // call above).
+
+        pPropStg-&gt;Release(); pPropStg = NULL;
+        pPropSetStg-&gt;Release(); pPropSetStg = NULL;
+
+        hr = StgOpenStorageEx( L&quot;WriteRead.stg&quot;,
+                             STGM_READ|STGM_SHARE_DENY_WRITE,
+                             STGFMT_ANY,
+                             0, NULL, NULL, 
+                             IID_IPropertySetStorage,
+                             reinterpret_cast&lt;void**&gt;(&amp;pPropSetStg) );
+        if( FAILED(hr) ) 
+            throw L&quot;Failed StgOpenStorageEx&quot;;
+
+        hr = pPropSetStg-&gt;Open( fmtid, STGM_READ|STGM_SHARE_EXCLUSIVE,
+                                &amp;pPropStg );
+        if( FAILED(hr) ) 
+            throw L&quot;Failed IPropertySetStorage::Open&quot;;
+
+        // Read the property back and validate it
+
+        hr = pPropStg-&gt;ReadMultiple( 1, &amp;propspec, &amp;propvarRead );
+        if( FAILED(hr) ) 
+            throw L&quot;Failed IPropertyStorage::ReadMultiple&quot;;
+
+        if( S_FALSE == hr )
+          throw L&quot;Property didn't exist after reopening the 
+                                                     property set&quot;;
+        else if( propvarWrite.vt != propvarRead.vt )
+          throw L&quot;Property types didn't match after reopening the 
+                                                     property set&quot;;
+        else if( 0 != wcscmp( propvarWrite.pwszVal, 
+                              propvarRead.pwszVal ))
+          throw L&quot;Property values didn't match after reopening the 
+                                                     property set&quot;;
+        else
+           wprintf( L&quot;Success\n&quot; );
+
+   }
+   catch( const WCHAR *pwszError )
+   {
+       wprintf( L&quot;Error:  %s (hr=%08x)\n&quot;, pwszError, hr );
+   }
+
+   PropVariantClear( &amp;propvarRead );
+            if( pPropStg ) pPropStg-&gt;Release();
+   if( pPropSetStg ) pPropSetStg-&gt;Release();
+
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

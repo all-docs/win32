@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Setting Video Compression Properties</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Setting Video Compression Properties
+ms.assetid: 2be03a2c-39a5-46da-9bbc-af42c08150ab
+title: Setting Video Compression Properties
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Setting Video Compression Properties</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>Video compression filters can support the <a href="/windows/desktop/api/Strmif/nn-strmif-iamvideocompression"><strong>IAMVideoCompression</strong></a> interface on their output pins. Use this interface to set compression properties, such as the key frame rate, the number of predicted (P) frames per key frame, and the relative compression quality.</p>
+<p>First, call the <a href="/windows/desktop/api/Strmif/nf-strmif-ibasefilter-enumpins"><strong>IBaseFilter::EnumPins</strong></a> method to find the filter's output pin, and query the pin for the interface. Some filters may not support the interface at all. Others may expose the interface but not support every compression property. To determine which properties are supported, call <a href="/windows/desktop/api/Strmif/nf-strmif-iamvideocompression-getinfo"><strong>IAMVideoCompression::GetInfo</strong></a>. This method returns several pieces of information:</p>
+<ul>
+<li>A set of capabilities flags</li>
+<li>A descriptive string and version-number string</li>
+<li>Default values for key frame rate, P frame rate, and quality (when supported)</li>
+</ul>
+<p>The method has the following syntax:</p>
+<pre lang="C++"><code>hr = pCompress-&gt;GetInfo(pszVersion, &amp;cbVersion, pszDesc, &amp;cbDesc, 
+         &amp;lKeyFrame, &amp;lPFrame, &amp;dblQuality, &amp;lCap);
+</code></pre>
+<p>The <em>pszVersion</em> and <em>pszDesc</em> parameters are wide-character buffers that receive the version string and description string. The <em>cbVersion</em> and <em>cbDesc</em> parameters receive the required buffer sizes in bytes (not characters). The <em>lKeyFrame</em>, <em>lPFrame</em>, and <em>dblQuality</em> parameters receive the default values for the key frame rate, P frame rate, and quality. Quality is expressed as a floating-point number from 0.0 to 1.0. The <em>lCap</em> parameter receives a bitwise <strong>OR</strong> of the capabilities flags, which are defined by the <a href="/windows/desktop/api/strmif/ne-strmif-compressioncaps"><strong>CompressionCaps</strong></a> enumerated type.</p>
+<p>Any of these parameters can be <strong>NULL</strong>, in which case the method ignores that parameter. For example, to allocate buffers for the version and description strings, first call the method with <strong>NULL</strong> in the first and third parameters. Use the returned values for <em>cbVersion</em> and <em>cbDesc</em> to allocate the buffers and then call the method again:</p>
+<pre lang="C++"><code>int cbVersion, cbDesc; // Size in bytes, not characters!
+hr = pCompress-&gt;GetInfo(0, &amp;cbVersion, 0, &amp;cbDesc, 0, 0, 0, 0);
+if (SUCCEEDED(hr))
+{
+    WCHAR *pszVersion = new WCHAR[cbVersion/2]; // Wide character = 2 bytes
+    WCHAR *pszDesc = new WCHAR[cbDesc/2];
+    hr = pCompress-&gt;GetInfo(pszVersion, 0, pszDesc, 0, 0, 0, 0, 0);
+}
+</code></pre>
+<p>The value of <em>lCap</em> indicates which of the other <strong>IAMVideoCompression</strong> methods the filter supports. For example, if <em>lCap</em> contains the CompressionCaps_CanKeyFrame flag, you can call <a href="/windows/desktop/api/Strmif/nf-strmif-iamvideocompression-get_keyframerate"><strong>IAMVideoCompression::get_KeyFrameRate</strong></a> to get the key frame rate and <a href="/windows/desktop/api/Strmif/nf-strmif-iamvideocompression-put_keyframerate"><strong>IAMVideoCompression::put_KeyFrameRate</strong></a> to set the key frame rate. A negative value indicates that the filter will use the default value, as obtained from <a href="/windows/desktop/api/Strmif/nf-strmif-iamvideocompression-getinfo"><strong>IAMVideoCompression::GetInfo</strong></a>. For example:</p>
+<pre lang="C++"><code>if (lCap &amp; CompressionCaps_CanKeyFrame)
+{
+    hr = pCompress-&gt;get_KeyFrameRate(&amp;lKeyFrame);
+    if (FAILED(hr) || lKeyFrame &lt; 0)
+    {
+        lKeyFrame = lDefaultKeyFrame; // From GetInfo.
+    }
+}
+</code></pre>
+<p>The following code example tries to find the <strong>IAMVideoCompression</strong> interface on the output pin. If it succeeds, it retrieves the default and actual values for the compression properties:</p>
+<pre lang="C++"><code>HRESULT hr = E_FAIL;
+IEnumPins *pEnum = NULL;
+IPin *pPin = NULL;
+IAMVideoCompression *pCompress = NULL;
+
+// Find the pin that supports IAMVideoCompression (if any).
+pFilter-&gt;EnumPins(&amp;pEnum);
+while (S_OK == pEnum-&gt;Next(1, &amp;pPin, NULL))
+{
+    hr = pPin-&gt;QueryInterface(IID_IAMVideoCompression, (void**)&amp;pCompress);
+    pPin-&gt;Release();
+    if (SUCCEEDED(hr)) // Found the interface.
+    {
+        break;
+    }
+}
+if (SUCCEEDED(hr)) 
+{
+    long lCap;                     // Capability flags
+    long lKeyFrame, lPFrame;       // Real values
+    double m_Quality;
+    long lKeyFrameDef, lPFrameDef; // Default values
+    double QualityDef;
+    
+    // Get default values and capabilities.
+    hr = pCompress-&gt;GetInfo(0, 0, 0, 0, &amp;KeyFrameDef, &amp;lPFrameDef,
+             &amp;QualityDef, &amp;lCap);
+    if (SUCCEEDED(hr))
+    {
+        // Get actual values where possible.
+        if (lCap &amp; CompressionCaps_CanKeyFrame)
+        {
+            hr = pCompress-&gt;get_KeyFrameRate(&amp;lKeyFrame);
+            if (FAILED(hr) || lKeyFrame &lt; 0)
+                lKeyFrame = lKeyFrameDef;
+        }
+        if (lCap &amp; CompressionCaps_CanBFrame)
+        {
+            hr = pCompress-&gt;get_PFramesPerKeyFrame(&amp;lPFrame);
+            if (FAILED(hr) || lPFrame &lt; 0)
+                lPFrame = lPFrameDef;
+        }
+        if (lCap &amp; CompressionCaps_CanQuality)
+        {
+            hr = pCompress-&gt;get_Quality(&amp;Quality);
+            if (FAILED(hr) || Quality &lt; 0)
+                Quality = QualityDef;
+        }
+    }
+}
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+If you are using the <a href="/windows/desktop/api/Strmif/nn-strmif-icapturegraphbuilder2"><strong>ICaptureGraphBuilder2</strong></a> interface to build your graph, you can obtain the <strong>IAMVideoCompression</strong> interface by calling <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findinterface"><strong>ICaptureGraphBuilder2::FindInterface</strong></a>, instead of using <strong>IBaseFilter::EnumPins</strong>. The <strong>FindInterface</strong> method is a helper method that searches filters and pins in the graph for a specified interface.</p>
+</blockquote>
+<p>Â </p>
+<p>Â </p>
+<p>Â </p>
+</body>

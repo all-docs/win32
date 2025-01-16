@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Working with Pin Categories</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Working with Pin Categories
+ms.assetid: 1ee648b3-8370-4e4d-b513-d998131512ee
+title: Working with Pin Categories
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Working with Pin Categories</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>To search on a filter for a pin with a given pin category, you can use the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findpin"><strong>ICaptureGraphBuilder2::FindPin</strong></a> method. The following example searches for a video preview pin:</p>
+<pre lang="C++"><code>int i = 0;
+hr = pBuild-&gt;FindPin(
+    pFilter,               // Pointer to a filter to search.
+    PINDIR_OUTPUT,         // Which pin direction?
+    &amp;PIN_CATEGORY_PREVIEW, // Which category? (NULL means &quot;any category&quot;)
+    &amp;MEDIATYPE_Video,      // What media type? (NULL means &quot;any type&quot;)
+    FALSE,                 // Must be connected?
+    i,                     // Get the i'th matching pin (0 = first match)
+    &amp;pPin                  // Receives a pointer to the pin.
+);
+</code></pre>
+<p>The first parameter is a pointer to the filter's <a href="/windows/desktop/api/Strmif/nn-strmif-ibasefilter"><strong>IBaseFilter</strong></a> interface. The next three parameters specify the direction, pin category, and media type. The value <strong>FALSE</strong> in the fifth parameter indicates that the pin can be either connected or unconnected. (For the exact definitions of these parameters, refer to the documentation for the method.) If the method finds a matching pin, it returns a pointer to the <a href="/windows/desktop/api/Strmif/nn-strmif-ipin"><strong>IPin</strong></a> interface in the <em>pPin</em> parameter.</p>
+<p>Although the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findpin"><strong>FindPin</strong></a> method is convenient, you can also write your own helper functions if you prefer. To determine a pin's category, call the <a href="ikspropertyset-get.html"><strong>IKsPropertySet::Get</strong></a> method as described in the topic <a href="pin-property-set.html">Pin Property Set</a>.</p>
+<p>The following code shows a helper function that checks whether a pin matches a specified category:</p>
+<pre lang="C++"><code>// Returns TRUE if a pin matches the specified pin category.
+
+BOOL PinMatchesCategory(IPin *pPin, REFGUID Category)
+{
+    BOOL bFound = FALSE;
+
+    IKsPropertySet *pKs = NULL;
+    HRESULT hr = pPin-&gt;QueryInterface(IID_PPV_ARGS(&amp;pKs));
+    if (SUCCEEDED(hr))
+    {
+        GUID PinCategory;
+        DWORD cbReturned;
+        hr = pKs-&gt;Get(AMPROPSETID_Pin, AMPROPERTY_PIN_CATEGORY, NULL, 0, 
+            &amp;PinCategory, sizeof(GUID), &amp;cbReturned);
+        if (SUCCEEDED(hr) &amp;&amp; (cbReturned == sizeof(GUID)))
+        {
+            bFound = (PinCategory == Category);
+        }
+        pKs-&gt;Release();
+    }
+    return bFound;
+}
+</code></pre>
+<p>The next example is a function that searches for a pin by category, similar to the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findpin"><strong>FindPin</strong></a> method:</p>
+<pre lang="C++"><code>// Finds the first pin that matches a specified pin category and direction.
+
+HRESULT FindPinByCategory(
+    IBaseFilter *pFilter, // Pointer to the filter to search.
+    PIN_DIRECTION PinDir, // Direction of the pin.
+    REFGUID Category,     // Pin category.
+    IPin **ppPin)         // Receives a pointer to the pin.
+{
+    *ppPin = 0;
+
+    HRESULT hr = S_OK;
+    BOOL bFound = FALSE;
+
+    IEnumPins *pEnum = 0;
+    IPin *pPin = 0;
+
+    hr = pFilter-&gt;EnumPins(&amp;pEnum);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    while (hr = pEnum-&gt;Next(1, &amp;pPin, 0), hr == S_OK)
+    {
+        PIN_DIRECTION ThisPinDir;
+        hr = pPin-&gt;QueryDirection(&amp;ThisPinDir);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+        if ((ThisPinDir == PinDir) &amp;&amp; 
+            PinMatchesCategory(pPin, Category))
+        {
+            *ppPin = pPin;
+            (*ppPin)-&gt;AddRef();   // The caller must release the interface.
+            bFound = TRUE;
+            break;
+        }
+        SafeRelease(&amp;pPin);
+    }
+
+done:
+    SafeRelease(&amp;pPin);
+    SafeRelease(&amp;pEnum);
+    if (SUCCEEDED(hr) &amp;&amp; !bFound)
+    {
+        hr = E_FAIL;
+    }
+    return hr;
+}
+</code></pre>
+<p>The following code uses the previous function to search for a video port pin on a filter:</p>
+<pre lang="C++"><code>IPin *pVP; 
+hr = FindPinByCategory(pFilter, PINDIR_OUTPUT, 
+    PIN_CATEGORY_VIDEOPORT, &amp;pVP);
+if (SUCCEEDED(hr))
+{
+    // Use pVP ... 
+    // Release when you are done.
+    pVP-&gt;Release();
+}
+</code></pre>
+<p>For more information about property sets, refer to the <a href="/windows-hardware/drivers/gettingstarted/">Windows Driver Kit (WDK)</a> documentation.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="advanced-capture-topics.html">Advanced Capture Topics</a></p>
+<!-- raw HTML omitted -->
+<p><a href="pin-property-set.html">Pin Property Set</a></p>
+<!-- raw HTML omitted -->
+<p><a href="directshow-video-capture-filters.html">DirectShow Video Capture Filters</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

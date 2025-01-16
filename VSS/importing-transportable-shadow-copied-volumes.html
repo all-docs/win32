@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Importing Transportable Shadow Copied Volumes</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: It is sometimes desirable to create a shadow copy on one system, but use the shadow copy on a second system.
+ms.assetid: 4ec63917-03c0-434e-892e-3d9d4c47740e
+title: Importing Transportable Shadow Copied Volumes
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Importing Transportable Shadow Copied Volumes</h1>
+<p>It is sometimes desirable to create a shadow copy on one system, but use the shadow copy on a second system.</p>
+<p>Consider the case where data to be backed up is normally managed by a given system (<em>systemOne</em>) during normal operations, and that this data is physically stored on a storage array or an appliance.</p>
+<p>To minimize any disruption to <em>systemOne</em> (because backup operations can be resource intensive), it is desirable to perform the backup using <em>systemTwo</em>, a backup server, which has access to the same storage array as <em>systemOne</em>.</p>
+<p>To ensure a proper shadow copyâ€”cooperating with the writers on <em>systemOne</em> and preserving the state appropriately for ongoing tasksâ€”the shadow copy should be performed by <em>systemOne</em>.</p>
+<p>Therefore, <em>systemOne</em> must create a <a href="vssgloss-t.html"><em>transportable shadow copy</em></a>, which <em>systemTwo</em> will then import.</p>
+<p><strong>Windows ServerÂ 2003, Standard Edition, Windows ServerÂ 2003, Web Edition and WindowsÂ XP:</strong> Transportable shadow copy sets are not supported. All editions of Windows ServerÂ 2003 with Service PackÂ 1 (SP1) support transportable shadow copy sets.</p>
+<p>A typical example of importing a transportable shadow copy can proceed in the following way:</p>
+<ol>
+<li>
+<p>Initially, the logical unit (LUN) that is provided by the storage array is mounted as a volume on <em>systemOne</em> (say, F:).</p>
+</li>
+<li>
+<p>A requester that is running on <em>systemOne</em> instantiates an instance of <a href="/windows/desktop/api/VsBackup/nl-vsbackup-ivssbackupcomponents"><strong>IVssBackupComponents</strong></a> and proceeds as if it were preparing for a backup. (See <a href="overview-of-backup-initialization.html">Overview of Backup Initialization</a>, <a href="overview-of-the-backup-discovery-phase.html">Overview of the Backup Discovery Phase</a>, and <a href="overview-of-pre-backup-tasks.html">Overview of Pre-Backup Tasks</a> for more information.)</p>
+</li>
+<li>
+<p>The requester on <em>systemOne</em> modifies the shadow copy context that is typically used for local backup operation (<strong>VSS_CTX_APP_BACKUP</strong>) to indicate that a transportable shadow copy will be created (<strong>VSS_VOLSNAP_ATTR_TRANSPORTABLE</strong>). The transportable attribute can be added to other shadow copy contexts as well.</p>
+</li>
+<li>
+<p>With a shadow copy context of <strong>VSS_CTX_APP_BACKUP</strong> | <strong>VSS_VOLSNAP_ATTR_TRANSPORTABLE</strong>, the requester that is on <em>systemOne</em> creates a shadow copy by calling <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-dosnapshotset"><strong>IVssBackupComponents::DoSnapshotSet</strong></a>.</p>
+</li>
+<li>
+<p><em>SystemOne</em> uses <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-saveasxml"><strong>IVssBackupComponents::SaveAsXML</strong></a> to save the current state of the Backup Components Document and <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssexaminewritermetadata-saveasxml"><strong>IVssExamineWriterMetadata::SaveAsXML</strong></a> to save each writer's Writer Metadata Documents. The XML strings that contain these documents are then made available to a requester that is running on <em>systemTwo</em>.</p>
+<p>The requester transfers the Backup Components Document to <em>systemTwo</em>.</p>
+<p>Note that the requester on <em>systemOne</em> does not release its instance of <a href="/windows/desktop/api/VsBackup/nl-vsbackup-ivssbackupcomponents"><strong>IVssBackupComponents</strong></a> at this point if the purpose of the shadow copy is for backup. The interface should remain open until <em>systemTwo</em> successfully finishes its backup operations. Only then should the requester issue a <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-backupcomplete"><strong>BackupComplete</strong></a> event since some writers will truncate logs and do other work after a successful backup. If the goal of the shadow copy is data mining or other purposes, then the interface can be closed at this step.</p>
+</li>
+<li>
+<p>The requester on <em>systemTwo</em> then calls <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-importsnapshots"><strong>IVssBackupComponents::ImportSnapshots</strong></a> to get access to the shadow copy that was created by the requester on <em>systemOne</em>.</p>
+<blockquote>
+<p>[!Note]<br />
+The requester is responsible for serializing the import shadow copy operation. Also, if the call to <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-importsnapshots"><strong>IVssBackupComponents::ImportSnapshots</strong></a> fails, the VSS won't clean up LUNs on it's own. The requester has to initiate the cleanup of LUNs.</p>
+</blockquote>
+<p>Â </p>
+</li>
+<li>
+<p>The requester on <em>systemTwo</em> proceeds with the backup of the shadow copied material exactly as if it were backing up a shadow copy that it created by itself (see <a href="overview-of-actual-backup-of-files.html">Overview of Actual Backup Of Files</a>).</p>
+<p>The requester on <em>systemTwo</em> obtains the shadow copy's <a href="vssgloss-d.html"><em>device object</em></a> using <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-getsnapshotproperties"><strong>IVssBackupComponents::GetSnapshotProperties</strong></a> on the imported shadow copy and appends that to the beginning of the original file paths that were obtained from the metadata to access files to be backed up.</p>
+</li>
+<li>
+<p>After using the shadow copy, the requester on <em>systemTwo</em> must delete the shadow copy. As with non-transportable shadow copies, if the shadow copy context indicates auto-release shadow copies (for example, <strong>VSS_CTX_BACKUP</strong>), then releasing the <a href="/windows/desktop/api/VsBackup/nl-vsbackup-ivssbackupcomponents"><strong>IVssBackupComponents</strong></a> on <em>systemTwo</em> will cause the VSS service to delete the shadow copy. Otherwise, if the context indicates a persistent shadow copy (for example, <strong>VSS_CTX_APP_ROLLBACK</strong>), then the requester on <em>systemTwo</em> must explicitly delete the shadow copy.</p>
+<p>Then the requester on <em>systemTwo</em> signals the requester on <em>systemOne</em> that it has finished with the backup of the transportable shadow copy.</p>
+</li>
+<li>
+<p>After the requester on <em>systemOne</em> has received notification that the requester on <em>systemTwo</em> has finished the backup of the transportable shadow copy, it notifies the writers on its system by generating a <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-backupcomplete"><strong>BackupComplete</strong></a> event with a call to <strong>IVssBackupComponents::BackupComplete</strong>. At this point, the requester on <em>systemOne</em> is free to release its instance of <a href="/windows/desktop/api/VsBackup/nl-vsbackup-ivssbackupcomponents"><strong>IVssBackupComponents</strong></a>.</p>
+</li>
+</ol>
+<p><strong>Transportable shadow copies in a cluster:</strong> Transportable shadow copies must be imported from outside the cluster as long as the original volume is mounted within the cluster. For information about implementing a fast recovery in a cluster, see <a href="fast-recovery-using-transportable-shadow-copied-volumes.html">Fast Recovery Using Transportable Shadow Copied Volumes</a>.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

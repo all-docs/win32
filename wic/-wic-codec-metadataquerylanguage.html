@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Metadata Query Language Overview</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic introduces the metadata query language for Windows Imaging Component (WIC).
+ms.assetid: 5ffa0a69-b53d-4be3-b802-deaaa743e6bd
+title: Metadata Query Language Overview
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Metadata Query Language Overview</h1>
+<p>This topic introduces the metadata query language for Windows Imaging Component (WIC). You use the metadata query language to create expressions that find specific data (metadata items) and locations (metadata blocks) within the metadata of an image.</p>
+<p>This topic contains the following sections.</p>
+<ul>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#introduction">Introduction</a></li>
+<li><a href="#anatomy-of-a-path-expression">Anatomy of a Path Expression</a>
+<ul>
+<li><a href="#block-selection">Block Selection</a></li>
+<li><a href="#item-selection">Item Selection</a></li>
+<li><a href="#escape-character">Escape Character</a></li>
+<li><a href="#sample-expressions">Sample Expressions</a></li>
+</ul>
+</li>
+<li><a href="#photo-metadata-policy-expressions">Photo Metadata Policy Expressions</a></li>
+<li><a href="#metadata-query-language-summary">Metadata Query Language Summary</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Prerequisites</h2>
+<p>To understand this topic, you should be familiar with the WIC metadata system as described in the <a href="-wic-about-metadata.html">WIC Metadata Overview</a> and accessing metadata, as described in the <a href="-wic-codec-readingwritingmetadata.html">Overview of Reading and Writing Image Metadata</a>.</p>
+<h2>Introduction</h2>
+<p>You interact with the metadata platform primarily through two Component Object Model (COM) components: a query reader, represented by the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicmetadataqueryreader"><strong>IWICMetadataQueryReader</strong></a> interface, and a query writer, represented by the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicmetadataquerywriter"><strong>IWICMetadataQueryWriter</strong></a> interface. These components enable you to read or write metadata using the metadata query language. The query language describes the syntax of a path expression and the query components use this path expression to access the desired metadata. This path expression describes the location of a metadata block or item.</p>
+<p>A metadata block is a named group of metadata in a specific format. A metadata block can contain individual metadata items such as an author or creation time and additional metadata blocks. A metadata block's name is determined by its format. For example, a metadata block containing App1 metadata would be named &quot;app1&quot;. Common metadata formats include App1, Exif, IFD, and XMP.</p>
+<p>A metadata item is a name/value pair that describes characteristics like author, title, and rating.</p>
+<p>A path expression contains one or more metadata block names. It can also specify a metadata item within a metadata block. The following path expression represents an App1 block which contains an IFD block which contains the metadata item:</p>
+<ul>
+<li>/app1/ifd/{ushort=18249}</li>
+</ul>
+<p>The following diagram illustrates the makeup of an example JPEG image with four root metadata blocks: App0, App1, XMP, and an unknown block. Each highlighted item notes the type of metadata (block or item) and the query expression used to retrieve the data.</p>
+<p><img src="graphics/jpegwithcallouts.png" alt="jpeg image with metadata callouts" /></p>
+<blockquote>
+<p>[!Note]<br />
+The contents of this diagram are referenced throughout this document and are used in many of the examples.</p>
+</blockquote>
+<p>Â </p>
+<h2>Anatomy of a Path Expression</h2>
+<p>To access metadata using the WICÂ APIs, a fully qualified query expression must be used in most cases. This topic discusses fully qualified expressions for accessing metadata. If you need information about the cases in which non-fully qualified expressions are used, refer to the Photo Metadata Policy Expression section later in this document.</p>
+<p>What is a fully qualified query expression? In WIC, a fully qualified expression is a string that begins with the path character slash (/), followed by a navigation path to a metadata block or a specific metadata item. Each step within the navigation path is separated by a slash, forming an expression for accessing a metadata block or a metadata item. For example, the following is a fully qualified query expression that accesses the Microsoft Photo Rating in an IFD block that is nested in an App1 block:</p>
+<ul>
+<li>/app1/ifd/{ushort=18249}</li>
+</ul>
+<p>When WIC parses this expression, it first searches for the App1 metadata block within the image's metadata. If the App1 block is found, it continues its search looking for the nested IFD metadata block. If the IFD block is found, it then looks for the specific metadata item, in this case the MicrosoftPhoto rating under the tag 18249, within the IFD metadata block. If at any time WIC does not find a metadata block or item, it aborts the query.</p>
+<h3>Block Selection</h3>
+<p>The simplest WIC metadata query expression is an expression to obtain a query reader/writer for a specific metadata block. Obtaining a query reader/writer enables you to direct subsequent queries directly to a nested metadata block without dealing with its parent block. A block selection query expression is a navigation path to the desired metadata block. For example, in the previous illustration there are five metadata blocks, two of which are nested in other metadata blocks. The following are the path expressions to each metadata block in the JPEG example:</p>
+<ul>
+<li>/app0</li>
+<li>/app1</li>
+<li>/app1/ifd</li>
+<li>/app1/ifd/exif</li>
+<li>/xmp</li>
+</ul>
+<p>When you use a query reader/writer to execute a query, it returns a new query reader/writer that services queries within the scope of the specified metadata block. For instance, if you execute the query &quot;/app1&quot; , a new query reader is obtained and queries to the new reader are relative to the App1 block. This means that the query &quot;/ifd&quot; is valid for the new reader because the App1 block contains an IFD block. However, &quot;/xmp&quot; would not work because this App1 block does not contain an XMP metadata block.</p>
+<p>The query language also supports an index notation. Index notation provides access to a specific metadata block when multiple blocks of the same type exist. For the JPEG example, the following indexed path expression can be used:</p>
+<ul>
+<li>/[0]app1/[0]ifd</li>
+</ul>
+<p>In the query language, all indexes start at zero. In the previous expression, the first zero queries for the first App1 block and the second zero queries the first nested IFD block. Index notation can still be used even when multiple blocks of the same type do not exist. If the example JPEG included a second App1 block with an embedded IFD block, the expression &quot;/[1]app1/ifd&quot; would be used to access the second App1 block.</p>
+<p>Index notation becomes more common when dealing with PNG tEXt chunks because it is likely that the PNG image will have more than one tEXt chunk.</p>
+<blockquote>
+<p>[!Note]<br />
+Multidimensional array indexes are not supported.</p>
+</blockquote>
+<p>Â </p>
+<h3>Item Selection</h3>
+<p>You can access the metadata items in a metadata block by building on the block selection expressions. Consider the XMP and Microsoft Photo rating properties in the JPEG example. This metadata exists in two metadata blocks: the App1/IFD and XMP blocks. Therefore, more than one expression can be used to access the same data. The following expression accesses the MicrosoftPhoto rating in the XMP block:</p>
+<ul>
+<li>/xmp/xmp:Rating</li>
+</ul>
+<p>The &quot;xmp:&quot; part of the expression is a schema friendly identifier. XMP is an extensible standard and allows third party entities to publish their own schemas which define how to store certain metadata items. An XMP schema is fully identified by a URL, but WIC provides a set of friendly identifiers for well-known schemas. For more information, see the <a href="-wic-native-image-format-metadata-queries.html">Native Image Format Metadata Queries</a> topic.</p>
+<p>For JPEG images, rating information can also be stored within the App1 nested IFD block. However, unlike the XMP rating example, the IFD block does not use a schema name to access the rating information. You use a data expression instead. The following expression is used to access the MicrosoftPhoto rating in the App1 nested IFD block:</p>
+<ul>
+<li>/app1/ifd/{ushort=18249}</li>
+</ul>
+<p>In this expression, the &quot;/app1/ifd&quot; part of the expression is the navigation path to the IFD block (as discussed previously in the Block Selection section). The second part of the expression &quot;/{ushort=18249}&quot; accesses the data. This part of the expression instructs the query parser to find the data embedded in the unsigned short tag that has the tag identifier 18249.</p>
+<blockquote>
+<p>[!Note]<br />
+For a list of common metadata formats supported by each image format at, see the <a href="-wic-native-image-format-metadata-queries.html">Native Image Format Metadata Queries</a> topic.</p>
+</blockquote>
+<p>Â </p>
+<p>The {ushort=18249} is a data expression and can take several forms. A data expression is a two part expression containing the requested metadata tag or key, in this case &quot;18249&quot;, and the data type of the key, in this case &quot;ushort&quot;. The two parts are separated by an equal sign (=). WICsupports a majority of the common C/C++ data types. The following data types are accepted by the query language:</p>
+<ul>
+<li>char</li>
+<li>uchar</li>
+<li>short</li>
+<li>ushort</li>
+<li>long</li>
+<li>ulong</li>
+<li>int</li>
+<li>uint</li>
+<li>longlong</li>
+<li>float</li>
+<li>double</li>
+<li>str</li>
+<li>wstr</li>
+<li>guid</li>
+<li>bool</li>
+</ul>
+<blockquote>
+<p>[!Note]<br />
+This list only specifies the data types supported by the metadata query language. Use these data types when creating a metadata query data expression such as {ushort=18249}. The WIC returns the metadata item's value in the form of PROPVARIANT, which defines its own type system.</p>
+</blockquote>
+<p>Â </p>
+<p>The &quot;18249&quot; in the example is the data tag. This particular number is defined by Microsoft to contain the MicrosoftPhoto rating. The data tag can be any number, string, or GUID depending on the data item you are looking for</p>
+<p>Unlike the XMP Rating example, there is no name collision for the rating value in the App1/IFD block. This is because the XMP rating value is actually stored under a different ushort tag, 18246. Thus, the expression to access the XMP rating in the App1/IFD block is:</p>
+<ul>
+<li>/app1/ifd/{ushort=18246}</li>
+</ul>
+<blockquote>
+<p>[!Note]<br />
+For a formal description of the metadata query language, see the Metadata Query Language Summary section later in this document.</p>
+</blockquote>
+<p>Â </p>
+<h3>Escape Character</h3>
+<p>The query language is not case sensitive and treats all characters as lowercase. However, some metadata formats (such as XMP) are case sensitive. When working with a case-sensitive metadata format, use the backslash (\) character when you want to specify an uppercase character.</p>
+<p>The escape character is consumed by the language parser and the following character that follows it is interpreted directly. For example, the expression {char=\\} is resolved as '\'and {char=\C} is resolved as an uppercase C. Without the escape character, {char=\} would be an invalid expression and {char=C} would be interpreted as a lowercase c. Be sure to use the backslash escape character before all uppercase letters in metadata formats that are case sensitive.</p>
+<h3>Sample Expressions</h3>
+<p>The following table provides some example expressions and descriptions of their interpretations by the query language parser.</p>
+<table>
+<thead>
+<tr>
+<th>Expression</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ifd/xmp/exif:Author</td>
+<td>Corresponds to the following navigation path: IFD block -&gt; XMP block -&gt; &quot;Author&quot; property in the &quot;Exif&quot; schema.</td>
+</tr>
+<tr>
+<td>/[1]ifd/[0]xmp/exif:Author</td>
+<td>Same as the first item in this table except that the [#] prefix describes which item to navigate in event of a name collision.</td>
+</tr>
+<tr>
+<td>/ifd/{ushort=700}/Author</td>
+<td>Same as the first item in this table except that it uses a data expression to reference the XMP block instead of the block name &quot;xmp&quot; (XMP block is embedded under the unsigned short tag identifier 700). Also, the &quot;Author&quot; property does not specify a schema. The query parser will try to match the property across all schemas and return the first match.</td>
+</tr>
+<tr>
+<td>/ifd/xmp</td>
+<td>Provides a navigation path to a metadata block. If the block is found, a new metadata reader/writer is returned.</td>
+</tr>
+<tr>
+<td>/[*]tEXt/Keyword</td>
+<td>Gets or sets the Keyword property for a PNG chunk. Because the PNG metadata specification allows for multiple chunks of a particular type, the [*] notation gets/sets the data PNG chunk with the appropriate property. Per the PNG specification, no two chunks can have the same properties.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Each metadata block is also uniquely identified by the metadata GUID which can be used in place of the friendly block name. The following syntax can be used in place of providing block names: &quot;/{guid=GUID}/[n]{guid=GUID}/schema:tagidentifier&quot;</p>
+<p>The following table provides some invalid examples and the reasons they would be rejected.</p>
+<table>
+<thead>
+<tr>
+<th>Invalid Expression</th>
+<th>Rejection description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>/ifd/[0][2]exif/</td>
+<td>Rejected because multi dimensional array indexes are not supported.</td>
+</tr>
+<tr>
+<td>/ifd/{ushort=1}/{ushort=2}</td>
+<td>Rejected unless the IFD has a tagID=1 which is a metadata handler that contains a metadata item with a tagID=2.</td>
+</tr>
+<tr>
+<td>/{ushort=1}</td>
+<td>Rejected if the query processing is relative to a top level of the metadata hierarchy. This is because the top level contains only metadata blocks and not data items.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Photo Metadata Policy Expressions</h2>
+<p>As noted previously, a fully qualified query expression starts with a slash (/). Expressions that do not begin with the slash are evaluated as policy expressions. A policy expression enables you to query the photo metadata for image-related Windows <a href="https://msdn.microsoft.com/library/ms788673(VS.85).aspx">Shell Properties</a>. In the Data Selection section earlier in this document, the expression &quot;/xmp/xmp:Rating&quot; was used to access the XMP rating property. This property can also be queried using the following policy expression:</p>
+<ul>
+<li>System.SimpleRating</li>
+</ul>
+<p>To access the rating property from the MicrosoftPhoto schema, the following query expression can be used:</p>
+<ul>
+<li>System.Rating</li>
+</ul>
+<p>Photo metadata policy expressions behave differently from fully qualified metadata queries in a few notable ways.</p>
+<p>First, when accessing metadata using a policy expression, WIC performs arbitration and conflict resolution in the case that the same property is available in multiple metadata blocks. For instance, both the MicrosoftPhoto and the XMP rating values are stored in both the App1/IFD block and the XMP block. The photo metadata policy determines the precedence for which block value is returned when reading metadata. When you are writing metadata, the photo metadata policy ensures that the same properties in different blocks are consistent. If you use a metadata query such as &quot;/xmp/xmp:Rating&quot;, you are responsible for arbitrating between the various metadata locations.</p>
+<blockquote>
+<p>[!Note]<br />
+For a list of the supported policy expressions and their mapping policies, see the <a href="photo-metadata-policies.html">Photo Metadata Policies</a> topic.</p>
+</blockquote>
+<p>Â </p>
+<p>Second, photo metadata policy expressions are independent of the image format, while fully qualified metadata queries are not. For example, the &quot;/xmp/xmp:Rating&quot; query is specific to the JPEG format. TIFF images also support XMP metadata, but it is stored differently compared to JPEG, so the TIFF query would be â€œ/ifd/xmp/xmp:Ratingâ€. However, in both cases the policy expression would be â€œSystem.SimpleRatingâ€.</p>
+<p>Photo metadata policy expressions provide a higher level of abstraction and simplicity when compared to fully qualified metadata queries, and so should be preferred in cases where low-level metadata access is not needed. However, policy expressions only provide access to a limited set of image metadata, whereas the metadata query language provides access to nearly all of the metadata stored within an image file.</p>
+<h2>Metadata Query Language Summary</h2>
+<p>The following table is a formal definition of the WIC metadata query language. Each grammar symbol represents an expression made up of other symbols. The expression can be another symbol or a sequence of other symbols separated by the vertical bar (|), indicating an &quot;or&quot; choice. The whole expression on the right is a possible substitution for the specified symbol on the left.</p>
+<table>
+<thead>
+<tr>
+<th>Symbol</th>
+<th>Expression</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>&lt;path&gt;</td>
+<td>&lt;name&gt; | '/' &lt;property path&gt;</td>
+</tr>
+<tr>
+<td>&lt;property path&gt;</td>
+<td>&lt;metadata item&gt; | &lt;property path&gt; '/' &lt;property path&gt;</td>
+</tr>
+<tr>
+<td>&lt;metadata item&gt;</td>
+<td>&lt;index name&gt; | &lt;item name&gt; | &lt;schema name&gt; ':' &lt;item name&gt;</td>
+</tr>
+<tr>
+<td>&lt;schema name&gt;</td>
+<td>&lt;item name&gt;</td>
+</tr>
+<tr>
+<td>&lt;item name&gt;</td>
+<td>&lt;metadata item&gt; | &lt;indexed item&gt;&lt;index&gt;</td>
+</tr>
+<tr>
+<td>&lt;indexed item&gt;</td>
+<td>&lt;item&gt; | &lt;implied metadata&gt;&lt;item&gt;</td>
+</tr>
+<tr>
+<td>&lt;implied metadata&gt;</td>
+<td>'<!-- raw HTML omitted -->'</td>
+</tr>
+<tr>
+<td>&lt;item&gt;</td>
+<td>&lt;name&gt; | &amp;lt;index&gt; &lt;data&gt; | &lt;data&gt;</td>
+</tr>
+<tr>
+<td>&lt;data&gt;</td>
+<td>'{' &lt;data type&gt; '=' &lt;value&gt; '}'</td>
+</tr>
+<tr>
+<td>&amp;lt;index&gt;</td>
+<td>'[' &lt;number&gt; | &lt;star&gt; ']'</td>
+</tr>
+<tr>
+<td>&lt;data type&gt;</td>
+<td>'char' | 'uchar' | 'short' | 'ushort' | 'long' | 'ulong' | 'int' | 'uint' | 'longlong' | 'ulonglong' | 'float' | 'double' | 'str' | 'wstr' | 'guid' | 'bool'</td>
+</tr>
+<tr>
+<td>&lt;data value&gt;</td>
+<td>&lt;number&gt; | &lt;name&gt; | &lt;guid&gt;</td>
+</tr>
+<tr>
+<td>&lt;star&gt;</td>
+<td>'*'</td>
+</tr>
+<tr>
+<td>&lt;number&gt;</td>
+<td>number</td>
+</tr>
+<tr>
+<td>&lt;name&gt;</td>
+<td>string</td>
+</tr>
+<tr>
+<td>&lt;guid&gt;</td>
+<td>guid</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Conceptual</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-about-windows-imaging-codec.html">Windows Imaging Component Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-about-metadata.html">WIC Metadata Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-readingwritingmetadata.html">Overview of Reading and Writing Image Metadata</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-metadatahandlers.html">Metadata Extensibility Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-jpegmetadataencoding.html">How-to: Re-encode a JPEG Image with Metadata</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

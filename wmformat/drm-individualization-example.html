@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DRM Individualization Example</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: DRM Individualization Example
+description: DRM Individualization Example
+ms.assetid: 665a5005-d435-4783-b48e-2d8400aa7638
+keywords:</p>
+<ul>
+<li>Windows Media Format SDK,DRM individualization</li>
+<li>Windows Media Format SDK,individualization</li>
+<li>digital rights management (DRM),individualization</li>
+<li>DRM (digital rights management),individualization</li>
+<li>digital rights management (DRM),DRM individualization</li>
+<li>DRM (digital rights management),DRM individualization</li>
+<li>DRM Client Extended APIs,individualization</li>
+<li>Client Extended APIs,individualization
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</li>
+</ul>
+<hr />
+<h1>DRM Individualization Example</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/wmformat/windows-media-format-11-sdk">Windows Media Format 11 SDK</a>, is a legacy feature. It has been superseded by <a href="/windows/win32/medfound/source-reader">Source Reader</a> and <a href="/windows/win32/medfound/sink-writer">Sink Writer</a>. <strong>Source Reader</strong> and <strong>Sink Writer</strong> have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>Source Reader</strong> and <strong>Sink Writer</strong> instead of <strong>Windows Media Format 11 SDK</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>The following code is an example of forced individualization, and also shows how to use the synchronous event handling model with events that have associated status interfaces.</p>
+<pre lang="C++"><code>HRESULT Individualize(IWMDRMSecurity* pSecurity)
+{
+    HRESULT hr = S_OK;
+    
+    IMFMediaEvent*                  pEvent        = NULL;
+    IUnknown*                       pCancelCookie = NULL;
+    IWMDRMIndividualizationStatus*  pIndivStatus  = NULL;   
+
+    MediaEventType EventType    = MEUnknown;
+    HRESULT        EventHR      = E_FAIL;
+    PROPVARIANT    EventValue;
+
+    WM_INDIVIDUALIZE_STATUS IndivStatusStruct;
+
+    // Intialize local variables.
+    ZeroMemory(&amp;IndivStatusStruct, sizeof(IndivStatusStruct));
+    PropVariantInit(&amp;EventValue);
+
+    // Check input pointer.
+    if (pSecurity == NULL) return E_POINTER;
+    
+    // Start the security update.
+    hr = pSecurity-&gt;PerformSecurityUpdate(WMDRM_SECURITY_PERFORM_FORCE_INDIV,
+        &amp;pCancelCookie);
+
+    // Get the EventGenerator from the Security interface; this 
+    //  is not neccessary, merely illustrative. 
+    if (SUCCEEDED(hr))
+    {
+        hr = pSecurity-&gt;QueryInterface( IID_IWMDRMEventGenerator, (void**)&amp;pEventGenerator);
+    }
+
+    // Event loop.
+    if (SUCCEEDED(hr))
+    { 
+        do
+        {
+            // Release the previous event (if there is one).
+            SAFE_RELEASE(pEvent);
+            SAFE_RELEASE(pIndivStatus);
+
+            // Check for an event.
+            hr = pEventGenerator-&gt;GetEvent(MF_EVENT_FLAG_NO_WAIT,
+                                           &amp;pEvent);
+
+            // If an event was not found, wait a half second and retry.
+            if (FAILED(hr))
+            {
+                Sleep(500);
+                continue;
+            }
+
+            // Get the event type.
+            hr = pEvent-&gt;GetType(&amp;EventType);
+            
+            // 
+            if (FAILED(hr))
+            {
+                printf(&quot;Failed to get event type&quot;);
+                break;
+            }
+
+            // Display a message depending on the event.
+            switch (EventType)
+            {
+            case MEWMDRMIndividualizationProgress:
+
+                printf(&quot;Received a progress event.\n&quot;);
+                
+                // Get the value of the event.
+                hr = pEvent-&gt;GetValue(&amp;EventValue);
+                if (!SUCCEEDED(hr))
+                    break;
+
+                // The event value should be of type VT_UNKNOWN
+                //  (an IUnknown pointer).
+                if (EventValue.vt != VT_UNKNOWN)
+                {
+                    // All progress events should have a value of 
+                    //  type VT_UNKNOWN. Note this and continue.
+                    printf(&quot;Unexpected event value type.\n&quot;);
+                    PropVariantClear(&amp;EventValue);
+                    break;
+                }
+
+                // Get the extended status interface.
+                hr = EventValue.punkVal-&gt;QueryInterface(
+                    IID_IWMDRMIndividualizationStatus, 
+                    (void**)&amp;pIndivStatus);
+
+                // If the interface can't be retrieved, print a
+                //  note and continue.
+                if (FAILED(hr))
+                {
+                    printf(&quot;Unable to get the extended status interface.\n&quot;);
+                    PropVariantClear(&amp;EventValue);
+                    break;
+                }
+
+                // Get the status structure from the newly
+                //  acquired interface.
+                hr = pIndivStatus-&gt;GetStatus(&amp;IndivStatusStruct);
+
+                // If the structure can't be retrieved, make a
+                //  note and continue.
+                if (FAILED(hr))
+                {
+                    printf(&quot;Unable to get the status structure.\n&quot;);
+                    PropVariantClear(&amp;EventValue);
+                    break;
+                }
+
+                //
+                // TODO: Print or log the information in the
+                //  structure to track status between events.
+                //
+
+                // Clear the event value for the next iteration.
+                PropVariantClear(&amp;EventValue);
+                break;
+            case MEWMDRMIndividualizationCompleted:
+                printf(&quot;Individualization completed.\n&quot;);
+                break;
+            default:
+                printf(&quot;Received event number %d.\n&quot;, EventType);
+                break;
+            }
+
+            // Give up CPU time to stay out of a busy loop.
+            Sleep(0);
+
+        } while (EventType != MEWMDRMIndividualizationCompleted); 
+    }
+
+    SAFE_RELEASE(pEvent);
+    SAFE_RELEASE(pCancelCookie);
+    SAFE_RELEASE(pIndivStatus);
+    SAFE_RELEASE(pEventGenerator);
+
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="performing-drm-individualization.html"><strong>Performing DRM Individualization</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="using-the-media-foundation-model.html"><strong>Using the Media Foundation Event Model</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

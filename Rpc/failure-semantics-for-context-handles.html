@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Failure Semantics for Context Handles</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Failure Semantics for Context Handles
+description: This topic discusses failure semantics for context handles.
+ms.assetid: fcf28519-39ad-4823-bc27-f3502e4d540c
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Failure Semantics for Context Handles</h1>
+<p>This topic discusses failure semantics for context handles.</p>
+<h2>Failure Semantics when Closing the Context Handle Fails</h2>
+<p>Imagine a client application is attempting to close a context handle it opened on the server, without shutting down the client process. Also, assume the call to the server to close the context handle fails (for example, the client is out of memory). The proper way to handle this situation is to call the <a href="/windows/desktop/api/Rpcndr/nf-rpcndr-rpcssdestroyclientcontext"><strong>RpcSsDestroyClientContext</strong></a> function. In such a case the client cleans up its side of the context handle, and abortively closes the connection to the server. Since the connection is really a connection pool (see <a href="rpc-and-the-network.html">RPC and the Network</a>), which is reference-counted with one reference for each opened binding or context handle, destroying the context handle by calling the <strong>RpcSsDestroyClientContext</strong> function does not actually destroy the connection. Rather, it decrements the reference count for the connection pool. For connections in the pool to be closed, the client needs to close all binding handles and context handles to that server from the client process. Then all connections in the pool are closed, and the server run-down mechanism is initiated and cleans up.</p>
+<h2>Failure Semantics During Change of State of the Context Handle</h2>
+<p>The information in this section refers to WindowsÂ XP and later platforms.</p>
+<p>Context handles are simply parameters to a function. All changes in the state of a context handle happen when parameters are marshaled or unmarshaled. For example, if a client opens a context handle (changes it from <strong>NULL</strong> to non-<strong>NULL</strong>), the RPC run-time does not actually open the RPC portion of the handle until the arguments are marshaled for sending to the client. Failures can occur during the interim. Due to a variety of possible network or low resource conditions, transmission of the packet to the client could fail. Or the server routine may throw an exception while attempting to change a context handle. In these or other failure situations, the client and server may get inconsistent views of the context handle. This section explains the rule for the state of the context handle, and the responsibility of client and server code during various failure conditions.</p>
+<ul>
+<li>
+<p>A <strong>NULL</strong> context handle arrives, but the server routine encounters a failure and throws an exception.</p>
+<p>It is the responsibility of the server routine to clean up any context handleâ€“related state it may have created. The RPC run time cleans up its state.</p>
+</li>
+<li>
+<p>A non-<strong>NULL</strong> context handles arrives, but the server routine encounters a failure and throws an exception.</p>
+<p>If the server routine closed the context handle, the client will not know about it, since the call will not succeed; further use of the context handle will result in an RPC_X_SS_CONTEXT_MISMATCH error on the client. If the server routine does not modify the context handle, the client can still use it. If the server routine changes the information stored in the server context, new calls from the client will use that information.</p>
+</li>
+<li>
+<p>A non-<strong>NULL</strong> context handle arrives, and the server routine closes the handle, but either marshaling after the context handle was marshaled failed, or processing after marshaling failed.</p>
+<p>The context handle is closed, and further calls by this client using this context handle result in an RPC_X_SS_CONTEXT_MISMATCH error on the client.</p>
+</li>
+<li>
+<p>A <strong>NULL</strong> context handle arrives, and the server creates its context for this handle, but either marshaling after the context handle was marshaled failed, or processing after marshaling failed.</p>
+<p>In this case, the RPC run time invokes the run down for this context handle, and cleans up the RPC state for this context handle. The context handle will not be created on the client side.</p>
+</li>
+<li>
+<p>A non-<strong>NULL</strong> context handle arrives, and the server either does not change the context handle, or it changes the information stored in the server context, and marshaling fails after the context handle is marshaled.</p>
+<p>New calls from the client will use the context handle that the server has.</p>
+</li>
+<li>
+<p>A <strong>NULL</strong> context handle arrives, and the server does not set it to anything other than <strong>NULL</strong>, but the call fails before the context handle is marshaled.</p>
+<p>In this case, no context handle is created on the client.</p>
+</li>
+<li>
+<p>A non-<strong>NULL</strong> context handle arrives, and the server sets it to <strong>NULL</strong>, but marshaling fails before the context handle is marshaled.</p>
+<p>In this case, the context handle remains closed on the server, and the client gets RPC_X_SS_CONTEXT_MISMATCH errors when it tries to use the context handle.</p>
+</li>
+<li>
+<p>A <strong>NULL</strong> context handle arrives on the server, and the server sets it to non-<strong>NULL</strong>, but marshaling fails before the context handle is marshaled.</p>
+<p>The context handle run down is to be invoked so that the server can clean up, and no context handle will be created on the client.</p>
+</li>
+<li>
+<p>A non-<strong>NULL</strong> context handle arrives, and the server either does not change the context handle, or it changes the information stored in the server context, and marshaling fails before the context handle is marshaled.</p>
+<p>New calls from the client will use the state on the server.</p>
+</li>
+<li>
+<p>A context handle is declared as a return value, and the server routine returns <strong>NULL</strong> for the context handle and marshaling fails before the context handle is marshaled.</p>
+<p>In this case, no new context is created on the client.</p>
+</li>
+<li>
+<p>A context handle is declared as a return value, and the server routine returns non-<strong>NULL</strong> for the context handle and marshaling fails before the context handle is marshaled.</p>
+<p>The RPC run time calls the context handle run-down routine to give it a chance to clean up, and no new context is created on the client.</p>
+</li>
+</ul>
+<p>Â </p>
+<p>Â </p>
+</body>

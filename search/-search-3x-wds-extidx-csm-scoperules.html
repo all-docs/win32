@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Managing Scope Rules</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The Crawl Scope Manager (CSM) enables you define scope rules that include or exclude URLs from the Windows Search crawl scope.
+ms.assetid: 132a55f9-680d-438e-b983-f5ce4cf66a41
+title: Managing Scope Rules
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Managing Scope Rules</h1>
+<p>The Crawl Scope Manager (CSM) enables you define scope rules that include or exclude URLs from the Windows Search crawl scope.</p>
+<p>The CSM lets you do the following:</p>
+<ul>
+<li>Add new scope rules to the working rule set</li>
+<li>Remove existing scope rules</li>
+<li>Enumerate default scope rules</li>
+<li>Discover whether a particular URL is included or excluded from the crawl scope or has a parent or child scope rule</li>
+</ul>
+<p>Â </p>
+<p>This topic includes the following subjects:</p>
+<ul>
+<li><a href="#about-scope-rules">About Scope Rules</a></li>
+<li><a href="#before-you-begin">Before You Begin</a></li>
+<li><a href="#adding-scope-rules">Adding Scope Rules</a>
+<ul>
+<li><a href="#notes-on-user-rules">Notes on User Rules</a></li>
+</ul>
+</li>
+<li><a href="#removing-scope-rules">Removing Scope Rules</a></li>
+<li><a href="#reverting-to-default-rules">Reverting to Default Rules</a></li>
+<li><a href="#enumerating-scope-rules">Enumerating Scope Rules</a></li>
+<li><a href="#tracing-scope-rules">Tracing Scope Rules</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>About Scope Rules</h2>
+<p>A scope rule is a rule that includes or excludes URLs within a search root from being crawled and indexed. Inclusion rules cause the indexer to include that URL in the scrawl scope, and exclusion rules cause the indexer exclude that URL (and its children) from the crawl scope.</p>
+<p>For example, suppose you've installed a new application whose data files are located in the folder WorkteamA\ProjectFiles on a local computer. Suppose you want everything within the ProjectFiles folder indexed except for items in the subfolder Prototypes. In this situation, you would need an inclusion rule for myPH:///C:\WorkteamA\ProjectFiles\ and an exclusion rule for myPH:///C:\WorkteamA\ProjectFiles\Prototypes\.</p>
+<p>There are three types of rules, with the following order of precedence:</p>
+<ol>
+<li>Group Policy rules are set by administrators and can override all other rules.</li>
+<li>User rules are set by users modifying the scope in the Windows Search options user interface. Users or other applications can remove all user rules and revert to default rules.</li>
+<li>Default rules are typically set by an application to define a default scope. For example, default rules might be set when a new protocol handler or container is added to the system.</li>
+</ol>
+<p>Together, these types of rules comprise the <em>working rule set</em> from which the Crawl Scope Manager (CSM) generates the full list of URLs to crawl. While default rules can be overridden by group policy rules and by user rules, they are maintained in their own default rule set, which you can revert to at any time. The indexer crawls the URLs from the working rule set and adds items, properties, and content to the catalog.</p>
+<blockquote>
+<p>[!Note]<br />
+Users with access to Control Panel can modify the rules through that interface. Therefore, applications offering scope management should always get the rules directly from the CSM by using the enumeration methods instead of relying on a saved copy of user rules.</p>
+</blockquote>
+<p>Â </p>
+<p>Exclusion rules can define pattern URLs with the wildcard character '*'; for example: file:///C:\ProjectA\*\. An exclusion rule using this pattern prevents the indexer from crawling any folders under the ProjectA directory. For a more complicated example, suppose there is an inclusion rule for file:///C:\ProjectA\ and an exclusion pattern rule for file:///C:\ProjectA\*\data\*. In this case, the indexer would crawl items in:</p>
+<ul>
+<li>C:\ProjectA\</li>
+<li>C:\ProjectA\<strong>version1</strong>\testfiles\</li>
+<li>C:\ProjectA\<strong>version1\temp</strong>\data\</li>
+</ul>
+<p>But the indexer would not crawl items in:</p>
+<ul>
+<li>C:\ProjectA\<strong>version1</strong>\data\</li>
+</ul>
+<p>Â </p>
+<h2>Before You Begin</h2>
+<p>Before you use any of the Crawl Scope Manager interfaces, you must perform the following prerequisite steps:</p>
+<ol>
+<li>Create the <strong>CSearchManager</strong> object and obtain its <strong>ISearchManager</strong> interface.</li>
+<li>Call <strong>ISearchManager::GetCatalog</strong> for &quot;SystemIndex&quot; to obtain an instance of the <strong>ISearchCatalogManager</strong> interface.</li>
+<li>Call <strong>ISearchCatalogManager::GetCrawlScopeManager</strong> to obtain an instance of the <strong>ISearchCrawlScopeManager</strong> interface.</li>
+</ol>
+<p>After making any changes to the Crawl Scope Manager, you must call the <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-saveall"><strong>ISearchCrawlScopeManager::SaveAll</strong></a> method. This method takes no parameters and returns S_OK on success.</p>
+<p>Â </p>
+<h2>Adding Scope Rules</h2>
+<p>The working rules set for the CSM includes user and default rules, as well as any rules forced by group policy. User rules are set up by users in a user interface, and default rules can be set by any of the following:</p>
+<ul>
+<li>Group policies implemented by a system administrator (These do not use the <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchcrawlscopemanager"><strong>ISearchCrawlScopeManager</strong></a> interface.)</li>
+<li>The installation or update of an application like Windows Search or a protocol handler</li>
+<li>A setup application for the addition of a new data store or container</li>
+</ul>
+<p>The <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchcrawlscopemanager"><strong>ISearchCrawlScopeManager</strong></a> provides two methods for adding new scope rules, as described in the following table. Paths for inclusion rules for the file system must end with a backslash '\' (for example, file:///C:\files\), and paths for exclusion rules must end with an asterisk (for example, file:///c:\files\*). Only exclusion rules can contain pattern URLs. Furthermore, we recommend including users' security identifiers (SIDs) in paths, for better security. Per-user paths are more secure as queries would then run in a per-user process, ensuring that one user cannot see items indexed from another user's inbox, for example.</p>
+<p>The following table describes the methods of the ISearchCrawlScopeManager interface used for adding new scope rules.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-adduserscoperule"><strong>AddUserScopeRule</strong></a></td>
+<td>Adds a rule for a URL, as specified by the user. These rules override default rules. Use this method if you have implemented a user interface that lets users manage their own scope rules and URLs.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-adddefaultscoperule"><strong>AddDefaultScopeRule</strong></a></td>
+<td>Adds a rule for a URL, as specified by another application like a protocol handler. Use this method when you have implemented a new protocol handler or added a new data store. These rules can be overridden by user rules.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Each method takes a URL to an indexable location and flags that determine whether the URL should be included or excluded. The <em>fFollowFlags</em> parameter is reserved for future use. When you add a new scope rule and the Crawl Scope Manager determines that the rule already exists (based on the URL or the pattern provided), the working rule set is updated so that (1) the old rule is replaced by the new rule and (2) any user rules that contradict it are removed.</p>
+<p><strong>Tip:</strong> While the file:// root is included by default in the crawl scope, Program Files is not indexed by default. Therefore, applications with data saved to their Program Files directory need to add their location as a default rule.</p>
+<h3>Notes on User Rules</h3>
+<p>If a new user rule is the same as an existing default rule, the new user rule overrides the default rule in the working rule set. If the new user rule is the same as an existing user rule, the old user rule is replaced.</p>
+<p>Setting the flag <em>fOverrideChildren</em> has the following results in the working rule set:</p>
+<ul>
+<li><strong>TRUE</strong> results in the removal of all child rules from the working rule set (both user rules and default rules).</li>
+<li>FALSE results in re-adding to the working rules set all the default rules that are children of the new user rule. If a child default rule is an inclusion and the new user rule is an exclusion, the default rule is changed to an inclusion user rule.</li>
+</ul>
+<p>Â </p>
+<h2>Removing Scope Rules</h2>
+<p>You can use the <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchcrawlscopemanager"><strong>ISearchCrawlScopeManager</strong></a> interface to remove a scope rule from the working rule set. This interface provides the following two methods for removing scope rules.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-removescoperule"><strong>RemoveScopeRule</strong></a></td>
+<td>Removes a user rule for a specified URL from the working rule set. If the user rule is a duplicate of or overrides a default rule, the default rule remains in the working rule set.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-removedefaultscoperule"><strong>RemoveDefaultScopeRule</strong></a></td>
+<td>Removes a default rule for a specified URL from both the working rule set and the default rule set. After calling this method, you cannot revert to this default rule by using RevertToDefaultScopes.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Each method takes a URL and a flag indicating whether the rule to be removed is an inclusion or exclusion rule. These methods returns an error if a rule with that URL and inclusion/exclusion flag is not found.</p>
+<p><strong>Tip:</strong> If you want to remove a scope from the crawl scope entirely, use the <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-removeroot"><strong>RemoveRoot</strong></a> method, which removes the search root and all associated scope rules. Doing this while uninstalling, for example, is considered best practice.</p>
+<p>It is also possible to remove all user-set overrides of a search root and revert to the original search root and default scope rules. For more information, refer to the next section.</p>
+<blockquote>
+<p>[!Note]<br />
+On WindowsÂ Vista, if users are removed through User Profiles in Control Panel, CSM removes all rules and roots that include their SID and removes their indexed items from the catalog. On WindowsÂ XP, you must remove the users' roots and rules manually.</p>
+</blockquote>
+<p>Â </p>
+<p>Â </p>
+<h2>Reverting to Default Rules</h2>
+<p>Reverting to default rules removes all user rules for a URL or root and restores all default rules to the working rule set. It does not, however, remove rules set by group policy. The <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-reverttodefaultscopes"><strong>RevertToDefaultScopes</strong></a> method takes no parameters and returns an error code if it is unable to revert to default rules.</p>
+<p>Â </p>
+<h2>Enumerating Scope Rules</h2>
+<p>The CSM enumerates scope rules by using a standard COM-style enumerator interface, <a href="/windows/desktop/api/Searchapi/nn-searchapi-ienumsearchscoperules"><strong>IEnumSearchScopeRules</strong></a> . You can use this interface to enumerate scope rules for several purposes. For example, you might want to display the entire working rule set in a user interface, or discover whether a rule or the child of a rule is already in the crawl scope.</p>
+<p>Â </p>
+<h2>Tracing Scope Rules</h2>
+<p>The CSM also enables you to determine whether a specified URL is included in the crawl scope and whether it has a parent or child scope rule. You can also find out why a URL is included or excluded from the crawl scope. These methods are not intended to be used with pattern URLs.</p>
+<p>The following table describes the methods of <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchcrawlscopemanager"><strong>ISearchCrawlScopeManager</strong></a> used for adding new scope rules.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-getparentscopeversionid"><strong>GetParentScopeVersionId</strong></a></td>
+<td>Gets the version ID of the parent inclusion URL. You can use this method to see if the parent scope has changed since the last time you checked it.<!-- raw HTML omitted --> Example: If a mail application uses provider-managed notifications, it might get the parent scope version before it closes and check the version again when it opens. Then the application can determine whether it needs to push a new set of notifications to the indexer.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-haschildscoperule"><strong>HasChildScopeRule</strong></a></td>
+<td>Returns <strong>TRUE</strong> if the specified URL has a child rule (a rule applying to a child at any level within its URL hierarchy). <!-- raw HTML omitted --> Example: If the URL is file:///C:\Folder\, this method returns <strong>TRUE</strong> if the CSM has a scope rule specifically for file:///C:\Folder\Subfolder\.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-hasparentscoperule"><strong>HasParentScopeRule</strong></a></td>
+<td>Returns <strong>TRUE</strong> if the specified URL has a parent rule (a rule applying to a parent at any level in the URL hierarchy).<!-- raw HTML omitted --> Example: If the URL is file:///C:\Folder\Subfolder, this method returns <strong>TRUE</strong> if the CSM has a scope rule specifically for file:///C:\Folder\.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-includedincrawlscope"><strong>IncludedInCrawlScope</strong></a></td>
+<td>Returns <strong>TRUE</strong> if the specified URL is included in the crawl scope.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-includedincrawlscopeex"><strong>IncludedInCrawlScopeEx</strong></a></td>
+<td>Returns a value from the <a href="/windows/win32/api/searchapi/ne-searchapi-clusion_reason"><strong>CLUSION_REASON</strong></a> enumeration explaining why the URL is included in or excluded from the crawl scope, and retrieves the value <strong>TRUE</strong> if the URL is included in the crawl scope. This method can help you identify conflicts in your working rule set.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+The <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-includedincrawlscope"><strong>IncludedInCrawlScope</strong></a> and <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager-includedincrawlscopeex"><strong>IncludedInCrawlScopeEx</strong></a> methods determine whether the URL will be crawled based solely on the rules in the CSM. There can be other reasons that a URL is not crawled, such as the FANCI bit being set (that is, a user has disallowed fast indexing in the folder's Property dialog box.)</p>
+</blockquote>
+<p>Â </p>
+<p>If you believe that a file path should be excluded, but it is listed as included, be sure that exclusion rules end with &quot;&lt;path&gt;\*&quot;. If you believe that a file or file path should be included but it is not, be sure to check the FANCI bit setting for the file or path. You can do this by right-clicking the file or file path and selecting <strong>Properties</strong>, then be sure the <strong>For fast searching, allow Indexing Service to index this folder</strong> checkbox is selected. If the file or file path is not marked for indexing here, it will not be indexed even if it is in an inclusion rule.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Reference</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchcrawlscopemanager"><strong>ISearchCrawlScopeManager</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchcrawlscopemanager2"><strong>ISearchCrawlScopeManager2</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchscoperule"><strong>ISearchScopeRule</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Searchapi/nn-searchapi-ienumsearchscoperules"><strong>IEnumSearchScopeRules</strong></a></p>
+<!-- raw HTML omitted -->
+<p><strong>Conceptual</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-extidx-csm-searchroots.html">Managing Search Roots</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

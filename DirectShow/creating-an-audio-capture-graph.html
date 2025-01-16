@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating an Audio Capture Graph</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Creating an Audio Capture Graph
+ms.assetid: 2302bb40-a5db-473a-afeb-71905ac41f47
+title: Creating an Audio Capture Graph
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Creating an Audio Capture Graph</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>The first step for an audio capture application is to build a filter graph. The configuration of the graph depends on the type of file that you want to create.</p>
+<ul>
+<li>Audio-only AVI file: Audio Capture Filter to <a href="avi-mux-filter.html">AVI Mux</a> filter, and AVI Mux to <a href="file-writer-filter.html">File Writer</a> filter.</li>
+<li>WAV file: Audio Capture Filter to <a href="wavdest-filter-sample.html">WavDest Filter Sample</a> to File Writer Filter</li>
+<li>Windows Media Audio (.wma) file: Audio Capture Filter to <a href="wm-asf-writer-filter.html">WM ASF Writer</a> filter.</li>
+</ul>
+<p>The WavDest filter is provided as an SDK sample. To use it, you must build and register the filter.</p>
+<p>To use the ASF Writer filter, you must install the Windows Media SDK and obtain a software key to unlock the filter. For more information, see <a href="using-windows-media-in-directshow.html">Using Windows Media in DirectShow</a>.</p>
+<p>You can build the filter graph using the <a href="capture-graph-builder.html">Capture Graph Builder</a> object, or you can build the graph &quot;manually&quot;; that is, have the application programmatically add and connect each filter. This article describes the manual approach. For more information about using the Capture Graph Builder, see <a href="video-capture.html">Video Capture</a>. Much of the information in that article applies to audio-only graphs.</p>
+<p>Adding the Audio Capture Device</p>
+<p>Because the Audio Capture Filter communicates with a specific hardware device, you cannot simply call <strong>CoCreateInstance</strong> to create the filter. Instead, use the <a href="system-device-enumerator.html">System Device Enumerator</a> to enumerate all of the devices in the &quot;Audio Capture Sources&quot; category, which is identified by the class identifier CLSID_AudioInputDeviceCategory.</p>
+<p>The System Device Enumerator returns a list of monikers for the devices; each moniker's friendly name corresponds to the name of the device. Choose one of the returned monikers and use it to create an instance of the Audio Capture Filter for that device. Add the filter to the filter graph. The user's preferred audio recording device appears first in the moniker list. (The user selects a preferred device by clicking Sounds and Multimedia in Control Panel.)</p>
+<p>For more information, see <a href="using-the-system-device-enumerator.html">Using the System Device Enumerator</a>.</p>
+<p>To specify which input to capture from, obtain the <a href="/windows/desktop/api/Strmif/nn-strmif-iamaudioinputmixer"><strong>IAMAudioInputMixer</strong></a> interface from the Audio Capture filter and call the <strong>put_Enable</strong> method to specify the input. One limitation of this method, however, is that different hardware devices may use different strings to identify their inputs. For example, one card may use &quot;Microphone&quot; to identify the microphone input and another card may use &quot;Mic&quot;. To determine the string identifier for a given input, use the Windows Multimedia functions <a href="/previous-versions//dd743866(v=vs.85)"><strong>waveOutOpen</strong></a>, <a href="/previous-versions//dd757308(v=vs.85)"><strong>mixerOpen</strong></a>, and <a href="/previous-versions//dd757303(v=vs.85)"><strong>mixerGetLineInfo</strong></a>. See <a href="/windows/desktop/Multimedia/mixer-device-queries">Mixer Device Queries</a> for more information.</p>
+<p>Adding the Multiplexer and the File Writer</p>
+<p>An audio capture graph must contain a multiplexer and a file writer.</p>
+<p>A <em>multiplexer</em> is a filter that combines one or more streams into a single stream with a particular format. For example, the AVI Mux filter combines audio and video streams into an interleaved AVI stream. For audio capture, there is typically only a single audio stream, but the audio data must still be packaged into a format that can be saved to disk, which requires a multiplexer. The choice of multiplexer depends on the target format:</p>
+<ul>
+<li>AVI: AVI Multiplexer</li>
+<li>WAV: WavDest</li>
+<li>WMA: ASF Writer</li>
+</ul>
+<p>A <em>file writer</em> is a filter that writes incoming data to a file. For AVI or WAV files, use the <a href="file-writer-filter.html">File Writer Filter</a>. For WMA files, the ASF Writer acts as both multiplexer and file writer.</p>
+<p>After you create the filters and add them to the graph, connect the Audio Capture Filter's output pin to the multiplexer's input pin, and connect the multiplexer's output pin to the filter writer's input pin (assuming these are separate filters). To specify the file name, query the file writer for the <a href="/windows/desktop/api/Strmif/nn-strmif-ifilesinkfilter"><strong>IFileSinkFilter</strong></a> interface and call the <a href="/windows/desktop/api/Strmif/nf-strmif-ifilesinkfilter-setfilename"><strong>IFileSinkFilter::SetFileName</strong></a> method.</p>
+<h3>Example Code</h3>
+<p>The following example shows how to build an audio capture graph using the WavDest filter. The same principles apply for the other file types.</p>
+<pre lang="C++"><code>IBaseFilter *pSrc = NULL, *pWaveDest = NULL, *pWriter = NULL;
+IFileSinkFilter *pSink= NULL;
+IGraphBuilder *pGraph;
+
+// Create the Filter Graph Manager.
+hr = CoCreateInstance(CLSID_FilterGraph, NULL, CLSCTX_INPROC_SERVER,
+    IID_IGraphBuilder, (void**)&amp;pGraph);
+
+// This example omits error handling.
+
+// Not shown: Use the System Device Enumerator to create the 
+// audio capture filter.
+
+// Add the audio capture filter to the filter graph. 
+hr = pGraph-&gt;AddFilter(pSrc, L&quot;Capture&quot;);
+
+// Add the WavDest and the File Writer.
+hr = AddFilterByCLSID(pGraph, CLSID_WavDest, L&quot;WavDest&quot;, &amp;pWaveDest);
+hr = AddFilterByCLSID(pGraph, CLSID_FileWriter, L&quot;File Writer&quot;, &amp;pWriter);
+
+// Set the file name.
+hr = pWriter-&gt;QueryInterface(IID_IFileSinkFilter, (void**)&amp;pSink);
+hr = pSink-&gt;SetFileName(L&quot;C:\\MyWavFile.wav&quot;, NULL);
+
+// Connect the filters.
+hr = ConnectFilters(pGraph, pSrc, pWaveDest);
+hr = ConnectFilters(pGraph, pWaveDest, pWriter);
+
+// Not shown: Release interface pointers.
+
+</code></pre>
+<p>This example uses the <code>AddFilterByCLSID</code> function described in <a href="add-a-filter-by-clsid.html">Add a Filter by CLSID</a>, and the <code>ConnectFilters</code> function described in <a href="connect-two-filters.html">Connect Two Filters</a>. Neither of these is a DirectShow API.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="audio-capture.html">Audio Capture</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>InsertElementExample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: InsertElementExample
+description: This example shows how to insert an element in an xml buffer.
+ms.assetid: 98fed487-77f8-4224-9a73-b20afcb01d47
+keywords:</p>
+<ul>
+<li>InsertElementExample Native-Web-Services</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>InsertElementExample</h1>
+<p>This example shows how to insert an element in an xml buffer.</p>
+<h2>InsertElement.cpp</h2>
+<pre lang="C++"><code>//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;string.h&quot;
+
+#pragma comment(lib, &quot;WebServices.lib&quot;)
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_ERROR* error = NULL;
+    WS_HEAP* heap = NULL;
+    WS_XML_BUFFER* buffer = NULL;
+    WS_XML_WRITER* writer = NULL;
+    WS_XML_READER* reader = NULL;
+    void* xml = NULL;
+    ULONG xmlLength = 0;
+    WS_XML_NODE_POSITION securityEndElementPosition;
+    
+    static const WS_XML_STRING soapNs = WS_XML_STRING_VALUE(&quot;http://schemas.xmlsoap.org/soap/envelope/&quot;);
+    static const WS_XML_STRING wsseNs = WS_XML_STRING_VALUE(&quot;http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd&quot;);
+    static const WS_XML_STRING envelope = WS_XML_STRING_VALUE(&quot;Envelope&quot;);
+    static const WS_XML_STRING header = WS_XML_STRING_VALUE(&quot;Header&quot;);
+    static const WS_XML_STRING security = WS_XML_STRING_VALUE(&quot;Security&quot;);
+    static const WS_XML_STRING dsNs = WS_XML_STRING_VALUE(&quot;http://www.w3.org/2000/09/xmldsig#&quot;);
+    static const WS_XML_STRING signature = WS_XML_STRING_VALUE(&quot;Signature&quot;);
+    
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Create a heap to store deserialized data
+    hr = WsCreateHeap(
+        /*maxSize*/ 2048, 
+        /*trimSize*/ 512, 
+        NULL, 
+        0, 
+        &amp;heap, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Create an XML writer
+    hr = WsCreateWriter(
+        NULL, 
+        0, 
+        &amp;writer, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // Create an XML reader
+    hr = WsCreateReader(
+        NULL,
+        0, 
+        &amp;reader, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // Create an XML buffer on the specified heap
+    hr = WsCreateXmlBuffer(
+        heap, 
+        NULL, 
+        0, 
+        &amp;buffer, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Set the writer to output to the XML buffer
+    hr = WsSetOutputToBuffer(
+        writer, 
+        buffer, 
+        NULL, 
+        0, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Write the envelope element
+    hr = WsWriteStartElement(writer, NULL, &amp;envelope, &amp;soapNs, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Write the header element
+    hr = WsWriteStartElement(writer, NULL, &amp;header, &amp;soapNs, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Write the security element
+    hr = WsWriteStartElement(writer, NULL, &amp;security, &amp;wsseNs, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Force the security element start tag to be written so the position obtained
+    // is &quot;after&quot; the security element
+    hr = WsWriteEndStartElement(writer, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    hr = WsGetWriterPosition(writer, &amp;securityEndElementPosition, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Close the security element
+    hr = WsWriteEndElement(writer, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Close the header element
+    hr = WsWriteEndElement(writer, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Close the envelope element
+    hr = WsWriteEndElement(writer, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Move the write back
+    hr = WsSetWriterPosition(writer, &amp;securityEndElementPosition, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Write the &quot;signature&quot; element
+    hr = WsWriteStartElement(writer, NULL, &amp;signature, &amp;dsNs, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Close the signature element
+    hr = WsWriteEndElement(writer, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Generate the bytes of the document
+    ULONG indent = 4;
+    WS_XML_WRITER_PROPERTY properties[1];
+    properties[0].id = WS_XML_WRITER_PROPERTY_INDENT;
+    properties[0].value = &amp;indent;
+    properties[0].valueSize = sizeof(indent);
+    hr = WsWriteXmlBufferToBytes(writer, buffer, NULL, properties, WsCountOf(properties), heap, &amp;xml, &amp;xmlLength, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    printf(&quot;%.*s\n&quot;, xmlLength, (char*)xml);
+    
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    
+    if (writer != NULL)
+    {
+        WsFreeWriter(writer);
+    }
+    if (reader != NULL)
+    {
+        WsFreeReader(reader);
+    }
+    if (heap != NULL)
+    {
+        WsFreeHeap(heap);
+    }
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

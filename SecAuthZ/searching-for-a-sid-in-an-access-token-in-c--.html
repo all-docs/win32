@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Searching for a SID in an Access Token in C++</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example uses the OpenProcessToken and GetTokenInformation functions to get the group memberships in an access token.
+ms.assetid: f895dfef-75ad-419c-95d0-6480bdf9c769
+title: Searching for a SID in an Access Token in C++
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Searching for a SID in an Access Token in C++</h1>
+<p>The following example uses the <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken"><strong>OpenProcessToken</strong></a> and <a href="/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation"><strong>GetTokenInformation</strong></a> functions to get the group memberships in an <a href="/windows/desktop/SecGloss/a-gly"><em>access token</em></a>. Then it uses the <a href="/windows/win32/api/securitybaseapi/nf-securitybaseapi-allocateandinitializesid"><strong>AllocateAndInitializeSid</strong></a> function to create a SID that identifies the well-known SID of the administrator group for the local computer. Next, it uses the <a href="/windows/win32/api/securitybaseapi/nf-securitybaseapi-equalsid"><strong>EqualSid</strong></a> function to compare the well-known SID with the group SIDs from the access token. If the SID is present in the token, the function checks the attributes of the SID to determine whether it is enabled.</p>
+<p>The <a href="/windows/win32/api/securitybaseapi/nf-securitybaseapi-checktokenmembership"><strong>CheckTokenMembership</strong></a> function should be used to determine whether a specified SID is present and enabled in an access token. This function eliminates potential misinterpretations of the active group membership.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#pragma comment(lib, &quot;advapi32.lib&quot;)
+
+#define MAX_NAME 256
+
+BOOL SearchTokenGroupsForSID (VOID) 
+{
+    DWORD i, dwSize = 0, dwResult = 0;
+    HANDLE hToken;
+    PTOKEN_GROUPS pGroupInfo;
+    SID_NAME_USE SidType;
+    char lpName[MAX_NAME];
+    char lpDomain[MAX_NAME];
+    PSID pSID = NULL;
+    SID_IDENTIFIER_AUTHORITY SIDAuth = SECURITY_NT_AUTHORITY;
+       
+    // Open a handle to the access token for the calling process.
+
+    if (!OpenProcessToken( GetCurrentProcess(), TOKEN_QUERY, &amp;hToken )) 
+    {
+        printf( &quot;OpenProcessToken Error %u\n&quot;, GetLastError() );
+        return FALSE;
+    }
+
+    // Call GetTokenInformation to get the buffer size.
+
+    if(!GetTokenInformation(hToken, TokenGroups, NULL, dwSize, &amp;dwSize)) 
+    {
+        dwResult = GetLastError();
+        if( dwResult != ERROR_INSUFFICIENT_BUFFER ) {
+            printf( &quot;GetTokenInformation Error %u\n&quot;, dwResult );
+            return FALSE;
+        }
+    }
+
+    // Allocate the buffer.
+
+    pGroupInfo = (PTOKEN_GROUPS) GlobalAlloc( GPTR, dwSize );
+
+    // Call GetTokenInformation again to get the group information.
+
+    if(! GetTokenInformation(hToken, TokenGroups, pGroupInfo, 
+                            dwSize, &amp;dwSize ) ) 
+    {
+        printf( &quot;GetTokenInformation Error %u\n&quot;, GetLastError() );
+        return FALSE;
+    }
+
+    // Create a SID for the BUILTIN\Administrators group.
+
+    if(! AllocateAndInitializeSid( &amp;SIDAuth, 2,
+                     SECURITY_BUILTIN_DOMAIN_RID,
+                     DOMAIN_ALIAS_RID_ADMINS,
+                     0, 0, 0, 0, 0, 0,
+                     &amp;pSID) ) 
+    {
+        printf( &quot;AllocateAndInitializeSid Error %u\n&quot;, GetLastError() );
+        return FALSE;
+    }
+
+    // Loop through the group SIDs looking for the administrator SID.
+
+    for(i=0; i&lt;pGroupInfo-&gt;GroupCount; i++) 
+    {
+        if ( EqualSid(pSID, pGroupInfo-&gt;Groups[i].Sid) ) 
+        {
+
+            // Lookup the account name and print it.
+
+            dwSize = MAX_NAME;
+            if( !LookupAccountSid( NULL, pGroupInfo-&gt;Groups[i].Sid,
+                                  lpName, &amp;dwSize, lpDomain, 
+                                  &amp;dwSize, &amp;SidType ) ) 
+            {
+                dwResult = GetLastError();
+                if( dwResult == ERROR_NONE_MAPPED )
+                   strcpy_s (lpName, dwSize, &quot;NONE_MAPPED&quot; );
+                else 
+                {
+                    printf(&quot;LookupAccountSid Error %u\n&quot;, GetLastError());
+                    return FALSE;
+                }
+            }
+            printf( &quot;Current user is a member of the %s\\%s group\n&quot;, 
+                    lpDomain, lpName );
+
+            // Find out whether the SID is enabled in the token.
+            if (pGroupInfo-&gt;Groups[i].Attributes &amp; SE_GROUP_ENABLED)
+                printf(&quot;The group SID is enabled.\n&quot;);
+            else if (pGroupInfo-&gt;Groups[i].Attributes &amp; 
+                              SE_GROUP_USE_FOR_DENY_ONLY)
+                printf(&quot;The group SID is a deny-only SID.\n&quot;);
+            else 
+                printf(&quot;The group SID is not enabled.\n&quot;);
+        }
+    }
+
+    if (pSID)
+        FreeSid(pSID);
+    if ( pGroupInfo )
+        GlobalFree( pGroupInfo );
+    return TRUE;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

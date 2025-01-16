@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adding Users to an Encrypted File</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Example code that shows how to add a new user to an existing encrypted file by using the AddUsersToEncryptedFile function.
+ms.assetid: 39260882-dc02-4f08-9d9b-f170c1e391df
+title: Adding Users to an Encrypted File
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Adding Users to an Encrypted File</h1>
+<p>The code sample in this topic adds a new user to an existing encrypted file by using the <a href="/windows/desktop/api/Winefs/nf-winefs-adduserstoencryptedfile"><strong>AddUsersToEncryptedFile</strong></a> function. It requires the user's Encrypting File System (EFS) certificate (from the Active Directory) to exist in the Trusted People user certificate store.</p>
+<p>This sample adds a new Data Recovery Field to the encrypted file. As a result, the newly added user can decrypt the encrypted file. The caller must already have access to the encrypted file, either as the original owner, the data recovery agent, or as a user who was previously added to the encrypted file.</p>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+// 
+//  Adduser.c: adds a user to an encrypted file.
+//
+//  Note: Build project must link Crypt32.lib
+//-------------------------------------------------------------------
+#define UNICODE 1
+
+#include &lt;Windows.h&gt;
+#include &lt;malloc.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;wchar.h&gt;
+#include &lt;wincrypt.h&gt;
+#include &lt;winefs.h&gt;
+
+#pragma comment(lib, &quot;Advapi32.lib&quot;)
+#pragma comment(lib, &quot;Crypt32.lib&quot;)
+
+//-------------------------------------------------------------------
+// Utility function that outputs this application's usage 
+// instructions.
+//
+VOID usage(LPWSTR wszAppName)
+{
+    wprintf(L&quot;\n%s: adds users to encrypted files.\n&quot;, wszAppName);
+    wprintf(L&quot;\nUsage:\tadduser &lt;file&gt; &lt;user name&gt; &lt;subject name&gt;\n\n&quot;);
+    wprintf(L&quot;\t&lt;file&gt; is the name of the file\n&quot;);
+    wprintf(L&quot;\t&lt;user name&gt; is the name of the user's account\n&quot;);
+    wprintf(L&quot;\t\tExample: for name@example.com, use \&quot;name\&quot;\n&quot;);
+    wprintf(L&quot;\t&lt;subject name&gt; is the \&quot;IssuedTo\&quot; name on the &quot;);
+    wprintf(L&quot;certificate\n\t\tfrom the TrustedPeople store.\n&quot;);
+    exit(1);
+}
+
+VOID ErrorExit(LPWSTR wszErrorMessage, DWORD dwErrorCode);
+
+void __cdecl wmain(int argc, wchar_t *argv[])
+{
+    LPWSTR wszFile    = NULL;
+    LPWSTR wszAccount = NULL;
+    LPWSTR wszSubject = NULL;
+    PSID   pSid       = NULL;
+    DWORD  cbSid      = 0;
+    LPWSTR wszDomain  = NULL;
+    DWORD  cchDomain  = 0;
+    SID_NAME_USE SidType = SidTypeUser;
+    HCERTSTORE hStore = NULL;
+    PCCERT_CONTEXT pCertContext = NULL;
+    PENCRYPTION_CERTIFICATE      pEfsEncryptionCert     = NULL;
+    PENCRYPTION_CERTIFICATE_LIST pEfsEncryptionCertList = NULL;
+    DWORD dwResult = ERROR_SUCCESS;
+
+    // Simple check whether to explain usage to the user.
+    //
+    if(argc !=4)
+    {
+        usage(argv[0]);
+    }
+
+    // TODO: Check the parameters for correctness.
+    //
+    wszFile = argv[1];
+    wszAccount = argv[2];
+    wszSubject = argv[3];
+
+    // First, look up the user's SID using the specified account name.
+    // Call LookupAccountName twice; first to find the size of the 
+    // SID, and a second time to retrieve the SID.
+    //
+    LookupAccountName(NULL,wszAccount,pSid,&amp;cbSid,
+                      wszDomain,&amp;cchDomain,&amp;SidType);
+    if(0 == cbSid)
+    {
+        ErrorExit(L&quot;LookupAccountName did not return the SID size.&quot;,
+                     GetLastError());
+    }
+    pSid = (PSID)malloc(cbSid);
+    if(!pSid)
+    {
+        ErrorExit(L&quot;Failed to allocate SID.&quot;, GetLastError());
+    }
+    wszDomain = (LPWSTR)malloc(cchDomain * sizeof(WCHAR));
+    if(!wszDomain)
+    {
+        ErrorExit(L&quot;Failed to allocate string.&quot;, GetLastError());
+    }
+    if(!LookupAccountName(NULL,wszAccount,pSid,&amp;cbSid,
+                          wszDomain,&amp;cchDomain,&amp;SidType))
+    {
+        ErrorExit(L&quot;LookupAccountName failed.&quot;, GetLastError());
+    }
+
+    // Obtain the user's certificate.
+    // Search the TrustedPeople store for the specified subject name.
+    // Anyone who has encrypted a file on the computer has an 
+    // encryption certificate placed the TrustedPeople store by the 
+    // system. It is likely that the user has a matching private key.
+    //
+    hStore = CertOpenSystemStore( (HCRYPTPROV)NULL,L&quot;TrustedPeople&quot;);
+    if (! hStore)
+    {
+        ErrorExit(L&quot;OpenSystemStore failed.&quot;, GetLastError());
+    }
+
+    pCertContext = CertFindCertificateInStore( hStore,
+                           X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                           0,
+                           CERT_FIND_SUBJECT_STR,
+                           (VOID*)wszSubject,
+                           NULL);
+    if(!pCertContext)
+    {
+        ErrorExit(L&quot;FindCertificateInStore failed.&quot;, GetLastError());
+    }
+
+    // Create the ENCRYPTION_CERTIFICATE using the cert context and 
+    // the user's SID.
+    //
+    pEfsEncryptionCert = (PENCRYPTION_CERTIFICATE) 
+                       malloc(sizeof(ENCRYPTION_CERTIFICATE));
+    if(!pEfsEncryptionCert)
+    {
+        ErrorExit(L&quot;Failed to allocate structure.&quot;, GetLastError());
+    }
+    pEfsEncryptionCert-&gt;cbTotalLength = 
+        sizeof(ENCRYPTION_CERTIFICATE);
+    pEfsEncryptionCert-&gt;pUserSid = (SID *)pSid;
+    pEfsEncryptionCert-&gt;pCertBlob = (PEFS_CERTIFICATE_BLOB) 
+                                 malloc(sizeof(EFS_CERTIFICATE_BLOB));
+    if(!pEfsEncryptionCert-&gt;pCertBlob)
+    {
+        ErrorExit(L&quot;Failed to allocate cert blob.&quot;, GetLastError());
+    }
+    pEfsEncryptionCert-&gt;pCertBlob-&gt;dwCertEncodingType = 
+                        pCertContext-&gt;dwCertEncodingType;
+    pEfsEncryptionCert-&gt;pCertBlob-&gt;cbData = 
+                        pCertContext-&gt;cbCertEncoded;
+    pEfsEncryptionCert-&gt;pCertBlob-&gt;pbData =
+                        pCertContext-&gt;pbCertEncoded;
+
+    // AddUsersToEncryptedFile takes an ENCRYPTION_CERTIFICATE_LIST; 
+    // create one with only one ENCRYPTION_CERTIFICATE in it.
+    //
+    pEfsEncryptionCertList = (PENCRYPTION_CERTIFICATE_LIST) 
+                          malloc(sizeof(ENCRYPTION_CERTIFICATE_LIST));
+    if(!pEfsEncryptionCertList)
+    {
+        ErrorExit(L&quot;Failed to allocate structure.&quot;, GetLastError());
+    }
+    pEfsEncryptionCertList-&gt;nUsers = 1;
+    pEfsEncryptionCertList-&gt;pUsers = &amp;pEfsEncryptionCert;
+
+    // Call the API to add the user.
+    //
+    dwResult = 
+        AddUsersToEncryptedFile(wszFile,pEfsEncryptionCertList);
+    if(ERROR_SUCCESS == dwResult)
+    {
+        wprintf(L&quot;The user was successfully added to the file.\n&quot;);
+    }
+    else
+    {
+        ErrorExit(L&quot;AddUsersToEncryptedFile failed.&quot;, dwResult);
+    }
+
+    // Clean up all allocated resources.
+    //
+    if(wszDomain) free(wszDomain);
+    if(pSid) free(pSid);
+    if(pCertContext) CertFreeCertificateContext(pCertContext);
+    if(hStore) CertCloseStore(hStore,CERT_CLOSE_STORE_FORCE_FLAG);
+
+    if(pEfsEncryptionCertList)
+    {
+        if (pEfsEncryptionCertList-&gt;pUsers)
+        {
+            if(pEfsEncryptionCertList-&gt;pUsers[0])
+            {
+                if((pEfsEncryptionCertList-&gt;pUsers[0])-&gt;pCertBlob) 
+                 free((pEfsEncryptionCertList-&gt;pUsers[0])-&gt;pCertBlob);
+                free(pEfsEncryptionCertList-&gt;pUsers[0]);
+            }
+            free(pEfsEncryptionCertList-&gt;pUsers);
+        }
+        free(pEfsEncryptionCertList);
+    }
+  
+    wprintf(L&quot;The program ran to completion without error.\n&quot;);
+    exit(0);
+}
+
+
+//------------------------------------------------------------------
+//  A simple error handling function that prints an error message 
+//  and exits the program. 
+//
+//  TODO: Replace this function with one that has better error 
+//  reporting.
+//
+VOID ErrorExit(LPWSTR wszErrorMessage, DWORD dwErrorCode)
+{
+    fwprintf(stderr, L&quot;An error occurred in running the program. \n&quot;);
+    fwprintf(stderr, L&quot;%s\n&quot;, wszErrorMessage);
+    fwprintf(stderr, L&quot;Error code: 0x%08x\n&quot;, dwErrorCode);
+    fwprintf(stderr, L&quot;Program terminating. \n&quot;);
+    exit(1);
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/wincrypt/nf-wincrypt-certclosestore"><strong>CertCloseStore</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/wincrypt/nf-wincrypt-certfindcertificateinstore"><strong>CertFindCertificateInStore</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/wincrypt/nf-wincrypt-certfreecertificatecontext"><strong>CertFreeCertificateContext</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/wincrypt/nf-wincrypt-certopensystemstorea"><strong>CertOpenSystemStore</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="file-encryption.html">File Encryption</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/winbase/nf-winbase-lookupaccountnamea"><strong>LookupAccountName</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

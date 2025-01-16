@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Supporting Application-Specific Language Settings</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Your application can support a different set of user interface languages from those supported by the target operating system. This topic discusses this type of support, using snippets from complete samples.
+ms.assetid: cb9f2a5f-3bb8-4287-a542-c71d20b37194
+title: Supporting Application-Specific Language Settings
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Supporting Application-Specific Language Settings</h1>
+<p>Your application can support a different set of user interface languages from those supported by the target operating system. This topic discusses this type of support, using snippets from complete samples.</p>
+<h2>Interpret User's Language Preference</h2>
+<p>Your application must first determine which user interface language to display, based on user preference. The code can read the settings from a configuration file or from registry settings.</p>
+<p>The following example defines two functions used to interpret the user's language preference. The first function illustrates the reading of a delimited list of languages from a file, represented in the code as &quot;langs.txt&quot;. The delimiters supported in the sample are &quot;,&quot;,&quot;;&quot;;&quot;.&quot; and &quot; &quot;. The second function converts the string read from the file to a multi-string value. This operation is necessary because the MUI functions used to set languages only accept multi-string values.</p>
+<pre lang="C++"><code>BOOL GetMyUserDefinedLanguages(WCHAR * langStr, DWORD langStrSize)
+{
+    BOOL rtnVal = FALSE;
+    // Very simple implementation - assumes that first 'langStrSize' characters of the
+    // L&quot;.\\langs.txt&quot; file comprises a string of one or more languages.
+    HANDLE langConfigFileHandle = CreateFileW(L&quot;.\\langs.txt&quot;, GENERIC_READ, 0,
+                                    NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if(langConfigFileHandle != INVALID_HANDLE_VALUE)
+    {
+        // Clear the input variables.
+        DWORD bytesActuallyRead = 0;
+        if(ReadFile(langConfigFileHandle, langStr, langStrSize*sizeof(WCHAR), &amp;bytesActuallyRead, NULL)
+           &amp;&amp; bytesActuallyRead &gt; 0)
+        {
+            rtnVal = TRUE;
+            DWORD nullIndex = (bytesActuallyRead/sizeof(WCHAR) &lt; langStrSize)
+                              ? bytesActuallyRead/sizeof(WCHAR) : langStrSize;
+            langStr[nullIndex] = L'\0';
+        }
+        CloseHandle(langConfigFileHandle);
+    }
+    return rtnVal;
+}
+BOOL ConvertMyLangStrToMultiLangStr(WCHAR * langStr, WCHAR * langMultiStr, DWORD langMultiStrSize)
+{
+    BOOL rtnVal = FALSE;
+    size_t strLen = 0;
+    rtnVal = SUCCEEDED(StringCchLengthW(langStr, USER_CONFIGURATION_STRING_BUFFER*2, &amp;strLen));
+    if(rtnVal &amp;&amp; strLen &gt; 0 &amp;&amp; langMultiStr &amp;&amp; langMultiStrSize &gt; 0)
+    {
+        WCHAR * langMultiStrPtr = langMultiStr;
+        WCHAR * last = langStr + (langStr[0] == 0xFEFF ? 1 : 0);
+        WCHAR * context = last;
+        WCHAR * next = wcstok_s(last,L&quot;,; :&quot;,&amp;context);
+        while(next &amp;&amp; rtnVal)
+        {
+            // Make sure you validate the user input.
+            if(SUCCEEDED(StringCchLengthW(last, LOCALE_NAME_MAX_LENGTH, &amp;strLen))
+               &amp;&amp; IsValidLocaleName(next))
+            {
+                langMultiStrPtr[0] = L'\0';
+                rtnVal &amp;= SUCCEEDED(StringCchCatW(langMultiStrPtr,
+                                    (langMultiStrSize - (langMultiStrPtr - langMultiStr)), next));
+                langMultiStrPtr += strLen + 1;
+            }
+            next = wcstok_s(NULL, L&quot;,; :&quot;, &amp;context);
+            if(next)
+                last = next;
+        }
+        // Make sure there is a double null term for the multi-string.
+        if(rtnVal &amp;&amp; (langMultiStrSize - (langMultiStrPtr - langMultiStr)))
+        {
+            langMultiStrPtr[0] = L'\0';
+        }
+        else // Fail and guard anyone whom might use the multi-string.
+        {
+            langMultiStr[0] = L'\0';
+            langMultiStr[1] = L'\0';
+        }
+    }
+    return rtnVal;
+}
+</code></pre>
+<h2>Set the Application Language</h2>
+<p>After reading the language preference information, the application code must use the retrieved setting to set the application language. On WindowsÂ 7 and later, the application can set the language at the process level by calling the <a href="/windows/desktop/api/Winnls/nf-winnls-setprocesspreferreduilanguages"><strong>SetProcessPreferredUILanguages</strong></a> function.</p>
+<pre lang="C++"><code>DWORD langCount = 0;
+// Using SetProcessPreferredUILanguages is recommended for new applications (esp. multi-threaded applications).
+if(!SetProcessPreferredUILanguages(MUI_LANGUAGE_NAME, userLanguagesMultiString, &amp;langCount) || langCount == 0)
+{
+    swprintf_s(displayBuffer, SUFFICIENTLY_LARGE_ERROR_BUFFER,
+               L&quot;FAILURE: Unable to set the user defined languages, last error = %d.&quot;, GetLastError());
+    MessageBoxW(NULL, displayBuffer, L&quot;HelloMUI ERROR!&quot;, MB_OK | MB_ICONERROR);
+    return 1; // Exit.
+}
+</code></pre>
+<p>On WindowsÂ Vista and later, the application language is set at the thread level by calling the <a href="/windows/desktop/api/Winnls/nf-winnls-setthreadpreferreduilanguages"><strong>SetThreadPreferredUILanguages</strong></a> function.</p>
+<pre lang="C++"><code>DWORD langCount = 0;
+// The following line of code is supported on Windows Vista and later.
+if(!SetThreadPreferredUILanguages(MUI_LANGUAGE_NAME, userLanguagesMultiString, &amp;langCount) || langCount == 0)
+{
+    swprintf_s(displayBuffer, SUFFICIENTLY_LARGE_ERROR_BUFFER,
+               L&quot;FAILURE: Unable to set the user defined languages, last error = %d.&quot;, GetLastError());
+    MessageBoxW(NULL, displayBuffer, L&quot;HelloMUI ERROR!&quot;, MB_OK | MB_ICONERROR);
+    return 1; // Exit.
+}
+return 1;
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="setting-application-language-preferences.html">Setting Application Language Preferences</a></p>
+<!-- raw HTML omitted -->
+<p><a href="mui-application-specific-settings-sample-vista.html">MUI: Application-Specific Settings Sample (Windows Vista)</a></p>
+<!-- raw HTML omitted -->
+<p><a href="mui-application-specific-settings-sample-pre-vista.html">MUI: Application-Specific Settings Sample (Pre-Windows Vista)</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

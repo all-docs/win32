@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Create a Client-Side (Proxy) UI Automation Provider</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: How to Create a Client-Side (Proxy) UI Automation Provider
+description: This topic contains example code that shows how to implement a client-side, or proxy, Microsoft UI Automation provider.
+ms.assetid: 37e54a0f-3d41-4f47-ba73-7f1bf6c365e7
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to Create a Client-Side (Proxy) UI Automation Provider</h1>
+<p>This topic contains example code that shows how to implement a client-side, or proxy, Microsoft UI Automation provider.</p>
+<ul>
+<li><a href="#example-1-enumerating-the-proxy-factory-table">Example 1: Enumerating the Proxy Factory Table</a></li>
+<li><a href="#example-2-implementing-a-simple-proxy-for-button-controls">Example 2: Implementing a Simple Proxy for Button Controls</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Example 1: Enumerating the Proxy Factory Table</h2>
+<p>The following example code enumerates the entries in the proxy factory table and displays the class name of the supported control. For proxies that are not supplied with the operating system, the image name is displayed.</p>
+<pre lang="C++"><code>HRESULT GetProxyTable()
+{
+    IUIAutomationProxyFactoryMapping* pMap;
+    IUIAutomationProxyFactoryEntry* pEntry;
+    UINT count;
+    BSTR className;
+    BSTR imageName;
+
+    HRESULT hr = g_pAutomation-&gt;get_ProxyFactoryMapping(&amp;pMap);
+    if (SUCCEEDED(hr))
+    {
+        if (SUCCEEDED(pMap-&gt;get_Count(&amp;count)))
+        {
+            for (UINT x = 0; x &lt; count; x++)
+            {
+                if (SUCCEEDED(pMap-&gt;GetEntry(x, &amp;pEntry)))
+                {
+                    pEntry-&gt;get_ClassName(&amp;className);
+                    if (className)
+                    {
+                        std::wcout &lt;&lt; className &lt;&lt; L&quot;\t&quot;;
+                        SysFreeString(className);
+                    }
+                    if (SUCCEEDED(pEntry-&gt;get_ImageName(&amp;imageName)))
+                    {
+                        if (imageName)
+                        {
+                            std::wcout &lt;&lt; imageName;
+                            SysFreeString(imageName);
+                        }
+                        std::wcout &lt;&lt; L&quot;\n&quot;;
+                    }
+                }
+                pEntry-&gt;Release();
+            }
+        }
+        pMap-&gt;Release();
+    }
+
+    return hr;
+}
+</code></pre>
+<h2>Example 2: Implementing a Simple Proxy for Button Controls</h2>
+<p>The following example code implements a simple proxy for controls that have the &quot;Button&quot; class name, and adds an entry for the proxy to the proxy factory table. This example uses the Font dialog box of Notepad to demonstrate the proxy.</p>
+<pre lang="C++"><code>// Registers a proxy for controls with the class name &quot;BUTTON&quot; and
+// demonstrates it on the Font dialog of Notepad (which should be
+// open when running this code).
+#include &quot;stdafx.h&quot;
+#include &lt;stdio.h&gt;
+#include &lt;tchar.h&gt;
+
+#include &lt;windows.h&gt;
+#include &lt;UIAutomation.h&gt;
+
+template &lt;class T&gt; void SafeRelease(T **ppT)
+{
+    if (*ppT)
+    {
+        (*ppT)-&gt;Release();
+        *ppT = NULL;
+    }
+}
+
+// A simple proxy for the proxy factory to create.
+class ReallySimpleProxy : public IRawElementProviderSimple
+{
+public:
+    ReallySimpleProxy(HWND hwnd):_refCount(1), _hWnd(hwnd) { }
+    virtual ~ReallySimpleProxy() {}
+
+    // IUnknown methods.
+    IFACEMETHODIMP_(ULONG) AddRef() 
+    { 
+        return InterlockedIncrement(&amp;_refCount);
+    }
+    IFACEMETHODIMP_(ULONG) Release()
+    {
+        long val = InterlockedDecrement(&amp;_refCount);
+        if(val == 0)
+        {
+            delete this;
+        }
+        return val;
+    }
+
+    IFACEMETHODIMP QueryInterface(REFIID riid, void** ppInterface)
+    {
+        if(riid == __uuidof(IUnknown))
+            *ppInterface =(IUnknown*)((IRawElementProviderSimple*)this);
+        else if(riid == __uuidof(IRawElementProviderSimple))
+            *ppInterface =(IRawElementProviderSimple*)this;
+        else
+        {
+            *ppInterface = NULL;
+            return E_NOINTERFACE;
+        }
+
+        ((IUnknown*)(*ppInterface))-&gt;AddRef();
+        return S_OK;
+    }
+
+    // IRawElementProviderSimple methods.
+    IFACEMETHODIMP get_ProviderOptions(ProviderOptions * pRetVal)
+    {
+        *pRetVal = ProviderOptions_ClientSideProvider;
+        return S_OK;
+    }
+
+    IFACEMETHODIMP GetPatternProvider(PATTERNID patternId, IUnknown ** pRetVal)
+    {
+        *pRetVal = NULL;
+        return S_OK;
+    }
+
+    IFACEMETHODIMP GetPropertyValue(PROPERTYID propertyId, VARIANT * pRetVal)
+    {
+        pRetVal-&gt;vt = VT_EMPTY;
+
+        // A String value to test
+        if(propertyId == UIA_NamePropertyId)
+        {
+            pRetVal-&gt;vt = VT_BSTR;
+            pRetVal-&gt;bstrVal = SysAllocString( L&quot;ReallySimpleProxy Control&quot; );
+        }
+
+        // Provider Id
+        if(propertyId == UIA_ProviderDescriptionPropertyId)
+        {
+            pRetVal-&gt;vt = VT_BSTR;
+            pRetVal-&gt;bstrVal = SysAllocString( L&quot;Sample: ReallySimpleProxy&quot; );
+        }
+
+        return S_OK;
+    }
+
+    IFACEMETHODIMP get_HostRawElementProvider(
+        IRawElementProviderSimple ** pRetVal)
+    {
+        return UiaHostProviderFromHwnd(_hWnd, pRetVal); 
+    }
+
+private:
+    ULONG _refCount;
+
+    HWND _hWnd; // Window handle for this object.
+};
+
+// A simple proxy factory that creates a simple proxy.
+class SimpleProxyFactory : public IUIAutomationProxyFactory
+{
+public:
+    SimpleProxyFactory():_refCount(1) {}
+    virtual ~SimpleProxyFactory() {}
+
+    // IUnknown methods.
+    IFACEMETHODIMP_(ULONG) AddRef() 
+    { 
+        return InterlockedIncrement(&amp;_refCount);
+    }
+    IFACEMETHODIMP_(ULONG) Release()
+    {
+        long val = InterlockedDecrement(&amp;_refCount);
+        if(val == 0)
+        {
+            delete this;
+        }
+        return val;
+    }
+
+    IFACEMETHODIMP QueryInterface(REFIID riid, void** ppInterface)
+    {
+        if(riid == __uuidof(IUnknown))
+            *ppInterface =(IUnknown*)((IUIAutomationProxyFactory*)this);
+        else if(riid == __uuidof(IUIAutomationProxyFactory))
+            *ppInterface =(IUIAutomationProxyFactory*)this;
+        else
+        {
+            *ppInterface = NULL;
+            return E_NOINTERFACE;
+        }
+
+        ((IUnknown*)(*ppInterface))-&gt;AddRef();
+        return S_OK;
+    }
+
+    // IUIAutomationProxyFactory methods.
+    IFACEMETHODIMP CreateProvider (UIA_HWND hwnd, LONG idObject, LONG idChild,
+        IRawElementProviderSimple **ppRetVal )
+    {
+        *ppRetVal = new ReallySimpleProxy((HWND)hwnd);
+        return S_OK;
+    }
+
+    IFACEMETHODIMP get_ProxyFactoryId ( BSTR *pRetVal )
+    {
+        *pRetVal = SysAllocString(L&quot;Simple Proxy Factory&quot;);
+        return S_OK;
+    }
+
+private:
+    ULONG _refCount;
+};
+
+
+HRESULT CheckElement(IUIAutomation *uia, HWND hwnd)
+{
+    IUIAutomationElement * buttonEl = NULL;
+    BSTR name = NULL;
+    BSTR providerDescription = NULL;
+
+    wprintf( L&quot;Getting AutomationElement for the button...\n&quot; );
+    HRESULT hr = uia-&gt;ElementFromHandle(hwnd, &amp;buttonEl);
+    if (FAILED(hr))
+        goto cleanup;
+    if (buttonEl == NULL)
+    {
+        hr = E_FAIL;
+        goto cleanup;
+    }
+
+    hr = buttonEl-&gt;get_CurrentName(&amp;name);
+    if (FAILED(hr))
+        goto cleanup;
+
+    hr = buttonEl-&gt;get_CurrentProviderDescription(&amp;providerDescription);
+    if (FAILED(hr))
+        goto cleanup;
+
+    wprintf( L&quot;Got Element:\n  %s\n  %s\n\n&quot;, name, providerDescription);
+cleanup:
+    SysFreeString(providerDescription);
+    SysFreeString(name);
+    SafeRelease(&amp;buttonEl);
+
+    return hr;
+}
+
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    IUIAutomation * uia = NULL;
+    IUIAutomationProxyFactoryMapping * proxyMapping = NULL;
+    IUIAutomationProxyFactoryEntry * simpleEntry = NULL;
+    IUIAutomationProxyFactory *simpleFactory = NULL;
+    BSTR bstrClassName = NULL;
+
+    wprintf( L&quot;Initializing COM...\n&quot; );
+    HRESULT hr = CoInitializeEx( NULL, COINIT_APARTMENTTHREADED );
+    if (FAILED(hr))
+        goto cleanup;
+
+    wprintf( L&quot;CoCreating Automation Object...\n&quot; );
+    hr = CoCreateInstance(__uuidof(CUIAutomation), NULL, CLSCTX_INPROC_SERVER,
+        __uuidof(IUIAutomation), (void **)&amp;uia);
+    if (FAILED(hr))
+        goto cleanup;
+
+
+    wprintf( L&quot;Finding Notepad Font Window...\n&quot; );
+    HWND fontHwnd = FindWindow(NULL,L&quot;Font&quot;);
+    if (fontHwnd == NULL)
+        goto cleanup;
+
+    wprintf( L&quot;Finding the OK button in Font Window...\n&quot; );
+    HWND buttonHwnd = FindWindowEx(fontHwnd, NULL, L&quot;BUTTON&quot;, L&quot;OK&quot;);
+    if (buttonHwnd == NULL)
+        goto cleanup;
+
+    wprintf( L&quot;Checking Name and Provider Description without our Proxy:\n&quot; );
+    CheckElement(uia, buttonHwnd);
+
+    wprintf( L&quot;Getting the Proxy Factory Mapping Object...\n&quot; );
+    hr = uia-&gt;get_ProxyFactoryMapping(&amp;proxyMapping);
+    if (FAILED(hr))
+        goto cleanup;
+    if (proxyMapping == NULL)
+        goto cleanup;
+
+    wprintf( L&quot;Creating the Proxy Factory...\n&quot; );
+    simpleFactory = new SimpleProxyFactory();
+    if (simpleFactory == NULL)
+        goto cleanup;
+
+    wprintf( L&quot;Creating the Proxy Factory Entry...\n&quot; );
+    hr = uia-&gt;CreateProxyFactoryEntry(simpleFactory, &amp;simpleEntry);
+    if (FAILED(hr))
+        goto cleanup;
+   bstrClassName = SysAllocString(L&quot;BUTTON&quot;);
+    if (bstrClassName == NULL)
+        goto cleanup;
+
+    // Match HWNDs with Button class name.
+    hr = simpleEntry-&gt;put_ClassName(bstrClassName);   
+    if (FAILED(hr))
+        goto cleanup;
+
+    // Match any process ImageName.
+    hr = simpleEntry-&gt;put_ImageName(NULL);            
+    if (FAILED(hr))
+        goto cleanup;
+
+    // Do not allow substring matching.
+    hr = simpleEntry-&gt;put_AllowSubstringMatch(FALSE); 
+    if (FAILED(hr))
+        goto cleanup;
+
+    // Enter it into the mapping.
+    hr = proxyMapping-&gt;InsertEntry(0, simpleEntry);
+    if (FAILED(hr))
+        goto cleanup;
+
+    wprintf( L&quot;Checking Name and Provider Description with our Proxy:\n&quot; );
+    CheckElement(uia, buttonHwnd);
+
+cleanup:
+
+    SafeRelease(&amp;simpleEntry);
+    SafeRelease(&amp;simpleFactory);
+    SafeRelease(&amp;proxyMapping);
+    SafeRelease(&amp;uia);
+    SysFreeString(bstrClassName);
+    CoUninitialize();
+
+    return 0;
+}
+
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Conceptual</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="uiauto-serversideprovider.html">Implementing a Client-Side UI Automation Provider</a></p>
+<!-- raw HTML omitted -->
+<p><a href="uiauto-howto-topics-for-uiautomation-providers.html">How-To Topics for UI Automation Providers</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Indirect drawing and GPU culling</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Indirect drawing and GPU culling
+description: The D3D12ExecuteIndirect sample demonstrates how to use indirect commands to draw content. It also demonstrates how these commands can be manipulated on the GPU in a compute shader before they are issued.
+ms.assetid: 09F90837-D6BF-498E-8018-5C28EDD9BDC3
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Indirect drawing and GPU culling</h1>
+<p>The D3D12ExecuteIndirect sample demonstrates how to use indirect commands to draw content. It also demonstrates how these commands can be manipulated on the GPU in a compute shader before they are issued.</p>
+<ul>
+<li><a href="#define-the-indirect-commands">Define the indirect commands</a></li>
+<li><a href="#create-a-graphics-and-compute-root-signature">Create a graphics and compute root signature</a></li>
+<li><a href="#create-a-shader-resource-view-srv-for-the-compute-shader">Create a shader resource view (SRV) for the compute shader</a></li>
+<li><a href="#create-the-indirect-command-buffers">Create the indirect command buffers</a></li>
+<li><a href="#create-the-compute-uavs">Create the compute UAVs</a></li>
+<li><a href="#drawing-the-frame">Drawing the frame</a></li>
+<li><a href="#run-the-sample">Run the sample</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<p>The sample creates a command buffer that describes 1024 draw calls. Each draw call renders a triangle with a random color, position, and velocity. The triangles animate endlessly across the screen. There are two modes in this sample. In the first mode, a compute shader inspects the indirect commands and decides whether or not to add that command to an unordered access view (UAV) describing which commands that should be executed. In the second mode, all commands are simply executed. Pressing the spacebar will toggle between modes.</p>
+<h2>Define the indirect commands</h2>
+<p>We start out by defining what the indirect commands should look like. In this sample the commands we want to execute are to:</p>
+<!-- raw HTML omitted -->
+<p>These drawing commands are represented by the following structure in the <strong>D3D12ExecuteIndirect</strong> class definition. Commands are executed sequentially in the order they are defined in this structure.</p>
+<pre lang="syntax"><code>  
+// Data structure to match the command signature used for ExecuteIndirect.
+struct IndirectCommand
+{
+       D3D12_GPU_VIRTUAL_ADDRESS cbv;
+       D3D12_DRAW_ARGUMENTS drawArguments;
+};
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Call flow</th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D3D12_GPU_VIRTUAL_ADDRESS (simply a UINT64)</td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_draw_arguments"><strong>D3D12_DRAW_ARGUMENTS</strong></a></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>To accompany the data structure, a command signature is also created which instructs the GPU how to interpret the data passed in to the <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-executeindirect"><strong>ExecuteIndirect</strong></a> API. This, and the most of the following code, is added to the <strong>LoadAssets</strong> method.</p>
+<pre lang="syntax"><code>// Create the command signature used for indirect drawing.
+{
+       // Each command consists of a CBV update and a DrawInstanced call.
+       D3D12_INDIRECT_ARGUMENT_DESC argumentDescs[2] = {};
+       argumentDescs[0].Type = D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT_BUFFER_VIEW;
+       argumentDescs[0].ConstantBufferView.RootParameterIndex = Cbv;
+       argumentDescs[1].Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW;
+
+       D3D12_COMMAND_SIGNATURE_DESC commandSignatureDesc = {};
+       commandSignatureDesc.pArgumentDescs = argumentDescs;
+       commandSignatureDesc.NumArgumentDescs = _countof(argumentDescs);
+       commandSignatureDesc.ByteStride = sizeof(IndirectCommand);
+
+       ThrowIfFailed(m_device-&gt;CreateCommandSignature(&amp;commandSignatureDesc, m_rootSignature.Get(), IID_PPV_ARGS(&amp;m_commandSignature)));
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Call flow</th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_indirect_argument_desc"><strong>D3D12_INDIRECT_ARGUMENT_DESC</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_indirect_argument_type"><strong>D3D12_INDIRECT_ARGUMENT_TYPE</strong></a></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_command_signature_desc"><strong>D3D12_COMMAND_SIGNATURE_DESC</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-createcommandsignature"><strong>CreateCommandSignature</strong></a></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Create a graphics and compute root signature</h2>
+<p>We also create both a graphics and a compute root signature. The graphics root signature just defines a root CBV. Note that we map the index of this root parameter in the <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_indirect_argument_desc"><strong>D3D12_INDIRECT_ARGUMENT_DESC</strong></a> (shown above) when the command signature is defined. The compute root signature defines:</p>
+<ul>
+<li>A common descriptor table with three slots (two SRVâ€™s and one UAV):
+<ul>
+<li>One SRV exposes the constant buffers to the compute shader</li>
+<li>One SRV exposes the command buffer to the compute shader</li>
+<li>The UAV is where the compute shader saves the commands for the visible triangles</li>
+</ul>
+</li>
+<li>Four root constants:
+<ul>
+<li>Half the width of one side of the triangle</li>
+<li>The z position of the triangle vertices</li>
+<li>The +/- x offset of the culling plane in homogenous space [-1,1]</li>
+<li>The number of indirect commands in the command buffer</li>
+</ul>
+</li>
+</ul>
+<pre lang="syntax"><code>// Create the root signatures.
+{
+       CD3DX12_ROOT_PARAMETER rootParameters[GraphicsRootParametersCount];
+       rootParameters[Cbv].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_VERTEX);
+
+       CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
+       rootSignatureDesc.Init(_countof(rootParameters), rootParameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+       ComPtr&lt;ID3DBlob&gt; signature;
+       ComPtr&lt;ID3DBlob&gt; error;
+       ThrowIfFailed(D3D12SerializeRootSignature(&amp;rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &amp;signature, &amp;error));
+       ThrowIfFailed(m_device-&gt;CreateRootSignature(0, signature-&gt;GetBufferPointer(), signature-&gt;GetBufferSize(), IID_PPV_ARGS(&amp;m_rootSignature)));
+
+       // Create compute signature.
+       CD3DX12_DESCRIPTOR_RANGE ranges[2];
+       ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
+       ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+
+       CD3DX12_ROOT_PARAMETER computeRootParameters[ComputeRootParametersCount];
+       computeRootParameters[SrvUavTable].InitAsDescriptorTable(2, ranges);
+       computeRootParameters[RootConstants].InitAsConstants(4, 0);
+
+       CD3DX12_ROOT_SIGNATURE_DESC computeRootSignatureDesc;
+       computeRootSignatureDesc.Init(_countof(computeRootParameters), computeRootParameters);
+
+       ThrowIfFailed(D3D12SerializeRootSignature(&amp;computeRootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &amp;signature, &amp;error));
+       ThrowIfFailed(m_device-&gt;CreateRootSignature(0, signature-&gt;GetBufferPointer(), signature-&gt;GetBufferSize(), IID_PPV_ARGS(&amp;m_computeRootSignature)));
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Call flow</th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="cd3dx12-root-parameter.html"><strong>CD3DX12_ROOT_PARAMETER</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shader_visibility"><strong>D3D12_SHADER_VISIBILITY</strong></a></td>
+</tr>
+<tr>
+<td><a href="cd3dx12-root-signature-desc.html"><strong>CD3DX12_ROOT_SIGNATURE_DESC</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_root_signature_flags"><strong>D3D12_ROOT_SIGNATURE_FLAGS</strong></a></td>
+</tr>
+<tr>
+<td><a href="/previous-versions/windows/desktop/legacy/ff728743(v=vs.85)"><strong>ID3DBlob</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-d3d12serializerootsignature"><strong>D3D12SerializeRootSignature</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d_root_signature_version"><strong>D3D_ROOT_SIGNATURE_VERSION</strong></a></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-createrootsignature"><strong>CreateRootSignature</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="cd3dx12-descriptor-range.html"><strong>CD3DX12_DESCRIPTOR_RANGE</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_descriptor_range_type"><strong>D3D12_DESCRIPTOR_RANGE_TYPE</strong></a></td>
+</tr>
+<tr>
+<td><a href="cd3dx12-root-parameter.html"><strong>CD3DX12_ROOT_PARAMETER</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shader_visibility"><strong>D3D12_SHADER_VISIBILITY</strong></a></td>
+</tr>
+<tr>
+<td><a href="cd3dx12-root-signature-desc.html"><strong>CD3DX12_ROOT_SIGNATURE_DESC</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_root_signature_flags"><strong>D3D12_ROOT_SIGNATURE_FLAGS</strong></a></td>
+</tr>
+<tr>
+<td><a href="/previous-versions/windows/desktop/legacy/ff728743(v=vs.85)"><strong>ID3DBlob</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-d3d12serializerootsignature"><strong>D3D12SerializeRootSignature</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d_root_signature_version"><strong>D3D_ROOT_SIGNATURE_VERSION</strong></a></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-createrootsignature"><strong>CreateRootSignature</strong></a></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Create a shader resource view (SRV) for the compute shader</h2>
+<p>After creating the pipeline state objects, vertex buffers, a depth stencil, and the constant buffers, the sample then creates a shader resource view (SRV) of the constant buffer so that the compute shader can access the data in the constant buffer.</p>
+<pre lang="syntax"><code>// Create shader resource views (SRV) of the constant buffers for the
+// compute shader to read from.
+       D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+       srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+       srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+       srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+       srvDesc.Buffer.NumElements = TriangleCount;
+       srvDesc.Buffer.StructureByteStride = sizeof(ConstantBufferData);
+       srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+
+       CD3DX12_CPU_DESCRIPTOR_HANDLE cbvSrvHandle(m_cbvSrvUavHeap-&gt;GetCPUDescriptorHandleForHeapStart(), CbvSrvOffset, m_cbvSrvUavDescriptorSize);
+       for (UINT frame = 0; frame &lt; FrameCount; frame++)
+       {
+              srvDesc.Buffer.FirstElement = frame * TriangleCount;
+              m_device-&gt;CreateShaderResourceView(m_constantBuffer.Get(), &amp;srvDesc, cbvSrvHandle);
+              cbvSrvHandle.Offset(CbvSrvUavDescriptorCountPerFrame, m_cbvSrvUavDescriptorSize);
+       }
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<p>Â </p>
+<h2>Create the indirect command buffers</h2>
+<p>We then create the indirect command buffers and define their content using the following code. We draw the same triangle vertices 1024 times, but point to a different constant buffer location with each draw call.</p>
+<pre lang="syntax"><code>       D3D12_GPU_VIRTUAL_ADDRESS gpuAddress = m_constantBuffer-&gt;GetGPUVirtualAddress();
+       UINT commandIndex = 0;
+
+       for (UINT frame = 0; frame &lt; FrameCount; frame++)
+       {
+              for (UINT n = 0; n &lt; TriangleCount; n++)
+              {
+                    commands[commandIndex].cbv = gpuAddress;
+                    commands[commandIndex].drawArguments.VertexCountPerInstance = 3;
+                    commands[commandIndex].drawArguments.InstanceCount = 1;
+                    commands[commandIndex].drawArguments.StartVertexLocation = 0;
+                    commands[commandIndex].drawArguments.StartInstanceLocation = 0;
+
+                    commandIndex++;
+                    gpuAddress += sizeof(ConstantBufferData);
+              }
+       }
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Call flow</th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D3D12_GPU_VIRTUAL_ADDRESS</td>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-getgpuvirtualaddress"><strong>GetGPUVirtualAddress</strong></a></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>After uploading the command buffers to the GPU, we also create an SRV of them for the compute shader to read from. This is very similar to the SRV created of the constant buffer.</p>
+<pre lang="syntax"><code>// Create SRVs for the command buffers.
+       D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+       srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+       srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+       srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+       srvDesc.Buffer.NumElements = TriangleCount;
+       srvDesc.Buffer.StructureByteStride = sizeof(IndirectCommand);
+       srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+
+       CD3DX12_CPU_DESCRIPTOR_HANDLE commandsHandle(m_cbvSrvUavHeap-&gt;GetCPUDescriptorHandleForHeapStart(), CommandsOffset, m_cbvSrvUavDescriptorSize);
+       for (UINT frame = 0; frame &lt; FrameCount; frame++)
+       {
+              srvDesc.Buffer.FirstElement = frame * TriangleCount;
+              m_device-&gt;CreateShaderResourceView(m_commandBuffer.Get(), &amp;srvDesc, commandsHandle);
+              commandsHandle.Offset(CbvSrvUavDescriptorCountPerFrame, m_cbvSrvUavDescriptorSize);
+       }
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<p>Â </p>
+<h2>Create the compute UAVs</h2>
+<p>We need to create the UAVs that will store the results of the compute work. When a triangle is deemed by the compute shader to be visible to the render target, it will be appended to this UAV and then consumed by the <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-executeindirect"><strong>ExecuteIndirect</strong></a> API.</p>
+<pre lang="syntax"><code>CD3DX12_CPU_DESCRIPTOR_HANDLE processedCommandsHandle(m_cbvSrvUavHeap-&gt;GetCPUDescriptorHandleForHeapStart(), ProcessedCommandsOffset, m_cbvSrvUavDescriptorSize);
+for (UINT frame = 0; frame &lt; FrameCount; frame++)
+{
+       // Allocate a buffer large enough to hold all of the indirect commands
+       // for a single frame as well as a UAV counter.
+       commandBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(CommandBufferSizePerFrame + sizeof(UINT), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+       CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_DEFAULT);
+       ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+             &amp;heapProps,
+             D3D12_HEAP_FLAG_NONE,
+             &amp;commandBufferDesc,
+             D3D12_RESOURCE_STATE_COPY_DEST,
+             nullptr,
+             IID_PPV_ARGS(&amp;m_processedCommandBuffers[frame])));
+
+       D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+       uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+       uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+       uavDesc.Buffer.FirstElement = 0;
+       uavDesc.Buffer.NumElements = TriangleCount;
+       uavDesc.Buffer.StructureByteStride = sizeof(IndirectCommand);
+       uavDesc.Buffer.CounterOffsetInBytes = CommandBufferSizePerFrame;
+       uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
+
+       m_device-&gt;CreateUnorderedAccessView(
+             m_processedCommandBuffers[frame].Get(),
+             m_processedCommandBuffers[frame].Get(),
+             &amp;uavDesc,
+             processedCommandsHandle);
+
+       processedCommandsHandle.Offset(CbvSrvUavDescriptorCountPerFrame, m_cbvSrvUavDescriptorSize);
+}
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<p>Â </p>
+<h2>Drawing the frame</h2>
+<p>When it comes time to draw the frame, if we are in the mode when the compute shader is being invoked and indirect commands are being processed by the GPU, we will first <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-dispatch"><strong>Dispatch</strong></a> that work to populate our command buffer for <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-executeindirect"><strong>ExecuteIndirect</strong></a>. The following code snippets are added to the <strong>PopulateCommandLists</strong> method.</p>
+<pre lang="syntax"><code>// Record the compute commands that will cull triangles and prevent them from being processed by the vertex shader.
+if (m_enableCulling)
+{
+       UINT frameDescriptorOffset = m_frameIndex * CbvSrvUavDescriptorCountPerFrame;
+       D3D12_GPU_DESCRIPTOR_HANDLE cbvSrvUavHandle = m_cbvSrvUavHeap-&gt;GetGPUDescriptorHandleForHeapStart();
+
+       m_computeCommandList-&gt;SetComputeRootSignature(m_computeRootSignature.Get());
+
+       ID3D12DescriptorHeap* ppHeaps[] = { m_cbvSrvUavHeap.Get() };
+       m_computeCommandList-&gt;SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+
+       m_computeCommandList-&gt;SetComputeRootDescriptorTable(
+              SrvUavTable,
+              CD3DX12_GPU_DESCRIPTOR_HANDLE(cbvSrvUavHandle, CbvSrvOffset + frameDescriptorOffset, m_cbvSrvUavDescriptorSize));
+
+       m_computeCommandList-&gt;SetComputeRoot32BitConstants(RootConstants, 4, reinterpret_cast&lt;void*&gt;(&amp;m_csRootConstants), 0);
+
+       // Reset the UAV counter for this frame.
+       m_computeCommandList-&gt;CopyBufferRegion(m_processedCommandBuffers[m_frameIndex].Get(), CommandBufferSizePerFrame, m_processedCommandBufferCounterReset.Get(), 0, sizeof(UINT));
+
+       D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_processedCommandBuffers[m_frameIndex].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+       m_computeCommandList-&gt;ResourceBarrier(1, &amp;barrier);
+
+       m_computeCommandList-&gt;Dispatch(static_cast&lt;UINT&gt;(ceil(TriangleCount / float(ComputeThreadBlockSize))), 1, 1);
+}
+
+ThrowIfFailed(m_computeCommandList-&gt;Close());
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Then we will execute the commands in either the UAV (GPU culling enabled) or the full command buffer (GPU culling disabled).</p>
+<pre lang="syntax"><code>// Record the rendering commands.
+{
+       // Set necessary state.
+       m_commandList-&gt;SetGraphicsRootSignature(m_rootSignature.Get());
+
+       ID3D12DescriptorHeap* ppHeaps[] = { m_cbvSrvUavHeap.Get() };
+       m_commandList-&gt;SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+
+       m_commandList-&gt;RSSetViewports(1, &amp;m_viewport);
+       m_commandList-&gt;RSSetScissorRects(1, m_enableCulling ? &amp;m_cullingScissorRect : &amp;m_scissorRect);
+
+       // Indicate that the command buffer will be used for indirect drawing
+       // and that the back buffer will be used as a render target.
+       D3D12_RESOURCE_BARRIER barriers[2] = {
+              CD3DX12_RESOURCE_BARRIER::Transition(
+                    m_enableCulling ? m_processedCommandBuffers[m_frameIndex].Get() : m_commandBuffer.Get(),
+                    m_enableCulling ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                    D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT),
+              CD3DX12_RESOURCE_BARRIER::Transition(
+                    m_renderTargets[m_frameIndex].Get(),
+                    D3D12_RESOURCE_STATE_PRESENT,
+                    D3D12_RESOURCE_STATE_RENDER_TARGET)
+       };
+
+       m_commandList-&gt;ResourceBarrier(_countof(barriers), barriers);
+
+       CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_rtvHeap-&gt;GetCPUDescriptorHandleForHeapStart(), m_frameIndex, m_rtvDescriptorSize);
+       CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(m_dsvHeap-&gt;GetCPUDescriptorHandleForHeapStart());
+       m_commandList-&gt;OMSetRenderTargets(1, &amp;rtvHandle, FALSE, &amp;dsvHandle);
+
+       // Record commands.
+       const float clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
+       m_commandList-&gt;ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+       m_commandList-&gt;ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+       m_commandList-&gt;IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+       m_commandList-&gt;IASetVertexBuffers(0, 1, &amp;m_vertexBufferView);
+
+       if (m_enableCulling)
+       {
+              // Draw the triangles that have not been culled.
+              m_commandList-&gt;ExecuteIndirect(
+                    m_commandSignature.Get(),
+                    TriangleCount,
+                    m_processedCommandBuffers[m_frameIndex].Get(),
+                    0,
+                    m_processedCommandBuffers[m_frameIndex].Get(),
+                    CommandBufferSizePerFrame);
+       }
+       else
+       {
+              // Draw all of the triangles.
+              m_commandList-&gt;ExecuteIndirect(
+                    m_commandSignature.Get(),
+                    TriangleCount,
+                    m_commandBuffer.Get(),
+                    CommandBufferSizePerFrame * m_frameIndex,
+                    nullptr,
+                    0);
+       }
+
+       // Indicate that the command buffer may be used by the compute shader
+       // and that the back buffer will now be used to present.
+       barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
+       barriers[0].Transition.StateAfter = m_enableCulling ? D3D12_RESOURCE_STATE_COPY_DEST : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+       barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+       barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+
+       m_commandList-&gt;ResourceBarrier(_countof(barriers), barriers);
+
+       ThrowIfFailed(m_commandList-&gt;Close());
+}
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>If we are in GPU culling mode, we will have the graphics command queue wait for the compute work to complete before it begins executing the indirect commands. In the <strong>OnRender</strong> method the following snippet is added.</p>
+<pre lang="syntax"><code>// Execute the compute work.
+if (m_enableCulling)
+{
+       ID3D12CommandList* ppCommandLists[] = { m_computeCommandList.Get() };
+       m_computeCommandQueue-&gt;ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+       m_computeCommandQueue-&gt;Signal(m_computeFence.Get(), m_fenceValues[m_frameIndex]);
+
+       // Execute the rendering work only when the compute work is complete.
+       m_commandQueue-&gt;Wait(m_computeFence.Get(), m_fenceValues[m_frameIndex]);
+}
+
+// Execute the rendering work.
+ID3D12CommandList* ppCommandLists[] = { m_commandList.Get() };
+m_commandQueue-&gt;ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Call flow</th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nn-d3d12-id3d12commandlist"><strong>ID3D12CommandList</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-executecommandlists"><strong>ExecuteCommandLists</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-signal"><strong>Signal</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-wait"><strong>Wait</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nn-d3d12-id3d12commandlist"><strong>ID3D12CommandList</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-executecommandlists"><strong>ExecuteCommandLists</strong></a></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Run the sample</h2>
+<p>The sample with GPU primitive culling.</p>
+<p><img src="images/executeindirect-withculling.png" alt="screen shot of the exectue indirect sample with gpu culling" /></p>
+<p>The sample without GPU primitive culling.</p>
+<p><img src="images/executeindirect-withoutculling.png" alt="screen shot of the exectue indirect sample without gpu culling" /></p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="d3d12-code-walk-throughs.html">D3D12 Code Walk-Throughs</a></p>
+<!-- raw HTML omitted -->
+<p><a href="https://www.youtube.com/watch?v=fKD-VKJeeds">DirectX advanced learning video tutorials : Execute Indirect and Async GPU culling</a></p>
+<!-- raw HTML omitted -->
+<p><a href="indirect-drawing.html">Indirect Drawing</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

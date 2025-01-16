@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Impersonating a Client</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: When a user application requests data from objects on the system through a WMI provider, impersonation means the provider presents credentials that represent the clients security level rather than the providers.
+ms.assetid: 6d54f234-45aa-445b-ad50-7d5a9946c134
+ms.tgt_platform: multiple
+title: Impersonating a Client
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Impersonating a Client</h1>
+<p>When a user application requests data from objects on the system through a WMI provider, impersonation means the provider presents credentials that represent the client's security level rather than the provider's. Impersonation prevents a client from obtaining unauthorized access to information on the system.</p>
+<p>The following sections are discussed in this topic:</p>
+<ul>
+<li><a href="#registering-a-provider-for-impersonation">Registering a Provider for Impersonation</a></li>
+<li><a href="#setting-impersonation-levels-within-a-provider">Setting Impersonation Levels Within a Provider</a></li>
+<li><a href="#maintaining-security-levels-in-a-provider">Maintaining Security Levels in a Provider</a></li>
+<li><a href="#handling-access-denied-messages-in-a-provider">Handling Access Denied Messages in a Provider</a></li>
+<li><a href="#reporting-partial-instances">Reporting Partial Instances</a></li>
+<li><a href="#reporting-partial-enumerations">Reporting Partial Enumerations</a></li>
+<li><a href="#debugging-your-access-denied-code">Debugging Your Access Denied Code</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<p>WMI typically runs as an administrative service at a high security level, using the LocalServer security context. Using an administrative service gives WMI the means to access privileged information. When calling a provider for information, WMI passes its security identifier (SID) to the provider, enabling the provider to access information at the same high security level.</p>
+<p>During the WMI application launch process, the Windows operating system gives the WMI application the security context of the user who began the process. The security context of the user is typically a lower security level than LocalServer, so the user may not have permission to access all of the information available to WMI. When the user application asks for dynamic information, WMI passes the SID of the user to the corresponding provider. If written appropriately, the provider attempts to access information with the user SID, rather than the provider SID.</p>
+<p>For the provider to successfully impersonate the client application, the client application and provider must meet the following criteria:</p>
+<ul>
+<li>The client application must call WMI with a COM connection security level of <strong>RPC_C_IMP_LEVEL_IMPERSONATE</strong> or <strong>RPC_C_IMP_LEVEL_DELEGATE</strong>. For more information, see <a href="maintaining-wmi-security.html">Maintaining WMI Security</a>.</li>
+<li>The provider must register with WMI as an impersonation provider. For more information, see <a href="#registering-a-provider-for-impersonation">Registering a Provider for Impersonation</a>.</li>
+<li>The provider must switch to the security level of the client application before accessing privileged information. For more information, see <a href="#setting-impersonation-levels-within-a-provider">Setting Impersonation Levels Within a Provider</a>.</li>
+<li>The provider must correctly handle error conditions if access to this information is denied. For more information, see <a href="#handling-access-denied-messages-in-a-provider">Handling Access Denied Messages in a Provider</a>.</li>
+</ul>
+<h2>Registering a Provider for Impersonation</h2>
+<p>WMI only passes the SID of a client application to providers who have registered as impersonation providers. Enabling a provider to perform impersonation requires that you modify the provider registration process.</p>
+<p>The following procedure describes how to register a provider for impersonation. The procedure assumes that you already understand the registration process. For more information about the registration process, see <a href="registering-a-provider.html">Registering a Provider</a>.</p>
+<p><strong>To register a provider for impersonation</strong></p>
+<ol>
+<li>
+<p>Set the <a href="swbemsecurity-impersonationlevel.html"><strong>ImpersonationLevel</strong></a> property of the <a href="--win32provider.html"><strong>__Win32Provider</strong></a> class that represents your provider to 1.</p>
+<p>The <a href="swbemsecurity-impersonationlevel.html"><strong>ImpersonationLevel</strong></a> property documents whether the provider supports impersonation or not. Setting <strong>ImpersonationLevel</strong> to 0 indicates that the provider does not impersonate the client and performs all requested operations in the same user context as WMI. Setting <strong>ImpersonationLevel</strong> to 1 indicates that the provider uses impersonation calls to check operations performed on behalf of the client.</p>
+</li>
+<li>
+<p>Set the <strong>PerUserInitialization</strong> property of the same <a href="--win32provider.html"><strong>__Win32Provider</strong></a> class to <strong>TRUE</strong>.</p>
+</li>
+</ol>
+<blockquote>
+<p>[!Note]<br />
+If you register a provider with the <a href="--win32provider.html"><strong>__Win32Provider</strong></a> property <strong>InitializeAsAdminFirst</strong> set to <strong>TRUE</strong>, then the provider uses the administration-level thread security token only during the initialization phase. While a call to <a href="/windows/win32/api/combaseapi/nf-combaseapi-coimpersonateclient"><strong>CoImpersonateClient</strong></a> does not fail, the provider uses the security context of WMI and not of the client.</p>
+</blockquote>
+<p>Â </p>
+<p>The following code example shows how to register a provider for impersonation.</p>
+<pre lang="syntax"><code>instance of __Win32Provider
+{
+    CLSID = &quot;{FD4F53E0-65DC-11d1-AB64-00C04FD9159E}&quot;;
+    ImpersonationLevel = 1;
+    Name = &quot;MS_NT_EVENTLOG_PROVIDER&quot;;
+    PerUserInitialization = TRUE;
+};
+</code></pre>
+<h2>Setting Impersonation Levels Within a Provider</h2>
+<p>If you register a provider with the <a href="--win32provider.html"><strong>__Win32Provider</strong></a> class property <a href="swbemsecurity-impersonationlevel.html"><strong>ImpersonationLevel</strong></a> set to 1, then WMI calls your provider to impersonate various clients. To handle these calls, use the <a href="/windows/win32/api/combaseapi/nf-combaseapi-coimpersonateclient"><strong>CoImpersonateClient</strong></a> and <a href="/windows/win32/api/combaseapi/nf-combaseapi-coreverttoself"><strong>CoRevertToSelf</strong></a> COM functions in your implementation of the <a href="/windows/desktop/api/WbemCli/nn-wbemcli-iwbemservices"><strong>IWbemServices</strong></a> interface.</p>
+<p>The <a href="/windows/win32/api/combaseapi/nf-combaseapi-coimpersonateclient"><strong>CoImpersonateClient</strong></a> function allows a server to impersonate the client that made the call. By placing a call to <strong>CoImpersonateClient</strong> into your implementation of <a href="/windows/desktop/api/WbemCli/nn-wbemcli-iwbemservices"><strong>IWbemServices</strong></a>, you allow your provider to set the thread token of the provider to match the thread token of the client, and thus impersonate the client. If you do not call <strong>CoImpersonateClient</strong>, your provider executes code at an administrator level of security, thereby creating a potential security vulnerability. If your provider temporarily needs to act as an administrator or perform the access check manually, then call <a href="/windows/win32/api/combaseapi/nf-combaseapi-coreverttoself"><strong>CoRevertToSelf</strong></a>.</p>
+<p>In contrast to <a href="/windows/win32/api/combaseapi/nf-combaseapi-coimpersonateclient"><strong>CoImpersonateClient</strong></a>, <a href="/windows/win32/api/combaseapi/nf-combaseapi-coreverttoself"><strong>CoRevertToSelf</strong></a> is a COM function that handles thread impersonation levels. In this case, <strong>CoRevertToSelf</strong> changes the impersonation level back to the original impersonation setting. In general, the provider is initially an administrator and alternates between <strong>CoImpersonateClient</strong> and <strong>CoRevertToSelf</strong> depending on whether it is making a call that represents the caller or its own calls. It is the responsibility of the provider to place these calls correctly so as not to expose a security hole to the end user. For example, the provider should only call native Windows functions within the impersonated code sequence.</p>
+<blockquote>
+<p>[!Note]<br />
+The purpose of <a href="/windows/win32/api/combaseapi/nf-combaseapi-coimpersonateclient"><strong>CoImpersonateClient</strong></a> and <a href="/windows/win32/api/combaseapi/nf-combaseapi-coreverttoself"><strong>CoRevertToSelf</strong></a> is to set security for a provider. If you determine that your impersonation has failed, you should return an appropriate completion code to WMI through <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemobjectsink-setstatus"><strong>IWbemObjectSink::SetStatus</strong></a>. For more information, see <a href="#handling-access-denied-messages-in-a-provider">Handling Access Denied Messages in a Provider</a>.</p>
+</blockquote>
+<p>Â </p>
+<h2>Maintaining Security Levels in a Provider</h2>
+<p>Providers cannot call <a href="/windows/win32/api/combaseapi/nf-combaseapi-coimpersonateclient"><strong>CoImpersonateClient</strong></a> one time in an implementation of <a href="/windows/desktop/api/WbemCli/nn-wbemcli-iwbemservices"><strong>IWbemServices</strong></a> and assume that the impersonation credentials remain in place for the duration of the provider. Instead, call <strong>CoImpersonateClient</strong> multiple times during the course of an implementation to keep WMI from changing the credentials.</p>
+<p>The main concern for setting impersonation for a provider is reentrancy. In this context, reentrancy is when a provider makes a call to WMI for information and waits until WMI calls back into the provider. In essence, the thread of execution leaves the provider code, only to reenter the code at a later date. Reentry is a part of the design of COM, and is generally not a concern. However, when the thread of execution enters WMI, the thread takes on the impersonation levels of WMI. When the thread returns to the provider, you must reset the impersonation levels with another call to <a href="/windows/win32/api/combaseapi/nf-combaseapi-coimpersonateclient"><strong>CoImpersonateClient</strong></a>.</p>
+<p>To protect yourself from security holes in your provider, you should make reentrant calls into WMI only while impersonating the client. That is, calls to WMI should be made after you call <a href="/windows/win32/api/combaseapi/nf-combaseapi-coimpersonateclient"><strong>CoImpersonateClient</strong></a> and before you call <a href="/windows/win32/api/combaseapi/nf-combaseapi-coreverttoself"><strong>CoRevertToSelf</strong></a>. Because <strong>CoRevertToSelf</strong> causes the impersonation to be set to the user level WMI is running, generally LocalSystem, reentrant calls to WMI after calling <strong>CoRevertToSelf</strong> could give the user, and any providers called, a lot more capabilities than they should have.</p>
+<blockquote>
+<p>[!Note]<br />
+If you call a system function or another interface method, the call context is not guaranteed to be maintained.</p>
+</blockquote>
+<p>Â </p>
+<h2>Handling Access Denied Messages in a Provider</h2>
+<p>Most Access Denied error messages appear when a client requests a class or information to which they do not have access. If the provider returns an Access Denied error message to WMI and WMI passes this on to the client, the client can infer that the information exists. In some situations, this can be a breach of security. Therefore, your provider should not propagate the message to the client. Instead, the set of classes that the provider would have supplied should not be exposed. Similarly, a dynamic instance provider should call to the underlying data source to determine how to deal with Access Denied messages. It is the responsibility of the provider to replicate that philosophy into the WMI environment. For more information, see <a href="#reporting-partial-instances">Reporting Partial Instances</a> and <a href="#reporting-partial-enumerations">Reporting Partial Enumerations</a>.</p>
+<p>When you determine how your provider should handle Access Denied messages, you must write and debug your code. While debugging, it is often convenient to distinguish between a denial due to low impersonation, and a denial due to an error in your code. You can use a simple test in your code to determine the difference. For more information, see <a href="#debugging-your-access-denied-code">Debugging your Access Denied Code</a>.</p>
+<h2>Reporting Partial Instances</h2>
+<p>One common occurrence of an Access Denied message is when WMI cannot provide all the information to fill an instance. For example, a client may have the authority to view a hard disk drive object, but may not have authority to see how much space is available on the hard disk drive itself. Your provider must determine how to handle any situation when the provider cannot completely fill an instance with properties due to an access violation.</p>
+<p>WMI does not require a single response to clients that have partial access to an instance. Instead, WMI version 1.x allows the provider one of the following options:</p>
+<ul>
+<li>
+<p>Fail the entire operation with <strong>WBEM_E_ACCESS_DENIED</strong> and return no instances.</p>
+<p>Return an error object along with <strong>WBEM_E_ACCESS_DENIED</strong>, to describe the reason for the denial.</p>
+</li>
+<li>
+<p>Return all available properties, and fill unavailable properties with <strong>NULL</strong>.</p>
+</li>
+</ul>
+<blockquote>
+<p>[!Note]<br />
+Make sure that returning <strong>WBEM_E_ACCESS_DENIED</strong> does not create a security hole in your enterprise.</p>
+</blockquote>
+<p>Â </p>
+<h2>Reporting Partial Enumerations</h2>
+<p>Another common occurrence of an access violation is when WMI cannot return all of an enumeration. For example, a client may have access to view all of the local network computer objects, but may not have access to view computer objects outside of his domain. Your provider must determine how to handle any situation when an enumeration cannot be completed due to an access violation.</p>
+<p>As with an instance provider, WMI does not require a single response to a partial enumeration. Instead, WMI version 1.x allows a provider one of the following options:</p>
+<ul>
+<li>
+<p>Return <strong>WBEM_S_NO_ERROR</strong> for all instances that the provider can access.</p>
+<p>If you use this option, the user is not aware that some instances were not available. A number of providers, such as those using Structured Query Language (SQL) with row-level security, return successful partial results using the security level of the caller to define the result set.</p>
+</li>
+<li>
+<p>Fail the entire operation with <strong>WBEM_E_ACCESS_DENIED</strong> and return no instances.</p>
+<p>The provider may optionally include an error object that describes the situation to the client. Note that some providers may access data sources serially and may not encounter denials until partway through the enumeration.</p>
+</li>
+<li>
+<p>Return all of the instances that can be accessed but also return the nonerror status code <strong>WBEM_S_ACCESS_DENIED</strong>.</p>
+<p>The provider should note the denial during enumeration and may continue providing instances, finishing up with the nonerror status code. The provider may also elect to terminate the enumeration at the first denial. The justification for this option is that different providers have different retrieval paradigms. A provider may have already delivered instances before discovering an access violation. Some providers may elect to continue providing other instances and others may wish to terminate.</p>
+</li>
+</ul>
+<p>Due to the structure of COM, you cannot marshal back any information during an error except for an error object. Therefore, you cannot return both information and an error code. If you choose to return information, you must use a nonerror status code instead.</p>
+<h2>Debugging Your Access Denied Code</h2>
+<p>Some applications may use impersonation levels lower than <strong>RPC_C_IMP_LEVEL_IMPERSONATE</strong>. In this case, most impersonation calls made by the provider for the client application will fail. To successfully design and implement a provider, you must keep this idea in mind.</p>
+<p>By default, the only other level of impersonation that can access a provider is <strong>RPC_C_IMP_LEVEL_IDENTIFY</strong>. In cases where a client application uses <strong>RPC_C_IMP_LEVEL_IDENTIFY</strong>, <a href="/windows/win32/api/combaseapi/nf-combaseapi-coimpersonateclient"><strong>CoImpersonateClient</strong></a> does not return an error code. Instead, the provider impersonates the client for identification purposes only. Therefore, most Windows methods called by the provider will return an access denied message. This is harmless in practice, as users will not be permitted to do anything inappropriate. However, it may be useful during provider development to know whether the client was truly impersonated or not.</p>
+<p>The code requires the following references and #include statements to compile correctly.</p>
+<pre lang="C++"><code>#define _WIN32_DCOM
+#include &lt;iostream&gt;
+using namespace std;
+#include &lt;wbemidl.h&gt;
+</code></pre>
+<p>The following code example shows how to determine whether a provider has successfully impersonated a client application.</p>
+<pre lang="C++"><code>DWORD dwImp = 0;
+HANDLE hThreadTok;
+DWORD dwBytesReturned;
+BOOL bRes;
+
+// You must call this before trying to open a thread token!
+CoImpersonateClient();
+
+bRes = OpenThreadToken(
+    GetCurrentThread(),
+    TOKEN_QUERY,
+    TRUE,
+    &amp;hThreadTok
+);
+
+if (bRes == FALSE)
+{
+    printf(&quot;Unable to read thread token (%d)\n&quot;, GetLastError());
+    return 0;
+}
+
+bRes = GetTokenInformation(
+    hThreadTok,
+    TokenImpersonationLevel, 
+    &amp;dwImp,
+    sizeof(DWORD),
+    &amp;dwBytesReturned
+);
+
+if (!bRes)
+{
+    printf(&quot;Unable to read impersonation level\n&quot;);
+    CloseHandle(hThreadTok);
+    return 0;
+}
+
+switch (dwImp)
+{
+case SecurityAnonymous:
+    printf(&quot;SecurityAnonymous\n&quot;);
+    break;
+
+case SecurityIdentification:
+    printf(&quot;SecurityIdentification\n&quot;);
+    break;
+
+case SecurityImpersonation:
+    printf(&quot;SecurityImpersonation\n&quot;);
+    break;
+
+case SecurityDelegation:
+    printf(&quot;SecurityDelegation\n&quot;);
+    break;
+
+default:
+    printf(&quot;Error. Unable to determine impersonation level\n&quot;);
+    break;
+}
+
+CloseHandle(hThreadTok);
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="developing-a-wmi-provider.html">Developing a WMI Provider</a></p>
+<!-- raw HTML omitted -->
+<p><a href="setting-namespace-security-descriptors.html">Setting Namepace Security Descriptors</a></p>
+<!-- raw HTML omitted -->
+<p><a href="securing-your-provider.html">Securing Your Provider</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

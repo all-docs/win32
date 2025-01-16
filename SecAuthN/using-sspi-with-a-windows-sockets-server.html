@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using SSPI with a Windows Sockets Server</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This sample program works with the client program Using SSPI with a Windows Sockets Client. Both sample programs use the header file SspiExample.h which can be found in Header File for SSPI Client and Server Samples.
+ms.assetid: 4fa044c7-cce2-4a43-8f68-16cf3a4daaee
+title: Using SSPI with a Windows Sockets Server
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using SSPI with a Windows Sockets Server</h1>
+<p>This sample program works with the client program <a href="using-sspi-with-a-windows-sockets-client.html">Using SSPI with a Windows Sockets Client</a>. Both sample programs use the header file SspiExample.h which can be found in <a href="header-file-for-sspi-client-and-server.html">Header File for SSPI Client and Server Samples</a>.</p>
+<p>This program includes calls to functions in Secur32.lib and Ws2_32.lib, which must be included among the link libraries.</p>
+<p>This program demonstrates the following:</p>
+<ul>
+<li>Establishing a Windows Sockets connection with a client.</li>
+<li>Initializing a session.</li>
+<li>Connecting with a client and establishing a secure communication session. The server here offers the Negotiate SSP which can respond to the client with either NTLM or Kerberos.</li>
+<li>Uses client impersonation and reverting to self.</li>
+<li>Sends the client an encrypted message.</li>
+</ul>
+<p>This sample program uses limited error handling.</p>
+<pre lang="C++"><code>//--------------------------------------------------------------------
+//  This is a server-side SSPI Windows Sockets program.
+
+#define usPort 2000
+#define SECURITY_WIN32
+#define SEC_SUCCESS(Status) ((Status) &gt;= 0)
+
+#include &lt;windows.h&gt;
+#include &lt;winsock.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &quot;Sspiexample.h&quot;
+
+CredHandle hcred;
+struct _SecHandle  hctxt;
+
+static PBYTE g_pInBuf = NULL;
+static PBYTE g_pOutBuf = NULL;
+static DWORD g_cbMaxMessage;
+static TCHAR g_lpPackageName[1024];
+
+BOOL AcceptAuthSocket (SOCKET *ServerSocket);
+
+void main ()
+{
+CHAR pMessage[200];
+DWORD cbMessage;
+PBYTE pDataToClient = NULL;
+DWORD cbDataToClient = 0;
+PCHAR pUserName = NULL;
+DWORD cbUserName = 0;
+SOCKET Server_Socket;
+WSADATA wsaData;
+SECURITY_STATUS ss;
+PSecPkgInfo pkgInfo;
+SecPkgContext_Sizes SecPkgContextSizes;
+SecPkgContext_NegotiationInfo SecPkgNegInfo;
+ULONG cbMaxSignature;
+ULONG cbSecurityTrailer;
+
+//-----------------------------------------------------------------   
+//  Set the default package to negotiate.
+
+strcpy_s(g_lpPackageName, 1024 * sizeof(TCHAR), &quot;Negotiate&quot;);
+
+//-----------------------------------------------------------------   
+//  Initialize the socket interface and the security package.
+
+if( WSAStartup (0x0101, &amp;wsaData))
+{
+    fprintf (stderr, &quot;Could not initialize winsock: \n&quot;);
+    cleanup();
+}
+
+ss = QuerySecurityPackageInfo (
+   g_lpPackageName, 
+   &amp;pkgInfo);
+
+if (!SEC_SUCCESS(ss)) 
+{
+     fprintf (stderr,
+               &quot;Could not query package info for %s, error 0x%08x\n&quot;,
+               g_lpPackageName, ss);
+     cleanup();  
+}
+
+g_cbMaxMessage = pkgInfo-&gt;cbMaxToken;
+
+FreeContextBuffer(pkgInfo);
+
+g_pInBuf = (PBYTE) malloc (g_cbMaxMessage);
+g_pOutBuf = (PBYTE) malloc (g_cbMaxMessage);
+   
+if (NULL == g_pInBuf || NULL == g_pOutBuf)
+{
+     fprintf (stderr, &quot;Memory allocation error.\n&quot;);
+      cleanup();
+}
+
+//-----------------------------------------------------------------   
+//  Start looping for clients.
+
+while(TRUE)
+{
+  printf(&quot;Waiting for client to connect...\n&quot;);
+
+//-----------------------------------------------------------------   
+//  Make an authenticated connection with client.
+
+
+  if (!AcceptAuthSocket (&amp;Server_Socket))
+  {
+      fprintf (stderr, &quot;Could not authenticate the socket.\n&quot;);
+     cleanup();
+  }
+      
+ss = QueryContextAttributes(
+       &amp;hctxt,
+       SECPKG_ATTR_SIZES,
+       &amp;SecPkgContextSizes );
+
+if (!SEC_SUCCESS(ss))  
+{
+    fprintf (stderr, &quot;QueryContextAttributes failed: 0x%08x\n&quot;, ss);
+    exit(1);
+}
+
+//----------------------------------------------------------------
+//  The following values are used for encryption and signing.
+
+cbMaxSignature = SecPkgContextSizes.cbMaxSignature;
+cbSecurityTrailer = SecPkgContextSizes.cbSecurityTrailer;
+
+ss = QueryContextAttributes(
+      &amp;hctxt,
+      SECPKG_ATTR_NEGOTIATION_INFO,
+      &amp;SecPkgNegInfo );
+
+if (!SEC_SUCCESS(ss))  
+{
+      fprintf (stderr, &quot;QueryContextAttributes failed: 0x%08x\n&quot;, ss);
+      exit(1);
+}
+else
+{
+      printf(&quot;Package Name: %s\n&quot;, SecPkgNegInfo.PackageInfo-&gt;Name);
+}
+
+//----------------------------------------------------------------
+//  Free the allocated buffer.
+
+FreeContextBuffer(SecPkgNegInfo.PackageInfo);
+
+//-----------------------------------------------------------------   
+//  Impersonate the client.
+
+  ss = ImpersonateSecurityContext (&amp;hctxt);
+  if (!SEC_SUCCESS(ss)) 
+  {
+     fprintf (stderr, &quot;Impersonate failed: 0x%08x\n&quot;, ss);
+     cleanup();
+  }
+  else
+  {
+       printf(&quot;Impersonation worked. \n&quot;);
+  }
+
+  GetUserName (NULL, &amp;cbUserName);
+  pUserName = (PCHAR) malloc (cbUserName);
+
+  if (!pUserName)
+  {
+    fprintf (stderr, &quot;Memory allocation error. \n&quot;);
+    cleanup();
+  }
+
+  if (!GetUserName (
+     pUserName, 
+     &amp;cbUserName))
+  {
+    fprintf (stderr, &quot;Could not get the client name. \n&quot;);
+    cleanup();
+  }
+  else
+  {
+    printf (&quot;Client connected as :  %s\n&quot;, pUserName);
+  }
+
+//-----------------------------------------------------------------   
+//  Revert to self.
+
+  ss = RevertSecurityContext (&amp;hctxt);
+  if (!SEC_SUCCESS(ss)) 
+  {
+     fprintf (stderr, &quot;Revert failed: 0x%08x\n&quot;, ss);
+     cleanup();
+  }
+  else
+  {
+      printf(&quot;Reverted to self.\n&quot;);
+  }
+
+//-----------------------------------------------------------------   
+//  Send the client an encrypted message.
+
+  strcpy_s(pMessage, sizeof(pMessage),
+      &quot;This is your server speaking&quot;);
+  cbMessage = strlen(pMessage);
+
+  EncryptThis (
+       (PBYTE) pMessage,
+       cbMessage,
+       &amp;pDataToClient, 
+       &amp;cbDataToClient,
+       cbSecurityTrailer);
+
+//-----------------------------------------------------------------   
+//  Send the encrypted data to client.
+
+
+  if (!SendBytes(
+     Server_Socket, 
+     pDataToClient, 
+    cbDataToClient))
+  {
+     printf(&quot;send message failed. \n&quot;);
+     cleanup();
+  }
+
+  printf(&quot; %d encrypted bytes sent. \n&quot;, cbDataToClient);
+
+  if (Server_Socket)
+  {
+    DeleteSecurityContext (&amp;hctxt);
+    FreeCredentialHandle (&amp;hcred);
+    shutdown (Server_Socket, 2) ; 
+    closesocket (Server_Socket);
+    Server_Socket = 0;
+  }
+  
+  if (pUserName)
+  {
+     free (pUserName);
+     pUserName = NULL;
+     cbUserName = 0;
+  }
+  if(pDataToClient)
+  {
+     free (pDataToClient);
+     pDataToClient = NULL;
+     cbDataToClient = 0;
+  }
+}  // end while loop
+
+printf(&quot;Server ran to completion without error.\n&quot;);
+cleanup(); 
+}  // end main
+
+BOOL AcceptAuthSocket (SOCKET *ServerSocket)
+{
+SOCKET sockListen;
+SOCKET sockClient;
+SOCKADDR_IN sockIn;
+
+//-----------------------------------------------------------------   
+//  Create listening socket.
+
+sockListen = socket (
+   PF_INET, 
+   SOCK_STREAM, 
+   0);
+   
+if (INVALID_SOCKET == sockListen)  
+{
+   fprintf (stderr, &quot;Failed to create socket: %u\n&quot;, GetLastError ());
+   return(FALSE);
+}
+   
+//-----------------------------------------------------------------   
+//  Bind to local port.
+
+sockIn.sin_family = AF_INET;
+sockIn.sin_addr.s_addr = 0;
+sockIn.sin_port = htons(usPort);
+ 
+if (SOCKET_ERROR == bind (
+   sockListen, 
+   (LPSOCKADDR) &amp;sockIn, 
+   sizeof (sockIn)))  
+{
+    fprintf (stderr, &quot;bind failed: %u\n&quot;, GetLastError ());
+    return(FALSE);
+}
+   
+//-----------------------------------------------------------------   
+//  Listen for client.
+   
+if (SOCKET_ERROR == listen (sockListen, 1))  
+{
+   fprintf (stderr, &quot;Listen failed: %u\n&quot;, GetLastError ());
+   return(FALSE);
+}
+else
+{
+   printf(&quot;Listening ! \n&quot;);
+}
+
+//-----------------------------------------------------------------   
+//  Accept client.
+   
+sockClient = accept (
+   sockListen, 
+   NULL, 
+   NULL);
+
+if (INVALID_SOCKET == sockClient)  
+{
+    fprintf (stderr, &quot;accept failed: %u\n&quot;, GetLastError ());
+    return(FALSE);
+}
+   
+closesocket (sockListen);
+
+*ServerSocket = sockClient;
+
+   
+return(DoAuthentication (sockClient));
+
+}  // end AcceptAuthSocket  
+
+BOOL DoAuthentication (SOCKET AuthSocket)
+{
+SECURITY_STATUS   ss;
+DWORD cbIn,       cbOut;
+BOOL              done =   FALSE;
+TimeStamp         Lifetime;
+BOOL              fNewConversation;
+
+fNewConversation = TRUE;
+
+ss = AcquireCredentialsHandle (
+       NULL, 
+       g_lpPackageName,
+       SECPKG_CRED_INBOUND,
+       NULL, 
+       NULL, 
+       NULL, 
+       NULL, 
+       &amp;hcred,
+       &amp;Lifetime);
+
+if (!SEC_SUCCESS (ss))
+{
+       fprintf (stderr, &quot;AcquireCreds failed: 0x%08x\n&quot;, ss);
+       return(FALSE);
+}
+
+while(!done) 
+{
+   if (!ReceiveMsg (
+     AuthSocket, 
+     g_pInBuf, 
+     g_cbMaxMessage, 
+     &amp;cbIn))
+   {
+      return(FALSE);
+   }
+   
+   cbOut = g_cbMaxMessage;
+
+    if (!GenServerContext (
+       g_pInBuf, 
+       cbIn, 
+       g_pOutBuf, 
+       &amp;cbOut, 
+       &amp;done,
+       fNewConversation))
+   {
+        fprintf(stderr,&quot;GenServerContext failed.\n&quot;);
+        return(FALSE);
+    }
+    fNewConversation = FALSE;
+    if (!SendMsg (
+        AuthSocket, 
+        g_pOutBuf, 
+        cbOut))
+    {
+        fprintf(stderr,&quot;Sending message failed.\n&quot;);
+        return(FALSE);
+    }
+} 
+
+return(TRUE);
+}  // end DoAuthentication
+
+BOOL GenServerContext (
+         BYTE *pIn,
+         DWORD cbIn,
+         BYTE *pOut,
+         DWORD *pcbOut,
+         BOOL *pfDone,
+         BOOL fNewConversation)
+{
+SECURITY_STATUS   ss;
+TimeStamp         Lifetime;
+SecBufferDesc     OutBuffDesc;
+SecBuffer         OutSecBuff;
+SecBufferDesc     InBuffDesc;
+SecBuffer         InSecBuff;
+ULONG             Attribs = 0;
+ 
+//----------------------------------------------------------------
+//  Prepare output buffers.
+
+OutBuffDesc.ulVersion = 0;
+OutBuffDesc.cBuffers = 1;
+OutBuffDesc.pBuffers = &amp;OutSecBuff;
+
+OutSecBuff.cbBuffer = *pcbOut;
+OutSecBuff.BufferType = SECBUFFER_TOKEN;
+OutSecBuff.pvBuffer = pOut;
+
+//----------------------------------------------------------------
+//  Prepare input buffers.
+
+InBuffDesc.ulVersion = 0;
+InBuffDesc.cBuffers = 1;
+InBuffDesc.pBuffers = &amp;InSecBuff;
+
+InSecBuff.cbBuffer = cbIn;
+InSecBuff.BufferType = SECBUFFER_TOKEN;
+InSecBuff.pvBuffer = pIn;
+
+printf (&quot;Token buffer received (%lu bytes):\n&quot;, InSecBuff.cbBuffer);
+PrintHexDump (InSecBuff.cbBuffer, (PBYTE)InSecBuff.pvBuffer);
+
+ss = AcceptSecurityContext (
+       &amp;hcred,
+       fNewConversation ? NULL : &amp;hctxt,
+       &amp;InBuffDesc,
+       Attribs, 
+       SECURITY_NATIVE_DREP,
+       &amp;hctxt,
+       &amp;OutBuffDesc,
+       &amp;Attribs,
+       &amp;Lifetime);
+
+if (!SEC_SUCCESS (ss))  
+{
+    fprintf (stderr, &quot;AcceptSecurityContext failed: 0x%08x\n&quot;, ss);
+    return FALSE;
+}
+
+//----------------------------------------------------------------
+//  Complete token if applicable.
+   
+if ((SEC_I_COMPLETE_NEEDED == ss) 
+   || (SEC_I_COMPLETE_AND_CONTINUE == ss))  
+{
+    ss = CompleteAuthToken (&amp;hctxt, &amp;OutBuffDesc);
+    if (!SEC_SUCCESS(ss))  
+   {
+       fprintf (stderr, &quot;complete failed: 0x%08x\n&quot;, ss);
+       return FALSE;
+    }
+}
+
+*pcbOut = OutSecBuff.cbBuffer;
+
+//  fNewConversation equals FALSE.
+
+printf (&quot;Token buffer generated (%lu bytes):\n&quot;, 
+     OutSecBuff.cbBuffer);
+PrintHexDump (
+   OutSecBuff.cbBuffer, 
+   (PBYTE)OutSecBuff.pvBuffer);
+
+*pfDone = !((SEC_I_CONTINUE_NEEDED == ss) 
+   || (SEC_I_COMPLETE_AND_CONTINUE == ss));
+
+printf(&quot;AcceptSecurityContext result = 0x%08x\n&quot;, ss);
+
+return TRUE;
+
+}  // end GenServerContext
+
+
+BOOL EncryptThis (
+         PBYTE pMessage, 
+         ULONG cbMessage,
+         BYTE ** ppOutput,
+         ULONG * pcbOutput,
+         ULONG cbSecurityTrailer)
+{
+SECURITY_STATUS   ss;
+SecBufferDesc     BuffDesc;
+SecBuffer         SecBuff[2];
+ULONG             ulQop = 0;
+ULONG             SigBufferSize;
+
+//-----------------------------------------------------------------
+//  The size of the trailer (signature + padding) block is 
+//  determined from the global cbSecurityTrailer.
+
+SigBufferSize = cbSecurityTrailer;
+
+printf (&quot;Data before encryption: %s\n&quot;, pMessage);
+printf (&quot;Length of data before encryption: %d \n&quot;,cbMessage);
+
+//-----------------------------------------------------------------
+//  Allocate a buffer to hold the signature,
+//  encrypted data, and a DWORD  
+//  that specifies the size of the trailer block.
+
+* ppOutput = (PBYTE) malloc (
+ SigBufferSize + cbMessage + sizeof(DWORD));
+
+//------------------------------------------------------------------
+//  Prepare buffers.
+
+BuffDesc.ulVersion = 0;
+BuffDesc.cBuffers = 2;
+BuffDesc.pBuffers = SecBuff;
+
+SecBuff[0].cbBuffer = SigBufferSize;
+SecBuff[0].BufferType = SECBUFFER_TOKEN;
+SecBuff[0].pvBuffer = *ppOutput + sizeof(DWORD);
+
+SecBuff[1].cbBuffer = cbMessage;
+SecBuff[1].BufferType = SECBUFFER_DATA;
+SecBuff[1].pvBuffer = pMessage;
+
+ss = EncryptMessage(
+    &amp;hctxt,
+    ulQop,
+    &amp;BuffDesc,
+    0);
+
+if (!SEC_SUCCESS(ss)) 
+{
+   fprintf (stderr, &quot;EncryptMessage failed: 0x%08x\n&quot;, ss);
+   return(FALSE);
+}
+else
+{
+   printf(&quot;The message has been encrypted. \n&quot;);
+}
+
+//------------------------------------------------------------------
+//  Indicate the size of the buffer in the first DWORD. 
+
+*((DWORD *) *ppOutput) = SecBuff[0].cbBuffer;
+
+//-----------------------------------------------------------------
+//  Append the encrypted data to our trailer block
+//  to form a single block. 
+//  Putting trailer at the beginning of the buffer works out 
+//  better. 
+
+memcpy (*ppOutput+SecBuff[0].cbBuffer+sizeof(DWORD), pMessage,
+    cbMessage);
+
+*pcbOutput = cbMessage + SecBuff[0].cbBuffer + sizeof(DWORD);
+
+printf (&quot;data after encryption including trailer (%lu bytes):\n&quot;,
+    *pcbOutput);
+PrintHexDump (*pcbOutput, *ppOutput);
+
+return TRUE;
+
+}  // end EncryptThis
+
+
+
+void PrintHexDump(DWORD length, PBYTE buffer)
+{
+DWORD i,count,index;
+CHAR rgbDigits[]=&quot;0123456789abcdef&quot;;
+CHAR rgbLine[100];
+char cbLine;
+
+for(index = 0; length;
+   length -= count, buffer += count, index += count) 
+{
+   count = (length &gt; 16) ? 16:length;
+
+   sprintf_s(rgbLine, 100, &quot;%4.4x  &quot;,index);
+   cbLine = 6;
+
+   for(i=0;i&lt;count;i++) 
+   {
+      rgbLine[cbLine++] = rgbDigits[buffer[i] &gt;&gt; 4];
+      rgbLine[cbLine++] = rgbDigits[buffer[i] &amp; 0x0f];
+      if(i == 7) 
+      {
+         rgbLine[cbLine++] = ':';
+      } 
+      else 
+      {
+         rgbLine[cbLine++] = ' ';
+      }
+   }
+   for(; i &lt; 16; i++) 
+   {
+      rgbLine[cbLine++] = ' ';
+      rgbLine[cbLine++] = ' ';
+      rgbLine[cbLine++] = ' ';
+   }
+
+   rgbLine[cbLine++] = ' ';
+
+   for(i = 0; i &lt; count; i++) 
+   {
+      if(buffer[i] &lt; 32 || buffer[i] &gt; 126) 
+      {
+         rgbLine[cbLine++] = '.';
+      } 
+      else 
+      {
+         rgbLine[cbLine++] = buffer[i];
+      }
+   }
+
+   rgbLine[cbLine++] = 0;
+   printf(&quot;%s\n&quot;, rgbLine);
+}
+}  // end PrintHexDump
+
+
+BOOL SendMsg (
+   SOCKET s, 
+   PBYTE pBuf, 
+   DWORD cbBuf)
+{
+if (0 == cbBuf)
+   return(TRUE);
+
+//----------------------------------------------------------------
+//  Send the size of the message.
+
+if (!SendBytes (
+  s, 
+  (PBYTE)&amp;cbBuf, 
+  sizeof (cbBuf)))
+{
+    return(FALSE);
+}
+
+//----------------------------------------------------------------    
+//  Send the body of the message.
+
+if (!SendBytes (
+   s, 
+   pBuf, 
+   cbBuf))
+{
+    return(FALSE);
+}
+
+return(TRUE);
+} // end SendMsg    
+
+BOOL ReceiveMsg (
+  SOCKET s, 
+  PBYTE pBuf, 
+  DWORD cbBuf, 
+  DWORD *pcbRead)
+{
+DWORD cbRead;
+DWORD cbData;
+
+//-----------------------------------------------------------------
+//  Retrieve the number of bytes in the message.
+
+if (!ReceiveBytes (
+  s, 
+  (PBYTE)&amp;cbData, 
+  sizeof (cbData), 
+  &amp;cbRead))
+{
+  return(FALSE);
+}
+
+if (sizeof (cbData) != cbRead)
+{
+   return(FALSE);
+}
+
+//----------------------------------------------------------------
+//  Read the full message.
+
+if (!ReceiveBytes (
+  s, 
+  pBuf, 
+  cbData, 
+  &amp;cbRead))
+{
+   return(FALSE);
+}
+
+if (cbRead != cbData)
+{
+  return(FALSE);
+}
+
+*pcbRead = cbRead;
+
+return(TRUE);
+}  // end ReceiveMsg    
+
+BOOL SendBytes (
+  SOCKET s, 
+  PBYTE pBuf, 
+  DWORD cbBuf)
+{
+PBYTE pTemp = pBuf;
+int cbSent, cbRemaining = cbBuf;
+
+if (0 == cbBuf)
+{
+   return(TRUE);
+}
+
+while (cbRemaining) 
+{
+   cbSent = send (
+   s, 
+   (const char *)pTemp, 
+   cbRemaining, 
+   0);
+  if (SOCKET_ERROR == cbSent) 
+{
+   fprintf (stderr, &quot;send failed: %u\n&quot;, GetLastError ());
+   return FALSE;
+}
+
+pTemp += cbSent;
+cbRemaining -= cbSent;
+}
+
+return TRUE;
+}  // end SendBytes
+
+BOOL ReceiveBytes (
+  SOCKET s, 
+  PBYTE pBuf, 
+  DWORD cbBuf, 
+  DWORD *pcbRead)
+{
+PBYTE pTemp = pBuf;
+int cbRead, cbRemaining = cbBuf;
+
+while (cbRemaining) 
+{
+    cbRead = recv (
+        s, 
+        (char *)pTemp, 
+        cbRemaining, 
+        0);
+    if (0 == cbRead)
+   {
+      break;
+   }
+
+   if (SOCKET_ERROR == cbRead) 
+  {
+      fprintf (stderr, &quot;recv failed: %u\n&quot;, GetLastError ());
+      return FALSE;
+  }
+
+cbRemaining -= cbRead;
+pTemp += cbRead;
+}
+
+*pcbRead = cbBuf - cbRemaining;
+
+return TRUE;
+}  // end ReceivesBytes
+
+void cleanup()
+{
+   if (g_pInBuf)
+      free (g_pInBuf);
+
+   if (g_pOutBuf)
+      free (g_pOutBuf);
+
+   WSACleanup ();
+   exit(0);
+}
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

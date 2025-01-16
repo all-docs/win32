@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Asynchronous MFTs</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes asynchronous data processing for Media Foundation transforms (MFTs).
+ms.assetid: d438ffae-fc50-454f-8ce4-2d6676500fff
+title: Asynchronous MFTs
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Asynchronous MFTs</h1>
+<p>This topic describes asynchronous data processing for Media Foundation transforms (MFTs).</p>
+<blockquote>
+<p>[!Note]<br />
+This topic applies to WindowsÂ 7 or later.</p>
+</blockquote>
+<p>Â </p>
+<ul>
+<li><a href="#about-asynchronous-mfts">About Asynchronous MFTs</a></li>
+<li><a href="#general-requirements">General Requirements</a></li>
+<li><a href="#events">Events</a></li>
+<li><a href="#processinput">ProcessInput</a></li>
+<li><a href="#processoutput">ProcessOutput</a></li>
+<li><a href="#draining">Draining</a></li>
+<li><a href="#flushing">Flushing</a></li>
+<li><a href="#markers">Markers</a></li>
+<li><a href="#format-changes">Format Changes</a></li>
+<li><a href="#attributes">Attributes</a></li>
+<li><a href="#unlocking-asynchronous-mfts">Unlocking Asynchronous MFTs</a></li>
+<li><a href="#shutting-down-the-mft">Shutting Down the MFT</a></li>
+<li><a href="#registration-and-enumeration">Registration and Enumeration</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>About Asynchronous MFTs</h2>
+<p>When MFTs were introduced in WindowsÂ Vista, the API was designed for <em>synchronous</em> data processing. In that model, the MFT is always either waiting to get input, or waiting to produce output.</p>
+<p>Consider a typical video decoder. To get a decoded frame, the client calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>IMFTransform::ProcessOutput</strong></a>. If the decoder has enough data to decode a frame, <strong>ProcessOutput</strong> blocks while the MFT decodes the frame. Otherwise, <strong>ProcessOutput</strong> returns <strong>MF_E_TRANSFORM_NEED_MORE_INPUT</strong>, indicating that the client should call <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processinput"><strong>IMFTransform::ProcessInput</strong></a>.</p>
+<p>This model works well if the decoder performs all of its decoding operations on one thread. But suppose the decoder uses several threads to decode frames in parallel. For the best performance, the decoder should receive new input whenever a decoding thread becomes idle. But the rate at which threads complete decoding operations will not align exactly with the client's calls to <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processinput"><strong>ProcessInput</strong></a> and <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>ProcessOutput</strong></a>, resulting in threads waiting for work.</p>
+<p>WindowsÂ 7 introduces event-driven, <em>asynchronous</em> processing for MFTs. In this model, whenever the MFT needs input or has output, it sends an event to the client.</p>
+<h2>General Requirements</h2>
+<p>This topic describes how asynchronous MFTs differ from synchronous MFT. Except where noted in this topic, the two processing models are the same. (In particular, format negotiation is the same.)</p>
+<p>An asynchronous MFT must implement the following interfaces:</p>
+<ul>
+<li><a href="/windows/desktop/api/mftransform/nn-mftransform-imftransform"><strong>IMFTransform</strong></a></li>
+<li><a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a></li>
+<li><a href="/windows/desktop/api/mfidl/nn-mfidl-imfshutdown"><strong>IMFShutdown</strong></a></li>
+</ul>
+<h2>Events</h2>
+<p>An asynchronous MFT uses the following events to signal its data-processing status:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="metransformneedinput.html">METransformNeedInput</a></td>
+<td>Sent when the MFT can accept more input.</td>
+</tr>
+<tr>
+<td><a href="metransformhaveoutput.html">METransformHaveOutput</a></td>
+<td>Sent when the MFT has output.</td>
+</tr>
+<tr>
+<td><a href="metransformdraincomplete.html">METransformDrainComplete</a></td>
+<td>Sent when a drain operation completes. See <a href="#draining">Draining</a>.</td>
+</tr>
+<tr>
+<td><a href="metransformmarker.html">METransformMarker</a></td>
+<td>Sent when a marker is process. See <a href="#markers">Markers</a>.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>These events are sent out-of-band. It is important to understand the difference between in-band and out-of-band events in the context of an MFT.</p>
+<p>The original MFT design supports <em>in-band</em> events. An in-band event contains information about the data stream, such as information about a format change. The client sends in-band events to the MFT by calling <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processevent"><strong>IMFTransform::ProcessEvent</strong></a>. The MFT can send in-band events back to the client in the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>ProcessOutput</strong></a> method. (Specifically, events are conveyed in the <strong>pEvents</strong> member of the <a href="/windows/desktop/api/mftransform/ns-mftransform-mft_output_data_buffer"><strong>MFT_OUTPUT_DATA_BUFFER</strong></a> structure.)</p>
+<p>An MFT sends out-of-band events through the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a> interface as follows:</p>
+<ol>
+<li>The MFT implements the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a> interface, as described in <a href="media-event-generators.html">Media Event Generators</a>.</li>
+<li>The client calls <strong>IUnknown::QueryInterface</strong> on the MFT for the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a> interface. An asynchronous MFT must expose this interface. Synchronous MFTs should not expose this interface.</li>
+<li>The client calls <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaeventgenerator-begingetevent"><strong>IMFMediaEventGenerator::BeginGetEvent</strong></a> and <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaeventgenerator-endgetevent"><strong>IMFMediaEventGenerator::EndGetEvent</strong></a> to receive out-of-band events from the MFT.</li>
+</ol>
+<h2>ProcessInput</h2>
+<p>The <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processinput"><strong>IMFTransform::ProcessInput</strong></a> method is modified as follows:</p>
+<ol>
+<li>When streaming starts, the client sends the <a href="mft-message-notify-start-of-stream.html"><strong>MFT_MESSAGE_NOTIFY_START_OF_STREAM</strong></a> message.</li>
+<li>During streaming, the MFT requests data by sending an <a href="metransformneedinput.html">METransformNeedInput</a> event. The event data is the stream identifier.</li>
+<li>For each <a href="metransformneedinput.html">METransformNeedInput</a> event, the client calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processinput"><strong>ProcessInput</strong></a> for the specified stream.</li>
+<li>At the end of streaming, the client may call <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processmessage"><strong>ProcessMessage</strong></a> with the <a href="mft-message-notify-end-of-stream.html"><strong>MFT_MESSAGE_NOTIFY_END_OF_STREAM</strong></a> message.</li>
+</ol>
+<p>Implementation notes:</p>
+<ul>
+<li>The MFT must not send any <a href="metransformneedinput.html">METransformNeedInput</a> events until it receives the <a href="mft-message-notify-start-of-stream.html"><strong>MFT_MESSAGE_NOTIFY_START_OF_STREAM</strong></a> message.</li>
+<li>During streaming, the MFT may send <a href="metransformneedinput.html">METransformNeedInput</a> events at any time.</li>
+<li>The MFT should maintain a count of pending <a href="metransformneedinput.html">METransformNeedInput</a> events. Any call to <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processinput"><strong>ProcessInput</strong></a> that does not correspond to an METransformNeedInput event must return <strong>MF_E_NOTACCEPTING</strong>.</li>
+<li>When the MFT receives the <a href="mft-message-notify-end-of-stream.html"><strong>MFT_MESSAGE_NOTIFY_END_OF_STREAM</strong></a> message, it resets the count of pending <a href="metransformneedinput.html">METransformNeedInput</a> events to zero.</li>
+<li>The MFT must not send any <a href="metransformneedinput.html">METransformNeedInput</a> events after it receives the <a href="mft-message-notify-end-of-stream.html"><strong>MFT_MESSAGE_NOTIFY_END_OF_STREAM</strong></a> message.</li>
+<li>If <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processinput"><strong>ProcessInput</strong></a> is called before <a href="mft-message-notify-start-of-stream.html"><strong>MFT_MESSAGE_NOTIFY_START_OF_STREAM</strong></a> or after <a href="mft-message-notify-end-of-stream.html"><strong>MFT_MESSAGE_NOTIFY_END_OF_STREAM</strong></a>, the method must return <strong>MF_E_NOTACCEPTING</strong>.</li>
+</ul>
+<h2>ProcessOutput</h2>
+<p>The <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>IMFTransform::ProcessOutput</strong></a> method is modified as follows:</p>
+<ol>
+<li>Whenever the MFT has output, it sends an <a href="metransformhaveoutput.html">METransformHaveOutput</a> event.</li>
+<li>For each <a href="metransformhaveoutput.html">METransformHaveOutput</a> event, the client calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>ProcessOutput</strong></a>.</li>
+</ol>
+<p>Implementation notes:</p>
+<ul>
+<li>If the client calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>ProcessOutput</strong></a> at any other time, the method returns <strong>E_UNEXPECTED</strong>.</li>
+<li>An asynchronous MFT should never return <strong>MF_E_TRANSFORM_NEED_MORE_INPUT</strong> from the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>ProcessOutput</strong></a> method. If the MFT requires more input, it sends an <a href="metransformneedinput.html">METransformNeedInput</a> event.</li>
+</ul>
+<h2>Draining</h2>
+<p>Draining an MFT causes the MFT to produce as much output as it can from whatever input data has already been sent. Draining an asynchronous MFT works as follows:</p>
+<ol>
+<li>The client sends the <a href="mft-message-command-drain.html"><strong>MFT_MESSAGE_COMMAND_DRAIN</strong></a> message.</li>
+<li>The MFT continues to send <a href="metransformhaveoutput.html">METransformHaveOutput</a> events until it has no more data to process. It does not send <a href="metransformneedinput.html">METransformNeedInput</a> events during this time.</li>
+<li>After the MFT sends the last <a href="metransformhaveoutput.html">METransformHaveOutput</a> event, it sends an <a href="metransformdraincomplete.html">METransformDrainComplete</a> event.</li>
+</ol>
+<p>After draining is complete, the MFT does not send another <a href="metransformneedinput.html">METransformNeedInput</a> event until it receives an <a href="mft-message-notify-start-of-stream.html"><strong>MFT_MESSAGE_NOTIFY_START_OF_STREAM</strong></a> message from the client.</p>
+<h2>Flushing</h2>
+<p>The client can flush the MFT by sending the <a href="mft-message-command-flush.html"><strong>MFT_MESSAGE_COMMAND_FLUSH</strong></a> message. The MFT drops all of the input and output samples it is holding.</p>
+<p>The MFT does not send another <a href="metransformneedinput.html">METransformNeedInput</a> event until it receives an <a href="mft-message-notify-start-of-stream.html"><strong>MFT_MESSAGE_NOTIFY_START_OF_STREAM</strong></a> message from the client.</p>
+<h2>Markers</h2>
+<p>The client can mark a point in the stream by sending the <a href="mft-message-command-marker.html"><strong>MFT_MESSAGE_COMMAND_MARKER</strong></a> message. The MFT responds as follows:</p>
+<ol>
+<li>The MFT generates as many output samples as it can from the existing input data, sending an <a href="metransformhaveoutput.html">METransformHaveOutput</a> event for each output sample.</li>
+<li>After all of the output is generated, the MFT sends an <a href="metransformmarker.html">METransformMarker</a> event. This event must be sent after all of the <a href="metransformhaveoutput.html">METransformHaveOutput</a> events.</li>
+</ol>
+<p>For example, suppose that a decoder has enough input data to produce four output samples. If the client sends the <a href="mft-message-command-marker.html"><strong>MFT_MESSAGE_COMMAND_MARKER</strong></a> message, the MFT will queue four <a href="metransformhaveoutput.html">METransformHaveOutput</a> events (one per output sample), followed by an <a href="metransformmarker.html">METransformMarker</a> event.</p>
+<p>The marker message is similar to the drain message. However, a drain is considered a break in the stream, whereas a marker is not. Draining and markers have the following differences.</p>
+<p>Draining:</p>
+<ul>
+<li>While draining, the MFT does not send <a href="metransformneedinput.html">METransformNeedInput</a> events.</li>
+<li>The MFT discards any input data that cannot be used to create an output sample.</li>
+<li>Some MFTs produce a &quot;tail&quot; at the end of the data. For example, audio effects such as reverb or echo produce extra data after the input data has stopped. An MFT that generates a tail should do so at the end of a drain operation.</li>
+<li>After the MFT has finished draining, it marks the next output sample with the <a href="mfsampleextension-discontinuity-attribute.html"><strong>MFSampleExtension_Discontinuity</strong></a> attribute, to indicate a discontinuity in the stream.</li>
+</ul>
+<p>Marker:</p>
+<ul>
+<li>The MFT continues to send <a href="metransformneedinput.html">METransformNeedInput</a> events before sending the marker event.</li>
+<li>The MFT does not discard any input data. If there is partial data, it should be processed after the marker point.</li>
+<li>The MFT does not produce a tail at the marker point.</li>
+<li>The MFT does not set the discontinuity flag after the marker point.</li>
+</ul>
+<h2>Format Changes</h2>
+<p>An asynchronous MFT must support dynamic format changes, as described in <a href="handling-stream-changes.html">Handling Stream Changes</a>.</p>
+<h2>Attributes</h2>
+<p>An asynchronous MFT must implement the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getattributes"><strong>IMFTransform::GetAttributes</strong></a> method to return a valid attribute store. The following attributes apply to asynchronous MFTs:</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="mf-transform-async.html">MF_TRANSFORM_ASYNC</a></td>
+<td>The MFT must set this attribute to <strong>TRUE</strong> (1). The client can query this attribute to discover whether the MFT is asynchronous.</td>
+</tr>
+<tr>
+<td><a href="mf-transform-async-unlock.html">MF_TRANSFORM_ASYNC_UNLOCK</a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="mft-support-dynamic-format-change-attribute.html"><strong>MFT_SUPPORT_DYNAMIC_FORMAT_CHANGE</strong></a></td>
+<td>The MFT must set this attribute to <strong>TRUE</strong> (1). The client can assume that this attribute is set.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Unlocking Asynchronous MFTs</h2>
+<p>Asynchronous MFTs are not compatible with the original MFT data processing model. To prevent asynchronous MFTs from breaking existing applications, the following mechanism is defined:</p>
+<!-- raw HTML omitted -->
+<p>Until the client unlocks the MFT, all <a href="/windows/desktop/api/mftransform/nn-mftransform-imftransform"><strong>IMFTransform</strong></a> methods should return <strong>MF_E_TRANSFORM_ASYNC_LOCKED</strong>, with the following exceptions:</p>
+<ul>
+<li><a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getattributes"><strong>IMFTransform::GetAttributes</strong></a> (all asynchronous MFTs)</li>
+<li><a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getinputavailabletype"><strong>IMFTransform::GetInputAvailableType</strong></a> (all asynchronous MFTs)</li>
+<li><a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getoutputcurrenttype"><strong>IMFTransform::GetOutputCurrentType</strong></a> (encoders only)</li>
+<li><a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setoutputtype"><strong>IMFTransform::SetOutputType</strong></a> (encoders only)</li>
+<li><a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getstreamcount"><strong>IMFTransform::GetStreamCount</strong></a> (all asynchronous MFTs)</li>
+<li><a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getstreamids"><strong>IMFTransform::GetStreamIDs</strong></a> (all asynchronous MFTs)</li>
+</ul>
+<p>The following code shows how to unlock an asynchronous MFT:</p>
+<pre lang="C++"><code>HRESULT UnlockAsyncMFT(IMFTransform *pMFT)
+{
+    IMFAttributes *pAttributes = NULL;
+
+    HRESULT hr = hr = pMFT-&gt;GetAttributes(&amp;pAttributes);
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE);
+        pAttributes-&gt;Release();
+    }
+    
+    return hr;
+}
+</code></pre>
+<h2>Shutting Down the MFT</h2>
+<p>Asynchronous MFTs must implement the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfshutdown"><strong>IMFShutdown</strong></a> interface.</p>
+<ul>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfshutdown-shutdown"><strong>Shutdown</strong></a>: The MFT must shut down its event queue. If using the standard event queue, call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaeventqueue-shutdown"><strong>IMFMediaEventQueue::Shutdown</strong></a>. Optionally, the MFT may release other resources. The client must not use the MFT after calling <strong>Shutdown</strong>.</li>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfshutdown-getshutdownstatus"><strong>GetShutdownStatus</strong></a>: After <a href="/windows/desktop/api/mfidl/nf-mfidl-imfshutdown-shutdown"><strong>Shutdown</strong></a> has been called, the MFT should return the value <strong>MFSHUTDOWN_COMPLETED</strong> in the <em>pStatus</em> parameter. It should not return the value <strong>MFSHUTDOWN_INITIATED</strong>.</li>
+</ul>
+<h2>Registration and Enumeration</h2>
+<p>To register an asynchronous MFT, call the <a href="/windows/desktop/api/mfapi/nf-mfapi-mftregister"><strong>MFTRegister</strong></a> function and set the <strong>MFT_ENUM_FLAG_ASYNCMFT</strong> flag in the <em>Flags</em> parameter. (Previously this flag was reserved.)</p>
+<p>To enumerate asynchronous MFTs, call the <a href="/windows/desktop/api/mfapi/nf-mfapi-mftenumex"><strong>MFTEnumEx</strong></a> function and set the <strong>MFT_ENUM_FLAG_ASYNCMFT</strong> flag in the <em>Flags</em> parameter. For backward compatibility, the <a href="/windows/desktop/api/mfapi/nf-mfapi-mftenum"><strong>MFTEnum</strong></a> function does not enumerate asynchronous MFTs. Otherwise, installing an asynchronous MFT on the user's computer could break existing applications.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="media-foundation-transforms.html">Media Foundation Transforms</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

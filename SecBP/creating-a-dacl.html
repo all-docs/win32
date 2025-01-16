@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating a DACL</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Shows how to properly create a DACL.
+ms.assetid: f8ec202f-4f34-4123-8f3c-cfc5960b4dc2
+title: Creating a DACL
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Creating a DACL</h1>
+<p>Creating a proper <a href="/windows/desktop/SecGloss/d-gly"><em>discretionary access control list</em></a> (DACL) is a necessary and important part of application development. Because a <strong>NULL</strong> DACL permits all types of access to all users, do not use <strong>NULL</strong> DACLs.</p>
+<p>The following example shows how to properly create a DACL. The example contains a function, CreateMyDACL, that uses the <a href="/windows/desktop/SecAuthZ/security-descriptor-definition-language">security descriptor definition language</a> (SDDL) to define the granted and denied access control in a DACL. To provide different access for your application's objects, modify the CreateMyDACL function as needed.</p>
+<p>In the example:</p>
+<ol>
+<li>
+<p>The main function passes an address of a <a href="/previous-versions/windows/desktop/legacy/aa379560(v=vs.85)"><strong>SECURITY_ATTRIBUTES</strong></a> structure to the CreateMyDACL function.</p>
+</li>
+<li>
+<p>The CreateMyDACL function uses SDDL strings to:</p>
+<ul>
+<li>Deny access to guest and anonymous logon users.</li>
+<li>Allow read/write/execute access to authenticated users.</li>
+<li>Allow full control to administrators.</li>
+</ul>
+<p>For more information about the SDDL string formats, see <a href="/windows/desktop/SecAuthZ/security-descriptor-string-format">Security Descriptor String Format</a>.</p>
+</li>
+<li>
+<p>The CreateMyDACL function calls the <a href="/windows/desktop/api/sddl/nf-sddl-convertstringsecuritydescriptortosecuritydescriptora"><strong>ConvertStringSecurityDescriptorToSecurityDescriptor</strong></a> function to convert the SDDL strings to a <a href="/windows/desktop/SecGloss/s-gly"><em>security descriptor</em></a>. The security descriptor is pointed to by the <strong>lpSecurityDescriptor</strong> member of the <a href="/previous-versions/windows/desktop/legacy/aa379560(v=vs.85)"><strong>SECURITY_ATTRIBUTES</strong></a> structure. CreateMyDACL sends the return value from <strong>ConvertStringSecurityDescriptorToSecurityDescriptor</strong> to the main function.</p>
+</li>
+<li>
+<p>The main function uses the updated <a href="/previous-versions/windows/desktop/legacy/aa379560(v=vs.85)"><strong>SECURITY_ATTRIBUTES</strong></a> structure to specify the DACL for a new folder that is created by the <a href="/windows/desktop/api/fileapi/nf-fileapi-createdirectorya"><strong>CreateDirectory</strong></a> function.</p>
+</li>
+<li>
+<p>When the main function is finished using the <a href="/previous-versions/windows/desktop/legacy/aa379560(v=vs.85)"><strong>SECURITY_ATTRIBUTES</strong></a> structure, the main function frees the memory allocated for the <strong>lpSecurityDescriptor</strong> member by calling the <a href="/windows/desktop/api/winbase/nf-winbase-localfree"><strong>LocalFree</strong></a> function.</p>
+</li>
+</ol>
+<blockquote>
+<p>[!Note]<br />
+To successfully compile SDDL functions such as <a href="/windows/desktop/api/sddl/nf-sddl-convertstringsecuritydescriptortosecuritydescriptora"><strong>ConvertStringSecurityDescriptorToSecurityDescriptor</strong></a>, you must define the _WIN32_WINNT constant as 0x0500 or greater.</p>
+</blockquote>
+<p>Â </p>
+<pre lang="C++"><code>#define _WIN32_WINNT 0x0500
+
+#include &lt;windows.h&gt;
+#include &lt;sddl.h&gt;
+#include &lt;stdio.h&gt;
+
+#pragma comment(lib, &quot;advapi32.lib&quot;)
+
+BOOL CreateMyDACL(SECURITY_ATTRIBUTES *);
+
+void main()
+{
+     SECURITY_ATTRIBUTES  sa;
+      
+     sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+     sa.bInheritHandle = FALSE;  
+
+     // Call function to set the DACL. The DACL
+     // is set in the SECURITY_ATTRIBUTES 
+     // lpSecurityDescriptor member.
+     if (!CreateMyDACL(&amp;sa))
+     {
+         // Error encountered; generate message and exit.
+         printf(&quot;Failed CreateMyDACL\n&quot;);
+         exit(1);
+     }
+
+     // Use the updated SECURITY_ATTRIBUTES to specify
+     // security attributes for securable objects.
+     // This example uses security attributes during
+     // creation of a new directory.
+     if (0 == CreateDirectory(TEXT(&quot;C:\\MyFolder&quot;), &amp;sa))
+     {
+         // Error encountered; generate message and exit.
+         printf(&quot;Failed CreateDirectory\n&quot;);
+         exit(1);
+     }
+
+     // Free the memory allocated for the SECURITY_DESCRIPTOR.
+     if (NULL != LocalFree(sa.lpSecurityDescriptor))
+     {
+         // Error encountered; generate message and exit.
+         printf(&quot;Failed LocalFree\n&quot;);
+         exit(1);
+     }
+}
+
+
+// CreateMyDACL.
+//    Create a security descriptor that contains the DACL 
+//    you want.
+//    This function uses SDDL to make Deny and Allow ACEs.
+//
+// Parameter:
+//    SECURITY_ATTRIBUTES * pSA
+//    Pointer to a SECURITY_ATTRIBUTES structure. It is your
+//    responsibility to properly initialize the 
+//    structure and to free the structure's 
+//    lpSecurityDescriptor member when you have
+//    finished using it. To free the structure's 
+//    lpSecurityDescriptor member, call the 
+//    LocalFree function.
+// 
+// Return value:
+//    FALSE if the address to the structure is NULL. 
+//    Otherwise, this function returns the value from the
+//    ConvertStringSecurityDescriptorToSecurityDescriptor 
+//    function.
+BOOL CreateMyDACL(SECURITY_ATTRIBUTES * pSA)
+{
+     // Define the SDDL for the DACL. This example sets 
+     // the following access:
+     //     Built-in guests are denied all access.
+     //     Anonymous logon is denied all access.
+     //     Authenticated users are allowed 
+     //     read/write/execute access.
+     //     Administrators are allowed full control.
+     // Modify these values as needed to generate the proper
+     // DACL for your application. 
+     TCHAR * szSD = TEXT(&quot;D:&quot;)       // Discretionary ACL
+        TEXT(&quot;(D;OICI;GA;;;BG)&quot;)     // Deny access to 
+                                     // built-in guests
+        TEXT(&quot;(D;OICI;GA;;;AN)&quot;)     // Deny access to 
+                                     // anonymous logon
+        TEXT(&quot;(A;OICI;GRGWGX;;;AU)&quot;) // Allow 
+                                     // read/write/execute 
+                                     // to authenticated 
+                                     // users
+        TEXT(&quot;(A;OICI;GA;;;BA)&quot;);    // Allow full control 
+                                     // to administrators
+
+    if (NULL == pSA)
+        return FALSE;
+
+     return ConvertStringSecurityDescriptorToSecurityDescriptor(
+                szSD,
+                SDDL_REVISION_1,
+                &amp;(pSA-&gt;lpSecurityDescriptor),
+                NULL);
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

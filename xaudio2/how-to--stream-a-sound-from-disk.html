@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to: Stream a Sound from Disk</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: 'How to: Stream a sound from disk'
+description: You can stream audio data in XAudio2 by creating a separate thread and perform buffer reads of the audio data in the streaming thread, and then use callbacks to control that thread.
+ms.assetid: 48b80a66-91c1-973f-069b-6f63422d7154
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to: Stream a Sound from Disk</h1>
+<blockquote>
+<p>[!NOTE]<br />
+This content applies only to desktop apps (and would require revision in order to function in a UWP app). Please refer to the documentation for <a href="/windows/win32/api/fileapi/nf-fileapi-createfile2"><strong>CreateFile2</strong></a>, <a href="/windows/win32/api/synchapi/nf-synchapi-createeventexa"><strong>CreateEventEx</strong></a>, <a href="/windows/win32/api/synchapi/nf-synchapi-waitforsingleobjectex"><strong>WaitForSingleObjectEx</strong></a>, <a href="/windows/win32/api/fileapi/nf-fileapi-setfilepointerex"><strong>SetFilePointerEx</strong></a>, and <a href="/windows/win32/api/ioapiset/nf-ioapiset-getoverlappedresultex"><strong>GetOverlappedResultEx</strong></a>. See the <a href="https://github.com/microsoftarchive/msdn-code-gallery-microsoft/tree/411c271e537727d737a53fa2cbe99eaecac00cc0/Official%20Windows%20Platform%20Sample/Windows%208%20app%20samples/%5BC%2B%2B%5D-Windows%208%20app%20samples/C%2B%2B/Windows%208%20app%20samples/XAudio2%20audio%20stream%20effect%20sample%20(Windows%208)/C%2B%2B">XAudio2 audio stream effect Windows 8 sample app</a> from now-archived Windows SDK Samples Gallery.</p>
+</blockquote>
+<p>You can stream audio data in XAudio2 by creating a separate thread and perform buffer reads of the audio data in the streaming thread, and then use callbacks to control that thread.</p>
+<ul>
+<li><a href="#performing-buffer-reads-in-the-streaming-thread">Performing buffer reads in the streaming thread</a></li>
+<li><a href="#creating-the-callback-class">Creating the callback class</a></li>
+</ul>
+<h2>Performing buffer reads in the streaming thread</h2>
+<p>To perform buffer reads in the streaming thread follow these steps:</p>
+<ol>
+<li>
+<p>Create an array of read buffers.</p>
+<pre><code>#define STREAMING_BUFFER_SIZE 65536
+#define MAX_BUFFER_COUNT 3
+BYTE buffers[MAX_BUFFER_COUNT][STREAMING_BUFFER_SIZE];
+</code></pre>
+</li>
+<li>
+<p>Initialize an OVERLAPPED structure.</p>
+<p>The structure is used to check when an asynchronous disk read has finished.</p>
+<pre><code>OVERLAPPED Overlapped = {0};
+Overlapped.hEvent = CreateEvent( NULL, TRUE, FALSE, NULL );
+</code></pre>
+</li>
+<li>
+<p>Call the <a href="/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2sourcevoice-start"><strong>Start</strong></a> function on the <a href="/windows/desktop/api/xaudio2/nn-xaudio2-ixaudio2sourcevoice"><strong>source voice</strong></a> that will be playing the streaming audio.</p>
+<pre><code>hr = pSourceVoice-&gt;Start( 0, 0 );
+</code></pre>
+</li>
+<li>
+<p>Loop while the current read position is not passed the end of the audio file.</p>
+<pre><code>CurrentDiskReadBuffer = 0;
+CurrentPosition = 0;
+while ( CurrentPosition &lt; cbWaveSize )
+{
+    ...
+}
+</code></pre>
+<p>In the loop, do the following:</p>
+<ol>
+<li>
+<p>Read a chunk of data from the disk into the current read buffer.</p>
+<pre><code>DWORD dwRead;
+if( SUCCEEDED(hr) &amp;&amp; 0 == ReadFile( hFile, pData, dwDataSize, &amp;dwRead, pOverlapped ) )
+    hr = HRESULT_FROM_WIN32( GetLastError() );
+    DWORD cbValid = min( STREAMING_BUFFER_SIZE, cbWaveSize - CurrentPosition );
+    DWORD dwRead;
+    if( 0 == ReadFile( hFile, buffers[CurrentDiskReadBuffer], STREAMING_BUFFER_SIZE, &amp;dwRead, &amp;Overlapped ) )
+        hr = HRESULT_FROM_WIN32( GetLastError() );
+    Overlapped.Offset += cbValid;
+
+    //update the file position to where it will be once the read finishes
+    CurrentPosition += cbValid;
+</code></pre>
+</li>
+<li>
+<p>Use the <strong>GetOverlappedResult</strong> function to wait for the event that signals the read has finished.</p>
+<pre><code>DWORD NumberBytesTransferred;
+::GetOverlappedResult(hFile,&amp;Overlapped,&amp;NumberBytesTransferred, TRUE);
+</code></pre>
+</li>
+<li>
+<p>Wait for the number of buffers queued on the <a href="/windows/desktop/api/xaudio2/nn-xaudio2-ixaudio2sourcevoice"><strong>source voice</strong></a> to be less than the number of read buffers.</p>
+<p>The state of the <a href="/windows/desktop/api/xaudio2/nn-xaudio2-ixaudio2sourcevoice"><strong>source voice</strong></a> is checked with the <a href="/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2sourcevoice-getstate"><strong>GetState</strong></a> function.</p>
+<pre><code>XAUDIO2_VOICE_STATE state;
+while( pSourceVoice-&gt;GetState( &amp;state ), state.BuffersQueued &gt;= MAX_BUFFER_COUNT - 1)
+{
+    WaitForSingleObject( Context.hBufferEndEvent, INFINITE );
+}
+</code></pre>
+</li>
+<li>
+<p>Submit the current read buffer to the <a href="/windows/desktop/api/xaudio2/nn-xaudio2-ixaudio2sourcevoice"><strong>source voice</strong></a> using the <a href="/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2sourcevoice-submitsourcebuffer"><strong>SubmitSourceBuffer</strong></a> function.</p>
+<pre><code>XAUDIO2_BUFFER buf = {0};
+buf.AudioBytes = cbValid;
+buf.pAudioData = buffers[CurrentDiskReadBuffer];
+if( CurrentPosition &gt;= cbWaveSize )
+{
+    buf.Flags = XAUDIO2_END_OF_STREAM;
+}
+pSourceVoice-&gt;SubmitSourceBuffer( &amp;buf );
+</code></pre>
+</li>
+<li>
+<p>Set the current read buffer index to the next buffer.</p>
+<pre><code>CurrentDiskReadBuffer++;
+CurrentDiskReadBuffer %= MAX_BUFFER_COUNT;
+</code></pre>
+</li>
+</ol>
+</li>
+<li>
+<p>After the loop has finished, wait for the remaining queued buffers to finish playing.</p>
+<p>When the remaining buffers have finished playing, the sound stops, and the thread can exit or be reused to stream another sound.</p>
+<pre><code>XAUDIO2_VOICE_STATE state;
+while( pSourceVoice-&gt;GetState( &amp;state ), state.BuffersQueued &gt; 0 )
+{
+    WaitForSingleObjectEx( Context.hBufferEndEvent, INFINITE, TRUE );
+}
+</code></pre>
+</li>
+</ol>
+<h2>Creating the callback class</h2>
+<p>To create the callback class, create a class that inherits from the <a href="/windows/desktop/api/xaudio2/nn-xaudio2-ixaudio2voicecallback"><strong>IXAudio2VoiceCallback</strong></a> interface.</p>
+<p>The class should set an event in its <a href="/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2voicecallback-onbufferend"><strong>OnBufferEnd</strong></a> method. This allows the streaming thread to put itself to sleep until the event signals it that XAudio2 has finished reading from an audio buffer. For more information about using callbacks with XAudio2, see <a href="how-to--use-source-voice-callbacks.html">How to: Use Source Voice Callbacks</a>.</p>
+<pre><code>struct StreamingVoiceContext : public IXAudio2VoiceCallback
+{
+    HANDLE hBufferEndEvent;
+    StreamingVoiceContext(): hBufferEndEvent( CreateEvent( NULL, FALSE, FALSE, NULL ) ){}
+    ~StreamingVoiceContext(){ CloseHandle( hBufferEndEvent ); }
+    void OnBufferEnd( void* ){ SetEvent( hBufferEndEvent ); }
+    ...
+};
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="streaming-audio-data.html">Streaming Audio Data</a></p>
+<!-- raw HTML omitted -->
+<p><a href="callbacks.html">XAudio2 Callbacks</a></p>
+<!-- raw HTML omitted -->
+<p><a href="programming-guide.html">XAudio2 Programming Guide</a></p>
+<!-- raw HTML omitted -->
+<p><a href="how-to--build-a-basic-audio-processing-graph.html">How to: Build a Basic Audio Processing Graph</a></p>
+<!-- raw HTML omitted -->
+<p><a href="how-to--use-source-voice-callbacks.html">How to: Use Source Voice Callbacks</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

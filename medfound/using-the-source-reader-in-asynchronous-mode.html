@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using the Source Reader in Asynchronous Mode</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to use the Source Reader in asynchronous mode.
+ms.assetid: 9D3C2780-D7DB-4151-8474-9A19EC94F6BE
+title: Using the Source Reader in Asynchronous Mode
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using the Source Reader in Asynchronous Mode</h1>
+<p>This topic describes how to use the <a href="source-reader.html">Source Reader</a> in asynchronous mode. In asynchronous mode, the application provides a callback interface, which is used to notify the application that data is available.</p>
+<p>This topic assumes that you have already read the topic <a href="processing-media-data-with-the-source-reader.html">Using the Source Reader to Process Media Data</a>.</p>
+<h2>Using Asynchronous Mode</h2>
+<p>The Source Reader operates either in synchronous mode or asynchronous mode. The code example shown in the previous section assumes that the Source Reader is using synchronous mode, which is the default. In synchronous mode, the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>IMFSourceReader::ReadSample</strong></a> method blocks while the media source produces the next sample. A media source typically acquires data from some external source (such as a local file or a network connection), so the method can block the calling thread for a noticeable amount of time.</p>
+<p>In asynchronous mode, the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>ReadSample</strong></a> returns immediately and the work is performed on another thread. After the operation is complete, the Source Reader calls the application through the <a href="/windows/desktop/api/mfreadwrite/nn-mfreadwrite-imfsourcereadercallback"><strong>IMFSourceReaderCallback</strong></a> callback interface. To use asynchronous mode, you must provide a callback pointer when you first create the Source Reader, as follows:</p>
+<ol>
+<li>Create an attribute store by calling the <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreateattributes"><strong>MFCreateAttributes</strong></a> function.</li>
+<li>Set the <a href="mf-source-reader-async-callback.html">MF_SOURCE_READER_ASYNC_CALLBACK</a> attribute on the attribute store. The attribute value is a pointer to your callback object.</li>
+<li>When you create the Source Reader, pass the attribute store to the creation function in the <em>pAttributes</em> parameter. All of the functions to create the Source Reader have this parameter.</li>
+</ol>
+<p>The following example shows these steps.</p>
+<pre lang="C++"><code>HRESULT CreateSourceReaderAsync(
+    PCWSTR pszURL, 
+    IMFSourceReaderCallback *pCallback, 
+    IMFSourceReader **ppReader)
+{
+    HRESULT hr = S_OK;
+    IMFAttributes *pAttributes = NULL;
+
+    hr = MFCreateAttributes(&amp;pAttributes, 1);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pAttributes-&gt;SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK, pCallback);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = MFCreateSourceReaderFromURL(pszURL, pAttributes, ppReader);
+
+done:
+    SafeRelease(&amp;pAttributes);
+    return hr;
+}
+</code></pre>
+<p>After you create the Source Reader, you cannot switch modes between synchronous and asynchronous.</p>
+<p>To get data in asynchronous mode, call the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>ReadSample</strong></a> method but set the last four parameters to <strong>NULL</strong>, as shown in the following example.</p>
+<pre lang="C++"><code>    // Request the first sample.
+    hr = pReader-&gt;ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 
+        0, NULL, NULL, NULL, NULL);
+</code></pre>
+<p>When the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>ReadSample</strong></a> method completes asynchronously, the Source Reader calls your <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereadercallback-onreadsample"><strong>IMFSourceReaderCallback::OnReadSample</strong></a> method. This method has five parameters:</p>
+<ul>
+<li><em>hrStatus</em>: Contains an <strong>HRESULT</strong> value. This is the same value that <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>ReadSample</strong></a> would return in synchronous mode. If <em>hrStatus</em> contains an error code, you can ignore the remaining parameters.</li>
+<li><em>dwStreamIndex</em>, <em>dwStreamFlags</em>, llTimestamp, and <em>pSample</em>: These three parameters are equivalent to the last three parameters in <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>ReadSample</strong></a>. They contain the stream number, status flags, and <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfsample"><strong>IMFSample</strong></a> pointer, respectively.</li>
+</ul>
+<pre lang="C++"><code>    STDMETHODIMP OnReadSample(HRESULT hrStatus, DWORD dwStreamIndex,
+        DWORD dwStreamFlags, LONGLONG llTimestamp, IMFSample *pSample);
+</code></pre>
+<p>In addition, the callback interface defines two other methods:</p>
+<ul>
+<li><a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereadercallback-onevent"><strong>OnEvent</strong></a>. Notifies the application when certain events occur in media source, such as buffering or network connection events.</li>
+<li><a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereadercallback-onflush"><strong>OnFlush</strong></a>. Called when the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-flush"><strong>Flush</strong></a> method completes.</li>
+</ul>
+<h2>Implementing the Callback Interface</h2>
+<p>The callback interface must be thread-safe, because <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereadercallback-onreadsample"><strong>OnReadSample</strong></a> and the other callback methods are called from worker threads.</p>
+<p>There are several different approaches you can take when you implement the callback. For example, you can do all of the work inside the callback, or you can use the callback to notify the application (for example, by signaling an event handle) and then do work from the application thread.</p>
+<p>The <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereadercallback-onreadsample"><strong>OnReadSample</strong></a> method will be called once for every call that you make to the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>IMFSourceReader::ReadSample</strong></a> method. To get the next sample, call <strong>ReadSample</strong> again. If an error occurs, <strong>OnReadSample</strong> is called with an error code for the <em>hrStatus</em> parameter.</p>
+<p>The following example shows a minimal implementation of the callback interface. First, here is the declaration of a class that implements the interface.</p>
+<pre lang="C++"><code>#include &lt;shlwapi.h&gt;
+
+class SourceReaderCB : public IMFSourceReaderCallback
+{
+public:
+    SourceReaderCB(HANDLE hEvent) : 
+      m_nRefCount(1), m_hEvent(hEvent), m_bEOS(FALSE), m_hrStatus(S_OK)
+    {
+        InitializeCriticalSection(&amp;m_critsec);
+    }
+
+    // IUnknown methods
+    STDMETHODIMP QueryInterface(REFIID iid, void** ppv)
+    {
+        static const QITAB qit[] =
+        {
+            QITABENT(SourceReaderCB, IMFSourceReaderCallback),
+            { 0 },
+        };
+        return QISearch(this, qit, iid, ppv);
+    }
+    STDMETHODIMP_(ULONG) AddRef()
+    {
+        return InterlockedIncrement(&amp;m_nRefCount);
+    }
+    STDMETHODIMP_(ULONG) Release()
+    {
+        ULONG uCount = InterlockedDecrement(&amp;m_nRefCount);
+        if (uCount == 0)
+        {
+            delete this;
+        }
+        return uCount;
+    }
+
+    // IMFSourceReaderCallback methods
+    STDMETHODIMP OnReadSample(HRESULT hrStatus, DWORD dwStreamIndex,
+        DWORD dwStreamFlags, LONGLONG llTimestamp, IMFSample *pSample);
+
+    STDMETHODIMP OnEvent(DWORD, IMFMediaEvent *)
+    {
+        return S_OK;
+    }
+
+    STDMETHODIMP OnFlush(DWORD)
+    {
+        return S_OK;
+    }
+
+public:
+    HRESULT Wait(DWORD dwMilliseconds, BOOL *pbEOS)
+    {
+        *pbEOS = FALSE;
+
+        DWORD dwResult = WaitForSingleObject(m_hEvent, dwMilliseconds);
+        if (dwResult == WAIT_TIMEOUT)
+        {
+            return E_PENDING;
+        }
+        else if (dwResult != WAIT_OBJECT_0)
+        {
+            return HRESULT_FROM_WIN32(GetLastError());
+        }
+
+        *pbEOS = m_bEOS;
+        return m_hrStatus;
+    }
+    
+private:
+    
+    // Destructor is private. Caller should call Release.
+    virtual ~SourceReaderCB() 
+    {
+    }
+
+    void NotifyError(HRESULT hr)
+    {
+        wprintf(L&quot;Source Reader error: 0x%X\n&quot;, hr);
+    }
+
+private:
+    long                m_nRefCount;        // Reference count.
+    CRITICAL_SECTION    m_critsec;
+    HANDLE              m_hEvent;
+    BOOL                m_bEOS;
+    HRESULT             m_hrStatus;
+
+};
+</code></pre>
+<p>In this example, we are not interested in the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereadercallback-onevent"><strong>OnEvent</strong></a> and <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereadercallback-onflush"><strong>OnFlush</strong></a> methods, so they simply return <strong>S_OK</strong>. The class uses an event handle to signal the application; this handle is provided through the constructor.</p>
+<p>In this minimal example, the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereadercallback-onreadsample"><strong>OnReadSample</strong></a> method just prints the time stamp to the console window. Then it stores the status code and the end-of-stream flag, and signals the event handle:</p>
+<pre lang="C++"><code>HRESULT SourceReaderCB::OnReadSample(
+    HRESULT hrStatus,
+    DWORD /* dwStreamIndex */,
+    DWORD dwStreamFlags,
+    LONGLONG llTimestamp,
+    IMFSample *pSample      // Can be NULL
+    )
+{
+    EnterCriticalSection(&amp;m_critsec);
+
+    if (SUCCEEDED(hrStatus))
+    {
+        if (pSample)
+        {
+            // Do something with the sample.
+            wprintf(L&quot;Frame @ %I64d\n&quot;, llTimestamp);
+        }
+    }
+    else
+    {
+        // Streaming error.
+        NotifyError(hrStatus);
+    }
+
+    if (MF_SOURCE_READERF_ENDOFSTREAM &amp; dwStreamFlags)
+    {
+        // Reached the end of the stream.
+        m_bEOS = TRUE;
+    }
+    m_hrStatus = hrStatus;
+
+    LeaveCriticalSection(&amp;m_critsec);
+    SetEvent(m_hEvent);
+    return S_OK;
+}
+</code></pre>
+<p>The following code shows the application would use this callback class to read all of the video frames from a media file:</p>
+<pre lang="C++"><code>HRESULT ReadMediaFile(PCWSTR pszURL)
+{
+    HRESULT hr = S_OK;
+
+    IMFSourceReader *pReader = NULL;
+    SourceReaderCB *pCallback = NULL;
+
+    HANDLE hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    if (hEvent == NULL)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto done;
+    }
+
+    // Create an instance of the callback object.
+    pCallback = new (std::nothrow) SourceReaderCB(hEvent);
+    if (pCallback == NULL)
+    {
+        hr = E_OUTOFMEMORY;
+        goto done;
+    }
+
+    // Create the Source Reader.
+    hr = CreateSourceReaderAsync(pszURL, pCallback, &amp;pReader);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = ConfigureDecoder(pReader, MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Request the first sample.
+    hr = pReader-&gt;ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 
+        0, NULL, NULL, NULL, NULL);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    while (SUCCEEDED(hr))
+    {
+        BOOL bEOS;
+        hr = pCallback-&gt;Wait(INFINITE, &amp;bEOS);
+        if (FAILED(hr) || bEOS)
+        {
+            break;
+        }
+        hr = pReader-&gt;ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+            0, NULL, NULL, NULL, NULL);
+    }
+
+done:
+    SafeRelease(&amp;pReader);
+    SafeRelease(&amp;pCallback);
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="source-reader.html">Source Reader</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

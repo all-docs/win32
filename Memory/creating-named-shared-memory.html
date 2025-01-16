@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating Named Shared Memory</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: To share data, multiple processes can use memory-mapped files that the system paging file stores.
+ms.assetid: 17458be2-3ef7-42f2-a717-abf73ac4846f
+title: Creating Named Shared Memory
+ms.topic: article
+ms.date: 07/30/2024</h2>
+<h1>Creating Named Shared Memory</h1>
+<p>To share data, multiple processes can use memory-mapped files that the system paging file stores.</p>
+<blockquote>
+<p>[!NOTE]
+The code in this example will require administrative privileges at runtime.</p>
+</blockquote>
+<h2>First Process</h2>
+<p>The first process creates the file mapping object by calling the <a href="/windows/win32/api/WinBase/nf-winbase-createfilemappinga"><strong>CreateFileMapping</strong></a> function with <strong>INVALID_HANDLE_VALUE</strong> and a name for the object. By using the <strong>PAGE_READWRITE</strong> flag, the process has read/write permission to the memory through any file views that are created.</p>
+<p>Then the process uses the file mapping object handle that <a href="/windows/win32/api/WinBase/nf-winbase-createfilemappinga"><strong>CreateFileMapping</strong></a> returns in a call to <a href="/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile"><strong>MapViewOfFile</strong></a> to create a view of the file in the process address space. The <strong>MapViewOfFile</strong> function returns a pointer to the file view, <code>pBuf</code>. The process then uses the <a href="/previous-versions/windows/desktop/legacy/aa366535(v=vs.85)"><strong>CopyMemory</strong></a> function to write a string to the view that can be accessed by other processes.</p>
+<p>Prefixing the file mapping object names with &quot;Global\&quot; allows processes to communicate with each other even if they are in different terminal server sessions. This requires that the first process must have the <a href="../secauthz/privilege-constants.html"><strong>SeCreateGlobalPrivilege</strong></a> privilege.</p>
+<p>When the process no longer needs access to the file mapping object, it should call the <a href="/windows/win32/api/handleapi/nf-handleapi-closehandle"><strong>CloseHandle</strong></a> function. When all handles are closed, the system can free the section of the paging file that the object uses.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;conio.h&gt;
+#include &lt;tchar.h&gt;
+
+#define BUF_SIZE 256
+TCHAR szName[]=TEXT(&quot;Global\\MyFileMappingObject&quot;);
+TCHAR szMsg[]=TEXT(&quot;Message from first process.&quot;);
+
+int _tmain()
+{
+   HANDLE hMapFile;
+   LPCTSTR pBuf;
+
+   hMapFile = CreateFileMapping(
+                 INVALID_HANDLE_VALUE,    // use paging file
+                 NULL,                    // default security
+                 PAGE_READWRITE,          // read/write access
+                 0,                       // maximum object size (high-order DWORD)
+                 BUF_SIZE,                // maximum object size (low-order DWORD)
+                 szName);                 // name of mapping object
+
+   if (hMapFile == NULL)
+   {
+      _tprintf(TEXT(&quot;Could not create file mapping object (%d).\n&quot;),
+             GetLastError());
+      return 1;
+   }
+   pBuf = (LPTSTR) MapViewOfFile(hMapFile,   // handle to map object
+                        FILE_MAP_ALL_ACCESS, // read/write permission
+                        0,
+                        0,
+                        BUF_SIZE);
+
+   if (pBuf == NULL)
+   {
+      _tprintf(TEXT(&quot;Could not map view of file (%d).\n&quot;),
+             GetLastError());
+
+       CloseHandle(hMapFile);
+
+      return 1;
+   }
+
+
+   CopyMemory((PVOID)pBuf, szMsg, (_tcslen(szMsg) * sizeof(TCHAR)));
+    _getch();
+
+   UnmapViewOfFile(pBuf);
+
+   CloseHandle(hMapFile);
+
+   return 0;
+}
+</code></pre>
+<h2>Second Process</h2>
+<p>A second process can access the string written to the shared memory by the first process by calling the <a href="/windows/win32/api/WinBase/nf-winbase-openfilemappinga"><strong>OpenFileMapping</strong></a> function specifying the same name for the mapping object as the first process. Then it can use the <a href="/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile"><strong>MapViewOfFile</strong></a> function to obtain a pointer to the file view, <code>pBuf</code>. The process can display this string as it would any other string. In this example, the message box displayed contains the message &quot;Message from first process&quot; that was written by the first process.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;conio.h&gt;
+#include &lt;tchar.h&gt;
+#pragma comment(lib, &quot;user32.lib&quot;)
+
+#define BUF_SIZE 256
+TCHAR szName[]=TEXT(&quot;Global\\MyFileMappingObject&quot;);
+
+int _tmain()
+{
+   HANDLE hMapFile;
+   LPCTSTR pBuf;
+
+   hMapFile = OpenFileMapping(
+                   FILE_MAP_ALL_ACCESS,   // read/write access
+                   FALSE,                 // do not inherit the name
+                   szName);               // name of mapping object
+
+   if (hMapFile == NULL)
+   {
+      _tprintf(TEXT(&quot;Could not open file mapping object (%d).\n&quot;),
+             GetLastError());
+      return 1;
+   }
+
+   pBuf = (LPTSTR) MapViewOfFile(hMapFile, // handle to map object
+               FILE_MAP_ALL_ACCESS,  // read/write permission
+               0,
+               0,
+               BUF_SIZE);
+
+   if (pBuf == NULL)
+   {
+      _tprintf(TEXT(&quot;Could not map view of file (%d).\n&quot;),
+             GetLastError());
+
+      CloseHandle(hMapFile);
+
+      return 1;
+   }
+
+   MessageBox(NULL, pBuf, TEXT(&quot;Process2&quot;), MB_OK);
+
+   UnmapViewOfFile(pBuf);
+
+   CloseHandle(hMapFile);
+
+   return 0;
+}
+</code></pre>
+<h2>Related topics</h2>
+<p><a href="sharing-files-and-memory.html">Sharing Files and Memory</a></p>
+</body>

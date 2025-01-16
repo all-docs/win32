@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Validating the Certificate Chain</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Validating the Certificate Chain
+ms.assetid: e0c36f04-1694-40d8-94a1-06ee7de08777
+title: Validating the Certificate Chain
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Validating the Certificate Chain</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This topic describes how to validate the driver's certificate chain when using Certified Output Protection Protocol (COPP).</p>
+<p>The graphic driver's certificate chain is an XML document. The certificate chain contains three certificates. The first certificate is called the <em>leaf certificate</em>, and is the driver's COPP certificate. The next certificate is the signing certificate of the Independent Hardware Vendor (IHV). The last certificate is Microsoft's signing certificate. To ensure that the graphics driver is a legitimate COPP device, the application must validate all three of these certificates. A malicious program can prevent COPP from working if an application does not correctly validate the certificates in the chain.</p>
+<p>COPP certificate chains use the UTF-8 character set. Binary data in the certificates, such as the RSA public key, are base64-encoded and stored in big-endian order. (<em>Big-endian</em> means that the most significant byte is stored in the memory location with the lowest address.)</p>
+<p>Some elements within a certificate contain Boolean values to denote that a feature of the certificate exists. If the feature exists, the corresponding child element value is set to 1. If a feature is not present, that child element is not present in the certificate.</p>
+<h3>XML Element Definitions</h3>
+<p>The following are definitions for elements in the certificate schema:</p>
+<ul>
+<li><strong>CertificateCollection</strong>. The root element of the XML document. It contains Certificate elements, one for each certificate in the chain.</li>
+<li><strong>Certificate</strong>. Contains one certificate. This element contains Data and Signature elements.</li>
+<li><strong>Data</strong>. Contains information about the certificate. In particular, it contains the certificate's public key and type. The Data element contains the following child elements:
+<ul>
+<li><strong>PublicKey</strong>. Contains the certificate's RSA public key. The PublicKey element contains a KeyValue element, which contains an RSAKeyValue element. The RSAKeyValue element has two child elements, Modulus and Exponent, and these define the public key. The Modulus and Exponent elements are base64-encoded and stored in big-endian order.</li>
+<li><strong>KeyUsage</strong>. If the certificate is the driver's COPP certificate, this element should contain a child element called EncryptKey. If the certificate is the IHV's signing certificate or Microsoft's signing certificate, it should contain a child element called SignCertificate. Both of these child elements contain Boolean values.</li>
+<li><strong>SecurityLevel</strong>. This element should be ignored.</li>
+<li><strong>ManufacturerData</strong>. Specifies the manufacturer and model of the graphics device. This element is informational only.</li>
+<li><strong>Features</strong>. Contains child elements that specify the usage of the certificate. The only one relevant to COPP is the COPPCertificate element. Other child elements might be present; if so, they should be ignored. If the COPPCertificate element exists, the certificate is a COPP certificate. This element must be present in the leaf node of a valid COPP certificate. This element contains a Boolean value.</li>
+</ul>
+</li>
+<li><strong>Signature</strong>. Contains the signature for this certificate. It contains the following child elements:
+<ul>
+<li><strong>SignedInfo</strong>. Contains information about the signature. The important child element of this element is the DigestValue element, which contains the base64-encoded value of the SHA-1 hash over the Data element. The digest value is used when checking the certificate against the certificate revocation list (CRL).</li>
+<li><strong>SignatureValue</strong>. This value is computed over the Data element and is computed according to the RSASSA-PSS digital signature scheme defined in Public-Key Cryptography Standards (PKCS) #1 (version 2.1). For information about PKCS #1, visit <a href="https://www.rsa.com/">https://www.rsa.com/</a>.</li>
+<li><strong>KeyInfo</strong>. Contains the RSA public key of the next certificate in the chain. This element is used to verify that the data in the Data element has not been tampered with. This element has the same format as the PublicKey element.</li>
+</ul>
+</li>
+</ul>
+<h3>Certificate Validation</h3>
+<p>The application must perform the following steps to correctly validate the certificate chain. If any step fails, or if any element referred to in these procedures does not exist, the validation fails.</p>
+<h3>Validate Certificate Collection Procedure</h3>
+<p>To validate the certificate chain, perform the following steps:</p>
+<ol>
+<li>Verify that the CertificateCollection is well-formed XML.</li>
+<li>Verify that the CertificateCollection is encoded in UTF-8 format.</li>
+<li>Check that the Version attribute in the CertificateCollection element is 2.0 or later.</li>
+<li>Verify that the certificate chain contains exactly three Certificate elements.</li>
+<li>Loop through each Certificate element in the certificate chain and perform the Validate Certificate procedure, described below, on each.</li>
+</ol>
+<h3>Validate Certificate Procedure</h3>
+<p>To validate a certificate in the chain, perform the following steps:</p>
+<ol>
+<li>Verify that none of the child elements in the Data element is duplicated. For example, there should be only one PublicKey element.</li>
+<li>Ensure that the Data/PublicKey/KeyValue/RSAKeyValue/Modulus element exists. The base64-decoded value must be 256 bytes long for all certificates except the root. In the root certificate, this element must be 128 bytes long.</li>
+<li>Ensure that the Data/PublicKey/KeyValue/RSAKeyValue/Exponent element exists. The base64-decoded value must not be larger than 4 bytes.</li>
+<li>If this certificate is the leaf certificate, verify the following:
+<ul>
+<li>The KeyUsage element contains an EncryptKey element with the value 1.</li>
+<li>The Features element contains a COPPCertificate element with the value 1.</li>
+</ul>
+</li>
+<li>If this certificate is not the leaf certificate, verify the following:
+<ul>
+<li>The modulus and exponent from the Data/PublicKey element exactly match the modulus and exponent from the Signature/KeyInfo element of the previous certificate.</li>
+<li>The KeyUsage element contains a SignCertificate element, with the value 1.</li>
+</ul>
+</li>
+<li>Use the SHA-1 hash algorithm to hash every byte in the certificate's Data element. Every byte from the first character in the &lt;Data&gt; tag to the last character in the closing &lt;/Data&gt; tag should be hashed. The hash value is used to check the certificate against the certificate revocation list (CRL), as described in <a href="certificate-revocation-lists.html">Certificate Revocation Lists</a></li>
+<li>Compare the hash value from step 6 with the base64-decoded value of the Signature/SignedInfo/Reference/DigestValue element. These values must match.</li>
+<li>Perform the Verify Signature procedure, described below.</li>
+<li>If this certificate is not the final certificate in the chain, save the Signature/KeyInfo/KeyValue/RSAKeyValue value for the next iteration of the loop.</li>
+<li>If this certificate is the final certificate in the chain, ensure that the value of Signature/KeyInfo/KeyValue/RSAKeyValue matches Microsoft's public key. The Microsoft public key has the following base64-encoded values:
+<ul>
+<li>
+<p>Modulus:</p>
+<p><code>pjoeWLSTLDonQG8She6QhkYbYott9fPZ8tHdB128ZETcghn5KHoyin7HkJEcPJ0Eg4UdSv a0KDIYDjA3EXd69R3CN2Wp/QyOo0ZPYWYp3NXpJ700tKPgIplzo5wVd/69g7j+j8M66W7V NmDwaNs9mDc1p2+VVMsDhOsV/Au6E+E=</code></p>
+</li>
+<li>
+<p>Exponent: <code>AQAB</code></p>
+</li>
+</ul>
+</li>
+</ol>
+<h3>Verify Signature Procedure</h3>
+<p>The value of the SignatureValue element is computed over the Data element according to the RSASSA-PSS digital signature scheme defined in PKCS #1 version 2.1 (hereinafter referred to as PKCS). To verify this signature, perform the following steps:</p>
+<ol>
+<li>Decode the Modulus and Exponent values in the Signature/KeyInfo/KeyValue/RSAKeyValue element. These values define the RSA public key of the signing certificate.</li>
+<li>Decode the Signature/SignatureValue element.</li>
+<li>Compute the RSASSA-PSS-Verify operation, defined in section 8.1.2 of PKCS.</li>
+</ol>
+<p>For the RSASSA-PSS-Verify operation, use the following inputs:</p>
+<ul>
+<li>(<em>n</em>,<em>e</em>) is the public key from step 1.</li>
+<li><em>M</em> is all of the bytes in the Data element, including the &lt;Data&gt; and &lt;/Data&gt; tags that enclose the element.</li>
+<li><em>S</em> is the decoded signature value from step 2.</li>
+</ul>
+<p>The RSASSA-PSS-Verify operation uses the EMSA-PSS-ENCODE operation, defined in section 9.1.1. of PKCS. For this operation, COPP uses the following options:</p>
+<ul>
+<li>Hash = SHA-1</li>
+<li><em>hLen</em> = 20</li>
+<li>MGF (mask generation function) = MGF1</li>
+<li><em>sLen</em> = 0</li>
+</ul>
+<p>The mask generation function MGF1 is defined in Appendix B.2 of PKCS. For this function, COPP uses the following options:</p>
+<ul>
+<li>Hash = SHA-1</li>
+<li><em>hLen</em> = 20</li>
+</ul>
+<p>The output of the RSASSA-PSS-Verify operation indicates whether the signature is valid or invalid.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-certified-output-protection-protocol--copp.html">Using Certified Output Protection Protocol (COPP)</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ReadXmlExample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: ReadXmlExample
+description: This example reads XML node by node.
+ms.assetid: 938825f6-43dd-4e24-a04d-c46290509a64
+keywords:</p>
+<ul>
+<li>ReadXmlExample Web Services for Windows</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>ReadXmlExample</h1>
+<p>This example reads XML node by node.</p>
+<h2>ReadXml.cpp</h2>
+<pre lang="C++"><code>//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;string.h&quot;
+
+#pragma comment(lib, &quot;WebServices.lib&quot;)
+#pragma comment(lib, &quot;Rpcrt4.lib&quot;)
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+void PrintString(const WS_XML_STRING* string)
+{
+    if (string-&gt;length == 0)
+    {
+        return;
+    }
+
+    WCHAR* chars = NULL;
+    int charCount = 0;
+
+    charCount = 
+        MultiByteToWideChar(
+        CP_UTF8, 
+        MB_ERR_INVALID_CHARS, 
+        (char*)string-&gt;bytes, 
+        string-&gt;length, NULL, 0);
+    if (charCount == 0)
+    {
+        printf(&quot;&lt;error: MultiByteToWideChar failed&gt;&quot;);
+        goto Exit;
+    }
+
+    chars = (WCHAR*)HeapAlloc(
+        GetProcessHeap(), 
+        0, 
+        charCount * sizeof(WCHAR));
+
+    if (chars == NULL)
+    {
+        printf(&quot;&lt;error: HeapAlloc failed&gt;&quot;);
+        goto Exit;
+    }
+
+    if (MultiByteToWideChar(
+        CP_UTF8,
+        MB_ERR_INVALID_CHARS, 
+        (char*)string-&gt;bytes, string-&gt;length,
+        chars, charCount) != charCount)
+    {
+        printf(&quot;&lt;error: MultiByteToWideChar failed&gt;&quot;);
+        goto Exit;
+    }
+
+    printf(&quot;%.*S&quot;, charCount, chars);
+
+Exit:
+    if (chars != NULL)
+    {
+        HeapFree(GetProcessHeap(), 0, chars);
+    }
+}
+
+void PrintText(const WS_XML_TEXT* text)
+{
+    switch (text-&gt;textType)
+    {
+        case WS_XML_TEXT_TYPE_UTF8:
+            {
+                const WS_XML_UTF8_TEXT* utf8Text = (const WS_XML_UTF8_TEXT*) text;
+                printf(&quot;WS_XML_TEXT_TYPE_UTF8(value='&quot;);
+                PrintString(&amp;utf8Text-&gt;value);
+                printf(&quot;')&quot;);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_UTF16:
+            {
+                const WS_XML_UTF16_TEXT* utf16Text = (const WS_XML_UTF16_TEXT*) text;
+                printf(&quot;WS_XML_TEXT_TYPE_UTF16(value='%.*S')&quot;, utf16Text-&gt;byteCount / sizeof(WCHAR), (WCHAR*)utf16Text-&gt;bytes);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_BASE64:
+            {
+                const WS_XML_BASE64_TEXT* base64Text = (const WS_XML_BASE64_TEXT*) text;
+                printf(&quot;WS_XML_TEXT_TYPE_BASE64(value={ &quot;);
+                for (ULONG i = 0; i &lt; base64Text-&gt;length; i++)
+                {
+                    printf(&quot;%02x&quot;, base64Text-&gt;bytes[i]);
+                }
+                printf(&quot; })&quot;);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_BOOL:
+            {
+                const WS_XML_BOOL_TEXT* boolText = (const WS_XML_BOOL_TEXT*) text;
+                printf(&quot;WS_XML_TEXT_TYPE_BOOL(value='%s')&quot;, boolText-&gt;value ? &quot;true&quot; : &quot;false&quot;);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_INT32:
+            {
+                const WS_XML_INT32_TEXT* int32Text = (const WS_XML_INT32_TEXT*) text;
+                printf(&quot;WS_XML_TEXT_TYPE_INT32(value='%d')&quot;, int32Text-&gt;value);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_INT64:
+            {
+                const WS_XML_INT64_TEXT* int64Text = (const WS_XML_INT64_TEXT*) text;
+                printf(&quot;WS_XML_TEXT_TYPE_INT64(value='%I64d')&quot;, int64Text-&gt;value);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_UINT64:
+            {
+                const WS_XML_UINT64_TEXT* uint64Text = (const WS_XML_UINT64_TEXT*) text;
+                printf(&quot;WS_XML_TEXT_TYPE_UINT64(value='%I64u')&quot;, uint64Text-&gt;value);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_FLOAT:
+            {
+                const WS_XML_FLOAT_TEXT* floatText = (const WS_XML_FLOAT_TEXT*) text;
+                printf(&quot;WS_XML_TEXT_TYPE_FLOAT(value='%f')&quot;, floatText-&gt;value);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_DOUBLE:
+            {
+                const WS_XML_DOUBLE_TEXT* doubleText = (const WS_XML_DOUBLE_TEXT*) text;
+                printf(&quot;WS_XML_TEXT_TYPE_DOUBLE(value='%f')&quot;, doubleText-&gt;value);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_DECIMAL:
+            {
+                const WS_XML_DECIMAL_TEXT* decimalText = (const WS_XML_DECIMAL_TEXT*) text;
+                const DECIMAL* dec = &amp;decimalText-&gt;value;
+                printf(&quot;WS_XML_TEXT_TYPE_DECIMAL(value={%x %x %x, %I64x})&quot;, dec-&gt;wReserved, dec-&gt;signscale, dec-&gt;Hi32, dec-&gt;Lo64);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_GUID:
+            {
+                WS_XML_GUID_TEXT* guidText = (WS_XML_GUID_TEXT*) text;
+                RPC_WSTR s;
+                if (UuidToString(&amp;guidText-&gt;value, &amp;s) == RPC_S_OK)
+                {
+                    printf(&quot;WS_XML_TEXT_TYPE_GUID(value='%ls')&quot;, s);
+                    RpcStringFree(&amp;s);
+                }
+                else
+                {
+                    printf(&quot;WS_XML_TEXT_TYPE_GUID(value='&lt;error: UuidToString failed&gt;')&quot;);
+                }
+            }
+            break;
+        case WS_XML_TEXT_TYPE_UNIQUE_ID:
+            {
+                WS_XML_UNIQUE_ID_TEXT* uniqueIdText = (WS_XML_UNIQUE_ID_TEXT*) text;
+                RPC_WSTR s;
+                if (UuidToString(&amp;uniqueIdText-&gt;value, &amp;s) == RPC_S_OK)
+                {
+                    printf(&quot;WS_XML_TEXT_TYPE_UNIQUEID(value='%ls')&quot;, s);
+                    RpcStringFree(&amp;s);
+                }
+                else
+                {
+                    printf(&quot;WS_XML_TEXT_TYPE_UNIQUEID(value='&lt;error: UuidToString failed&gt;')&quot;);
+                }
+            }
+            break;
+        case WS_XML_TEXT_TYPE_DATETIME:
+            {
+                const WS_XML_DATETIME_TEXT* dateTimeText = (const WS_XML_DATETIME_TEXT*)text;
+                WS_DATETIME value = dateTimeText-&gt;value;
+                printf(&quot;WS_XML_DATETIME_TEXT(ticks='%I64u',format='%d')&quot;, value.ticks, value.format);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_TIMESPAN:
+            {
+                const WS_XML_TIMESPAN_TEXT* timeSpanText = (const WS_XML_TIMESPAN_TEXT*)text;
+                printf(&quot;WS_XML_TIMESPAN_TEXT(value='%I64u')&quot;, timeSpanText-&gt;value.ticks);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_QNAME:
+            {
+                const WS_XML_QNAME_TEXT* qnameText = (const WS_XML_QNAME_TEXT*)text;
+                printf(&quot;WS_XML_QNAME_TEXT(prefix='&quot;); 
+                PrintString(qnameText-&gt;prefix);
+                printf(&quot;', localName='&quot;); 
+                PrintString(qnameText-&gt;localName);
+                printf(&quot;', ns='&quot;); 
+                PrintString(qnameText-&gt;ns);
+                printf(&quot;')&quot;);
+            }
+            break;
+        case WS_XML_TEXT_TYPE_LIST:
+            {
+                const WS_XML_LIST_TEXT* listText = (const WS_XML_LIST_TEXT*)text;
+                printf(&quot;WS_XML_LIST_TEXT(value={&quot;);
+                for (ULONG i = 0; i &lt; listText-&gt;itemCount; i++)
+                {
+                    PrintText(listText-&gt;items[i]);
+                    printf(&quot; &quot;);
+                }
+                printf(&quot;}&quot;);
+            }
+            break;
+        default:
+            printf(&quot;&lt;error: Unexpected textType&gt;&quot;);
+            break;
+    }
+}
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_ERROR* error = NULL;
+    WS_XML_READER* xmlReader = NULL;
+    
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Create an XML reader
+    hr = WsCreateReader(
+        NULL,
+        0, 
+        &amp;xmlReader, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    char* xml = 
+    &quot;&lt;?xml version='1.0' encoding='UTF-8' standalone='yes'?&gt;&quot;
+    &quot;&lt;Orders xmlns='http://example.com'&gt;&quot;
+        &quot;&lt;!-- Order #1 --&gt;&quot;
+        &quot;&lt;PurchaseOrder id='1'&gt;&quot;
+            &quot;&lt;Quantity&gt;42&lt;/Quantity&gt;&quot;
+            &quot;&lt;ProductName&gt;Toaster&lt;/ProductName&gt;&quot;
+        &quot;&lt;/PurchaseOrder&gt;&quot;
+        &quot;&lt;!-- Order #2 --&gt;&quot;
+        &quot;&lt;PurchaseOrder id='2'&gt;&quot;
+            &quot;&lt;Quantity&gt;5&lt;/Quantity&gt;&quot;
+            &quot;&lt;ProductName&gt;&lt;![CDATA[Block&amp;Tackle]&gt;&lt;/ProductName&gt;&quot;
+        &quot;&lt;/PurchaseOrder&gt;&quot;
+    &quot;&lt;/Orders&gt;&quot;;
+    BYTE* bytes = (BYTE*) xml;
+    ULONG byteCount = (ULONG)strlen(xml);
+    
+    // Setup the source input
+    WS_XML_READER_BUFFER_INPUT bufferInput;
+    ZeroMemory(&amp;bufferInput, sizeof(bufferInput));
+    bufferInput.input.inputType = WS_XML_READER_INPUT_TYPE_BUFFER;
+    bufferInput.encodedData = bytes;
+    bufferInput.encodedDataSize = byteCount;
+    
+    // Setup the source encoding
+    WS_XML_READER_TEXT_ENCODING textEncoding;
+    ZeroMemory(&amp;textEncoding, sizeof(textEncoding));
+    textEncoding.encoding.encodingType = WS_XML_READER_ENCODING_TYPE_TEXT;
+    textEncoding.charSet = WS_CHARSET_AUTO;
+    
+    // Setup the reader
+    hr = WsSetInput(xmlReader, &amp;textEncoding.encoding, &amp;bufferInput.input, NULL, 0, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    WS_CHARSET charSet;
+    hr = WsGetReaderProperty(xmlReader, WS_XML_READER_PROPERTY_CHARSET, &amp;charSet, sizeof(charSet), error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    switch (charSet)
+    {
+        case WS_CHARSET_UTF8:
+            printf(&quot;charSet=utf-8\n&quot;);
+            break;
+        case WS_CHARSET_UTF16LE:
+            printf(&quot;charSet=utf-16LE\n&quot;);
+            break;
+        case WS_CHARSET_UTF16BE:
+            printf(&quot;charSet=utf-16BE\n&quot;);
+            break;
+        default:
+            printf(&quot;&lt;error: Unexpected charset&gt;\n&quot;);
+            hr = E_FAIL;
+            goto Exit;
+    }
+    
+    ULONG depth = 0;
+    for (;;)
+    {
+        // Get the current node of the reader
+        const WS_XML_NODE* node;
+        hr = WsGetReaderNode(xmlReader, &amp;node, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; depth; i++)
+        {
+            printf(&quot; &quot;);
+        }
+        // Print out the type of node and its contents
+        switch (node-&gt;nodeType)
+        {
+        case WS_XML_NODE_TYPE_ELEMENT:
+            {
+                const WS_XML_ELEMENT_NODE* elementNode = (const WS_XML_ELEMENT_NODE*) node;
+                printf(&quot;WS_XML_NODE_TYPE_ELEMENT(prefix='&quot;);
+                PrintString(elementNode-&gt;prefix);
+                printf(&quot;', localName='&quot;);
+                PrintString(elementNode-&gt;localName);
+                printf(&quot;', ns='&quot;);
+                PrintString(elementNode-&gt;ns);
+                printf(&quot;', attributes={&quot;);
+                for (ULONG i = 0; i &lt; elementNode-&gt;attributeCount; i++)
+                {
+                    if (i != 0)
+                    {
+                        printf(&quot;, &quot;);
+                    }
+                    const WS_XML_ATTRIBUTE* attribute = elementNode-&gt;attributes[i];
+                    if (attribute-&gt;isXmlNs)
+                    {
+                        printf(&quot;(isXmlNs=TRUE, prefix='&quot;);
+                        PrintString(attribute-&gt;prefix);
+                        printf(&quot;', ns='&quot;);
+                        PrintString(attribute-&gt;ns);
+                        printf(&quot;')&quot;);
+                    }
+                    else
+                    {
+                        printf(&quot;(isXmlNs=FALSE, prefix='&quot;);
+                        PrintString(attribute-&gt;prefix);
+                        printf(&quot;', localName='&quot;);
+                        PrintString(attribute-&gt;localName);
+                        printf(&quot;', ns='&quot;);
+                        PrintString(attribute-&gt;ns);
+                        printf(&quot;', value=&quot;);
+                        PrintText(attribute-&gt;value);
+                        printf(&quot;)&quot;);
+                    }
+                }
+                printf(&quot;})\n&quot;);
+            }
+            depth++;
+            break;
+        case WS_XML_NODE_TYPE_END_ELEMENT:
+            printf(&quot;WS_XML_NODE_TYPE_END_ELEMENT\n&quot;);
+            depth--;
+            break;
+        case WS_XML_NODE_TYPE_TEXT:
+            {
+                const WS_XML_TEXT_NODE* textNode = (const WS_XML_TEXT_NODE*) node;
+                printf(&quot;WS_XML_NODE_TYPE_TEXT(value=&quot;);
+                PrintText(textNode-&gt;text);
+                printf(&quot;)\n&quot;);
+            }
+            break;
+        case WS_XML_NODE_TYPE_CDATA:
+            printf(&quot;WS_XML_NODE_TYPE_CDATA\n&quot;);
+            depth++;
+            break;
+        case WS_XML_NODE_TYPE_END_CDATA:
+            printf(&quot;WS_XML_NODE_TYPE_END_CDATA\n&quot;);
+            depth--;
+            break;
+        case WS_XML_NODE_TYPE_COMMENT:
+            {
+                const WS_XML_COMMENT_NODE* commentNode = (const WS_XML_COMMENT_NODE*) node;
+                printf(&quot;WS_XML_NODE_TYPE_COMMENT(value='&quot;);
+                PrintString(&amp;commentNode-&gt;value);
+                printf(&quot;')\n&quot;);
+            }
+            break;
+        case WS_XML_NODE_TYPE_BOF:
+            printf(&quot;WS_XML_NODE_TYPE_BOF\n&quot;);
+            depth++;
+            break;
+        case WS_XML_NODE_TYPE_EOF:
+            printf(&quot;WS_XML_NODE_TYPE_EOF\n&quot;);
+            depth--;
+            break;
+        default:
+            printf(&quot;&lt;error: Unexpected nodeType&gt;\n&quot;);
+            hr = E_FAIL;
+            goto Exit;
+        }
+        // See if we've reached the end of the document
+        if (node-&gt;nodeType == WS_XML_NODE_TYPE_EOF)
+        {
+            break;
+        }
+        // Advance the reader
+        hr = WsReadNode(xmlReader, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    }
+    
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    
+    if (xmlReader != NULL)
+    {
+        WsFreeReader(xmlReader);
+    }
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

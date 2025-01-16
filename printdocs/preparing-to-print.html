@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How To: Collect Print Job Information from the User</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to collect print job information from the user.
+ms.assetid: 98ae97e2-25c1-455c-8283-45bb07fb8251
+title: 'How To: Collect Print Job Information from the User'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How To: Collect Print Job Information from the User</h1>
+<p>This topic describes how to collect print job information from the user.</p>
+<h2>Overview</h2>
+<p>Collect print job information from the user by calling the <a href="/previous-versions/windows/desktop/legacy/ms646940(v=vs.85)"><strong>PrintDlg</strong></a> function. This function displays the <strong>Print</strong> common dialog box to the user, and returns the print job information in a <a href="/windows/win32/api/commdlg/ns-commdlg-printdlga"><strong>PRINTDLG</strong></a> data structure.</p>
+<p>The <strong>Print</strong> common dialog box is displayed when the user starts a print job. The <strong>Print</strong> common dialog box is a modal dialog box, which means that the user cannot interact with the main window until the common dialog box is closed.</p>
+<h2>Collecting Print Job Information</h2>
+<ol>
+<li>
+<p>Initialize the <a href="/windows/win32/api/commdlg/ns-commdlg-printdlga"><strong>PRINTDLG</strong></a> structure element.</p>
+<p>Before a program can display the <strong>Print</strong> common dialog box , it must allocate and initialize a <a href="/windows/win32/api/commdlg/ns-commdlg-printdlga"><strong>PRINTDLG</strong></a> structure. It then passes this structure to the <a href="/previous-versions/windows/desktop/legacy/ms646940(v=vs.85)"><strong>PrintDlg</strong></a> function, which displays the dialog and returns the print job data in the same structure. The following code example shows how the sample program performs this step.</p>
+<pre lang="C++"><code>// Initialize the print dialog box's data structure.
+pd.lStructSize = sizeof( pd );
+pd.Flags = 
+    // Return a printer device context
+    PD_RETURNDC 
+    // Don't allow separate print to file.
+    | PD_HIDEPRINTTOFILE        
+    | PD_DISABLEPRINTTOFILE 
+    // Don't allow selecting individual document pages to print.
+    | PD_NOSELECTION;
+</code></pre>
+</li>
+<li>
+<p>Display the <strong>Print</strong> common dialog box.</p>
+<p>Call <a href="/previous-versions/windows/desktop/legacy/ms646940(v=vs.85)"><strong>PrintDlg</strong></a> with the initialized <a href="/windows/win32/api/commdlg/ns-commdlg-printdlga"><strong>PRINTDLG</strong></a> structure to display the <strong>Print</strong> common dialog box and collect the user data, as shown in the following code example.</p>
+<pre lang="C++"><code>// Display the printer dialog and retrieve the printer DC
+pdReturn = PrintDlg(&amp;pd);
+</code></pre>
+</li>
+<li>
+<p>Save the fields from the <a href="/windows/win32/api/commdlg/ns-commdlg-printdlga"><strong>PRINTDLG</strong></a> structure and start the print job.</p>
+<p>The <a href="/windows/win32/api/commdlg/ns-commdlg-printdlga"><strong>PRINTDLG</strong></a> structure contains the data that describes the selections that the user made in the print dialog box. Some members of the <strong>PRINTDLG</strong> structure are handles to global memory objects. The <a href="https://github.com/microsoftarchive/msdn-code-gallery-microsoft/tree/master/Official%20Windows%20Platform%20Sample/Windows%208%20app%20samples/%5BC%2B%2B%5D-Windows%208%20app%20samples/C%2B%2B/Windows%208%20app%20samples/Print%20sample%20(Windows%208)">Print Sample Program</a> copies the data from the global memory objects to memory blocks that the program manages and copies other fields from the <strong>PRINTDLG</strong> structure to fields in a data structure that the program defined.</p>
+<p>After you store the data from the <a href="/windows/win32/api/commdlg/ns-commdlg-printdlga"><strong>PRINTDLG</strong></a> structure in the program's data structure, you can open the print progress dialog box. The print progress dialog box procedure handles the dialog box messages and starts the print processing thread.</p>
+<p>The following code example shows how to copy the data from the <a href="/windows/win32/api/commdlg/ns-commdlg-printdlga"><strong>PRINTDLG</strong></a> structure to the program's data structure and how to start the print job.</p>
+<pre lang="C++"><code>// A printer was returned so copy the information from 
+//  the dialog box structure and save it to the application's
+//  data structure.
+//
+//  Lock the handles to get pointers to the memory they refer to.
+PDEVMODE    devmode = (PDEVMODE)GlobalLock(pd.hDevMode);
+LPDEVNAMES  devnames = (LPDEVNAMES)GlobalLock(pd.hDevNames);
+
+// Free any old devmode structures and allocate a new one and
+// copy the data to the application's data structure.
+if (NULL != threadInfo-&gt;devmode)
+{
+    HeapFree(GetProcessHeap(), 0L, threadInfo-&gt;devmode);
+}
+
+threadInfo-&gt;devmode = (LPDEVMODE)HeapAlloc(
+    GetProcessHeap(), 
+    PRINT_SAMPLE_HEAP_FLAGS, 
+    devmode-&gt;dmSize);
+
+if (NULL != threadInfo-&gt;devmode) 
+{
+    memcpy(
+        (LPVOID)threadInfo-&gt;devmode,
+        devmode, 
+        devmode-&gt;dmSize);
+}
+else
+{
+    // Unable to allocate a new structure so leave
+    // the pointer as NULL to indicate that it's empty.
+}
+
+// Save the printer name from the devmode structure
+//  This is to make it easier to use. It could be
+//  used directly from the devmode structure.
+threadInfo-&gt;printerName = threadInfo-&gt;devmode-&gt;dmDeviceName;
+
+// Set the number of copies as entered by the user
+threadInfo-&gt;copies = pd.nCopies;
+
+// Some implementations might support printing more than
+// one package in a print job. For this program, only
+// one package (XPS document) can be printed per print job.
+threadInfo-&gt;packages = 1;
+
+// free allocated buffers from PRINTDLG structure
+if (NULL != pd.hDevMode) GlobalFree(pd.hDevMode);
+if (NULL != pd.hDevNames) GlobalFree(pd.hDevNames);
+
+// Display the print progress dialog box
+DialogBox(
+    threadInfo-&gt;applicationInstance, 
+    MAKEINTRESOURCE(IDD_PRINT_DLG), 
+    hWnd, 
+    PrintDlgProc);
+</code></pre>
+</li>
+<li>
+<p>If the user clicks the <strong>Cancel</strong> button in the <strong>Print</strong> common dialog box, no further processing is performed.</p>
+</li>
+</ol>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 4. Set Allocator Properties</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Set allocator properties as part of writing a transform filter. The transform filter's output pin selects the downstream allocator.
+ms.assetid: c2fd6d8b-b239-45e4-9c02-41edafa58762
+title: Step 4. Set Allocator Properties
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Step 4. Set Allocator Properties</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This is step 4 of the tutorial <a href="writing-transform-filters.html">Writing Transform Filters</a>.</p>
+<blockquote>
+<p>[!Note]<br />
+This step is not required for filters that derive from <strong>CTransInPlaceFilter</strong>.</p>
+</blockquote>
+<p>Â </p>
+<p>After two pins agree on a media type, they select an allocator for the connection and negotiate allocator properties, such as the buffer size and the number of buffers.</p>
+<p>In the <strong>CTransformFilter</strong> class, there are two allocators, one for the upstream pin connection and one for the downstream pin connection. The upstream filter selects the upstream allocator and also chooses the allocator properties. The input pin accepts whatever the upstream filter decides. If you need to modify this behavior, override the <a href="cbaseinputpin-notifyallocator.html"><strong>CBaseInputPin::NotifyAllocator</strong></a> method.</p>
+<p>The transform filter's output pin selects the downstream allocator. It performs the following steps:</p>
+<ol>
+<li>If the downstream filter can provide an allocator, the output pin uses that one. Otherwise, the output pin creates a new allocator.</li>
+<li>The output pin gets the downstream filter's allocator requirements (if any) by calling <a href="/windows/desktop/api/Strmif/nf-strmif-imeminputpin-getallocatorrequirements"><strong>IMemInputPin::GetAllocatorRequirements</strong></a>.</li>
+<li>The output pin calls the transform filter's <a href="ctransformfilter-decidebuffersize.html"><strong>CTransformFilter::DecideBufferSize</strong></a> method, which is pure virtual. The parameters to this method are a pointer to the allocator and an <a href="/windows/win32/api/strmif/ns-strmif-allocator_properties"><strong>ALLOCATOR_PROPERTIES</strong></a> structure with the downstream filter's requirements. If the downstream filter has no allocator requirements, the structure is zeroed out.</li>
+<li>In the <strong>DecideBufferSize</strong> method, the derived class sets the allocator properties by calling <a href="/windows/desktop/api/Strmif/nf-strmif-imemallocator-setproperties"><strong>IMemAllocator::SetProperties</strong></a>.</li>
+</ol>
+<p>Generally, the derived class will select allocator properties based on the output format, the downstream filter's requirements, and the filter's own requirements. Try to select properties that are compatible with the downstream filter's request. Otherwise, the downstream filter might reject the connection.</p>
+<p>In the following example, the RLE encoder sets minimum values for the buffer size, buffer alignment, and buffer count. For the prefix, it uses whatever value the downstream filter requested. The prefix is typically zero bytes, but some filters require it. For example, the <a href="avi-mux-filter.html">AVI Mux</a> filter uses the prefix to write RIFF headers.</p>
+<pre lang="C++"><code>HRESULT CRleFilter::DecideBufferSize(
+    IMemAllocator *pAlloc, ALLOCATOR_PROPERTIES *pProp)
+{
+    AM_MEDIA_TYPE mt;
+    HRESULT hr = m_pOutput-&gt;ConnectionMediaType(&amp;mt);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    ASSERT(mt.formattype == FORMAT_VideoInfo);
+    BITMAPINFOHEADER *pbmi = HEADER(mt.pbFormat);
+    pProp-&gt;cbBuffer = DIBSIZE(*pbmi) * 2; 
+    if (pProp-&gt;cbAlign == 0)
+    {
+        pProp-&gt;cbAlign = 1;
+    }
+    if (pProp-&gt;cBuffers == 0)
+    {
+        pProp-&gt;cBuffers = 1;
+    }
+    // Release the format block.
+    FreeMediaType(mt);
+
+    // Set allocator properties.
+    ALLOCATOR_PROPERTIES Actual;
+    hr = pAlloc-&gt;SetProperties(pProp, &amp;Actual);
+    if (FAILED(hr)) 
+    {
+        return hr;
+    }
+    // Even when it succeeds, check the actual result.
+    if (pProp-&gt;cbBuffer &gt; Actual.cbBuffer) 
+    {
+        return E_FAIL;
+    }
+    return S_OK;
+}
+</code></pre>
+<p>The allocator may not be able to match your request exactly. Therefore, the <strong>SetProperties</strong> method returns the actual result in a separate <strong>ALLOCATOR_PROPERTIES</strong> structure (the <em>Actual</em> parameter, in the previous example). Even when <strong>SetProperties</strong> succeeds, you should check the result to make sure they meet your filter's minimum requirements.</p>
+<p><strong>Custom Allocators</strong></p>
+<p>By default, all of the filter classes use the <a href="cmemallocator.html"><strong>CMemAllocator</strong></a> class for their allocators. This class allocates memory from the virtual address space of the client process (using <strong>VirtualAlloc</strong>). If your filter needs to use some other kind of memory, such as DirectDraw surfaces, you can implement a custom allocator. You can use the <a href="cbaseallocator.html"><strong>CBaseAllocator</strong></a> class or write an entirely new allocator class. If your filter has a custom allocator, override the following methods, depending on which pin uses the allocator:</p>
+<ul>
+<li>Input pin: <a href="cbaseinputpin-getallocator.html"><strong>CBaseInputPin::GetAllocator</strong></a> and <a href="cbaseinputpin-notifyallocator.html"><strong>CBaseInputPin::NotifyAllocator</strong></a>.</li>
+<li>Output pin: <a href="cbaseoutputpin-decideallocator.html"><strong>CBaseOutputPin::DecideAllocator</strong></a>.</li>
+</ul>
+<p>If the other filter refuses to connect using your custom allocator, your filter can either fail the connection, or else connect with the other filter's allocator. In the latter case, you might need to set an internal flag indicating the type of allocator. For an example of this approach, see <a href="cdrawimage.html"><strong>CDrawImage Class</strong></a>.</p>
+<p>Next: <a href="step-5--transform-the-image.html">Step 5. Transform the Image</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="writing-directshow-filters.html">Writing DirectShow Filters</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

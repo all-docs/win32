@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How Clients Find and Use a Service Connection Point</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: How Clients Find and Use a Service Connection Point
+description: The following code example shows how a client application searches the Global Catalog for a Service Connection Point (SCP).
+ms.assetid: d3163c22-22fe-4606-8cad-6f3a87f8fc36
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>service connection points AD ,how clients find and use
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>How Clients Find and Use a Service Connection Point</h1>
+<p>The following code example shows how a client application searches the Global Catalog for a Service Connection Point (SCP). In this code example, the client application has a hard-coded GUID string that identifies the service. The service installer stored the same GUID string as one of the values of the SCPs multi-value <strong>keywords</strong> attribute.</p>
+<p>This sample consists of two routines. The <strong>GetGC</strong> routine retrieves an <a href="/windows/desktop/api/iads/nn-iads-idirectorysearch"><strong>IDirectorySearch</strong></a> pointer for a Global Catalog (GC). The <strong>ScpLocate</strong> routine uses the <strong>IDirectorySearch</strong> methods to search the GC.</p>
+<p>The GC contains a partial replica of every object in the forest, but does not contain all of the SCP attributes that the client requires. First, the client must search the GC to find the SCP and retrieve its DN. Then the client uses the SCP's DN to bind to an <a href="/windows/desktop/api/iads/nn-iads-idirectoryobject"><strong>IDirectoryObject</strong></a> pointer on the SCP. The client then calls the <a href="/windows/desktop/api/iads/nf-iads-idirectoryobject-getobjectattributes"><strong>IDirectoryObject::GetObjectAttributes</strong></a> method to retrieve the rest of the attributes.</p>
+<pre lang="C++"><code>//***************************************************************************
+//
+//  ScpLocate()
+//
+//  All strings returned by ScpLocate must be freed by the caller using 
+//  FreeADsStr after it is finished using them.
+//
+//***************************************************************************
+
+DWORD ScpLocate (
+    LPWSTR *ppszDN,                  // Returns distinguished name of SCP.
+    LPWSTR *ppszServiceDNSName,      // Returns service DNS name.
+    LPWSTR *ppszServiceDNSNameType,  // Returns type of DNS name.
+    LPWSTR *ppszClass,               // Returns name of service class.
+    USHORT *pusPort)                 // Returns service port.
+{
+    HRESULT hr;
+    IDirectoryObject *pSCP = NULL;
+    ADS_ATTR_INFO *pPropEntries = NULL;
+    IDirectorySearch *pSearch = NULL;
+    ADS_SEARCH_HANDLE hSearch = NULL;
+
+    // Get an IDirectorySearch pointer for the Global Catalog. 
+    hr = GetGCSearch(&amp;pSearch);
+    if (FAILED(hr)) 
+    {
+        fprintf(stderr,&quot;GetGC failed 0x%x&quot;,hr);
+        goto Cleanup;
+    }
+
+    // Set up a deep search.
+    // Thousands of objects are not expected in this example, therefore
+    // query for 1000 rows per page.
+    ADS_SEARCHPREF_INFO SearchPref[2];
+    DWORD dwPref = sizeof(SearchPref)/sizeof(ADS_SEARCHPREF_INFO);
+    SearchPref[0].dwSearchPref =    ADS_SEARCHPREF_SEARCH_SCOPE;
+    SearchPref[0].vValue.dwType =   ADSTYPE_INTEGER;
+    SearchPref[0].vValue.Integer =  ADS_SCOPE_SUBTREE;
+
+    SearchPref[1].dwSearchPref =    ADS_SEARCHPREF_PAGESIZE;
+    SearchPref[1].vValue.dwType =   ADSTYPE_INTEGER;
+    SearchPref[1].vValue.Integer =  1000;
+
+    hr = pSearch-&gt;SetSearchPreference(SearchPref, dwPref);
+    fprintf (stderr, &quot;SetSearchPreference: 0x%x\n&quot;, hr);
+    if (FAILED(hr))
+    {
+        fprintf (stderr, &quot;Failed to set search prefs: hr:0x%x\n&quot;, hr);
+        goto Cleanup;
+    } 
+
+    // Execute the search. From the GC get the distinguished name 
+    // of the SCP. Use the DN to bind to the SCP and get the other 
+    // properties.
+    LPWSTR rgszDN[] = {L&quot;distinguishedName&quot;};
+
+    // Search for a match of the product GUID.
+    hr = pSearch-&gt;ExecuteSearch(    L&quot;keywords=A762885A-AA44-11d2-81F1-00C04FB9624E&quot;,
+                                    rgszDN,
+                                    1,
+                                    &amp;hSearch);
+
+    fprintf (stderr, &quot;ExecuteSearch: 0x%x\n&quot;, hr);
+
+    if (FAILED(hr)) 
+    {
+        fprintf (stderr, &quot;ExecuteSearch failed: hr:0x%x\n&quot;, hr);
+        goto Cleanup;
+    } 
+
+    // Loop through the results. Each row should be an instance of the 
+    // service identified by the product GUID.
+    // Add logic to select from multiple service instances.
+    hr = pSearch-&gt;GetNextRow(hSearch);
+    if (SUCCEEDED(hr) &amp;&amp; hr !=S_ADS_NOMORE_ROWS) 
+    {
+        ADS_SEARCH_COLUMN Col;
+
+        hr = pSearch-&gt;GetColumn(hSearch, L&quot;distinguishedName&quot;, &amp;Col);
+        *ppszDN = AllocADsStr(Col.pADsValues-&gt;CaseIgnoreString);
+        pSearch-&gt;FreeColumn(&amp;Col);
+        hr = pSearch-&gt;GetNextRow(hSearch);
+    }
+
+    // Bind to the DN to get the other properties.
+    LPWSTR lpszLDAPPrefix = L&quot;LDAP://&quot;;
+    DWORD dwSCPPathLength = wcslen(lpszLDAPPrefix) + wcslen(*ppszDN) + 1;
+    LPWSTR pwszSCPPath = new WCHAR[dwSCPPathLength];
+    if(pwszSCPPath)
+    {
+        wcscpy_s(pwszSCPPath, lpszLDAPPrefix);
+        wcscat_s(pwszSCPPath, *ppszDN);
+    }       
+    else
+    {
+        fprintf(stderr,&quot;Failed to allocate a buffer&quot;);
+        goto Cleanup;
+    }               
+
+    hr = ADsGetObject(  pwszSCPPath,
+                        IID_IDirectoryObject,
+                        (void**)&amp;pSCP);
+
+    // Free the string buffer
+    delete pwszSCPPath;
+
+    if (SUCCEEDED(hr)) 
+    {
+        // Properties to retrieve from the SCP object.
+        LPWSTR rgszAttribs[]=
+        {
+            {L&quot;serviceClassName&quot;},
+            {L&quot;serviceDNSName&quot;},
+            {L&quot;serviceDNSNameType&quot;},
+            {L&quot;serviceBindingInformation&quot;}
+        };
+
+        DWORD dwAttrs = sizeof(rgszAttribs)/sizeof(LPWSTR);
+        DWORD dwNumAttrGot;
+        hr = pSCP-&gt;GetObjectAttributes( rgszAttribs,
+                                        dwAttrs,
+                                        &amp;pPropEntries,
+                                        &amp;dwNumAttrGot);
+        if(FAILED(hr)) 
+        {
+            fprintf (stderr, &quot;GetObjectAttributes Failed. hr:0x%x\n&quot;, hr);
+            goto Cleanup;
+        }
+
+        // Loop through the entries returned by GetObjectAttributes 
+        // and save the values in the appropriate buffers. 
+        for (int i = 0; i &lt; (LONG)dwAttrs; i++) 
+        {
+            if ((wcscmp(L&quot;serviceDNSName&quot;, pPropEntries[i].pszAttrName)==0) &amp;&amp;
+                (pPropEntries[i].dwADsType == ADSTYPE_CASE_IGNORE_STRING)) 
+            {
+                *ppszServiceDNSName = AllocADsStr(pPropEntries[i].pADsValues-&gt;CaseIgnoreString);
+            }
+
+            if ((wcscmp(L&quot;serviceDNSNameType&quot;, pPropEntries[i].pszAttrName)==0) &amp;&amp;
+                (pPropEntries[i].dwADsType == ADSTYPE_CASE_IGNORE_STRING)) 
+            {
+                *ppszServiceDNSNameType = AllocADsStr(pPropEntries[i].pADsValues-&gt;CaseIgnoreString);
+            }
+
+            if ((wcscmp(L&quot;serviceClassName&quot;, pPropEntries[i].pszAttrName)==0) &amp;&amp;
+                (pPropEntries[i].dwADsType == ADSTYPE_CASE_IGNORE_STRING)) 
+            {
+                *ppszClass = AllocADsStr(pPropEntries[i].pADsValues-&gt;CaseIgnoreString);
+            }
+
+            if ((wcscmp(L&quot;serviceBindingInformation&quot;, pPropEntries[i].pszAttrName)==0) &amp;&amp;
+                (pPropEntries[i].dwADsType == ADSTYPE_CASE_IGNORE_STRING)) 
+            {
+                *pusPort=(USHORT)_wtoi(pPropEntries[i].pADsValues-&gt;CaseIgnoreString);
+            }
+        }
+    }
+
+Cleanup:
+    if (pSCP) 
+    {
+        pSCP-&gt;Release();
+        pSCP = NULL;
+    }
+
+    if (pPropEntries)
+    {
+        FreeADsMem(pPropEntries);
+        pPropEntries = NULL;
+    }
+
+    if (pSearch)
+    {
+        if (hSearch)
+        {
+            pSearch-&gt;CloseSearchHandle(hSearch);
+            hSearch = NULL;
+        }
+        
+        pSearch-&gt;Release();
+        pSearch = NULL;
+    }
+
+    return hr;
+}
+
+//***************************************************************************
+//
+//  GetGCSearch()
+//
+//  Retrieves an IDirectorySearch pointer for a Global Catalog (GC)
+//
+//***************************************************************************
+
+HRESULT GetGCSearch(IDirectorySearch **ppDS)
+{
+    HRESULT hr;
+    IEnumVARIANT *pEnum = NULL;
+    IADsContainer *pCont = NULL;
+    IDispatch *pDisp = NULL;
+    VARIANT var;
+    ULONG lFetch;
+
+    *ppDS = NULL;
+
+    // Bind to the GC: namespace container object. The true GC DN 
+    // is a single immediate child of the GC: namespace, which must 
+    // be obtained using enumeration.
+    hr = ADsOpenObject( L&quot;GC:&quot;,
+                        NULL,
+                        NULL,
+                        ADS_SECURE_AUTHENTICATION, // Use Secure Authentication.
+                        IID_IADsContainer,
+                        (void**)&amp;pCont);
+    if (FAILED(hr)) 
+    {
+        _tprintf(TEXT(&quot;ADsOpenObject failed: 0x%x\n&quot;), hr);
+        goto cleanup;
+    } 
+
+    // Get an enumeration interface for the GC container. 
+    hr = ADsBuildEnumerator(pCont, &amp;pEnum);
+    if (FAILED(hr)) 
+    {
+        _tprintf(TEXT(&quot;ADsBuildEnumerator failed: 0x%x\n&quot;), hr);
+        goto cleanup;
+    } 
+
+    // Now enumerate. There is only one child of the GC: object.
+    hr = ADsEnumerateNext(pEnum, 1, &amp;var, &amp;lFetch);
+    if (FAILED(hr)) 
+    {
+        _tprintf(TEXT(&quot;ADsEnumerateNext failed: 0x%x\n&quot;), hr);
+        goto cleanup;
+    } 
+
+    if ((hr == S_OK) &amp;&amp; (lFetch == 1))
+    {
+        pDisp = V_DISPATCH(&amp;var);
+        hr = pDisp-&gt;QueryInterface( IID_IDirectorySearch, (void**)ppDS); 
+    }
+
+cleanup:
+    if (pEnum)
+    {
+        ADsFreeEnumerator(pEnum);
+        pEnum = NULL;
+    }
+
+    if (pCont)
+    {
+        pCont-&gt;Release();
+        pCont = NULL;
+    }
+    
+    if (pDisp)
+    {
+        pDisp-&gt;Release();
+        pDisp = NULL;
+    }
+
+    return hr;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

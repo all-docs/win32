@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Making Error Information Available to the User</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Making Error Information Available to the User
+description: When a caller receives an error and needs to notify the user of the error, the presence of extended error information should be checked, and if found, the caller should make the resulting information available to the user.
+ms.assetid: 18689280-7124-46e4-9341-ad8d0c1705db
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Making Error Information Available to the User</h1>
+<p>When a caller receives an error and needs to notify the user of the error, the presence of extended error information should be checked, and if found, the caller should make the resulting information available to the user. The following code fragment is an example of making this information available to the user:</p>
+<pre lang="C++"><code>// Make an API
+status = //...
+if (status)
+    {
+    RPC_STATUS Status2;
+    RPC_ERROR_ENUM_HANDLE EnumHandle;
+
+    Status2 = RpcErrorStartEnumeration(&amp;EnumHandle);
+    if (Status2 == RPC_S_ENTRY_NOT_FOUND)
+        {
+        //...
+        }
+    else if (Status2 != RPC_S_OK)
+        {
+        PrintToConsole(&quot;Couldn't get EEInfo: %d\n&quot;, Status2);
+        //...
+        }
+    else
+        {
+        RPC_EXTENDED_ERROR_INFO ErrorInfo;
+        int Records;
+        BOOL Result;
+        BOOL CopyStrings = TRUE;
+        BOOL fUseFileTime = TRUE;
+        SYSTEMTIME *SystemTimeToUse;
+        SYSTEMTIME SystemTimeBuffer;
+
+        while (Status2 == RPC_S_OK)
+            {
+            ErrorInfo.Version = RPC_EEINFO_VERSION;
+            ErrorInfo.Flags = 0;
+            ErrorInfo.NumberOfParameters = 4;
+            if (fUseFileTime)
+                {
+                ErrorInfo.Flags |= EEInfoUseFileTime;
+                }
+
+            Status2 = RpcErrorGetNextRecord(&amp;EnumHandle, CopyStrings, &amp;ErrorInfo);
+            if (Status2 == RPC_S_ENTRY_NOT_FOUND)
+                {
+                break;
+                }
+            else if (Status2 != RPC_S_OK)
+                {
+                PrintToConsole(&quot;Couldn't finish enumeration: %d\n&quot;, Status2);
+                break;
+                }
+            else
+                {
+                int i;
+
+                if (ErrorInfo.ComputerName)
+                    {
+                    PrintToConsole(&quot;ComputerName is %S\n&quot;, ErrorInfo.ComputerName);
+                    if (CopyStrings)
+                        {
+                        Result = HeapFree(GetProcessHeap(), 0, ErrorInfo.ComputerName);
+                        ASSERT(Result);
+                        }
+                    }
+                PrintToConsole(&quot;ProcessID is %d\n&quot;, ErrorInfo.ProcessID);
+                if (fUseFileTime)
+                    {
+                    Result = FileTimeToSystemTime(&amp;ErrorInfo.u.FileTime, 
+                        &amp;SystemTimeBuffer);
+                    ASSERT(Result);
+                    SystemTimeToUse = &amp;SystemTimeBuffer;
+                    }
+                else
+                    SystemTimeToUse = &amp;ErrorInfo.u.SystemTime;
+
+                PrintToConsole(&quot;System Time is: %d/%d/%d %d:%d:%d:%d\n&quot;, 
+                    SystemTimeToUse-&gt;wMonth,
+                    SystemTimeToUse-&gt;wDay,
+                    SystemTimeToUse-&gt;wYear,
+                    SystemTimeToUse-&gt;wHour,
+                    SystemTimeToUse-&gt;wMinute,
+                    SystemTimeToUse-&gt;wSecond,
+                    SystemTimeToUse-&gt;wMilliseconds);
+                PrintToConsole(&quot;Generating component is %d\n&quot;, 
+                    ErrorInfo.GeneratingComponent);
+                PrintToConsole(&quot;Status is %d\n&quot;, ErrorInfo.Status);
+                PrintToConsole(&quot;Detection location is %d\n&quot;, 
+                    (int)ErrorInfo.DetectionLocation);
+                PrintToConsole(&quot;Flags is %d\n&quot;, ErrorInfo.Flags);
+                PrintToConsole(&quot;NumberOfParameters is %d\n&quot;, 
+                    ErrorInfo.NumberOfParameters);
+                for (i = 0; i &lt; ErrorInfo.NumberOfParameters; i ++)
+                    {
+                    switch(ErrorInfo.Parameters[i].ParameterType)
+                        {
+                        case eeptAnsiString:
+                            PrintToConsole(&quot;Ansi string: %s\n&quot;, 
+                                ErrorInfo.Parameters[i].u.AnsiString);
+                            if (CopyStrings)
+                                {
+                                Result = HeapFree(GetProcessHeap(), 0, 
+                                    ErrorInfo.Parameters[i].u.AnsiString);
+                                ASSERT(Result);
+                                }
+                            break;
+
+                        case eeptUnicodeString:
+                            PrintToConsole(&quot;Unicode string: %S\n&quot;, 
+                                ErrorInfo.Parameters[i].u.UnicodeString);
+                            if (CopyStrings)
+                                {
+                                Result = HeapFree(GetProcessHeap(), 0, 
+                                    ErrorInfo.Parameters[i].u.UnicodeString);
+                                ASSERT(Result);
+                                }
+                            break;
+
+                        case eeptLongVal:
+                            PrintToConsole(&quot;Long val: %d\n&quot;, 
+                                ErrorInfo.Parameters[i].u.LVal);
+                            break;
+
+                        case eeptShortVal:
+                            PrintToConsole(&quot;Short val: %d\n&quot;, 
+                                (int)ErrorInfo.Parameters[i].u.SVal);
+                            break;
+
+                        case eeptPointerVal:
+                            PrintToConsole(&quot;Pointer val: %d\n&quot;, 
+                                ErrorInfo.Parameters[i].u.PVal);
+                            break;
+
+                        case eeptNone:
+                            PrintToConsole(&quot;Truncated\n&quot;);
+                            break;
+
+                        default:
+                            PrintToConsole(&quot;Invalid type: %d\n&quot;, 
+                                ErrorInfo.Parameters[i].ParameterType);
+                        }
+                    }
+                }
+            }
+        RpcErrorEndEnumeration(&amp;EnumHandle);
+        }
+    }
+</code></pre>
+<p>In this example the extended error information is dumped to the console, but your component can make it available to the user in any other way. If your component chooses to save the information in persistent storage and show it later, it is often easier to use the binary format made available by the <a href="/windows/desktop/api/Rpcasync/nf-rpcasync-rpcerrorsaveerrorinfo"><strong>RpcErrorSaveErrorInfo</strong></a> and <a href="/windows/desktop/api/Rpcasync/nf-rpcasync-rpcerrorloaderrorinfo"><strong>RpcErrorLoadErrorInfo</strong></a> function calls.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

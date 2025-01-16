@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Supporting Extended Protection for Authentication (EPA) in a service</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: EPA cryptographically binds the TLS session key to the session key of the authentication protocol, allowing TLS to provide the same client authentication as the authentication protocolâ€™s key.
+ms.assetid: 97c616aa-1a8a-45a5-9b31-8813dd679e48
+title: Supporting Extended Protection for Authentication (EPA) in a service
+ms.topic: article
+ms.date: 07/14/2023</h2>
+<h1>Supporting Extended Protection for Authentication (EPA) in a service</h1>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Applies to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>EPA</td>
+<td>all supported Windows OS</td>
+</tr>
+<tr>
+<td>EPA Audit Mode</td>
+<td>Windows Server 2019<!-- raw HTML omitted -->Windows Server 2022<!-- raw HTML omitted -->Windows Server 23H2</td>
+</tr>
+</tbody>
+</table>
+<h2>What is the problem?</h2>
+<p>Thereâ€™s a class of attacks on authenticated services called forwarding attacks. These attacks allow adversaries to bypass authentication and act as another user. Because these are attacks on the service and not the authentication protocol itself, itâ€™s up to the authenticated service to thwart forwarding attacks.</p>
+<h2>How do forwarding attacks work?</h2>
+<p>When a service or application calls the API <a href="/windows/win32/api/sspi/nf-sspi-acceptsecuritycontext">AcceptSecurityContext</a> to authenticate a client, it passes a blob of data received from the clientâ€™s call to <a href="/windows/win32/api/sspi/nf-sspi-initializesecuritycontextw">InitializeSecurityContext</a>. The authentication protocol is responsible for verifying that the provided blob originated from the indicated user. AcceptSecurityContext can make no assertions about the authenticity of the remainder of the application message which it did not see.</p>
+<p>A common security mistake in applications is treating the application traffic as authenticated after a successful authentication of the inner authentication protocol blob. This most commonly occurs with applications that use TLS for their wire protocol. TLS commonly does not use client certificates; it provides the server with integrity and confidentiality guarantees, but not authentication.  The inner authentication provides client authentication, but only for its blob.  It does not authenticate the TLS channel or the remainder of the application protocol contained therein.</p>
+<p>An attacker executes a forwarding attack by inserting an authentication blob from one source with an attacker crafted request. For example, an attacker can observe authentication traffic on the network and insert this into its own request to the server. This allows the attacker to gain access to the server as the client from the captured authentication traffic.</p>
+<p>The key concept here is that SSPI authentication messages are designed to be exposed on the wire; they are not expected to be kept secret.  This differs from many web-based authentication schemes that use bearer tokens that are always kept confidential inside TLS channels.</p>
+<h2>What is the solution?</h2>
+<p>The preferred solution is to use the authentication protocolâ€™s session key to sign or encrypt (<a href="/windows/win32/api/sspi/nf-sspi-makesignature">MakeSignature</a>, <a href="/windows/win32/api/sspi/nf-sspi-encryptmessage">EncryptMessage</a>) other traffic. Because the session key is cryptographically derived during the authentication protocol exchange, its authenticated data, and any traffic protected by that key is guaranteed to come from the authenticated client.</p>
+<p>This is not always an option. In some cases, the format of the application protocol message is fixed by standards designed for bearer tokens. In this case, Extended Protection for Authentication (EPA), also known as Channel Binding, can protect against forwarding over a TLS/SSL channel.</p>
+<h2>What is EPA?</h2>
+<p>EPA cryptographically binds the TLS session key to the session key of the authentication protocol, allowing TLS to provide the same client authentication as the authentication protocolâ€™s key. See <a href="/dotnet/framework/wcf/feature-details/extended-protection-for-authentication-overview">Extended Protection for Authentication Overview</a> for more information.</p>
+<h3>Service Binding</h3>
+<p>The second part of EPA is called Service Binding.  Unlike Channel Binding, this does not provide the service with cryptographic guarantees and serves as a defense of last resort where channel binding is not possible.  This mechanism allows the server to call <a href="querycontextattributes--general.html">QueryContextAttributes</a> to retrieve the attribute <strong>SECPKG_ATTR_CLIENT_SPECIFIED_TARGET</strong> which contains the name the authenticated client passed to <strong>InitializeSecurityContext</strong>.</p>
+<p>For example, imagine a service residing behind a TLS terminating load balancer. It doesnâ€™t have access to the TLS session key and can only determine from the channel binding that the clientâ€™s authentication was intended for a TLS protected service. The name supplied by the client should be the same name as it used to validate the TLS server certificate. By verifying that the client was authenticating to a name matching the server TLS certificate from the load balancer, the service gains high confidence that the authentication came from the same client as the TLS channel.</p>
+<p>This article will not discuss how to support service binding. See <a href="/dotnet/framework/wcf/how-to-specify-a-service-binding-in-configuration">How to: Specify a Service Binding in Configuration</a> for more information.</p>
+<h2>How do you support EPA?</h2>
+<p>When enforcing EPA, services may notice clients failing to authenticate due to compatibility issues. Therefore, we have created an EPA audit mode where services can enable auditing, giving admins controls to observe how clients respond before enforcing EPA.</p>
+<p>Microsoft services supporting audit mode include:</p>
+<ul>
+<li><a href="/windows/security/threat-protection/security-policy-settings/domain-controller-ldap-server-signing-requirements">LDAP</a></li>
+</ul>
+<blockquote>
+<p>[!NOTE]
+Below you will find optional steps to enable EPA audit functionality. Please note, enabling EPA audit functionality without enforcing EPA does not protect against relay attacks. We recommend that services who choose to first enable EPA in audit mode only, later take steps to remediate incompatible clients and eventually strictly enforce EPA to avoid any potential relay attacks.</p>
+</blockquote>
+<blockquote>
+<p>[!NOTE]
+The channel bindings passed into <a href="/windows/win32/api/sspi/nf-sspi-acceptsecuritycontext">AcceptSecurityContext</a> do not need to be audit-only bindings to get the auditing results. Services can run audit mode while still enforcing EPA.</p>
+</blockquote>
+<h3>Client</h3>
+<ol>
+<li>Use <a href="querycontextattributes--general.html">QueryContextAttributes</a>(TLS) to get channel bindings (fill in unique vs endpoint)</li>
+<li>Call <a href="initializesecuritycontext--general.html">InitializeSecurityContext</a>, and pass channel bindings in <a href="/windows/win32/api/sspi/ns-sspi-sec_channel_bindings">SECBUFFER_CHANNEL_BINDINGS</a></li>
+</ol>
+<h3>Server</h3>
+<ol>
+<li>Use <a href="querycontextattributes--general.html">QueryContextAttributes</a>(TLS), as on the client</li>
+<li>(Optionally) Makes into audit-only by calling <a href="sspi-sspisetchannelbindingflags.html">SspiSetChannelBindingFlags</a></li>
+<li>(Optionally) Add channel binding result buffer to output buffers for ASC.</li>
+<li>Specify the EPA level and other configurations by calling <a href="/windows/win32/api/sspi/nf-sspi-acceptsecuritycontext">AcceptSecurityContext</a> with <a href="/windows/win32/api/sspi/ns-sspi-sec_channel_bindings">SECBUFFER_CHANNEL_BINDINGS</a></li>
+<li>(Optionally) Use flags to control behavior in corner cases:
+<ul>
+<li><strong>ASC_REQ_ALLOW_MISSING_BINDINGS</strong> - Don't fail clients that said nothing at all, like old third-party devices. Enlightened clients that didn't get <strong>SECBUFFER_CHANNEL_BINDINGS</strong> will send an empty binding rather than nothing.</li>
+<li><strong>ASC_REQ_PROXY_BINDINGS</strong> - A rare case for TLS terminating load balancers. We don't have a <strong>SECBUFFER_CHANNEL_BINDINGS</strong> to pass, but still want to enforce that clients put request into a TLS channel. This is most useful with service bindings to ensure that the client was also putting into a TLS channel for which the server cert matched our name.</li>
+</ul>
+</li>
+</ol>
+<h2>How do you enforce EPA?</h2>
+<p>Once a service supports EPA, admins can control EPA state all the way from audit to full enforcement. This gives services the tools to evaluate their ecosystemâ€™s readiness for EPA, remediate incompatible devices, and progressively enforce EPA to protect their environment.</p>
+<p>The following attributes and values can be used to enforce various levels of EPA in your environment:</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>None</td>
+<td>No channel binding validation is performed. This is the behavior of all servers that have not been updated.</td>
+</tr>
+<tr>
+<td>Allow</td>
+<td>All clients that have been updated must provide channel binding information to the server. Clients that have not been updated do not have to do so. This is an intermediate option that allows for application compatibility.</td>
+</tr>
+<tr>
+<td>Require</td>
+<td>All clients must provide channel binding information. The server rejects authentication requests from clients that do not do so.</td>
+</tr>
+</tbody>
+</table>
+<p>These attributes can be coupled with audit functionality to gather information on device compatibility at various levels of EPA enforcement. You will pass your desired configuration into <a href="sspi-sspisetchannelbindingflags.html">SspiSetChannelBindingFlags</a>.</p>
+<ul>
+<li><strong>Audit</strong> - Audit mode can be used in conjunction with any of the above EPA enforcement levels.</li>
+</ul>
+<h2>How do you interpret EPA audit results?</h2>
+<p>Audit results are a set of bit flags:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SEC_CHANNEL_BINDINGS_RESULT_CLIENT_SUPPORT</td>
+<td>The client indicated that it's capable of channel bindings.</td>
+</tr>
+<tr>
+<td>SEC_CHANNEL_BINDINGS_RESULT_ABSENT</td>
+<td>The client did not provide binding to an outer channel.</td>
+</tr>
+<tr>
+<td>SEC_CHANNEL_BINDINGS_RESULT_NOTVALID_MISMATCH</td>
+<td>The client bindings indicate a different channel than the server.</td>
+</tr>
+<tr>
+<td>SEC_CHANNEL_BINDINGS_RESULT_NOTVALID_MISSING</td>
+<td>Channel binding failed due to <strong>SEC_CHANNEL_BINDINGS_RESULT_ABSENT</strong>.</td>
+</tr>
+<tr>
+<td>SEC_CHANNEL_BINDINGS_RESULT_VALID_MATCHED</td>
+<td>The channels were successfully bound.</td>
+</tr>
+<tr>
+<td>SEC_CHANNEL_BINDINGS_RESULT_VALID_PROXY</td>
+<td>The client indicated binding to an outer channel, which passed due to <strong>ASC_REQ_PROXY_BINDINGS</strong>.</td>
+</tr>
+<tr>
+<td>SEC_CHANNEL_BINDINGS_RESULT_VALID_MISSING</td>
+<td>Channel binding passed due to <strong>ASC_REQ_ALLOW_MISSING_BINDINGS</strong>.</td>
+</tr>
+</tbody>
+</table>
+<p>There are also definitions for sets of bits:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SEC_CHANNEL_BINDINGS_RESULT_VALID</td>
+<td>Used to test for all <strong>SEC_CHANNEL_BINDINGS_VALID_</strong>* cases.</td>
+</tr>
+<tr>
+<td>SEC_CHANNEL_BINDINGS_RESULT_NOTVALID</td>
+<td>Used to test for all <strong>SEC_CHANNEL_BINDINGS_NOTVALID_</strong>* cases.</td>
+</tr>
+</tbody>
+</table>
+<h3>Audit flow</h3>
+<p>Any OS that supports the results will always set at least one bit out of <strong>SEC_CHANNEL_BINDINGS_RESULT_VALID</strong> and <strong>SEC_CHANNEL_BINDINGS_RESULT_NOTVALID</strong>.</p>
+<p><strong>Channel binding failed:</strong> Test for any bits from <strong>SEC_CHANNEL_BINDINGS_RESULT_NOTVALID</strong>. For bindings that are not audit-only, this corresponds to ASC failing with <strong>STATUS_BAD_BINDINGS</strong> or <strong>SEC_E_BAD_BINDINGS</strong>.</p>
+<ul>
+<li><strong>SEC_CHANNEL_BINDINGS_RESULT_NOTVALID_MISMATCH:</strong> The client and server both know about channel bindings but don't agree about the channel. This is the attack case or an improper security configuration that is indistinguishable from an attack because the configuration has compromised HTTPS to inspect traffic (e.g. Fiddler). It also could be the client and server disagreeing about unique versus endpoint bindings.</li>
+<li><strong>SEC_CHANNEL_BINDINGS_RESULT_NOTVALID_MISSING</strong> splits into two cases:
+<ul>
+<li>With <strong>SEC_CHANNEL_BINDINGS_RESULT_CLIENT_SUPPORT</strong>, it means that the client attests that it knows about channel bindings and said there was no channel. This can be a forwarding attack from a non-TLS service, but it's likely to be an unenlightened application running on the client that's doing TLS but not telling the inner authentication about it.</li>
+<li>Without <strong>SEC_CHANNEL_BINDINGS_RESULT_CLIENT_SUPPORT</strong>, it's a client that's not capable of channel bindings. All supported Windows versions are capable of channel binding, so this is either third-party or a system that's had the registry value SuppressExtendedProtection set. This is the case that's turned into <strong>SEC_CHANNEL_BINDINGS_RESULT_VALID_MISSING</strong> if you pass <strong>ASC_REQ_ALLOW_MISSING_BINDINGS</strong>.</li>
+</ul>
+</li>
+</ul>
+<p><strong>Channel binding succeeded:</strong> This is the inverse of the check for failure, or test for <strong>SEC_CHANNEL_BINDINGS_RESULT_VALID</strong>.</p>
+<ul>
+<li><strong>SEC_CHANNEL_BINDINGS_RESULT_VALID_MATCHED</strong> is the success case. The security protection is working (or would work if EPA is enabled as audit-only).</li>
+<li><strong>SEC_CHANNEL_BINDINGS_RESULT_VALID_MISSING</strong> means that <strong>ASC_REQ_ALLOW_MISSING_BINDINGS</strong> was passed, so we allowed a client that did not claim support for channel binding. Clients that are hitting this case are not protected and should be investigated to see what's wrong. They either need to be updated to support channel binding, or the SuppressExtendedProtection registry value should be cleared once the broken applications are updated.</li>
+<li><strong>SEC_CHANNEL_BINDINGS_RESULT_VALID_PROXY</strong> is a special case associated with the flag <strong>ASC_REQ_PROXY_BINDINGS</strong> that's used when TLS is terminated at a load balancer instead of reaching the server. It's not possible for the server to verify that the client is using the same TLS connection as is terminated at the load balancer. For auditing purposes, this is treated the same as <strong>SEC_CHANNEL_BINDINGS_RESULT_VALID_MATCHED</strong>.</li>
+</ul>
+<h2>See also</h2>
+<p><a href="/windows/win32/api/sspi/nf-sspi-acceptsecuritycontext">AcceptSecurityContext</a></p>
+<p><a href="/windows/win32/api/sspi/nf-sspi-initializesecuritycontextw">InitializeSecurityContext</a></p>
+<p><a href="/windows/win32/api/sspi/nf-sspi-makesignature">MakeSignature</a></p>
+<p><a href="/windows/win32/api/sspi/nf-sspi-encryptmessage">EncryptMessage</a></p>
+<p><a href="querycontextattributes--general.html">QueryContextAttributes</a></p>
+<p><a href="/dotnet/framework/wcf/feature-details/extended-protection-for-authentication-overview">Extended Protection for Authentication Overview</a></p>
+<p><a href="/dotnet/framework/wcf/how-to-specify-a-service-binding-in-configuration">How to: Specify a Service Binding in Configuration</a></p>
+</body>

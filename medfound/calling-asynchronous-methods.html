@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Calling Asynchronous Methods</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Calling Asynchronous Methods
+ms.assetid: 1d8688a5-d476-457d-a0ad-e4f106ac3484
+title: Calling Asynchronous Methods
+ms.topic: reference
+ms.date: 05/31/2018</h2>
+<h1>Calling Asynchronous Methods</h1>
+<p>In Media Foundation, many operations are performed asynchronously. Asynchronous operations can improve performance, because they do not block the calling thread. An asynchronous operation in Media Foundation is defined by a pair of methods with the naming convention <strong>Begin...</strong> and <strong>End....</strong>. Together, these two methods define an asynchronous read operation on the stream.</p>
+<p>To start an asynchronous operation, call the <strong>Begin</strong> method. The <strong>Begin</strong> method always contains at least two parameters:</p>
+<ul>
+<li>A pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasynccallback"><strong>IMFAsyncCallback</strong></a> interface. The application must implement this interface.</li>
+<li>A pointer to an optional state object.</li>
+</ul>
+<p>The <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasynccallback"><strong>IMFAsyncCallback</strong></a> interface notifies the application when the operation is completed. For an example of how to implement this interface, see <a href="implementing-the-asynchronous-callback.html">Implementing the Asynchronous Callback</a>. The state object is optional. If specified, it must implement the <strong>IUnknown</strong> interface. You can use the state object to store any state information that is needed by your callback. If you do not need state information, you can set this parameter to <strong>NULL</strong>. The <strong>Begin</strong> method might contain additional parameters that are specific to that method.</p>
+<p>If the <strong>Begin</strong> method returns a failure code, it means the operation has failed immediately, and the callback will not be invoked. If the <strong>Begin</strong> method succeeds, it means the operation is pending, and the callback will be invoked when the operation completes.</p>
+<p>For example, the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfbytestream-beginread"><strong>IMFByteStream::BeginRead</strong></a> method starts an asynchronous read operation on a byte stream:</p>
+<pre lang="C++"><code>    BYTE data[DATA_SIZE];
+    ULONG cbRead = 0;
+
+    CMyCallback *pCB = new (std::nothrow) CMyCallback(pStream, &amp;hr);
+
+    if (pCB == NULL)
+    {
+        hr = E_OUTOFMEMORY;
+    }
+
+    // Start an asynchronous request to read data.
+    if (SUCCEEDED(hr))
+    {
+        hr = pStream-&gt;BeginRead(data, DATA_SIZE, pCB, NULL);
+    }
+</code></pre>
+<p>The callback method is <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>IMFAsyncCallback::Invoke</strong></a>. It has a single parameter, <em>pAsyncResult</em>, which is a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasyncresult"><strong>IMFAsyncResult</strong></a> interface. To complete the asynchronous operation, call the <strong>End</strong> method that matches the asynchronous <strong>Begin</strong> method. The <strong>End</strong> method always takes an <strong>IMFAsyncResult</strong> pointer. Always pass in the same pointer that you received in the <strong>Invoke</strong> method. The asynchronous operation is not complete until you call the <strong>End</strong> method. You may call the <strong>End</strong> method from inside the <strong>Invoke</strong> method, or you can call it from another thread.</p>
+<p>For example, to complete the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfbytestream-beginread"><strong>IMFByteStream::BeginRead</strong></a> on a byte stream, call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfbytestream-endread"><strong>IMFByteStream::EndRead</strong></a>:</p>
+<pre lang="C++"><code>    STDMETHODIMP Invoke(IMFAsyncResult* pResult)
+    {
+        m_hrStatus = m_pStream-&gt;EndRead(pResult, &amp;m_cbRead);
+
+        SetEvent(m_hEvent);
+
+        return S_OK;
+    }
+</code></pre>
+<p>The return value of the <strong>End</strong> method indicates the status of the asynchronous operation. In most cases, your application will perform some work after the asynchronous operation completes, whether it completes successfully or not. You have several options:</p>
+<ul>
+<li>Do the work inside the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>Invoke</strong></a> method. This approach is acceptable as long as your application never blocks the calling thread or waits for anything inside the <strong>Invoke</strong> method. If you block the calling thread, you might block the streaming pipeline. For example, you might update some state variables, but do not perform a synchronous read operation or wait on a mutex object.</li>
+<li>In the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>Invoke</strong></a> method, set an event and return immediately. The application's calling thread waits for the event and does the work when the event is signaled.</li>
+<li>In the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>Invoke</strong></a> method, post a private window message to your application window and return immediately. The application does the work on its message loop. (Make sure to post the message by calling <strong>PostMessage</strong>, not <strong>SendMessage</strong>, because <strong>SendMessage</strong> can block the callback thread.)</li>
+</ul>
+<p>It is important to remember that <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>Invoke</strong></a> is called from another thread. Your application is responsible for ensuring that any work performed inside <strong>Invoke</strong> is thread-safe.</p>
+<p>By default, the thread that calls <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-invoke"><strong>Invoke</strong></a> makes no assumptions about the behavior of your callback object. Optionally, you can implement the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasynccallback-getparameters"><strong>IMFAsyncCallback::GetParameters</strong></a> method to return information about your callback implementation. Otherwise, this method can return <strong>E_NOTIMPL</strong>:</p>
+<pre lang="C++"><code>    STDMETHODIMP GetParameters(DWORD* pdwFlags, DWORD* pdwQueue)
+    {
+        // Implementation of this method is optional.
+        return E_NOTIMPL;
+    }
+</code></pre>
+<p>If you specified a state object in the <strong>Begin</strong> method, you can retrieve it from inside your callback method by calling <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfasyncresult-getstate"><strong>IMFAsyncResult::GetState</strong></a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="asynchronous-callback-methods.html">Asynchronous Callback Methods</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

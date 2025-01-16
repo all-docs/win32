@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Play Protected Media Files</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: How to play files that contain DRM-protected media.
+ms.assetid: 85d98f49-8af2-42ce-9b36-a025aee93f73
+title: How to Play Protected Media Files
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to Play Protected Media Files</h1>
+<p>A protected media file is any media file that has associated rules for using the content. In some cases, a protected media file is encrypted using some form of digital rights management (DRM) encryption. To play a protected media file, playback must occur inside the protected media path (PMP). In addition, the user might have to acquire rights to the content.</p>
+<p>The term rights acquisition refers to any action that the application must perform before the user can play the content. The most common example is obtaining a DRM license, but Media Foundation defines a generic mechanism that can support other types of rights acquisition. The <a href="/windows/desktop/api/mfidl/nn-mfidl-imfcontentenabler"><strong>IMFContentEnabler</strong></a> interface defines this generic mechanism.</p>
+<p>Rights acquisition must be done outside of the PMP, from the application process. The Media Session notifies the application through the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfcontentprotectionmanager"><strong>IMFContentProtectionManager</strong></a> interface, which is implemented by the application. The Media Session uses the <strong>IMFContentProtectionManager</strong> interface to forward a content enabler object to the application. Content enablers implement the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfcontentenabler"><strong>IMFContentEnabler</strong></a> interface. The application uses this interface to acquire the necessary rights.</p>
+<p>A content enabler might support automatic rights acquisition, in which case the content enabler implements the entire process, and the application simply monitors the status. Otherwise, the application must use non-silent rights acquisition, which is a process where the application sends HTTP POST data to a URL provided by the content enabler.</p>
+<p>To play protected media, an application follows the same steps given in the topic <a href="how-to-play-unprotected-media-files.html">How to Play Media Files with Media Foundation</a>, with the following additional steps:</p>
+<ol>
+<li>Query whether the media source contains protected content. (Optional.)</li>
+<li>Create the Media Session in the PMP process, instead of the application process.</li>
+<li>Perform rights acquisition, if notified to do so by the Media Session. This operation is performed asynchronously by the application.</li>
+<li>Complete the asynchronous operation.</li>
+</ol>
+<h2>Query for Protected Content</h2>
+<p>To query whether a media source contains protected content, call the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfrequireprotectedenvironment"><strong>MFRequireProtectedEnvironment</strong></a> function on the media source's presentation descriptor. If the function returns S_OK, you must use the PMP to play the content. If the function returns S_FALSE, the PMP is not required, and you can create the Media Session in the application process. Alternatively, you can use the PMP to play both types of content, protected and unprotected. If you do that, you do not need to call <strong>MFRequireProtectedEnvironment</strong>.</p>
+<p>For more information about presentation descriptors, see <a href="presentation-descriptors.html">Presentation Descriptors</a>.</p>
+<h2>Create the PMP Media Session</h2>
+<p>To create the Media Session in the PMP, call <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatepmpmediasession"><strong>MFCreatePMPMediaSession</strong></a>. This function is similar to <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatemediasession"><strong>MFCreateMediaSession</strong></a>, but instead of creating the Media Session in the application's process, it creates the Media Session in the PMP process. The application receives a pointer to a proxy object for the Media Session. The application calls <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasession"><strong>IMFMediaSession</strong></a> methods on the proxy object, just as it would on the Media Session. The proxy object forwards the calls to the Media Session across the process boundary.</p>
+<p>Create the PMP Media Session as follows:</p>
+<ol>
+<li>Create a new attribute store by calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreateattributes"><strong>MFCreateAttributes</strong></a>.</li>
+<li>Set the <a href="mf-session-content-protection-manager-attribute.html"><strong>MF_SESSION_CONTENT_PROTECTION_MANAGER</strong></a> attribute on the attribute store. The value of this attribute is a pointer to your application's implementation of <a href="/windows/desktop/api/mfidl/nn-mfidl-imfcontentprotectionmanager"><strong>IMFContentProtectionManager</strong></a>. Call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfattributes-setunknown"><strong>IMFAttributes::SetUnknown</strong></a> to set the attribute.</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatepmpmediasession"><strong>MFCreatePMPMediaSession</strong></a> to create the Media Session in the PMP process. The <em>pConfiguration</em> parameter is a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfattributes"><strong>IMFAttributes</strong></a> interface of the attribute store.</li>
+</ol>
+<pre lang="C++"><code>IMFAttributes *pAttributes = NULL;
+IMFMediaSession *pSession = NULL;
+
+// Create the attribute store.
+hr = MFCreateAttributes(&amp;pAttributes, 1);
+
+// Set the IMFContentProtectionManager pointer.
+if (SUCCEEDED(hr))
+{
+    hr = pAttributes-&gt;SetUnknown(
+        MF_SESSION_CONTENT_PROTECTION_MANAGER, 
+        pCPM  // Your implementation of IMFContentProtectionManager.
+        );
+}
+
+// Create the Media Session.
+if (SUCCEEDED(hr))
+{
+    hr = MFCreatePMPMediaSession(
+        0,
+        pAttributes, 
+        &amp;pSession,
+        NULL
+    );
+}
+
+SAFE_RELEASE(pAttributes); // Release the attribute store.
+// Use the Media Session to control playback (not shown).
+</code></pre>
+<p>Next, create a playback topology and queue it on the Media Session, as described in <a href="creating-playback-topologies.html">Creating Playback Topologies</a>.</p>
+<h2>Perform Rights Acquisition</h2>
+<p>If playback requires rights acquisition, the Media Session calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentprotectionmanager-beginenablecontent"><strong>IMFContentProtectionManager::BeginEnableContent</strong></a>. The <em>pEnablerActivate</em> parameter of this method is a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfactivate"><strong>IMFActivate</strong></a> interface. Use this interface to create the content enabler object, which exposes the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfcontentenabler"><strong>IMFContentEnabler</strong></a> interface. Then use the content enabler to perform the rights acquisition step.</p>
+<p>To create the content enabler, call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfactivate-activateobject"><strong>IMFActivate::ActivateObject</strong></a>:</p>
+<pre lang="C++"><code>IMFContentEnabler *pEnabler = NULL;
+hr = pEnablerActivate-&gt;ActivateObject(
+    IID_IMFContentEnabler, 
+    (void**)&amp;pEnabler
+    );
+</code></pre>
+<p>Query the returned <a href="/windows/desktop/api/mfidl/nn-mfidl-imfcontentenabler"><strong>IMFContentEnabler</strong></a> pointer for the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a> interface. Use this interface to get events from the content enabler object. For more information about events, see <a href="media-event-generators.html">Media Event Generators</a>.</p>
+<p>To find out whether the content enabler supports automatic acquisition, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentenabler-isautomaticsupported"><strong>IMFContentEnabler::IsAutomaticSupported</strong></a>. If this method returns the value <strong>TRUE</strong>, the application should use automatic acquisition. Otherwise, use non-silent acquisition.</p>
+<p>The <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentprotectionmanager-beginenablecontent"><strong>BeginEnableContent</strong></a> method is asynchronous. The application should perform the acquisition step on the application's thread. One approach is to post a private window message to the application's main window, notifying the application thread to perform the acquisition. While the operation is pending, the application must store the callback pointer and the state object that it received in the <em>pCallback</em> and <em>punkState</em> parameters of <strong>BeginEnableContent</strong>. These will be used to complete the asynchronous operation.</p>
+<h3>Automatic Acquisition</h3>
+<p>To perform automatic acquisition, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentenabler-automaticenable"><strong>IMFContentEnabler::AutomaticEnable</strong></a>. This method is asynchronous. When the operation is completed, the content enabler sends an <a href="meenablercompleted.html">MEEnablerCompleted</a> event. The event's status code indicates whether the operation was successful. If the status code from the MEEnablerCompleted event is NS_E_DRM_LICENSE_NOTACQUIRED, the application should try using non-silent acquisition.</p>
+<p>While the acquisition operation is in progress, the enabler object might send the <a href="meenablerprogress.html">MEEnablerProgress</a> event to indicate the progress of the operation. To cancel the operation, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentenabler-cancel"><strong>IMFContentEnabler::Cancel</strong></a>.</p>
+<h3>Non-Silent Acquisition</h3>
+<p>If the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentenabler-isautomaticsupported"><strong>IsAutomaticSupported</strong></a> method returns <strong>FALSE</strong> or the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentenabler-automaticenable"><strong>AutomaticEnable</strong></a> method fails with the error code NS_E_DRM_LICENSE_NOTACQUIRED, the application should perform non-silent acquisition as described in the following steps:</p>
+<ol>
+<li>
+<p>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentenabler-getenableurl"><strong>IMFContentEnabler::GetEnableURL</strong></a> to get the URL for the rights acquisition. This method also returns a flag indicating whether the URL is trusted.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentenabler-getenabledata"><strong>IMFContentEnabler::GetEnableData</strong></a> to get the HTTP POST data.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentenabler-monitorenable"><strong>IMFContentEnabler::MonitorEnable</strong></a>. This method causes the content enabler to monitor the progress of the rights acquisition action.</p>
+</li>
+<li>
+<p>Submit the data to the rights acquisition URL by using an HTTP POST action. You can use the Internet Explorer control or the Windows Internet (WinINet) APIs.</p>
+</li>
+</ol>
+<p>The following code shows steps 1â€“3. Step 4 depends on your application's particular requirements.</p>
+<pre lang="C++"><code>WCHAR   *sURL = NULL;  // URL.
+DWORD   cchURL = 0;    // Size of the URL in characters.
+
+// Trust status of the URL.
+MF_URL_TRUST_STATUS  trustStatus = MF_LICENSE_URL_UNTRUSTED;
+
+BYTE    *pPostData = NULL;  // Buffer to hold HTTP POST data.
+DWORD   cbPostDataSize = 0; // Size of the buffer, in bytes.
+
+HRESULT hr = S_OK;
+
+// Get the URL. 
+hr = m_pEnabler-&gt;GetEnableURL(&amp;sURL, &amp;cchURL, &amp;trustStatus);
+
+if (SUCCEEDED(hr))
+{
+    if (trustStatus != MF_LICENSE_URL_TRUSTED)
+    {
+        // The URL is not trusted. Do not proceed.
+        hr = E_FAIL;
+    }
+}
+
+// Monitor the rights acquisition. 
+if (SUCCEEDED(hr))
+{
+    hr = m_pEnabler-&gt;MonitorEnable();
+}
+
+// Get the HTTP POST data.
+if (SUCCEEDED(hr))
+{
+    hr = m_pEnabler-&gt;GetEnableData(&amp;pPostData, &amp;cbPostDataSize);
+}
+
+// Open the URL and send the HTTP POST data. (Not shown.)
+
+// Release the buffers.
+CoTaskMemFree(pPostData);
+CoTaskMemFree(sURL);
+</code></pre>
+<p>When the operation is completed, the content enabler sends an <a href="meenablercompleted.html">MEEnablerCompleted</a> event.</p>
+<h2>Complete the Asynchronous Operation</h2>
+<p>When the rights acquisition is completed, successfully or otherwise, the application must notify the Media Session, by invoking the callback pointer given in the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentprotectionmanager-beginenablecontent"><strong>BeginEnableContent</strong></a> method.</p>
+<ol>
+<li>Create an asynchronous result object by calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreateasyncresult"><strong>MFCreateAsyncResult</strong></a>.</li>
+<li>Invoke the Media Session's callback by calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfinvokecallback"><strong>MFInvokeCallback</strong></a>.</li>
+<li>The Media Session will call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentprotectionmanager-endenablecontent"><strong>IMFContentProtectionManager::EndEnableContent</strong></a>. In your implementation of this method, release any pointers or resources that you allocated inside <a href="/windows/desktop/api/mfidl/nf-mfidl-imfcontentprotectionmanager-beginenablecontent"><strong>BeginEnableContent</strong></a>. Return an <strong>HRESULT</strong> that indicates the overall success of the operation. If the rights acquisition failed or the user canceled before it was completed, return an error code.</li>
+</ol>
+<p>The following code shows how to create the asynchronous result and invoke the callback.</p>
+<pre lang="C++"><code>IMFAsyncResult  *pResult = NULL;
+
+// Create the asynchronous result object.
+hr = MFCreateAsyncResult(NULL, pCallback, punkState, &amp;pResult);
+
+// Invoke the callback.
+if (SUCCEEDED(hr))
+{
+    pResult-&gt;SetStatus(hrStatus);
+    hr = MFInvokeCallback(pResult);
+}
+SAFE_RELEASE(pResult);
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="media-session.html">Media Session</a></p>
+<!-- raw HTML omitted -->
+<p><a href="audio-video-playback.html">Audio/Video Playback</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

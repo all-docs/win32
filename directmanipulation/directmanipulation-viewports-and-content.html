@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Viewports and content</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Direct Manipulation uses viewports, contents and contacts to describe the interactive elements of the UI.
+ms.assetid: 1564F6F2-844F-4392-9EB5-AA46059D514C
+title: Viewports and content
+ms.topic: article
+ms.date: 02/03/2020</h2>
+<h1>Viewports and content</h1>
+<p><a href="direct-manipulation-portal.html">Direct Manipulation</a> uses <em>viewports</em>, <em>contents</em> and <em>contacts</em> to describe the interactive elements of the UI.</p>
+<ul>
+<li><a href="#configuring-a-viewport">Configuring a viewport</a></li>
+<li><a href="#snap-points-and-boundaries">Snap points and boundaries</a></li>
+<li><a href="#snap-point-offset-and-rtl-scenarios">Snap point offset and RTL scenarios</a></li>
+<li><a href="#behaviors">Behaviors</a></li>
+<li><a href="#coordinate-system">Coordinate system</a></li>
+<li><a href="#transforms">Transforms</a></li>
+<li><a href="#viewport-state">Viewport state</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<p>A <em>viewport</em> is a region within a window that can receive and process input from user interactions. The viewport represents the region of the content that can be seen by the end-user at a given time (also called the content clip). The viewport has several functions:</p>
+<ul>
+<li>It manages the interaction state (for example, when the content is ready to be manipulated, when content is undergoing manipulation, when content is in inertia animation) and maps input to output transforms.</li>
+<li>It contains content that moves in response to the user interaction. This might be an HTML div element (scrolling), a pan-able list (the Windows 8 Start screen), or the pop-up menu for a select control.</li>
+</ul>
+<p>A viewport is created by calling <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationmanager-createviewport"><strong>CreateViewport</strong></a>. Multiple viewports can be created in a single window to produce a rich UI experience.</p>
+<p><em>Content</em> represents the element that gets transformed in response to an interaction. In other words, the content is what moves or scales as the user pans or pinches. There are two types of content:</p>
+<ul>
+<li><em>Primary content</em> is the single, intrinsic element within a viewport that responds to input manipulations and inertia. Primary content is created at the same time as the viewport and cannot be added or removed from a viewport. You can customize behavior of primary content using snap points (discussed later).</li>
+<li><em>Secondary content</em> moves relative to the motion of primary content. Secondary content is created separately from the viewport and can be added or removed from a viewport. All secondary content transforms are calculated based on the primary contentâ€™s transform. Specific rules can be applied to change how the transform is calculated based on the intended purpose of the element, identified by its CLSID during creation.</li>
+</ul>
+<p>In this diagram showing before and after a pan, a single contact has been used to pan primary content. Even though the user isn't directly interacting with the panning indicator (secondary content), the secondary content moves as the primary content is panned. This provides visual cues for how far the user has panned.</p>
+<p><img src="images/dm-art-2.png" alt="diagram showing before/after a pan" /></p>
+<h2>Configuring a viewport</h2>
+<p>After you've created the viewport. configure its behavior using an <em>interaction configuration</em>. The interaction configuration specifies which manipulations, like panning, are supported.</p>
+<p><em>Panning</em> changes the position of the content along either the horizontal or vertical axis or both as a user pans. When you configure translation on both axes, the content moves freely in any direction.</p>
+<p>To constrain the motion of content, configure <em>rails</em>, typically on both the horizontal and vertical axis. If a userâ€™s interaction is primarily along a single axis (represented by the blue regions in the next diagram), the pan becomes <em>railed</em> and the content only moves along the railed axis. If the user has panned and is currently railed and performs a second pan while the content is in inertia, the new pan continues to be railed.</p>
+<p><img src="images/dm-art-3.png" alt="diagram showing content within a viewport in a railed pan" /></p>
+<p>Example: A viewport is configured for horizontal and vertical panning. In the first frame, the contact comes down. In the second, a vertical pan is initiated and the contact is locked to the vertical rail. Finally, once the pan is railed, only the vertical component of a diagonal pan is used to move the content.</p>
+<p>If the user pans diagonally in a way that they are not in the rails detection regions (the white regions), the pan is <em>unrailed</em> and the content will move freely in both axes.</p>
+<p><img src="images/dm-art-4.png" alt="diagram showing content moving in an unrailed pan" /></p>
+<p><em>Zooming</em> changes the scale factor of the content as a user pinches or stretches. The point around which the content is scaled (called the zoom center) is at the center of the contacts. If you've set horizontal or vertical alignment, the zoom center changes to preserve alignment.</p>
+<p><img src="images/dm-art-5.png" alt="diagram showing zooming of content with an alignment specified" /></p>
+<p>You can override this behavior by specifying unlock center, which sets the zoom center at the center of the contacts.</p>
+<p><img src="images/dm-art-6.png" alt="diagram showing zooming of content with the zoom center unlocked" /></p>
+<p><em>Inertia</em> is the gradual deceleration of a manipulation, both panning and zooming, after all contacts have been lifted (in the case of touch) or after keyboard/mouse input (such as clicking a scroll bar, or pressing the arrow keys). When a user manipulates the content, the manipulation does not immediately stop after the contact is lifted. Instead, the content continues in the current direction and velocity, slowing gradually to a stop.</p>
+<h2>Snap points and boundaries</h2>
+<p>An inertia animation takes place after the manipulation ends as result of a finger being lifted off the screen (in the case of touch) or as a result of a keyboard/mouse action (such as arrow keys, page up/down, mouse wheel scrolling, etc).</p>
+<p>There are two pieces of information that define the inertia animation:</p>
+<ul>
+<li>The rest point of the animation â€“ the final ending position of the particular transform component.</li>
+<li>The animation duration, curve, velocity â€“ these are determined by the type of the rest point.</li>
+</ul>
+<p>The inertia animation is affected by snap-points and boundaries. Boundaries specify the maximum and minimum rest points for content. If content reaches a boundary during inertia, a boundary animation will be applied. Snap points are defined on the primary content to modify the rest point and modify the inertia animation curve itself.</p>
+<p>You define snap points with <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationprimarycontent-setsnapinterval"><strong>SetSnapInterval</strong></a> when the content is regularly spaced or with <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationprimarycontent-setsnappoints"><strong>SetSnapPoints</strong></a> when the content is unevenly spaced. Here is an example of snap points:</p>
+<p><img src="images/dm-snappoint-states-3.png" alt="diagram showing how snap points set in content affect panning" /></p>
+<p>In the diagram, there is a piece of content with a series of sub-content blocks â€“ news items in a news-reader type app or items in a Grid View. The intent is to snap an itemâ€™s left edge onto the viewportâ€™s left edge after inertia has ended.</p>
+<p>There are two groups of snap point types:</p>
+<ul>
+<li><em>Optional vs. Mandatory</em>: An optional snap point snaps the inertia animation only if the inertia rest point is near the snap point. A mandatory snap point always snaps the inertia animation to a specified snap point.</li>
+<li><em>Single vs. Multiple</em>: A multiple snap point type allows the content to move past many snap points before coming to a rest at a snap point close to its natural rest point. A single snap point type chooses the next nearest snap point as the rest point for the inertia animation.</li>
+</ul>
+<p>The next diagram demonstrates how snap point types modify the rest position of the inertia animation.</p>
+<p><img src="images/dm-snappoint-states-1.png" alt="diagram showing how inertia and snap points interact" /></p>
+<p>In this diagram, the inertia start point is labeled as â€˜Startâ€™ and the natural inertia end position in the absence of snap points as â€˜Endâ€™. The vertical lines mark the various snap points. This table describes how each type of snap point will affect the end position of the animation.</p>
+<table>
+<thead>
+<tr>
+<th>Point type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mandatory single</td>
+<td>Snap point P1 is chosen because it is the first snap point in the direction of inertia</td>
+</tr>
+<tr>
+<td>Mandatory multiple</td>
+<td>Snap point P2 is chosen because it is closest to the end point in the direction of inertia</td>
+</tr>
+<tr>
+<td>Optional single</td>
+<td>Snap point P1 is chosen because it is the first snap point encountered during inertia</td>
+</tr>
+<tr>
+<td>Optional multiple</td>
+<td>Snap point P2 is chosen because it is near the natural end point</td>
+</tr>
+</tbody>
+</table>
+<h2>Snap point offset and RTL scenarios</h2>
+<p><img src="images/dm-snappoint-states-2.png" alt="diagram showing rtl snap point use" /></p>
+<p>You apply the snap point offset and coordinate system using the <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationprimarycontent-setsnapcoordinate"><strong>SetSnapCoordinate</strong></a> API â€“ which offsets all the snap points or snap-intervals using the specified offset/coordinate system.</p>
+<p>The coordinate system is very useful in RTL scenarios, where you want to describe snap points from the left-edge of the content in the reverse direction. In the previous diagram, <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationprimarycontent-setsnapcoordinate"><strong>SetSnapCoordinate</strong></a> is used with the <strong>DIRECTMANIPULATION_MOTION_TRANSLATEX</strong> and <strong>DIRECTMANIPULATION_COORDINATE_MIRRORED</strong> flag, which automatically offsets the snap points from the left-edge of the content and supplies them in right-to-left order: S1 is at 0px, S2 is at 50px (and so on). Any offset set using <strong>SetSnapCoordinate</strong> will further offset from this left-edge of the content automatically, including the correct scale-factor.</p>
+<p>You will almost always use <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationprimarycontent-setsnapcoordinate"><strong>SetSnapCoordinate</strong></a> with the <em>origin</em> parameter set to avoid setting snap points outside of the content area.</p>
+<p>For example, if the viewport is 200x200 and the content is 1000x200, and the interface is RTL, the viewport will have it's left edge at x=800 when the viewport is first presented. Call <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationprimarycontent-setsnapcoordinate"><strong>SetSnapCoordinate</strong></a> with <code>SetSnapCoordinate(DIRECTMANIPULATION_MOTION_TRANSLATEX, DIRECTMANIPULATION_COORDINATE_MIRRORED, 1000.0)</code> to specify that the snap points should be calculated from right to left order starting from the RIGHT edge of the content.</p>
+<h2>Behaviors</h2>
+<p>A <em>behavior</em> is an object that can be attached to a viewport in order to modify how <a href="direct-manipulation-portal.html">Direct Manipulation</a> handles the output transform of a viewport's primary or secondary content. A behavior object may affect one or more aspects of a manipulation, such as how input is processed or how the inertia animation is applied. For example, an autoscroll behavior affects the inertia animation by performing a scrolling animation toward one end of the primary content. A cross-slide configuration behavior affects Direct Manipulation input processing which detects when a cross-slide action is being performed.</p>
+<p>A behavior object is created by calling <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationmanager2-createbehavior"><strong>CreateBehavior</strong></a>, added to a viewport and then its behavior is configured asynchronously. Removing the behavior from the viewport removes its effects.</p>
+<h2>Coordinate system</h2>
+<p>There are three main coordinate systems employed by <a href="direct-manipulation-portal.html">Direct Manipulation</a>:</p>
+<ul>
+<li>Client coordinate system - describes the rectangle of the client window. Units are in pixels.</li>
+<li>Viewport coordinate system - describes the rectangle of a region within the client that can process input. Units are application-defined (using <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationviewport-setviewportrect"><strong>SetViewportRect</strong></a>).</li>
+<li>Content coordinate system - describes the rectangle or size of primary content. Units are application-defined (using <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationcontent-setcontentrect"><strong>SetContentRect</strong></a>).</li>
+</ul>
+<p>For all three systems, coordinates are defined relative to their respective top-left origin, and are positive increasing to the right and down. These coordinate systems are illustrated in the next diagram. Only the section of the content within the viewport rectangle can be seen or manipulated by the end-user.</p>
+<p><img src="images/dm-art-7.png" alt="diagram showing how content, client, and viewport coordinates interact" /></p>
+<h2>Transforms</h2>
+<p><a href="direct-manipulation-portal.html">Direct Manipulation</a> maintains several different transforms that contribute to the overall displayed output.</p>
+<ul>
+<li><em>Content transform</em> â€“ the initial transform computed by <a href="direct-manipulation-portal.html">Direct Manipulation</a> based on a manipulation or inertia. It captures the effects of snap points, railing, default overpan (manipulation), default overbounce (inertia), and ZoomToRect animations.</li>
+<li><em>Output transform</em> - the final visual or output transform. It is the combination of both the content as well as the sync transforms.</li>
+<li><em>Sync transform</em> â€“ computed when you call <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationcontent-synccontenttransform"><strong>SyncContentTransform</strong></a>. It helps <a href="direct-manipulation-portal.html">Direct Manipulation</a> apply a new content transform supplied by the application while also maintaining the existing output transform.</li>
+<li><em>Display transform</em> â€“ applied by the application as part of post-processing. See <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationviewport-syncdisplaytransform"><strong>SyncDisplayTransform</strong></a> for more details.</li>
+</ul>
+<p>Because the output transform is intended to offset a surface visually on the screen, <a href="direct-manipulation-portal.html">Direct Manipulation</a> performs the necessary rounding on the output transform components so that text and other content are always rendered/composited at an integral pixel boundary. The rounding mechanism depends upon multiple factors, including the velocity of the motion and the presence of Remote Desktop. The rounding mechanism for secondary content matches that of the primary content, while taking into account the difference in the motion between the two. Clients of <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationcontent-getoutputtransform"><strong>GetOutputTransform</strong></a> should not depend on the exact rounding mechanism of the output transform, as various factors affect it.</p>
+<blockquote>
+<p>[!Note]</p>
+<p>This means that the components of a content transform may not be integral and may contain sub-pixel offsets. Clients using <a href="direct-manipulation-portal.html">Direct Manipulation</a> are encouraged to use the <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationcontent-getoutputtransform"><strong>GetOutputTransform</strong></a> to compute the correct visual transform to apply on the content when using manual update mode. When using automatic update mode using the built in compositor, Direct Manipulation automatically applies this transform on the clientâ€™s behalf. This transform is generated by Direct Manipulation to ensure visually pleasing results when composing the visual output.</p>
+</blockquote>
+<h2>Viewport state</h2>
+<p>As input is processed the viewport manages the interaction state and mapping of input to output transforms. Check the interaction state of the viewport by calling <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationviewport-getstatus"><strong>GetStatus</strong></a>.</p>
+<p><img src="images/dm-states-diagram.png" alt="diagram showing directmanipulation interaction states" /></p>
+<ul>
+<li>
+<p>Building â€“ the viewport is being created and is not yet able to process input. In order to process input, call <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationviewport-enable"><strong>IDirectManipulationViewport::Enable</strong></a>. If <strong>Enable</strong> is not called, the viewport goes to the Disabled state.</p>
+<blockquote>
+<p>[!Note]<br />
+This is the initial state of the interaction.</p>
+</blockquote>
+</li>
+<li>
+<p>Enabled â€“ the viewport is ready to process input. When a contact comes down (<a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationviewport-setcontact"><strong>SetContact</strong></a> is called) and a manipulation is detected, the viewport transitions to Running.</p>
+</li>
+<li>
+<p>Running â€“ the viewport is currently processing input and updating content. When the contact is lifted, the viewport transitions to Inertia, if configured.</p>
+</li>
+<li>
+<p>Inertia â€“ the content is moving in an inertia animation. Once inertia is complete, the viewport will transition to Ready. If auto-disable has been set on the viewport, it will transition from Inertia to Ready, and then to Disabled.</p>
+</li>
+<li>
+<p>Ready â€“ the viewport is ready to process input. When a contact comes down (<a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationviewport-setcontact"><strong>SetContact</strong></a> is called) and a manipulation is detected, the viewport transitions to Running.</p>
+</li>
+<li>
+<p>Suspended â€“ the viewport may become Suspended when its input has been promoted to a parent in the <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationviewport-setcontact"><strong>SetContact</strong></a> chain. This is discussed in greater detail in <a href="directmanipulation-multiple-vieports.html">Multiple viewports: hit testing and viewport hierarchy</a>.</p>
+</li>
+<li>
+<p>Disabled â€“ the viewport will not process input or make callbacks. A viewport may be disabled from various states by calling <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationviewport-disable"><strong>IDirectManipulationViewport::Disable</strong></a>. If auto-disable has been set on the viewport, it will transition automatically to Disabled after a manipulation is processed. To re-enable a disabled viewport, call <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationviewport-enable"><strong>IDirectManipulationViewport::Enable</strong></a>.</p>
+</li>
+</ul>
+<h2>Related topics</h2>
+<p><a href="directmanipulation-multiple-vieports.html">Multiple viewports: hit testing and viewport hierarchy</a>, <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationviewport-activateconfiguration"><strong>ActivateConfiguration</strong></a>, <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationcontent-getoutputtransform"><strong>GetOutputTransform</strong></a>, <a href="/windows/win32/api/DirectManipulation/nf-directmanipulation-idirectmanipulationviewport-syncdisplaytransform"><strong>SyncDisplayTransform</strong></a></p>
+</body>

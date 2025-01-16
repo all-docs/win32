@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Changing Interfaces in a Backward Compatible Manner</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Changing Interfaces in a Backward Compatible Manner
+description: The methods explained in The Versioning Theory for RPC and COM may be unacceptable for many reasons.
+ms.assetid: 7dec4b67-3d50-453f-b0ef-290d091186fd
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Changing Interfaces in a Backward Compatible Manner</h1>
+<p>The methods explained in <a href="the-versioning-theory-for-rpc-and-com.html">The Versioning Theory for RPC and COM</a> may be unacceptable for many reasons. Changing an interface version according to the rules essentially requires that new clients not communicate with old servers. This is frequently impossible with commercial software deployed in the field. Sometimes, Windows has introduced interface changes absent of changed GUIDs or versions. This was a result of new clients needing to communicate with legacy servers, and because the solution that a new client would support both the old and new interfaces was deemed undesirable.</p>
+<h2>Best practice</h2>
+<p>These are the reasonable methods of working around the wire incompatibility issue when the interface GUID and version cannot be changed.</p>
+<ol>
+<li>
+<p>Have the application be aware of the other side's capabilities.</p>
+<p>The client and server have a protocol that enables each (or at least the new client) to establish the identity of the partner. Typically it is sufficient to have the new client be aware of features supported by old and new servers. This may easily be done when an application holds on to a connection context, and be supported through an <em>XxxGetInfo</em> type of function call executed by the client before performing any RPC operations. When an application manages the features on a per-server release basis, a call with an incompatibility to the old server/client can never occur, since the application controls which calls are issued to which server. The bottom line is that the application is proactive in preventing a mismatch from happening. This may be performed in conjunction with the second practice.</p>
+</li>
+<li>
+<p>Introduce a new remote API.</p>
+<p>A new remote method does not collide with existing methods if it is added at the very end of the interface. Old clients can call new servers as they always have. The new client can call the new method without knowing the server's identity, provided it watches for the errors coming from the server being called. The RPC run time always checks the method number for each interface before a dispatch to ensure the method is within an appropriate v-table. For a method that is unknown to a server, the RPC run time raises the exception RPC_S_PROCNUM_OUT_OF_RANGE. This exception is raised only in this particular situation. Therefore, a new client can watch for the exception as a sign that the call went to an old server and can modify its behavior gracefully.</p>
+</li>
+<li>
+<p>Introduce new parameters or new data types only in the new methods.</p>
+<p>One reason to introduce a new method is to avoid data incompatibility. If a new data type is introduced or simply modified, in principle it should be used only in a new method (or methods). See <a href="examples-of-incompatible-changes.html">Examples of Incompatible Changes</a> for examples of incompatible data type changes. The only notable exception to this rule is described in item four.</p>
+</li>
+<li>
+<p>Map new parameters or new data types through a wrapper.</p>
+<p>This solution applies when a new parameter or data type must be exposed to a user, but actually does not have to be remoted separately or can be mapped to the old data types or parameters. For example, many system APIs turn around and execute a remote call. They may or may not be doing some kind of mapping from the user known data types to the data types actually used in the underlying RPC call. It is therefore always worth examining if the change in the user interface needs to propagate as a change to a remote interface.</p>
+<p>A similar situation may happen when the user calls a remote API directly, but a wrapper could be introduced to do a new type mapping or some other additional actions that have become necessary. Interface Definition Language (IDL) has several ways of facilitating such remapping, namely [<a href="/windows/desktop/Midl/call-as"><strong>call_as</strong></a>], [<a href="/windows/desktop/Midl/transmit-as"><strong>transmit_as</strong></a>], and [<a href="/windows/desktop/Midl/wire-marshal"><strong>wire_marshal</strong></a>]. The [<strong>call_as</strong>] attribute introduces a function wrapper on the client and server. Both are placed between the user code and the marshaler. The other attributes deal with direct type mapping. For extension problems, [<strong>call_as</strong>] is the most frequently used, and is easiest to understand and manipulate without pitfalls.</p>
+</li>
+<li>
+<p>Modify data types through a defaultless union.</p>
+<p>Changing an attribute or data type typically leads to wire incompatibility. See <a href="examples-of-incompatible-changes.html">Examples of Incompatible Changes</a> for examples. However, in the case of a union without a default clause, the incompatibility may be managed in a way similar to the case of a procedure out of range, as described previously. This scheme is readily applicable to the popular <em>XxxINFO</em> types that use unions.</p>
+<p>For example, a call like this</p>
+<pre lang="C++"><code>XxxGetInfo( [in] level, [out] XxxINFO  * pInfo );
+</code></pre>
+<p>could return information at level 1, 2 or 3, with <em>XxxINFO</em> being a union with three branches: 1, 2 and 3.</p>
+</li>
+<li>
+<p>Use the [<a href="/windows/desktop/Midl/range"><strong>range</strong></a>] attribute to specify range.</p>
+<p>You can specify the [<a href="/windows/desktop/Midl/range"><strong>range</strong></a>] attribute on a simple scale type without breaking backward compatibility. This attribute does not affect wire format, but during unmarshalling RPC checks the value on wire to confirm that it is within the range specified in the .idl file. If not, a RPC_X_INVALID_BOUND exception is thrown. This is especially useful if the server knows the maximum size of a sized array.</p>
+<p>For example:</p>
+<pre lang="C++"><code>HRESULT Method1( [in, range(0,100)] ULONG m, [size_is(m)] ULONG *plong); 
+</code></pre>
+</li>
+</ol>
+<p>The RPC behavior when the indicated level is 4 and the arm is missing, depends on the definition of the union. For a union with the default clause defined, RPC transmits a type indicated in the default clause for anything different than the known arm labels (in this case, anything other than 1, 2 or 3). For a defaultless union, the unmarshaler raises an exception because by definition there is no default to fall back to. The exception is RPC_S_INVALID_TAG.</p>
+<p>Again, a new client can adjust its behavior upon discovering that it called an old server.</p>
+<p>What follows from these recommended practices is that if a remotable data type must be designed that can be extended in future, use a defaultless union in the IDL file. Given a choice, an encapsulated union is slightly cleaner.</p>
+<p>Due to quirks of internal representation of the NDR64 wire protocol, the recommendation for adding arms provided earlier in this section needs to be qualified as follows: The new arm being added cannot change the alignment of the union, and in particular, the biggest alignment of the arms should not change. This is typically not an issue, as a pointer in an arm forces alignment to 8. A design where each arm is a pointer to an arm type is one clean way of satisfying the requirement.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

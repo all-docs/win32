@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using DMOs in DirectShow</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Using DMOs in DirectShow
+ms.assetid: 47d75b9c-8b0d-4235-8ac1-02ae1502c0e7
+title: Using DMOs in DirectShow
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Using DMOs in DirectShow</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>Applications based on DirectShow can use DMOs in a filter graph, through the <a href="dmo-wrapper-filter.html">DMO Wrapper</a> filter. This filter aggregates a DMO and handles all the details of using the DMO, such as passing data to and from the DMO, allocating <a href="/previous-versions/windows/desktop/api/Mediaobj/nn-mediaobj-imediabuffer"><strong>IMediaBuffer</strong></a> objects, and so forth.</p>
+<p>Because the DMO is aggregated by the filter, the application can query the filter for any COM interfaces that the DMO exposes. However, the application should let the filter handle all streaming operations on the DMO. For example, do not set media types, process any buffers, flush the DMO, lock the DMO, enable or disable quality control, or set video optimizations.</p>
+<p>If you know the class identifier (CLSID) of a specific DMO that you want to use, you can initialize the DMO Wrapper filter with that DMO, as follows:</p>
+<ol>
+<li>Call <strong>CoCreateInstance</strong> to create the DMO Wrapper filter.</li>
+<li>Query the DMO Wrapper filter for the <a href="/previous-versions/windows/desktop/api/Dmodshow/nn-dmodshow-idmowrapperfilter"><strong>IDMOWrapperFilter</strong></a> interface.</li>
+<li>Call the <a href="/previous-versions/windows/desktop/api/Dmodshow/nf-dmodshow-idmowrapperfilter-init"><strong>IDMOWrapperFilter::Init</strong></a> method. Specify the CLSID of the DMO and the GUID of the DMO's category. For a list of DMO categories, see <a href="dmo-guids.html">DMO GUIDs</a>.</li>
+</ol>
+<p>The following code shows these steps:</p>
+<pre lang="C++"><code>// Create the DMO Wrapper filter.
+IBaseFilter *pFilter;
+HRESULT hr = CoCreateInstance(CLSID_DMOWrapperFilter, NULL, 
+    CLSCTX_INPROC_SERVER, IID_IBaseFilter, 
+    reinterpret_cast&lt;void**&gt;(&amp;pFilter));
+
+if (SUCCEEDED(hr)) 
+{
+    // Query for IDMOWrapperFilter.
+    IDMOWrapperFilter *pDmoWrapper;
+    hr = pFilter-&gt;QueryInterface(IID_IDMOWrapperFilter, 
+        reinterpret_cast&lt;void**&gt;(&amp;pDmoWrapper));
+
+    if (SUCCEEDED(hr)) 
+    {     
+        // Initialize the filter.
+        hr = pDmoWrapper-&gt;Init(CLSID_MyDMO, DMOCATEGORY_VIDEO_EFFECT); 
+        pDmoWrapper-&gt;Release();
+
+        if (SUCCEEDED(hr)) 
+        {
+            // Add the filter to the graph.
+            hr = pGraph-&gt;AddFilter(pFilter, L&quot;My DMO&quot;);
+        }
+    }
+    pFilter-&gt;Release();
+}
+</code></pre>
+<p>The <a href="/previous-versions/windows/desktop/api/Dmoreg/nf-dmoreg-dmoenum"><strong>DMOEnum</strong></a> function enumerates DMOs in the registry. This function uses a different set of category GUIDs from the ones used for DirectShow filters.</p>
+<p><strong>Using the System Device Enumerator with DMOs</strong></p>
+<p>Instead of creating a DMO directly, you can use the <a href="system-device-enumerator.html">System Device Enumerator</a>, which can enumerate any DMO category that is supported by the <strong>DMOEnum</strong> method. The System Device Enumerator also includes DMOs when it enumerates certain DirectShow filter categories. The following table shows the mapping between DMO categories and DirectShow categories.</p>
+<table>
+<thead>
+<tr>
+<th>Label</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DMO Category</td>
+<td>DirectShow Equivalent</td>
+</tr>
+<tr>
+<td>DMOCATEGORY_AUDIO_ENCODER</td>
+<td>CLSID_AudioCompressorCategory</td>
+</tr>
+<tr>
+<td>DMOCATEGORY_AUDIO_DECODER</td>
+<td>CLSID_LegacyAmFilterCategory</td>
+</tr>
+<tr>
+<td>DMOCATEGORY_VIDEO_ENCODER</td>
+<td>CLSID_VideoCompressorCategory</td>
+</tr>
+<tr>
+<td>DMOCATEGORY_VIDEO_DECODER</td>
+<td>CLSID_LegacyAmFilterCategory</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The System Device Enumerator returns a list of moniker objects. If the moniker represents a DMO, the <strong>IMoniker::BindToObject</strong> method automatically creates the DMO Wrapper filter and initializes it with that DMO. Thus, the fact that a DMO is involved is transparent to the application. For more information on using the System Device Enumerator, see <a href="using-the-system-device-enumerator.html">Using the System Device Enumerator</a>.</p>
+<p><strong>Limitations</strong></p>
+<p>There are some limitations when using DMOs in DirectShow:</p>
+<ul>
+<li>The DMO Wrapper filter does not support DMOs with zero inputs, multiple inputs, or zero outputs.</li>
+<li>All pin connections on the DMO Wrapper Filter use the <a href="/windows/desktop/api/Strmif/nn-strmif-imeminputpin"><strong>IMemInputPin</strong></a> interface.</li>
+<li>DirectShow Editing Services does not support DMO-based effects or transitions.</li>
+</ul>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-dmos.html">Using DMOs</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

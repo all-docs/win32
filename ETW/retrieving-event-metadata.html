@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Retrieving Event Metadata</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example shows how to use the trace data helper functions to retrieve metadata for each event.
+ms.assetid: 599e0405-b125-4742-b134-964e25413f59
+title: Retrieving Event Metadata
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Retrieving Event Metadata</h1>
+<p>The following example shows how to use the trace data helper functions to retrieve metadata for each event. Also see the examples included with the <a href="/windows/desktop/api/Tdh/nf-tdh-tdhqueryproviderfieldinformation"><strong>TdhQueryProviderFieldInformation</strong></a> and <a href="/windows/desktop/api/Tdh/nf-tdh-tdhenumerateproviderfieldinformation"><strong>TdhEnumerateProviderFieldInformation</strong></a> functions.</p>
+<pre lang="C++"><code>//Turns the DEFINE_GUID for EventTraceGuid into a const.
+#define INITGUID
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;comdef.h&gt;
+#include &lt;guiddef.h&gt;
+#include &lt;wbemidl.h&gt;
+#include &lt;wmistr.h&gt;
+#include &lt;evntrace.h&gt;
+#include &lt;tdh.h&gt;
+
+#pragma comment(lib, &quot;tdh.lib&quot;)
+
+#define LOGFILE_PATH L&quot;&lt;FULLPATHTOTHELOGFILE.etl&gt;&quot;
+
+static const GUID GUID_NULL = 
+{ 0x00000000, 0x0000, 0x0000, { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } };
+
+// Strings that represent the source of the event metadata.
+
+WCHAR* pSource[] = {L&quot;XML instrumentation manifest&quot;, L&quot;WMI MOF class&quot;, L&quot;WPP TMF file&quot;};
+
+// Handle to the trace file that you opened.
+
+TRACEHANDLE g_hTrace = 0;  
+
+
+// Prototypes
+
+void WINAPI ProcessEvent(PEVENT_RECORD pEvent);
+DWORD GetEventInformation(PEVENT_RECORD pEvent, PTRACE_EVENT_INFO &amp; pInfo);
+DWORD PrintPropertyMetadata(TRACE_EVENT_INFO* pInfo, DWORD i, USHORT indent);
+
+
+void wmain(void)
+{
+    ULONG status = ERROR_SUCCESS;
+    EVENT_TRACE_LOGFILE trace;
+    TRACE_LOGFILE_HEADER* pHeader = &amp;trace.LogfileHeader;
+
+    // Identify the log file from which you want to consume events
+    // and the callbacks used to process the events and buffers.
+
+    ZeroMemory(&amp;trace, sizeof(EVENT_TRACE_LOGFILE));
+    trace.LogFileName = (LPWSTR) LOGFILE_PATH;
+    trace.EventRecordCallback = (PEVENT_RECORD_CALLBACK) (ProcessEvent);
+    trace.ProcessTraceMode = PROCESS_TRACE_MODE_EVENT_RECORD;
+
+    g_hTrace = OpenTrace(&amp;trace);
+    if (INVALID_PROCESSTRACE_HANDLE == g_hTrace)
+    {
+        wprintf(L&quot;OpenTrace failed with %lu\n&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    status = ProcessTrace(&amp;g_hTrace, 1, 0, 0);
+    if (status != ERROR_SUCCESS &amp;&amp; status != ERROR_CANCELLED)
+    {
+        wprintf(L&quot;ProcessTrace failed with %lu\n&quot;, status);
+        goto cleanup;
+    }
+
+cleanup:
+
+    if (INVALID_PROCESSTRACE_HANDLE != g_hTrace)
+    {
+        status = CloseTrace(g_hTrace);
+    }
+}
+
+
+VOID WINAPI ProcessEvent(PEVENT_RECORD pEvent)
+{
+    DWORD status = ERROR_SUCCESS;
+    HRESULT hr = S_OK;
+    PTRACE_EVENT_INFO pInfo = NULL;
+    LPWSTR pStringGuid = NULL;
+
+
+    // Skips the event if it is the event trace header. Log files contain this event
+    // but real-time sessions do not. The event contains the same information as 
+    // the EVENT_TRACE_LOGFILE.LogfileHeader member that you can access when you open 
+    // the trace. 
+
+    if (IsEqualGUID(pEvent-&gt;EventHeader.ProviderId, EventTraceGuid) &amp;&amp;
+        pEvent-&gt;EventHeader.EventDescriptor.Opcode == EVENT_TRACE_TYPE_INFO)
+    {
+        ; // Skip this event.
+    }
+    else
+    {
+        // Process the event. This example does not process the event data but
+        // instead prints the metadata that describes each event.
+
+        status = GetEventInformation(pEvent, pInfo);
+
+        if (ERROR_SUCCESS != status)
+        {
+            wprintf(L&quot;GetEventInformation failed with %lu\n&quot;, status);
+            goto cleanup;
+        }
+
+        wprintf(L&quot;Decoding source: %s\n&quot;, pSource[pInfo-&gt;DecodingSource]);
+
+        if (DecodingSourceWPP == pInfo-&gt;DecodingSource)
+        {
+            // This example is not rendering WPP metadata.
+            goto cleanup;
+        }
+
+        if (pInfo-&gt;ProviderNameOffset &gt; 0)
+        {
+            wprintf(L&quot;Provider name: %s\n&quot;, (LPWSTR)((PBYTE)(pInfo) + pInfo-&gt;ProviderNameOffset));
+        }
+
+        hr = StringFromCLSID(pInfo-&gt;ProviderGuid, &amp;pStringGuid);
+        if (FAILED(hr))
+        {
+            wprintf(L&quot;StringFromCLSID(ProviderGuid) failed with 0x%x\n&quot;, hr);
+            status = hr;
+            goto cleanup;
+        }
+
+        wprintf(L&quot;\nProvider GUID: %s\n&quot;, pStringGuid);
+        CoTaskMemFree(pStringGuid);
+        pStringGuid = NULL;
+
+        if (!IsEqualGUID(pInfo-&gt;EventGuid, GUID_NULL))
+        {
+            hr = StringFromCLSID(pInfo-&gt;EventGuid, &amp;pStringGuid);
+            if (FAILED(hr))
+            {
+                wprintf(L&quot;StringFromCLSID(EventGuid) failed with 0x%x\n&quot;, hr);
+                status = hr;
+                goto cleanup;
+            }
+
+            wprintf(L&quot;\nEvent GUID: %s\n&quot;, pStringGuid);
+            CoTaskMemFree(pStringGuid);
+            pStringGuid = NULL;
+        }
+
+
+        if (DecodingSourceXMLFile == pInfo-&gt;DecodingSource)
+        {
+            wprintf(L&quot;Event ID: %hu\n&quot;, pInfo-&gt;EventDescriptor.Id);
+        }
+
+        wprintf(L&quot;Version: %d\n&quot;, pInfo-&gt;EventDescriptor.Version);
+
+        if (pInfo-&gt;ChannelNameOffset &gt; 0)
+        {
+            wprintf(L&quot;Channel name: %s\n&quot;, (LPWSTR)((PBYTE)(pInfo) + pInfo-&gt;ChannelNameOffset));
+        }
+
+        if (pInfo-&gt;LevelNameOffset &gt; 0)
+        {
+            wprintf(L&quot;Level name: %s\n&quot;, (LPWSTR)((PBYTE)(pInfo) + pInfo-&gt;LevelNameOffset));
+        }
+        else
+        {
+            wprintf(L&quot;Level: %hu\n&quot;, pInfo-&gt;EventDescriptor.Level);
+        }
+
+        if (DecodingSourceXMLFile == pInfo-&gt;DecodingSource)
+        {
+            if (pInfo-&gt;OpcodeNameOffset &gt; 0)
+            {
+                wprintf(L&quot;Opcode name: %s\n&quot;, (LPWSTR)((PBYTE)(pInfo) + pInfo-&gt;OpcodeNameOffset));
+            }
+        }
+        else
+        {
+            wprintf(L&quot;Type: %hu\n&quot;, pInfo-&gt;EventDescriptor.Opcode);
+        }
+
+        if (DecodingSourceXMLFile == pInfo-&gt;DecodingSource)
+        {
+            if (pInfo-&gt;TaskNameOffset &gt; 0)
+            {
+                wprintf(L&quot;Task name: %s\n&quot;, (LPWSTR)((PBYTE)(pInfo) + pInfo-&gt;TaskNameOffset));
+            }
+        }
+        else
+        {
+            wprintf(L&quot;Task: %hu\n&quot;, pInfo-&gt;EventDescriptor.Task);
+        }
+
+        wprintf(L&quot;Keyword mask: 0x%x\n&quot;, pInfo-&gt;EventDescriptor.Keyword);
+        if (pInfo-&gt;KeywordsNameOffset)
+        {
+            LPWSTR pKeyword = (LPWSTR)((PBYTE)(pInfo) + pInfo-&gt;KeywordsNameOffset);
+
+            for (; *pKeyword != 0; pKeyword += (wcslen(pKeyword) + 1))
+                wprintf(L&quot;  Keyword name: %s\n&quot;, pKeyword);
+        }
+
+        if (pInfo-&gt;EventMessageOffset &gt; 0)
+        {
+            wprintf(L&quot;Event message: %s\n&quot;, (LPWSTR)((PBYTE)(pInfo) + pInfo-&gt;EventMessageOffset));
+        }
+
+        if (pInfo-&gt;ActivityIDNameOffset &gt; 0)
+        {
+            wprintf(L&quot;Activity ID name: %s\n&quot;, (LPWSTR)((PBYTE)(pInfo) + pInfo-&gt;ActivityIDNameOffset));
+        }
+
+        if (pInfo-&gt;RelatedActivityIDNameOffset &gt; 0)
+        {
+            wprintf(L&quot;Related activity ID name: %s\n&quot;, (LPWSTR)((PBYTE)(pInfo) + pInfo-&gt;RelatedActivityIDNameOffset));
+        }
+
+        wprintf(L&quot;Number of top-level properties: %lu\n&quot;, pInfo-&gt;TopLevelPropertyCount);
+
+        wprintf(L&quot;Total number of properties: %lu\n&quot;, pInfo-&gt;PropertyCount);
+
+        // Print the metadata for all the top-level properties. Metadata for all the 
+        // top-level properties come before structure member properties in the 
+        // property information array.
+
+        if (pInfo-&gt;TopLevelPropertyCount &gt; 0)
+        {
+            wprintf(L&quot;\nThe following are the user data properties defined for this event:\n&quot;);
+
+            for (USHORT i = 0; i &lt; pInfo-&gt;TopLevelPropertyCount; i++)
+            {
+                status = PrintPropertyMetadata(pInfo, i, 0);
+                if (ERROR_SUCCESS != status)
+                {
+                    wprintf(L&quot;Printing metadata for top-level properties failed.\n&quot;);
+                    goto cleanup;
+                }
+            }
+        }
+        else
+        {
+            wprintf(L&quot;\nThe event does not define any user data properties.\n&quot;);
+        }
+
+        wprintf(L&quot;\n&quot;);
+    }
+
+cleanup:
+
+    if (pInfo)
+    {
+        free(pInfo);
+    }
+
+    if (ERROR_SUCCESS != status)
+    {
+        CloseTrace(g_hTrace);
+    }
+}
+
+
+
+DWORD GetEventInformation(PEVENT_RECORD pEvent, PTRACE_EVENT_INFO &amp; pInfo)
+{
+    DWORD status = ERROR_SUCCESS;
+    DWORD BufferSize = 0;
+
+    // Retrieve the required buffer size for the event metadata.
+
+    status = TdhGetEventInformation(pEvent, 0, NULL, pInfo, &amp;BufferSize);
+
+    if (ERROR_INSUFFICIENT_BUFFER == status)
+    {
+        pInfo = (TRACE_EVENT_INFO*) malloc(BufferSize);
+        if (pInfo == NULL)
+        {
+            wprintf(L&quot;Failed to allocate memory for event info (size=%lu).\n&quot;, BufferSize);
+            status = ERROR_OUTOFMEMORY;
+            goto cleanup;
+        }
+
+        // Retrieve the event metadata.
+
+        status = TdhGetEventInformation(pEvent, 0, NULL, pInfo, &amp;BufferSize);
+    }
+
+    if (ERROR_SUCCESS != status)
+    {
+        wprintf(L&quot;TdhGetEventInformation failed with 0x%x.\n&quot;, status);
+    }
+
+cleanup:
+
+    return status;
+}
+
+
+// Print the metadata for each property.
+
+DWORD PrintPropertyMetadata(TRACE_EVENT_INFO* pinfo, DWORD i, USHORT indent)
+{
+    DWORD status = ERROR_SUCCESS;
+    DWORD j = 0;
+    DWORD lastMember = 0;  // Last member of a structure
+
+    // Print property name.
+
+    wprintf(L&quot;%*s%s&quot;, indent, L&quot;&quot;, (LPWSTR)((PBYTE)(pinfo) + pinfo-&gt;EventPropertyInfoArray[i].NameOffset));
+
+
+    // If the property is an array, the property can define the array size or it can
+    // point to another property whose value defines the array size. The PropertyParamCount
+    // flag tells you where the array size is defined.
+
+    if ((pinfo-&gt;EventPropertyInfoArray[i].Flags &amp; PropertyParamCount) == PropertyParamCount)
+    {
+        j = pinfo-&gt;EventPropertyInfoArray[i].countPropertyIndex;
+        wprintf(L&quot; (array size is defined by %s)&quot;, (LPWSTR)((PBYTE)(pinfo) + pinfo-&gt;EventPropertyInfoArray[j].NameOffset));
+    }
+    else
+    {
+        if (pinfo-&gt;EventPropertyInfoArray[i].count &gt; 1)
+            wprintf(L&quot; (array size is %lu)&quot;, pinfo-&gt;EventPropertyInfoArray[i].count);
+    }
+
+
+    // If the property is a buffer, the property can define the buffer size or it can
+    // point to another property whose value defines the buffer size. The PropertyParamLength
+    // flag tells you where the buffer size is defined.
+
+    if ((pinfo-&gt;EventPropertyInfoArray[i].Flags &amp; PropertyParamLength) == PropertyParamLength)
+    {
+        j = pinfo-&gt;EventPropertyInfoArray[i].lengthPropertyIndex;
+        wprintf(L&quot; (size is defined by %s)&quot;, (LPWSTR)((PBYTE)(pinfo) + pinfo-&gt;EventPropertyInfoArray[j].NameOffset));
+    }
+    else
+    {
+        // Variable length properties such as structures and some strings do not have
+        // length definitions.
+
+        if (pinfo-&gt;EventPropertyInfoArray[i].length &gt; 0)
+            wprintf(L&quot; (size is %lu bytes)&quot;, pinfo-&gt;EventPropertyInfoArray[i].length);
+        else
+            wprintf(L&quot; (size  is unknown)&quot;);
+    }
+
+    wprintf(L&quot;\n&quot;);
+
+
+    // If the property is a structure, print the members of the structure.
+
+    if ((pinfo-&gt;EventPropertyInfoArray[i].Flags &amp; PropertyStruct) == PropertyStruct)
+    {
+        wprintf(L&quot;%*s(The property is a structure and has the following %hu members:)\n&quot;, 4, L&quot;&quot;,
+            pinfo-&gt;EventPropertyInfoArray[i].structType.NumOfStructMembers);
+
+        lastMember = pinfo-&gt;EventPropertyInfoArray[i].structType.StructStartIndex + 
+            pinfo-&gt;EventPropertyInfoArray[i].structType.NumOfStructMembers;
+
+        for (j = pinfo-&gt;EventPropertyInfoArray[i].structType.StructStartIndex; j &lt; lastMember; j++)
+        {
+            PrintPropertyMetadata(pinfo, j, 4);
+        }
+    }
+    else
+    {
+        // You can use InType to determine the data type of the member and OutType
+        // to determine the output format of the data.
+
+        if (pinfo-&gt;EventPropertyInfoArray[i].nonStructType.MapNameOffset)
+        {
+            // You can pass the name to the TdhGetEventMapInformation function to 
+            // retrieve metadata about the value map.
+
+            wprintf(L&quot;%*s(Map attribute name is %s)\n&quot;, indent, L&quot;&quot;, 
+                (PWCHAR)((PBYTE)(pinfo) + pinfo-&gt;EventPropertyInfoArray[i].nonStructType.MapNameOffset));
+        }
+    }
+
+    return status;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Extract app package contents (C++)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Extract app package contents (C++)
+description: Learn how to extract files from the app package for a Windows app using the packaging API.
+ms.assetid: 72C368F9-2EBA-4930-81CF-9B85717CC0AA
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Extract app package contents (C++)</h1>
+<p>Learn how to extract files from the app package for a Windows app using the <a href="interfaces.html">packaging API</a>.</p>
+<p>You can also use the MakeAppx.exe tool to extract files from an app package or bundle. See <a href="/windows/msix/package/create-app-package-with-makeappx-tool#extract-files-from-a-package-or-bundle">Extract files from a package or bundle</a> for more information.</p>
+<h3>Create a package reader</h3>
+<p>To create a package reader, call the <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxfactory-createpackagereader"><strong>IAppxFactory::CreatePackageReader</strong></a> method. The first parameter is an input stream for the package (.appx file). The second parameter is an output parameter that receives a pointer to an <a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxpackagereader"><strong>IAppxPackageReader</strong></a> pointer.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;shlwapi.h&gt;
+#include &lt;AppxPackaging.h&gt;
+
+int wmain(
+    _In_ int argc,
+    _In_count_(argc) wchar_t** argv)
+{
+    HRESULT hr = S_OK;
+
+    if (argc != 3)
+    {
+        wprintf(L&quot;Usage:  ExtractAppx.exe inputFile outputPath\n&quot;);
+        wprintf(L&quot;    inputFile: Path to the appx package\n&quot;);
+        wprintf(L&quot;    outputPath: Path to the folder for the extracted package contents\n&quot;);
+        return 2;
+    }
+
+    // Specify the appropriate COM threading model
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+    if (SUCCEEDED(hr))
+    {
+        // Create a package reader using the file name in argv[1] 
+        IAppxPackageReader* packageReader = NULL;
+        hr = GetPackageReader(argv[1], &amp;packageReader);
+
+        // Print information about all footprint files, and extract them to disk
+        if (SUCCEEDED(hr))
+        {
+            hr = ExtractFootprintFiles(packageReader, argv[2]);
+        }
+
+        // Print information about all payload files, and extract them to disk
+        if (SUCCEEDED(hr))
+        {
+            hr = ExtractPayloadFiles(packageReader, argv[2]);
+        }
+    }
+}
+
+//
+// Creates an app package reader.
+//
+// Parameters:
+//   inputFileName  
+//     The fully-qualified name of the app package (.appx file) to be opened.
+//   reader 
+//     On success, receives the created instance of IAppxPackageReader.
+//
+HRESULT GetPackageReader(
+    _In_ LPCWSTR inputFileName,
+    _Outptr_ IAppxPackageReader** reader)
+{
+    HRESULT hr = S_OK;
+    IAppxFactory* appxFactory = NULL;
+    IStream* inputStream = NULL;
+
+    // Create a new factory
+    hr = CoCreateInstance(
+            __uuidof(AppxFactory),
+            NULL,
+            CLSCTX_INPROC_SERVER,
+            __uuidof(IAppxFactory),
+            (LPVOID*)(&amp;appxFactory));
+
+    // Create a stream over the input app package
+    if (SUCCEEDED(hr))
+    {
+        hr = SHCreateStreamOnFileEx(
+                inputFileName,
+                STGM_READ | STGM_SHARE_EXCLUSIVE,
+                0, // default file attributes
+                FALSE, // do not create new file
+                NULL, // no template
+                &amp;inputStream);
+    }
+
+    // Create a new package reader using the factory.  For 
+    // simplicity, we don't verify the digital signature of the package.
+    if (SUCCEEDED(hr))
+    {
+        hr = appxFactory-&gt;CreatePackageReader(
+                inputStream,
+                reader);
+    }
+
+    // Clean up allocated resources
+    if (inputStream != NULL)
+    {
+        inputStream-&gt;Release();
+        inputStream = NULL;
+    }
+    if (appxFactory != NULL)
+    {
+        appxFactory-&gt;Release();
+        appxFactory = NULL;
+    }
+    return hr;
+}
+</code></pre>
+<h3>Extract footprint files</h3>
+<p>Call the <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxpackagereader-getfootprintfile"><strong>IAppxPackageReader::GetFootprintFile</strong></a> method to get each footprint file. Each footprint file is represented by an <a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxfile"><strong>IAppxFile</strong></a> interface. The <code>ExtractFile</code> function in this sample uses the <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxfile-getname"><strong>GetName</strong></a>, <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxfile-getcontenttype"><strong>GetContentType</strong></a>, and <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxfile-getsize"><strong>GetSize</strong></a> methods of <strong>IAppxFile</strong> to display basic information about the footprint file.</p>
+<pre lang="C++"><code>//
+// Extracts all footprint files from a package.
+//
+// Parameters:
+//   packageReader 
+//      The package reader for the app package.
+//   outputPath 
+//      The path of the folder for the extracted footprint files.
+//
+// Types of footprint files in an app package
+const int FootprintFilesCount = 4;
+const APPX_FOOTPRINT_FILE_TYPE FootprintFilesType[FootprintFilesCount] = {
+APPX_FOOTPRINT_FILE_TYPE_MANIFEST,
+APPX_FOOTPRINT_FILE_TYPE_BLOCKMAP,
+APPX_FOOTPRINT_FILE_TYPE_SIGNATURE,
+APPX_FOOTPRINT_FILE_TYPE_CODEINTEGRITY
+};
+const LPCWSTR FootprintFilesName[FootprintFilesCount] = {
+L&quot;manifest&quot;,
+L&quot;block map&quot;,
+L&quot;digital signature&quot;,
+L&quot;CI catalog&quot;
+}; 
+//
+
+HRESULT ExtractFootprintFiles(
+    _In_ IAppxPackageReader* packageReader,
+    _In_ LPCWSTR outputPath)
+{
+    HRESULT hr = S_OK;
+    wprintf(L&quot;\nExtracting footprint files from the package...\n&quot;);
+
+    for (int i = 0; SUCCEEDED(hr) &amp;&amp; (i &lt; FootprintFilesCount); i++)
+    {
+        IAppxFile* footprintFile = NULL;
+
+        hr = packageReader-&gt;GetFootprintFile(FootprintFilesType[i], &amp;footprintFile);
+
+        if (hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
+        {
+            // Some footprint files are optional. It is normal for the GetFootprintFile
+            // call to fail when there is no file.
+            wprintf(L&quot;\nThe package does not contain a %s.\n&quot;, FootprintFilesName[i]);
+            hr = S_OK;
+        }
+        else if (SUCCEEDED(hr))
+        {
+            hr = ExtractFile(footprintFile, outputPath);
+        }
+
+        if (footprintFile != NULL)
+        {
+            footprintFile-&gt;Release();
+            footprintFile = NULL;
+        }
+    }
+    return hr;
+}
+
+//
+// Prints basic info about a footprint or payload file and writes the file to disk.
+//
+// Parameters:
+//   file 
+//      The IAppxFile interface that represents a footprint or payload file in the package.
+//   outputPath 
+//      The path of the folder for the extracted files.
+//
+HRESULT ExtractFile(
+    _In_ IAppxFile* file,
+    _In_ LPCWSTR outputPath)
+{
+    HRESULT hr = S_OK;
+    LPWSTR fileName = NULL;
+    LPWSTR contentType = NULL;
+    UINT64 fileSize = 0;
+    IStream* fileStream = NULL;
+    IStream* outputStream = NULL;
+    ULARGE_INTEGER fileSizeLargeInteger = {0};
+
+    // Get basic info about the file
+    hr = file-&gt;GetName(&amp;fileName);
+
+    if (SUCCEEDED(hr))
+    {
+        hr = file-&gt;GetContentType(&amp;contentType);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = file-&gt;GetSize(&amp;fileSize);
+        fileSizeLargeInteger.QuadPart = fileSize;
+    }
+    if (SUCCEEDED(hr))
+    {
+        wprintf(L&quot;\nFile name: %s\n&quot;, fileName);
+        wprintf(L&quot;Content type: %s\n&quot;, contentType);
+        wprintf(L&quot;Size: %llu bytes\n&quot;, fileSize);
+    }
+
+    // Write the file to disk
+    if (SUCCEEDED(hr))
+    {
+        hr = file-&gt;GetStream(&amp;fileStream);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = GetOutputStream(outputPath, fileName, &amp;outputStream);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = fileStream-&gt;CopyTo(outputStream, fileSizeLargeInteger, NULL, NULL);
+    }
+
+    // You must free string buffers obtained from the packaging APIs
+    CoTaskMemFree(fileName);
+    CoTaskMemFree(contentType);
+
+    // Clean up other allocated resources
+    if (outputStream != NULL)
+    {
+        outputStream-&gt;Release();
+        outputStream = NULL;
+    }
+    if (fileStream != NULL)
+    {
+        fileStream-&gt;Release();
+        fileStream = NULL;
+    }
+    return hr;
+}
+</code></pre>
+<p>The previous code uses these variable definitions and <code>GetOutputStream</code> helper function.</p>
+<pre lang="C++"><code>// Creates a writable IStream for a file with the specified name under the specified path.  
+// This function also creates intermediate subdirectories if necessary. For simplicity, 
+// we keep file names including path to 200 characters or less. Make sure your appl 
+// handles longer names. Allocate the necessary buffer dynamically.
+//
+// Parameters:
+//    path 
+//       The path of the folder containing the file to be opened. Make sure this does not end
+//       with a '\' character.
+//    fileName 
+//       The name of the file to be opened, without the path.
+//    stream 
+//       On success, receives the created instance of IStream.
+//
+HRESULT GetOutputStream(
+    _In_ LPCWSTR path,
+    _In_ LPCWSTR fileName,
+    _Outptr_ IStream** stream)
+{
+    HRESULT hr = S_OK;
+    const int MaxFileNameLength = 200;
+    WCHAR fullFileName[MaxFileNameLength + 1];
+
+    // Create full file name by concatenating path and fileName
+    hr = StringCchCopyW(fullFileName, MaxFileNameLength, path);
+
+    if (SUCCEEDED(hr))
+    {
+        hr = StringCchCat(fullFileName, MaxFileNameLength, L&quot;\\&quot;);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = StringCchCat(fullFileName, MaxFileNameLength, fileName);
+    }
+
+    // Search through fullFileName for the '\' character which denotes
+    // subdirectory and create each subdirectory in order of depth.
+    for (int i = 0; SUCCEEDED(hr) &amp;&amp; (i &lt; MaxFileNameLength); i++)
+    {
+        if (fullFileName[i] == L'\0')
+        {
+            break;
+        }
+        else if (fullFileName[i] == L'\\')
+        {
+            // Temporarily set string to terminate at the '\' character
+            // to obtain name of the subdirectory to create
+            fullFileName[i] = L'\0';
+
+            if (!CreateDirectory(fullFileName, NULL))
+            {
+                DWORD lastError = GetLastError();
+
+                // It is normal for CreateDirectory to fail if the subdirectory
+                // already exists.  Don't ignore other errors.
+                if (lastError != ERROR_ALREADY_EXISTS)
+                {
+                    hr = HRESULT_FROM_WIN32(lastError);
+                }
+            }
+
+            // Restore original string
+            fullFileName[i] = L'\\';
+        }
+    }
+
+    // Create stream for writing the file
+    if (SUCCEEDED(hr))
+    {
+        hr = SHCreateStreamOnFileEx(
+                fullFileName,
+                STGM_CREATE | STGM_WRITE | STGM_SHARE_EXCLUSIVE,
+                0, // default file attributes
+                TRUE, // create new file if it does not exist
+                NULL, // no template
+                stream);
+    }
+    return hr;
+}
+</code></pre>
+<h3>Extract payload files</h3>
+<p>Call the <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxpackagereader-getpayloadfiles"><strong>IAppxPackageReader::GetPayloadFiles</strong></a> method to enumerate the payload files. Each payload file is represented by an <a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxfile"><strong>IAppxFile</strong></a> interface. The <code>ExtractFile</code> function in this sample uses the <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxfile-getname"><strong>GetName</strong></a>, <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxfile-getcontenttype"><strong>GetContentType</strong></a>, and <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxfile-getsize"><strong>GetSize</strong></a> methods of <strong>IAppxFile</strong> to display basic info about the payload file.</p>
+<p>This code uses the <code>ExtractFile</code> helper function shown in the previous step to create the stream for the package manifest.</p>
+<pre lang="C++"><code>//
+// Extracts all payload files from a package.
+//
+// Parameters:
+//   packageReader 
+//      The package reader for the app package.
+//   outputPath 
+//      The path of the folder for the extracted payload files.
+//
+HRESULT ExtractPayloadFiles(
+    _In_ IAppxPackageReader* packageReader,
+    _In_ LPCWSTR outputPath)
+{
+    HRESULT hr = S_OK;
+    IAppxFilesEnumerator* payloadFiles = NULL;
+    wprintf(L&quot;\nExtracting payload files from the package...\n&quot;);
+
+    // Get an enumerator of all payload files from the package reader and iterate
+    // through all files.
+    hr = packageReader-&gt;GetPayloadFiles(&amp;payloadFiles);
+
+    if (SUCCEEDED(hr))
+    {
+        BOOL hasCurrent = FALSE;
+        hr = payloadFiles-&gt;GetHasCurrent(&amp;hasCurrent);
+
+        while (SUCCEEDED(hr) &amp;&amp; hasCurrent)
+        {
+            IAppxFile* payloadFile = NULL;
+
+            hr = payloadFiles-&gt;GetCurrent(&amp;payloadFile);
+
+            if (SUCCEEDED(hr))
+            {
+                hr = ExtractFile(payloadFile, outputPath);
+            }
+            if (SUCCEEDED(hr))
+            {
+                hr = payloadFiles-&gt;MoveNext(&amp;hasCurrent);
+            }
+
+            if (payloadFile != NULL)
+            {
+                payloadFile-&gt;Release();
+                payloadFile = NULL;
+            }
+        }
+    }
+
+    if (payloadFiles != NULL)
+    {
+        payloadFiles-&gt;Release();
+        payloadFiles = NULL;
+    }
+    return hr;
+}
+</code></pre>
+<h3>Clean up the package reader</h3>
+<p>Before returning from the <code>wmain</code> function, call the <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> method to clean up the package reader and call the <a href="/windows/desktop/api/combaseapi/nf-combaseapi-couninitialize"><strong>CoUninitialize</strong></a> function.</p>
+<pre lang="C++"><code>// Clean up allocated resources
+if (packageReader != NULL)
+{
+    packageReader-&gt;Release();
+    packageReader = NULL;
+}
+
+CoUninitialize();
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Samples</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/AppxPackingExtractAppx">Extract app package contents sample</a></p>
+<!-- raw HTML omitted -->
+<p><strong>Reference</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxpackagereader"><strong>IAppxPackageReader</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

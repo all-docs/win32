@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Video Streaming Sample Code</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Video Streaming Sample Code
+ms.assetid: 735af042-9800-4f75-a5c9-e1cf17b4a472
+title: Video Streaming Sample Code
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Video Streaming Sample Code</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<blockquote>
+<p>[!Note]<br />
+These APIs are deprecated. Applications should use the <a href="sample-grabber-filter.html"><strong>Sample Grabber</strong></a> filter or implement a custom filter to get data from a DirectShow filter graph.</p>
+</blockquote>
+<p>Â </p>
+<p>This sample code reads a file and renders it to a primary DirectDraw surface. For brevity, this example performs minimal error checking.</p>
+<pre lang="C++"><code>#include &lt;stdio.h&gt;
+#include &quot;ddraw.h&quot;       // DirectDraw interfaces
+#include &quot;mmstream.h&quot;    // multimedia stream interfaces
+#include &quot;amstream.h&quot;    // DirectShow multimedia stream interfaces
+#include &quot;ddstream.h&quot;    // DirectDraw multimedia stream interfaces
+
+HRESULT RenderStreamToSurface(IDirectDrawSurface *pSurface, 
+    IMultiMediaStream *pMMStream)
+{    
+    IMediaStream *pPrimaryVidStream;    
+    IDirectDrawMediaStream *pDDStream;
+    IDirectDrawStreamSample *pSample;
+    RECT rect;
+    DDSURFACEDESC ddsd;
+
+    HRESULT hr;
+    hr = pMMStream-&gt;GetMediaStream(MSPID_PrimaryVideo, &amp;pPrimaryVidStream);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    pPrimaryVidStream-&gt;QueryInterface(IID_IDirectDrawMediaStream, (void **)&amp;pDDStream);
+
+    ddsd.dwSize = sizeof(ddsd);
+    hr = pDDStream-&gt;GetFormat(&amp;ddsd, NULL, NULL, NULL);
+    if (SUCCEEDED(hr))
+    {
+        rect.top = rect.left = 0;
+        rect.bottom = ddsd.dwHeight;
+        rect.right = ddsd.dwWidth;
+        hr = pDDStream-&gt;CreateSample(pSurface, &amp;rect, 0, &amp;pSample);
+        if (SUCCEEDED(hr))
+        {
+            pMMStream-&gt;SetState(STREAMSTATE_RUN);
+            while (pSample-&gt;Update(0, NULL, NULL, NULL) == S_OK)
+            {
+                // Empty loop.
+            }
+            pMMStream-&gt;SetState(STREAMSTATE_STOP);
+            pSample-&gt;Release();    
+        }
+    }
+    pDDStream-&gt;Release();
+    pPrimaryVidStream-&gt;Release();
+    return hr;
+}
+
+HRESULT RenderFileToMMStream(
+    const char * szFileName, 
+    IMultiMediaStream **ppMMStream,
+    IDirectDraw *pDD)
+{
+    if (strlen(szFileName) &gt; MAX_PATH)
+    {
+        return E_INVALIDARG;
+    }
+
+    IAMMultiMediaStream *pAMStream;
+    HRESULT hr = CoCreateInstance(CLSID_AMMultiMediaStream, NULL, 
+        CLSCTX_INPROC_SERVER, IID_IAMMultiMediaStream, 
+        (void **)&amp;pAMStream);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    WCHAR wPath[MAX_PATH + 1];
+    MultiByteToWideChar(CP_ACP, 0, szFileName, -1, wPath, MAX_PATH + 1);
+
+    pAMStream-&gt;Initialize(STREAMTYPE_READ, AMMSF_NOGRAPHTHREAD, NULL);
+    pAMStream-&gt;AddMediaStream(pDD, &amp;MSPID_PrimaryVideo, 0, NULL);
+    pAMStream-&gt;AddMediaStream(NULL, &amp;MSPID_PrimaryAudio, AMMSF_ADDDEFAULTRENDERER, NULL);
+    hr = pAMStream-&gt;OpenFile(wPath, 0);
+    if (SUCCEEDED(hr))
+    {
+        hr = pAMStream-&gt;QueryInterface(IID_IMultiMediaStream, 
+            (void**)ppMMStream);
+    }
+    pAMStream-&gt;Release();
+    return hr;
+}
+
+int __cdecl main(int argc, char *argv[])    
+{    
+    if (argc &lt; 2) 
+    {
+        printf(&quot;Usage : showstrm movie.ext\n&quot;);
+        exit(0);
+    }    
+
+    DDSURFACEDESC ddsd;
+    IDirectDraw *pDD;    
+    IDirectDrawSurface *pPrimarySurface;
+    IMultiMediaStream *pMMStream;
+
+    CoInitialize(NULL);
+
+    DirectDrawCreate(NULL, &amp;pDD, NULL);
+    pDD-&gt;SetCooperativeLevel(GetDesktopWindow(), DDSCL_NORMAL);
+
+    ddsd.dwSize = sizeof(ddsd);
+    ddsd.dwFlags = DDSD_CAPS;
+    ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE;
+    pDD-&gt;CreateSurface(&amp;ddsd, &amp;pPrimarySurface, NULL);
+
+    HRESULT hr = RenderFileToMMStream(argv[1], &amp;pMMStream, pDD);
+    if (SUCCEEDED(hr))
+    {
+        RenderStreamToSurface(pPrimarySurface, pMMStream);    
+        pMMStream-&gt;Release();
+    }
+    pPrimarySurface-&gt;Release();    
+    pDD-&gt;Release(); 
+    
+    CoUninitialize();
+    return 0;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

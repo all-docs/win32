@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Traversing the Heap List</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Traversing the Heap List
+description: Examples showing how to obtain a list of heaps for the current process.
+ms.assetid: cfa1d2a4-fec0-4089-9351-e0a26f9ecfe3
+ms.topic: article
+ms.date: 03/23/2021</h2>
+<h1>Traversing the Heap List</h1>
+<p>The following example obtains a list of heaps for the current process. It takes a snapshot of the heaps using the <a href="/windows/desktop/api/TlHelp32/nf-tlhelp32-createtoolhelp32snapshot"><strong>CreateToolhelp32Snapshot</strong></a> function, and then walks through the list using the <a href="/windows/desktop/api/TlHelp32/nf-tlhelp32-heap32listfirst"><strong>Heap32ListFirst</strong></a> and <a href="/windows/desktop/api/TlHelp32/nf-tlhelp32-heap32listnext"><strong>Heap32ListNext</strong></a> functions. For each heap, it uses the <a href="/windows/desktop/api/TlHelp32/nf-tlhelp32-heap32first"><strong>Heap32First</strong></a> and <a href="/windows/desktop/api/TlHelp32/nf-tlhelp32-heap32next"><strong>Heap32Next</strong></a> functions to walk the heap blocks.</p>
+<blockquote>
+<p>[!NOTE]
+<a href="/windows/desktop/api/TlHelp32/nf-tlhelp32-heap32first"><strong>Heap32First</strong></a> and <a href="/windows/desktop/api/TlHelp32/nf-tlhelp32-heap32next"><strong>Heap32Next</strong></a>
+are inefficient, particularly for large heaps. However, they are useful for querying other processes where you'd typically have to inject a thread into the other process to gather the information (these APIs do this for you).</p>
+</blockquote>
+<p>See the second example for an equivalent, much more efficient, alternative that uses <a href="/windows/desktop/api/heapapi/nf-heapapi-heapwalk"><strong>HeapWalk</strong></a> instead of <a href="/windows/desktop/api/TlHelp32/nf-tlhelp32-heap32first"><strong>Heap32First</strong></a> and <a href="/windows/desktop/api/TlHelp32/nf-tlhelp32-heap32next"><strong>Heap32Next</strong></a>. Note that <a href="/windows/desktop/api/heapapi/nf-heapapi-heapwalk"><strong>HeapWalk</strong></a> can only be used for the same process.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;tlhelp32.h&gt;
+#include &lt;stdio.h&gt;
+
+int main( void )
+{
+   HEAPLIST32 hl;
+   
+   HANDLE hHeapSnap = CreateToolhelp32Snapshot(TH32CS_SNAPHEAPLIST, GetCurrentProcessId());
+   
+   hl.dwSize = sizeof(HEAPLIST32);
+   
+   if ( hHeapSnap == INVALID_HANDLE_VALUE )
+   {
+      printf (&quot;CreateToolhelp32Snapshot failed (%d)\n&quot;, GetLastError());
+      return 1;
+   }
+   
+   if( Heap32ListFirst( hHeapSnap, &amp;hl ) )
+   {
+      do
+      {
+         HEAPENTRY32 he;
+         ZeroMemory(&amp;he, sizeof(HEAPENTRY32));
+         he.dwSize = sizeof(HEAPENTRY32);
+
+         if( Heap32First( &amp;he, GetCurrentProcessId(), hl.th32HeapID ) )
+         {
+            printf( &quot;\nHeap ID: %d\n&quot;, hl.th32HeapID );
+            do
+            {
+               printf( &quot;Block size: %d\n&quot;, he.dwBlockSize );
+               
+               he.dwSize = sizeof(HEAPENTRY32);
+            } while( Heap32Next(&amp;he) );
+         }
+         hl.dwSize = sizeof(HEAPLIST32);
+      } while (Heap32ListNext( hHeapSnap, &amp;hl ));
+   }
+   else printf (&quot;Cannot list first heap (%d)\n&quot;, GetLastError());
+   
+   CloseHandle(hHeapSnap); 
+
+   return 0;
+}
+</code></pre>
+<p>The following code snippet uses the <a href="/windows/desktop/api/heapapi/nf-heapapi-heapwalk"><strong>HeapWalk</strong></a> function to walk the process heaps, producing identical output to the previous example, but much more efficiently:</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+
+int main( void )
+{
+    DWORD heapIndex;
+    DWORD heapCount = 0;
+    PHANDLE heaps = NULL;
+    while (TRUE)
+    {
+        DWORD actualHeapCount = GetProcessHeaps(heapCount, heaps);
+        if (actualHeapCount &lt;= heapCount)
+        {
+            break;
+        }
+        heapCount = actualHeapCount;
+        free(heaps);
+        heaps = (HANDLE*)malloc(heapCount * sizeof(HANDLE));
+        if (heaps == NULL)
+        {
+            printf(&quot;Unable to allocate memory for list of heaps\n&quot;);
+            return 1;
+        }
+    }
+
+    for (heapIndex = 0; heapIndex &lt; heapCount; heapIndex++)
+    {
+        PROCESS_HEAP_ENTRY entry;
+
+        printf(&quot;Heap ID: %d\n&quot;, (DWORD)(ULONG_PTR)heaps[heapIndex]);
+        entry.lpData = NULL;
+        while (HeapWalk(heaps[heapIndex], &amp;entry))
+        {
+            // Heap32First and Heap32Next ignore entries
+            // with the PROCESS_HEAP_REGION flag
+            if (!(entry.wFlags &amp; PROCESS_HEAP_REGION))
+            {
+                printf(&quot;Block size: %d\n&quot;, entry.cbData + entry.cbOverhead);
+            }
+        }
+    }
+
+    free(heaps);
+    return 0;
+}
+</code></pre>
+<p>Walking a heap with the <a href="/windows/desktop/api/heapapi/nf-heapapi-heapwalk"><strong>HeapWalk</strong></a> function is roughly linear in the size of the heap, whereas
+walking a heap with the <a href="/windows/desktop/api/TlHelp32/nf-tlhelp32-heap32next"><strong>Heap32Next</strong></a> function is roughly quadratic in the size of the heap.
+Even for a modest heap with 10,000 allocations, <a href="/windows/desktop/api/heapapi/nf-heapapi-heapwalk"><strong>HeapWalk</strong></a> runs 10,000 times faster than
+<a href="/windows/desktop/api/TlHelp32/nf-tlhelp32-heap32next"><strong>Heap32Next</strong></a> while providing more detailed information. The difference in performance becomes even more dramatic
+as the heap size increases.</p>
+<p>For a more detailed example of walking the heap with the <a href="/windows/desktop/api/heapapi/nf-heapapi-heapwalk"><strong>HeapWalk</strong></a> function, see
+<a href="/windows/win32/memory/enumerating-a-heap">Enumerating a Heap</a>.</p>
+</body>

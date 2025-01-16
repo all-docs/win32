@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Encoding overview</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Encoding overview
+description: An encoder writes image data to a stream. Encoders can compress, encrypt, and alter the image pixels in a number of ways prior to writing them to the stream.
+ms.assetid: e1e3a9d9-209b-46a6-92da-5570476507cf
+ms.topic: article
+ms.date: 01/29/2024</h2>
+<h1>Encoding overview</h1>
+<blockquote>
+<p>[!IMPORTANT]
+Some information relates to a prerelease product which may be substantially modified before it's commercially released. Microsoft makes no warranties, express or implied, with respect to the information provided here.</p>
+</blockquote>
+<p>An encoder writes image data to a stream. Encoders can compress, encrypt, and alter the image pixels in a number of ways prior to writing them to the stream. Using some encoders results in tradeoffsâ€”for example, JPEG, which trades off color information for better compression. Other encoders do not result in such lossesâ€”for example, bitmap (BMP). Because many codecs use proprietary technology to achieve better compression and image fidelity, the details on how an image gets encoded are up to the codec developer.</p>
+<h2>IWICBitmapEncoder</h2>
+<p><a href="/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapencoder"><strong>IWICBitmapEncoder</strong></a> is the main interface for encoding an image to the target format and used to serialize an image's components, such as thumbnail (<a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapencoder-setthumbnail"><strong>SetThumbnail</strong></a>) and frames (<a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapencoder-createnewframe"><strong>CreateNewFrame</strong></a>), to the image file.</p>
+<p>How and when serialization occurs is left up to the codec developer. Each individual block of data within the target file format should be able to set independent of order, but again, this is the codec developer's decision. Once the <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapencoder-commit"><strong>Commit</strong></a> method is called however, changes to the image should not be allowed and the stream should be closed.</p>
+<h2>IWICBitmapFrameEncode</h2>
+<p><a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a> is the interface for encoding the individual frames of an image. It provides methods for setting individual frame imaging components, such as thumbnails and frames, as well as image dimensions, DPI, and pixel formats.</p>
+<p>Individual frames may be encoded with frame-specific metadata so <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a> provides access to a metadata writer through the <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapframeencode-getmetadataquerywriter"><strong>GetMetadataQueryWriter</strong></a> method.</p>
+<p>The frame's <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapframeencode-commit"><strong>Commit</strong></a> method commits all changes to the individual frame and indicates that changes to that frame should no longer be accepted.</p>
+<h2>Encoding example (TIFF)</h2>
+<p>In the following example, a Tagged Image File Format (TIFF) image is encoded using <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapencoder"><strong>IWICBitmapEncoder</strong></a> and an <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a>. The TIFF output is customized using the <a href="/windows/desktop/api/Wincodec/ne-wincodec-wictiffcompressionoption"><strong>WICTiffCompressionOption</strong></a> and the bitmap frame is initialized using the given options. Once the image has been created using <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapframeencode-writepixels"><strong>WritePixels</strong></a>, the frame is committed by way of <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapframeencode-commit"><strong>Commit</strong></a> and the image is saved using <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapencoder-commit"><strong>Commit</strong></a>.</p>
+<pre lang="cpp"><code>IWICImagingFactory *piFactory = NULL;
+IWICBitmapEncoder *piEncoder = NULL;
+IWICBitmapFrameEncode *piBitmapFrame = NULL;
+IPropertyBag2 *pPropertybag = NULL;
+
+IWICStream *piStream = NULL;
+UINT uiWidth = 640;
+UINT uiHeight = 480;
+
+HRESULT hr = CoCreateInstance(
+                CLSID_WICImagingFactory,
+                NULL,
+                CLSCTX_INPROC_SERVER,
+                IID_IWICImagingFactory,
+                (LPVOID*) &amp;piFactory);
+
+if (SUCCEEDED(hr))
+{
+    hr = piFactory-&gt;CreateStream(&amp;piStream);
+}
+
+if (SUCCEEDED(hr))
+{
+    hr = piStream-&gt;InitializeFromFilename(L&quot;output.tif&quot;, GENERIC_WRITE);
+}
+
+if (SUCCEEDED(hr))
+{
+   hr = piFactory-&gt;CreateEncoder(GUID_ContainerFormatTiff, NULL, &amp;piEncoder);
+}
+
+if (SUCCEEDED(hr))
+{
+    hr = piEncoder-&gt;Initialize(piStream, WICBitmapEncoderNoCache);
+}
+
+if (SUCCEEDED(hr))
+{
+    hr = piEncoder-&gt;CreateNewFrame(&amp;piBitmapFrame, &amp;pPropertybag);
+}
+
+if (SUCCEEDED(hr))
+{        
+    // This is how you customize the TIFF output.
+    PROPBAG2 option = { 0 };
+    option.pstrName = L&quot;TiffCompressionMethod&quot;;
+    VARIANT varValue;    
+    VariantInit(&amp;varValue);
+    varValue.vt = VT_UI1;
+    varValue.bVal = WICTiffCompressionZIP;      
+    hr = pPropertybag-&gt;Write(1, &amp;option, &amp;varValue);        
+    if (SUCCEEDED(hr))
+    {
+        hr = piBitmapFrame-&gt;Initialize(pPropertybag);
+    }
+}
+
+if (SUCCEEDED(hr))
+{
+    hr = piBitmapFrame-&gt;SetSize(uiWidth, uiHeight);
+}
+
+WICPixelFormatGUID formatGUID = GUID_WICPixelFormat24bppBGR;
+if (SUCCEEDED(hr))
+{
+    hr = piBitmapFrame-&gt;SetPixelFormat(&amp;formatGUID);
+}
+
+if (SUCCEEDED(hr))
+{
+    // We're expecting to write out 24bppRGB. Fail if the encoder cannot do it.
+    hr = IsEqualGUID(formatGUID, GUID_WICPixelFormat24bppBGR) ? S_OK : E_FAIL;
+}
+
+if (SUCCEEDED(hr))
+{
+    UINT cbStride = (uiWidth * 24 + 7)/8/***WICGetStride***/;
+    UINT cbBufferSize = uiHeight * cbStride;
+
+    BYTE *pbBuffer = new BYTE[cbBufferSize];
+
+    if (pbBuffer != NULL)
+    {
+        for (UINT i = 0; i &lt; cbBufferSize; i++)
+        {
+            pbBuffer[i] = static_cast&lt;BYTE&gt;(rand());
+        }
+
+        hr = piBitmapFrame-&gt;WritePixels(uiHeight, cbStride, cbBufferSize, pbBuffer);
+
+        delete[] pbBuffer;
+    }
+    else
+    {
+        hr = E_OUTOFMEMORY;
+    }
+}
+
+if (SUCCEEDED(hr))
+{
+    hr = piBitmapFrame-&gt;Commit();
+}    
+
+if (SUCCEEDED(hr))
+{
+    hr = piEncoder-&gt;Commit();
+}
+
+if (piFactory)
+    piFactory-&gt;Release();
+
+if (piEncoder)
+    piEncoder-&gt;Release();
+
+if (piBitmapFrame)
+    piBitmapFrame-&gt;Release();
+
+if (pPropertybag)
+    pPropertybag-&gt;Release();
+
+if (piStream)
+    piStream-&gt;Release();
+
+return hr;
+</code></pre>
+<h2>Encoder options usage</h2>
+<p>Different encoders for different formats need to expose different options for how an image is encoded. Windows Imaging Component (WIC) provides a consistent mechanism for expressing whether encoding options are required while still enabling applications to work with multiple encoders without requiring knowledge of a particular format. This is accomplished by providing an <a href="/windows/win32/api/oaidl/nn-oaidl-ipropertybag">IPropertyBag</a> parameter on the <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapencoder-createnewframe"><strong>CreateNewFrame</strong></a> method and the <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapframeencode-initialize"><strong>Initialize</strong></a> method.</p>
+<p>The component factory provides an easy creation point for creating an encoder options property bag. Codecs can use this service if they need to provide a simple, intuitive and non-conflicting set of encoder options. The imaging property bag must be initialized during creation with all the encoder options relevant to that codec. For encoder options from the canonical set, the value range will be enforced on Write. For more advanced needs, codecs should write their own property bag implementation.</p>
+<p>An application is given the encoder options bag during frame creation and must configure any values prior to initializing the encoder frame. For a UI-driven application, it can offer a fixed UI for the canonical encoder options and an advanced view for remaining options. Changes can be made one at a time through the Write method and any error will be reported through IErrorLog. The UI application should always re-read and display all options after making a change in case the change caused a cascade effect. An application should be prepared to handle failed frame initialization for codecs that only provide minimal error reporting through their property bag.</p>
+<h2>Encoder options</h2>
+<p>An application can expect to encounter the following set of encoder options. Encoder options reflect the capabilities of an encoder and the underlying container format, and therefore are by their nature not really codec-agnostic. When possible, new options should be normalized so they can be applied to new codecs that emerge.</p>
+<table>
+<thead>
+<tr>
+<th>Property Name</th>
+<th>VARTYPE</th>
+<th>Value</th>
+<th>Applicable Codecs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BitmapTransform</td>
+<td>VT_UI1</td>
+<td><a href="/windows/desktop/api/Wincodec/ne-wincodec-wicbitmaptransformoptions"><strong>WICBitmapTransformOptions</strong></a></td>
+<td>JPEG, HEIF</td>
+</tr>
+<tr>
+<td>CompressionQuality</td>
+<td>VT_R4</td>
+<td>0-1.0</td>
+<td>TIFF</td>
+</tr>
+<tr>
+<td>HeifCompressionMethod</td>
+<td><a href="/windows/win32/api/wincodec/ne-wincodec-wicheifcompressionoption">WICHeifCompressionOption</a></td>
+<td>various</td>
+<td>HEIF</td>
+</tr>
+<tr>
+<td>ImageQuality</td>
+<td>VT_R4</td>
+<td>0-1.0</td>
+<td>JPEG, HDPhoto, HEIF</td>
+</tr>
+<tr>
+<td>Lossless</td>
+<td>VT_BOOL</td>
+<td><strong>TRUE</strong>, <strong>FALSE</strong></td>
+<td>HDPhoto</td>
+</tr>
+</tbody>
+</table>
+<p>ImageQualty of 0.0 means the lowest possible fidelity rendition and 1.0 means the highest fidelity, which may also imply lossless depending on the codec.</p>
+<p>CompressionQuality of 0.0 means the least efficient compression scheme available, typically resulting in a fast encode but larger output. A value of 1.0 means the most efficient scheme available, typically taking more time to encode but producing smaller output. Depending on the capabilities of the codec, this range may be mapped onto a discrete set of available compression methods.</p>
+<p>Lossless means that the codec encodes the image as lossless with no image data loss. If Lossless is enabled, ImageQuality is ignored.</p>
+<p>In addition to the above generic encoder options, codecs supplied with WIC support the following options. If a codec has a need to support an option that is consistent with the usage in these supplied codecs, it is encouraged to do so.</p>
+<table>
+<thead>
+<tr>
+<th>Property Name</th>
+<th>VARTYPE</th>
+<th>Value</th>
+<th>Applicable Codecs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>InterlaceOption</td>
+<td>VT_BOOL</td>
+<td>On/Off</td>
+<td>PNG</td>
+</tr>
+<tr>
+<td>FilterOption</td>
+<td>VT_UI1</td>
+<td><a href="/windows/desktop/api/Wincodec/ne-wincodec-wicpngfilteroption"><strong>WICPngFilterOption</strong></a></td>
+<td>PNG</td>
+</tr>
+<tr>
+<td>TiffCompressionMethod</td>
+<td>VT_UI1</td>
+<td><a href="/windows/desktop/api/Wincodec/ne-wincodec-wictiffcompressionoption"><strong>WICTiffCompressionOption</strong></a></td>
+<td>TIFF</td>
+</tr>
+<tr>
+<td>Luminance</td>
+<td>VT_UI4/VT_ARRAY</td>
+<td>64 Entries (DCT)</td>
+<td>JPEG</td>
+</tr>
+<tr>
+<td>Chrominance</td>
+<td>VT_UI4/VT_ARRAY</td>
+<td>64 Entries (DCT)</td>
+<td>JPEG</td>
+</tr>
+<tr>
+<td>JpegYCrCbSubsampling</td>
+<td>VT_UI1</td>
+<td><a href="/windows/desktop/api/Wincodec/ne-wincodec-wicjpegycrcbsubsamplingoption"><strong>WICJpegYCrCbSubsamplingOption</strong></a></td>
+<td>JPEG</td>
+</tr>
+<tr>
+<td>SuppressApp0</td>
+<td>VT_BOOL</td>
+<td></td>
+<td>JPEG</td>
+</tr>
+<tr>
+<td>EnableV5Header32bppBGRA</td>
+<td>VT_BOOL</td>
+<td>On/Off</td>
+<td>BMP</td>
+</tr>
+</tbody>
+</table>
+<p>Use <strong>VT_EMPTY</strong> to indicate <strong>*not set*</strong> as the default. If additional properties are set but not supported, the encoder should ignore them; this allows applications to code less logic if they want a capability that may or may not be present.</p>
+<h2>Encoder options examples</h2>
+<p>In the <a href="#encoding-example-tiff">TIFF encoding example</a> above, a specific encoder option is set. The <em>pstrName</em> member of the PROPBAG2 structure is set to the appropriate property name, and the VARIANT is set to the corresponding VARTYPE and the desired valueâ€”in this case, a member of the <a href="/windows/desktop/api/Wincodec/ne-wincodec-wictiffcompressionoption"><strong>WICTiffCompressionOption</strong></a> enumeration.</p>
+<pre lang="cpp"><code>if (SUCCEEDED(hr))
+{
+    hr = piEncoder-&gt;CreateNewFrame(&amp;piBitmapFrame, &amp;pPropertybag);
+}
+
+if (SUCCEEDED(hr))
+{        
+    // This is how you customize the TIFF output.
+    PROPBAG2 option = { 0 };
+    option.pstrName = L&quot;TiffCompressionMethod&quot;;
+    VARIANT varValue;    
+    VariantInit(&amp;varValue);
+    varValue.vt = VT_UI1;
+    varValue.bVal = WICTiffCompressionZIP;      
+    hr = pPropertybag-&gt;Write(1, &amp;option, &amp;varValue);        
+    if (SUCCEEDED(hr))
+    {
+        hr = piBitmapFrame-&gt;Initialize(pPropertybag);
+    }
+}
+</code></pre>
+<p>To use the default encoder options, simply initialize the bitmap frame with the property bag returned when the frame was created.</p>
+<pre lang="cpp"><code>if (SUCCEEDED(hr))
+{
+    hr = piEncoder-&gt;CreateNewFrame(&amp;piBitmapFrame, &amp;pPropertybag);
+}
+
+if (SUCCEEDED(hr))
+{        
+    // Accept the default encoder options.
+    if (SUCCEEDED(hr))
+    {
+        hr = piBitmapFrame-&gt;Initialize(pPropertybag);
+    }
+}
+</code></pre>
+<p>It is also possible to eliminate the property bag when no encoder options are being considered.</p>
+<pre lang="cpp"><code>if (SUCCEEDED(hr))
+{
+    hr = piEncoder-&gt;CreateNewFrame(&amp;piBitmapFrame, 0);
+}
+
+if (SUCCEEDED(hr))
+{        
+    // No encoder options.
+    if (SUCCEEDED(hr))
+    {
+        hr = piBitmapFrame-&gt;Initialize(0);
+    }
+}
+</code></pre>
+<h2>Related topics</h2>
+<ul>
+<li><a href="-wic-about-windows-imaging-codec.html">Windows Imaging Component overview</a></li>
+<li><a href="-wic-creating-decoder.html">Decoding overview</a></li>
+<li><a href="-wic-howtowriteacodec.html">How to write a WIC-enabled CODEC</a></li>
+</ul>
+</body>

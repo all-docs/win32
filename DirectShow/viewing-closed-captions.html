@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Viewing Closed Captions</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Viewing Closed Captions
+ms.assetid: 86c0c553-af35-4ad1-8918-63d9e4577c73
+title: Viewing Closed Captions
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Viewing Closed Captions</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>To support closed captions in analog television, the capture filter exposes a pin that delivers either VBI or closed caption data. The pin will have one of the following pin categories:</p>
+<ul>
+<li>VBI pin (PIN_CATEGORY_VBI). Delivers a stream of VBI waveform samples. These are passed to a decoder filter that extracts the closed captioning data.</li>
+<li>CC pin (PIN_CATEGORY_CC). Delivers closed-caption byte pairs, extracted from the line-21 data.</li>
+<li>Hardware slicing CC pin (PINNAME_VIDEO_CC_CAPTURE).</li>
+</ul>
+<p>To preview closed captions, call <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>ICaptureGraphBuilder2::RenderStream</strong></a> with the VBI pin category, and if that fails, call it again with the CC category.</p>
+<pre lang="C++"><code>hr = pBuild-&gt;RenderStream(&amp;PIN_CATEGORY_VBI, 0, pCap, 0, 0);
+if (FAILED(hr))
+{
+    hr = pBuild-&gt;RenderStream(&amp;PIN_CATEGORY_CC, 0, pCap, 0, 0);
+}
+</code></pre>
+<p>The following diagram shows a typical filter graph for displaying closed captions.</p>
+<p><img src="images/vidcap08.png" alt="closed captioning preview graph" /></p>
+<p>This graph uses the following filters for closed caption display:</p>
+<ul>
+<li><a href="tee-sink-to-sink-converter.html">Tee/Sink-to-Sink Converter</a>. Accepts the VBI information from the capture filter and splits it into separate streams for each of the data services present on the signal. Microsoft provides VBI codecs for Closed Caption, NABTS, and World Standard Teletext (WST).</li>
+<li><a href="cc-decoder-filter.html">CC Decoder</a>. Decodes CC data from the sampled VBI waveforms provided by the capture filter.</li>
+<li><a href="line-21-decoder-filter.html">Line 21 Decoder</a>. Translates the CC byte pairs and draws the caption text onto bitmaps. The downstream filter (in this case the Overlay Mixer) overlays the bitmaps onto the video.</li>
+</ul>
+<p>The Capture Graph Builder's <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>RenderStream</strong></a> method adds these filters automatically. If the capture filter has a CC pin instead of a VBI pin, the CC pin is connected directly to the Line 21 Decoder filter.</p>
+<blockquote>
+<p>[!Note]<br />
+If you are using the Video Mixing Renderer (VMR) filter for rendering, use the Line 21 Decoder Filter 2. This filter has the same functionality as the Line 21 Decoder, but the CLSID is CLSID_Line21Decoder2.</p>
+</blockquote>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+The CC Decoder filter was removed in Windows Vista. New applications should use the VBICodec filter, which is documented in the Microsoft TV Technologies documentation.</p>
+</blockquote>
+<p>Â </p>
+<p>If the capture device uses a video port, the capture filter might have a video port VBI pin (PIN_CATEGORY_VIDEOPORT_VBI). This pin must be connected to the <a href="vbi-surface-allocator.html">VBI Surface Allocator</a> filter, which allocates surfaces to hold the captured VBI data. The <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>RenderStream</strong></a> method adds this filter if it is required. The following diagram shows a filter graph with the VBI Surface Allocator.</p>
+<p><img src="images/vidcap09.png" alt="closed captioning preview graph with vbi surface allocator" /></p>
+<h3>Enabling and Disabling the Captions</h3>
+<p>To control the captioning display, use the <a href="/previous-versions/windows/desktop/api/il21dec/nn-il21dec-iamline21decoder"><strong>IAMLine21Decoder</strong></a> interface on the Line 21 Decoder filter. For example, you can turn off the captioning display using the <a href="/previous-versions/windows/desktop/api/il21dec/nf-il21dec-iamline21decoder-setservicestate"><strong>IAMLine21Decoder::SetServiceState</strong></a> method, as follows:</p>
+<pre lang="C++"><code>// Use the FindInterface method to find the interface.
+IAMLine21Decoder *pLine21 = NULL;
+hr = pBuild-&gt;FindInterface(
+    &amp;LOOK_DOWNSTREAM_ONLY, // Look downstream from pCap 
+    NULL,                  // No particular media type
+    pCap,                  // Pointer to the capture filter.
+    IID_IAMLine21Decoder, (void**)&amp;pLine21);
+if (SUCCEEDED(hr))
+{
+    pLine21-&gt;SetServiceState(AM_L21_CCSTATE_Off);
+    // (Use AM_L21_CCSTATE_On to enable.)
+    pLine21-&gt;Release();
+}
+</code></pre>
+<p>This example uses the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findinterface"><strong>ICaptureGraphBuilder2::FindInterface</strong></a> method to locate the <a href="/previous-versions/windows/desktop/api/il21dec/nn-il21dec-iamline21decoder"><strong>IAMLine21Decoder</strong></a> interface. The first parameter to <strong>FindInterface</strong> is <strong>&amp;LOOK_DOWNSTREAM_ONLY</strong>, which specifies to search downstream from the capture filter (<em>pCap</em>).</p>
+<h3>Capturing Closed Caption Bitmaps</h3>
+<p>You can capture the caption bitmaps into a file. To do so, add the file-writing section of the filter graph, as described in <a href="capturing-video-to-a-file.html">Capturing Video to a File</a>. Then render the CC or VBI pin to the mux filter:</p>
+<pre lang="C++"><code>hr = pBuild-&gt;RenderStream(&amp;PIN_CATEGORY_VBI, 0, pCap, 0, pMux);
+if (FAILED(hr))
+{
+    hr = pBuild-&gt;RenderStream(&amp;PIN_CATEGORY_CC, 0, pCap, 0, pMux);
+}
+</code></pre>
+<p>If you are also capturing the video, this will create a file with two separate video streams. It will not capture video with captions overlaid on top of the picture.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="closed-captions-and-teletext.html">Closed Captions and Teletext</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

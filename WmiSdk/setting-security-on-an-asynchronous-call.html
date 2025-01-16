@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Setting Security on an Asynchronous Call</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Asynchronous calls present serious security risks because a callback to the sink may not be a result of the asynchronous call by the original application or script.
+ms.assetid: 2b839ea9-e1e6-4123-a98a-04ebee907b3b
+ms.tgt_platform: multiple
+title: Setting Security on an Asynchronous Call
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Setting Security on an Asynchronous Call</h1>
+<p>Asynchronous calls present serious security risks because a callback to the <a href="gloss-s.html"><em>sink</em></a> may not be a result of the asynchronous call by the original application or script. Security in remote connections is based on encryption of the communication between the client and the provider on the remote computer. In C++ you can set encryption through the authentication level parameter in the call to <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a>. In scripting, set the <em>AuthenticationLevel</em> in the moniker connection or on an <a href="swbemsecurity.html"><strong>SWbemSecurity</strong></a> object. For more information, see <a href="setting-the-default-process-security-level-using-vbscript.html">Setting the Default Process Security Level Using VBScript</a>.</p>
+<p>The security risks for asynchronous calls exist because WMI lowers the authentication level on a callback until the callback succeeds. On an outgoing asynchronous call, the client can set the authentication level on the connection to WMI. WMI retrieves the security settings on the client call and attempts to call back with the same authentication level. The callback is always initiated at the <strong>RPC_C_AUTHN_LEVEL_PKT_PRIVACY</strong> level. If the callback fails, WMI lowers the authentication level to a level where the callback can succeed, if necessary, to <strong>RPC_C_AUTHN_LEVEL_NONE</strong>. In the context of calls within the local system where the authentication service is not Kerberos, the callback is always returned at <strong>RPC_C_AUTHN_LEVEL_NONE</strong>.</p>
+<p>The minimum authentication level is <strong>RPC_C_AUTHN_LEVEL_PKT</strong> (<strong>wbemAuthenticationLevelPkt</strong>for scripting). However, you can specify a higher level, such as <strong>RPC_C_AUTHN_LEVEL_PKT_PRIVACY</strong> (<strong>wbemAuthenticationLevelPktPrivacy</strong>). It is recommended that client applications or scripts set the authentication level to <strong>RPC_C_AUTHN_LEVEL_DEFAULT</strong> (<strong>wbemAuthenticationLevelDefault</strong>) which allows the authentication level to be negotiated to the level specified by the server.</p>
+<p>The <strong>HKEY_LOCAL_MACHINE</strong>\<strong>Software</strong>\<strong>Microsoft</strong>\<strong>WBEM</strong>\<strong>CIMOM</strong>\<strong>UnsecAppAccessControlDefault</strong> registry value controls whether WMI checks for an acceptable authentication level in callbacks. This is the only mechanism for protecting sink security for asynchronous calls made in scripting or Visual Basic. By default, this registry key is set to zero. If the registry key is zero then WMI does not verify authentication levels. To secure asynchronous calls in scripting, set the registry key to 1. C++ clients can call <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemunsecuredapartment-createsinkstub"><strong>IWbemUnsecuredApartment::CreateSinkStub</strong></a> to control access to the sink. The value is created anywhere by default.</p>
+<p>The following topics provide examples of setting asynchronous call security:</p>
+<ul>
+<li><a href="setting-security-on-an-asynchronous-call-in-vbscript.html">Setting Security on an Asynchronous Call in VBScript</a></li>
+<li>Setting Asynchronous Call Security in C++</li>
+</ul>
+<h2>Setting Asynchronous Call Security in C++</h2>
+<p>The <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemunsecuredapartment-createsinkstub"><strong>IWbemUnsecuredApartment::CreateSinkStub</strong></a> method is similar to <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iunsecuredapartment-createobjectstub"><strong>IUnsecuredApartment::CreateObjectStub</strong></a> method and creates a sink in a separate process, Unsecapp.exe, to receive callbacks. However, the <strong>CreateSinkStub</strong> method has a <em>dwFlag</em>parameter that specifies how the separate process handles access control.</p>
+<p>The <em>dwFlag</em> parameter specifies one of the following actions for Unsecapp.exe:</p>
+<ul>
+<li>Use the registry key setting to determine whether or not to check access.</li>
+<li>Ignore the registry key and always check access.</li>
+<li>Ignore the registry key and never check access.</li>
+</ul>
+<p>The code example in this topic requires the following #include statement to correctly compile.</p>
+<pre lang="C++"><code>#include &lt;wbemidl.h&gt;
+</code></pre>
+<p>The following procedure describes how to perform an asynchronous call with <a href="/windows/desktop/api/Wbemcli/nn-wbemcli-iwbemunsecuredapartment"><strong>IWbemUnsecuredApartment</strong></a>.</p>
+<p><strong>To perform an asynchronous call with IWbemUnsecuredApartment</strong></p>
+<ol>
+<li>
+<p>Create a dedicated process with a call to <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a>.</p>
+<p>The following code example calls <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> to create a dedicated process.</p>
+<pre lang="C++"><code>CLSID                    CLSID_WbemUnsecuredApartment;
+IWbemUnsecuredApartment* pUnsecApp = NULL;
+
+CoCreateInstance(CLSID_WbemUnsecuredApartment, 
+                 NULL, 
+                 CLSCTX_LOCAL_SERVER, 
+                 IID_IWbemUnsecuredApartment, 
+                 (void**)&amp;pUnsecApp);
+</code></pre>
+</li>
+<li>
+<p>Instantiate the sink object.</p>
+<p>The following code example creates a new sink object.</p>
+<pre lang="C++"><code>CMySink* pSink = new CMySink;
+pSink-&gt;AddRef();
+</code></pre>
+</li>
+<li>
+<p>Create a stub for the sink.</p>
+<p>A stub is a wrapper function produced from the sink.</p>
+<p>The following code example creates a stub for the sink.</p>
+<pre lang="C++"><code>LPCWSTR          wszReserved = NULL;           
+IWbemObjectSink* pStubSink   = NULL;
+IUnknown*        pStubUnk    = NULL; 
+
+pUnsecApp-&gt;CreateSinkStub(pSink,
+                          WBEM_FLAG_UNSECAPP_CHECK_ACCESS,  //Authenticate callbacks regardless of registry key
+                          wszReserved,
+                          &amp;pStubSink);
+</code></pre>
+</li>
+<li>
+<p>Release the sink object pointer.</p>
+<p>You can release the object pointer because the stub now owns the pointer.</p>
+<p>The following code example releases the object pointer.</p>
+<pre lang="C++"><code>pSink-&gt;Release();
+</code></pre>
+</li>
+<li>
+<p>Use the stub in any asynchronous call.</p>
+<p>When finished with the call, release the local reference count.</p>
+<p>The following code example uses the stub in an asynchronous call.</p>
+<pre lang="C++"><code>// pServices is an IWbemServices* object
+pServices-&gt;CreateInstanceEnumAsync(strClassName, 0, NULL, pStubSink);
+</code></pre>
+<p>At times you may have to cancel an asynchronous call after you make the call. If you need to cancel the call, cancel the call with the same pointer that originally made the call.</p>
+<p>The following code example describes how to cancel an asynchronous call.</p>
+<pre lang="C++"><code>pServices-&gt;CancelAsyncCall(pStubSink);
+</code></pre>
+</li>
+<li>
+<p>Release the local reference count when you are done using the asynchronous call.</p>
+<p>Make sure to release the <em>pStubSink</em> pointer only after you confirm that the asynchronous call does not must be canceled. Further, do not release <em>pStubSink</em> after WMI releases the <em>pSink</em> sink pointer. Releasing <em>pStubSink</em> after <em>pSink</em> creates a circular reference count in which both the sink and the stub stay in memory forever. Instead, a possible location to release the pointer is in the <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemobjectsink-setstatus"><strong>IWbemObjectSink::SetStatus</strong></a> call, made by WMI to report that the original asynchronous call is complete.</p>
+</li>
+<li>
+<p>When finished, uninitialize COM with a call to <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release"><strong>Release()</strong></a>.</p>
+<p>The following code example shows how to call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release"><strong>Release()</strong></a> on the <em>pUnsecApp</em> pointer.</p>
+<pre lang="C++"><code>pUnsecApp-&gt;Release();
+</code></pre>
+</li>
+</ol>
+<p>For more information about the <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a> function and parameters, see the <a href="../cossdk/component-services-portal.html">COM</a> documentation.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

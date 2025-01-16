@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>C/C++ Code Example: Setting Task Account Information</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: C/C++ Code Example Setting Task Account Information
+description: This example sets the account information for a known task. This example assumes that the task \ 0034;test task \ 0034; already exists on the local computer and that the Task Scheduler service is running.
+ms.assetid: ab865f70-f8d1-411e-b637-b1b1028ccf62
+keywords:</p>
+<ul>
+<li>setting account information Task Scheduler</li>
+<li>setting work item properties Task Scheduler , account information
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>C/C++ Code Example: Setting Task Account Information</h1>
+<p>This example sets the account information for a known task. This example assumes that the task &quot;test task&quot; already exists on the local computer and that the Task Scheduler service is running.</p>
+<pre lang="C++"><code>#define _WIN32_DCOM
+#include &lt;windows.h&gt;
+#include &lt;initguid.h&gt;
+#include &lt;iostream&gt;
+#include &lt;stdio.h&gt;
+#include &lt;comdef.h&gt;
+#include &lt;wincred.h&gt;
+#include &lt;ole2.h&gt;
+#include &lt;mstask.h&gt;
+#include &lt;msterr.h&gt;
+#include &lt;wchar.h&gt;
+
+#pragma comment(lib, &quot;comsupp.lib&quot;)
+#pragma comment(lib, &quot;credui.lib&quot;)
+
+
+int main(int argc, char **argv)
+{
+  HRESULT hr = S_OK;
+  
+  ///////////////////////////////////////////////////////////////////
+  // Call CoInitialize to initialize the COM library and then
+  // call CoCreateInstance to get the Task Scheduler object.
+  ///////////////////////////////////////////////////////////////////
+  ITaskScheduler *pITS;
+  
+  hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+  if (SUCCEEDED(hr))
+  {
+    hr = CoCreateInstance(CLSID_CTaskScheduler,
+                          NULL,
+                          CLSCTX_INPROC_SERVER,
+                          IID_ITaskScheduler,
+                          (void **) &amp;pITS);
+    if (FAILED(hr))
+    {
+      wprintf(L&quot;Failed calling CoCreateInstance. &quot;);
+      CoUninitialize();
+      return 1;
+    }
+  }
+  else
+  {
+    wprintf(L&quot;Failed calling CoInitializeEx. &quot;);
+    return 1;
+  }
+  
+  
+  ///////////////////////////////////////////////////////////////////
+  // Call ITaskScheduler::Activate to get the Task object.
+  ///////////////////////////////////////////////////////////////////
+  
+  ITask *pITask;
+  LPCWSTR lpcwszTaskName;
+  lpcwszTaskName = L&quot;Test Task&quot;;
+  hr = pITS-&gt;Activate(lpcwszTaskName,
+                      IID_ITask,
+                      (IUnknown**) &amp;pITask);
+  
+  // Release the ITaskScheduler interface.
+  pITS-&gt;Release();  
+  
+  if (FAILED(hr))
+  {
+    wprintf(L&quot;Failed calling ITaskScheduler::Activate: &quot;);
+    wprintf(L&quot;error = 0x%x\n&quot;,hr);
+    CoUninitialize();
+    return 1;
+  }
+  
+    //  ------------------------------------------------------
+    //  Securely get the user name and password. 
+    CREDUI_INFO cui;
+    TCHAR pszName[CREDUI_MAX_USERNAME_LENGTH] = &quot;&quot;;
+    TCHAR pszPwd[CREDUI_MAX_PASSWORD_LENGTH] = &quot;&quot;;
+    BOOL fSave;
+    DWORD dwErr;
+
+    cui.cbSize = sizeof(CREDUI_INFO);
+    cui.hwndParent = NULL;
+    //  Ensure that MessageText and CaptionText identify
+    //  what credentials to use and which application requires them.
+    cui.pszMessageText = TEXT(&quot;Account information for task registration:&quot;);
+    cui.pszCaptionText = TEXT(&quot;Enter Account Information for Task Registration&quot;);
+    cui.hbmBanner = NULL;
+    fSave = FALSE;
+
+    //  Create the UI asking for the credentials.
+    dwErr = CredUIPromptForCredentials(
+        &amp;cui,                             //  CREDUI_INFO structure
+        TEXT(&quot;&quot;),                         //  Target for credentials
+        NULL,                             //  Reserved
+        0,                                //  Reason
+        pszName,                          //  User name
+        CREDUI_MAX_USERNAME_LENGTH,       //  Max number for user name
+        pszPwd,                           //  Password
+        CREDUI_MAX_PASSWORD_LENGTH,       //  Max number for password
+        &amp;fSave,                           //  State of save check box
+        CREDUI_FLAGS_GENERIC_CREDENTIALS |  //  Flags
+        CREDUI_FLAGS_ALWAYS_SHOW_UI |
+        CREDUI_FLAGS_DO_NOT_PERSIST);  
+
+    if(dwErr)
+    {
+        wprintf(L&quot;Failed calling ITask::SetAccountInformation: &quot;);
+        wprintf(L&quot;error = 0x%x\n&quot;,dwErr);
+        pITask-&gt;Release();    
+        CoUninitialize();
+        return 1;      
+    }
+
+  ///////////////////////////////////////////////////////////////////
+  // Call ITask::SetAccountInformation to specify the account name
+  // and the account password for Test Task.
+  ///////////////////////////////////////////////////////////////////
+  hr = pITask-&gt;SetAccountInformation((LPCWSTR)pszName, 
+            (LPCWSTR)pszPwd);
+
+  SecureZeroMemory(pszName, sizeof(pszName));
+  SecureZeroMemory(pszPwd, sizeof(pszPwd));
+  
+  if (FAILED(hr))
+  {
+    wprintf(L&quot;Failed calling ITask::SetAccountInformation: &quot;);
+    wprintf(L&quot;error = 0x%x\n&quot;,hr);
+    pITask-&gt;Release();
+    CoUninitialize();
+    return 1;
+  }
+  
+  
+  ///////////////////////////////////////////////////////////////////
+  // Call IPersistFile::Save to save the modified task to disk.
+  ///////////////////////////////////////////////////////////////////
+  IPersistFile *pIPersistFile;
+  
+  hr = pITask-&gt;QueryInterface(IID_IPersistFile,
+                              (void **)&amp;pIPersistFile);
+  
+  // Release the ITask interface.
+  pITask-&gt;Release();  
+  
+  hr = pIPersistFile-&gt;Save(NULL,
+                           TRUE);
+  
+  if (FAILED(hr))
+  {
+    wprintf(L&quot;Failed calling IPersistFile::Save: &quot;);
+    wprintf(L&quot;error = 0x%x\n&quot;,hr);
+    pIPersistFile-&gt;Release();
+    CoUninitialize();
+    return 1;
+  }
+  
+  // Release the IPersistFile interface.
+  pIPersistFile-&gt;Release();
+  
+  wprintf(L&quot;Set the account name and password.&quot;);  
+  CoUninitialize();
+  return 0;
+}
+
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="task-scheduler-1-0-examples.html">Task Scheduler 1.0 Examples</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

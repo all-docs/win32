@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>For best performance, use DXGI flip model</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic provides developer guidance on how to maximize performance and efficiency in the presentation stack on modern versions of Windows.
+ms.assetid: B6B92F4F-B1D0-40B9-987D-F0C0F2CC7AD1
+title: For best performance, use DXGI flip model
+ms.topic: article
+ms.date: 05/31/2018
+ms.custom: RS5</h2>
+<h1>For best performance, use DXGI flip model</h1>
+<p>This topic provides developer guidance on how to maximize performance and efficiency in the presentation stack on modern versions of Windows. It picks up where <a href="dxgi-flip-model.html">DXGI flip model</a>, <a href="https://www.youtube.com/watch?v=E3wTajGZOsA">DirectX 12: Presentation Modes In Windows 10 (video)</a>, and <a href="https://www.youtube.com/watch?v=nUZVV_mssWQ">Presentation Enhancements in Windows 10: An Early Look (video)</a> left off.</p>
+<h2>Call to action</h2>
+<p>If you are still using <strong>DXGI_SWAP_EFFECT_DISCARD</strong> or <strong>DXGI_SWAP_EFFECT_SEQUENTIAL</strong> (a.k.a. the &quot;blt&quot; present model), it's time to stop!</p>
+<p>Switching to <strong>DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL</strong> or <strong>DXGI_SWAP_EFFECT_FLIP_DISCARD</strong> (a.k.a. the flip model) will give better performance, lower power usage, and provide a richer set of features. (See <a href="/windows/desktop/api/DXGI/ne-dxgi-dxgi_swap_effect">DXGI_SWAP_EFFECT enumeration</a> for more information about these values.)</p>
+<p>Flip model presents go as far as making windowed mode effectively equivalent or better when compared to the classic &quot;fullscreen exclusive&quot; mode. In fact, you may want to reconsider whether your application actually needs a fullscreen exclusive mode, since the benefits of a flip model borderless window include faster Alt-Tab switching and better integration with modern display features.</p>
+<p>Why now? Prior to the April 2018 Update, blt model presents could result in visible tearing when used on hybrid GPU configurations, often found in high-end laptops (see <a href="https://support.microsoft.com/help/3158621/hybrid-graphics-and-vsync-results-in-graphic-tearing-in-some-games-and">KB 3158621</a>). In the April 2018 Update, this tearing has been fixed, at the cost of some additional work. If you are doing blt presents at high framerates across hybrid GPUs, especially at high resolutions such as 4K, this additional work may affect overall performance. To maintain best performance on these systems, switch from the blt to the flip present model. Additionally, consider reducing the resolution of your swapchain, especially if it isnâ€™t the primary point of user interaction (as is often the case with VR preview windows).</p>
+<h2>A brief history</h2>
+<p>What is the flip model? What is the alternative?</p>
+<p>Prior to Windows 7, the only way to present content from D3D was to &quot;blt&quot; or copy it into a surface which was owned by the window or screen. Beginning with D3D9â€™s FLIPEX swap effect, and coming to DXGI through the FLIP_SEQUENTIAL swap effect in Windows 8, weâ€™ve developed a more efficient way to put content on screen by sharing it directly with the desktop compositor, with minimal copies. See <a href="dxgi-flip-model.html">DXGI flip model</a> for a high level overview of the technology.</p>
+<p>This optimization is possible thanks to the DWM (Desktop Window Manager), which is the compositor that drives the Windows desktop.</p>
+<h2>When should I use the blt model?</h2>
+<p>There is one piece of functionality that the flip model does not provide: the ability to have multiple different APIs producing content, which all layer together into the same <strong>HWND</strong>, on a present-by-present basis. An example of this would be using D3D to draw a window background, and then <a href="/windows/desktop/gdi/windows-gdi">Windows GDI</a> to draw something on top, or using two different graphics APIs, or two swapchains from the same API, to produce alternating frames. If you donâ€™t require <strong>HWND</strong>-level interop between graphics components, then you donâ€™t need blt model.</p>
+<p>There is a second piece of functionality that was not provided in the original flip model design, but is available now, which is the ability to present at an unthrottled framerate. For an application using sync interval 0, we do not recommend switching to flip model unless the <a href="/windows/desktop/api/DXGI1_5/nf-dxgi1_5-idxgifactory5-checkfeaturesupport">IDXGIFactory5::CheckFeatureSupport</a> API is available, and reports support for <strong>DXGI_FEATURE_PRESENT_ALLOW_TEARING</strong>. This feature is nearly ubiquitous on recent versions of Windows 10 and on modern hardware.</p>
+<h2>DirectFlip</h2>
+<p>If youâ€™ve watched <a href="https://www.youtube.com/watch?v=E3wTajGZOsA">DirectX 12: Presentation Modes In Windows 10</a>, youâ€™ll see talk about &quot;Direct Flip&quot; and &quot;Independent Flip.&quot; These are optimizations that are enabled for applications using flip model swapchains. Depending on window and buffer configuration, it is possible to bypass desktop composition entirely and directly send application frames to the screen, in the same way that exclusive fullscreen does.</p>
+<p>These days, these optimizations can engage in one of 3 scenarios, in order of increasing functionality:</p>
+<ol>
+<li><strong>DirectFlip</strong>: Your swapchain buffers match the screen dimensions, and your window client region covers the screen. Instead of using the DWM swapchain to display on the screen, the application swapchain is used.</li>
+<li><strong>DirectFlip with panel fitters</strong>: Your window client region covers the screen, and your swapchain buffers are within some hardware-dependent scaling factor (for example, 0.25x to 4x) of the screen. The GPU scanout hardware is used to scale your buffer while sending it to the display.</li>
+<li><strong>DirectFlip with multi-plane overlay (MPO)</strong>: Your swapchain buffers are within some hardware-dependent scaling factor of your window dimensions. The DWM is able to reserve a dedicated hardware scanout plane for your application, which is then scanned out and potentially stretched to an alpha-blended sub-region of the screen.</li>
+</ol>
+<p>With the windowed flip model, the application can query hardware support for different DirectFlip scenarios and implement different types of dynamic scaling via the use of <a href="/windows/desktop/api/DXGI1_6/nf-dxgi1_6-idxgioutput6-checkhardwarecompositionsupport">IDXGIOutput6::CheckHardwareCompositionSupport</a>. One caveat to keep in mind is that if panel fitters are utilized, itâ€™s possible for the cursor to suffer stretching side effects, which is indicated via <strong>DXGI_HARDWARE_COMPOSITION_SUPPORT_FLAG_CURSOR_STRETCHED</strong>.</p>
+<p>Once your swapchain has been &quot;DirectFlipped,&quot; then the DWM can go to sleep, and only wake up when something changes outside of your application. Your application frames are sent directly to the screen, independently, with the same efficiency as fullscreen exclusive. This is &quot;Independent Flip,&quot; and can engage in all of the above scenarios. If other desktop contents come on top, the DWM can either seamlessly transition back to composed mode, efficiently &quot;reverse compose&quot; the contents on top of the application before flipping it, or leverage MPO to maintain the independent flip mode.</p>
+<p>Check out the <a href="https://github.com/GameTechDev/PresentMon">PresentMon</a> tool to get insight into which of the above was used.</p>
+<h2>What else is new in the flip model?</h2>
+<p>In addition to the above improvements, which apply to standard swapchains without anything special, there are several features available for flip model applications to use:</p>
+<ul>
+<li>Decreasing latency using <strong>DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT</strong>. When in Independent Flip mode, you can get down to 1 frame of latency on recent versions of Windows, with graceful fallback to the minimum possible when composed.
+<ul>
+<li>Caveat: there was an issue that gave a minimum of two frames of latency in the Windows 10 Anniversary Update and earlier. See <a href="https://www.gamedev.net/forums/topic/686507-windows-10-dx12-low-latency-tearing-free-rendering/">this forum topic</a> for more information. This is fixed in the Fall Creatorâ€™s Update.</li>
+</ul>
+</li>
+<li><strong>DXGI_SWAP_EFFECT_FLIP_DISCARD</strong> enables a &quot;reverse composition&quot; mode of direct flip, which results in less overall work to display the desktop. The DWM can scribble on the application buffers and send those to the screen, instead of performing a full copy into their own swapchains.</li>
+<li><strong>DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING</strong> can enable even lower latency than the waitable object, even in a window on systems with multi-plane overlay support.</li>
+<li>Applications have control over content scaling that happens during window resize, using the <a href="/windows/desktop/api/DXGI1_2/ne-dxgi1_2-dxgi_scaling">DXGI_SCALING</a> property set during swapchain creation.</li>
+<li>Content in HDR formats (R10G10B10A2_UNORM or R16G16B16A16_FLOAT) isnâ€™t clamped unless itâ€™s composed to an SDR desktop.</li>
+<li>Present statistics are available in windowed mode.</li>
+<li>There is greater compatibility with the UWP (Universal Windows Platform) application model and DX12 since these are only compatible with the flip model.</li>
+</ul>
+<h2>What do I have to do to use the flip model?</h2>
+<p>Flip model swapchains have a few additional requirements on top of blt swapchains:</p>
+<ol>
+<li>The buffer count must be at least 2.</li>
+<li>After <a href="/windows/desktop/api/DXGI/nf-dxgi-idxgiswapchain-present">Present</a> calls, the back buffer needs to explicitly be re-bound to the D3D11 immediate context before it can be used again.</li>
+<li>After calling <a href="/windows/desktop/api/DXGI/nf-dxgi-idxgiswapchain-setfullscreenstate">SetFullscreenState</a>, the application must call <a href="/windows/desktop/api/DXGI/nf-dxgi-idxgiswapchain-resizebuffers">ResizeBuffers</a> before <strong>Present</strong>.</li>
+<li>MSAA (multisample anti-aliasing) swapchains are not directly supported in the flip model, so the application will need to do an MSAA resolve before issuing the <strong>Present</strong>.</li>
+</ol>
+<h2>How to choose the right rendering and presentation resolutions</h2>
+<p>The traditional pattern for applications in the past has been to provide the user with a list of resolutions to choose from when the user selects exclusive fullscreen mode. With the ability of modern displays to seamlessly begin scaling content, consider providing users with the ability to choose a rendering resolution for performance scaling, independent from an output resolution, and even in windowed mode. Furthermore, applications should leverage <strong>IDXGIOutput6::CheckHardwareCompositionSupport</strong> to determine if they need to scale the content before presenting it, or if they should let the hardware do the scaling for them.</p>
+<p>Your content may need to be migrated from one GPU to another as part of the present or composition operation. This is often true on multi-GPU laptops, or systems with external GPUs plugged in. As these configurations get more common, and as high-resolution displays become more common, the cost of presenting a full resolution swapchain increases. If the target of your swapchain isnâ€™t the primary point of user interaction, as is often the case with VR titles that present a 2D preview of the VR scene into a secondary window, consider using a lower resolution swapchain to minimize the amount of bandwidth that needs to be transferred across different GPUs.</p>
+<h2>Other considerations</h2>
+<p>The first time you ask the GPU to write to the swapchain back buffer is the time that the GPU will stall waiting for the buffer to become available. When possible, delay this point as far into the frame as possible.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Requesting Text Recognition</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Requesting Text Recognition
+ms.assetid: 9db9045d-b289-4c6c-9b17-ddbc2c1d3089
+title: Requesting Text Recognition
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Requesting Text Recognition</h1>
+<p>The application calls the <a href="/windows/desktop/api/Elscore/nf-elscore-mappingrecognizetext"><strong>MappingRecognizeText</strong></a> function to request text recognition from a specific ELS service. The service must have been discovered in a previous call to <a href="/windows/desktop/api/Elscore/nf-elscore-mappinggetservices"><strong>MappingGetServices</strong></a>, as described in <a href="enumerating-and-freeing-services.html"><strong>Enumerating and Freeing Services</strong></a>.</p>
+<blockquote>
+<p>[!Note]<br />
+The platform can process <a href="/windows/desktop/api/Elscore/nf-elscore-mappingrecognizetext"><strong>MappingRecognizeText</strong></a> calls either synchronously or asynchronously.</p>
+</blockquote>
+<p>Â </p>
+<p><a href="/windows/desktop/api/Elscore/nf-elscore-mappingrecognizetext"><strong>MappingRecognizeText</strong></a> handles the following types of text:</p>
+<ul>
+<li>Microsoft language detection. UTF-16, normalization form C, text for which to determine the language.</li>
+<li>Microsoft script detection. UTF-16 text for which to determine script ranges.</li>
+<li>Transliteration services. UTF-16 text written in source script (writing system).</li>
+</ul>
+<h2>Use Synchronous Text Recognition</h2>
+<p>This section provides instructions for several ways to perform synchronous text recognition.</p>
+<p><strong>Synchronous Text Recognition with Microsoft Language Detection Service</strong></p>
+<p>The following example illustrates the use of <a href="/windows/desktop/api/Elscore/nf-elscore-mappingrecognizetext"><strong>MappingRecognizeText</strong></a> with the Microsoft Language Detection service, and prints all the results retrieved by the service. The output format of this service is a single <a href="/windows/desktop/api/Elscore/ns-elscore-mapping_data_range"><strong>MAPPING_DATA_RANGE</strong></a> structure with its <strong>pData</strong> member pointing to a Unicode double-null-terminated, registry-formatted array of strings. Every string of the array is null-terminated and an empty string is used to specify the end of the array. The contents of the array are language names sorted by confidence.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;elscore.h&gt;
+#include &lt;elssrvc.h&gt;
+
+#define USER_TEXT ( \
+    L&quot;Skip This is a simple sentence. &quot; \
+    L&quot;\x0422\x0445\x0438\x0441 \x0438\x0441 \x0415\x043d\x0433\x043b\x0438\x0441\x0445.&quot;)
+#define USER_TEXT_SKIP (5)
+
+int __cdecl main();
+HRESULT CallMappingRecognizeText(PMAPPING_SERVICE_INFO pService);
+void PrintAllResults(PMAPPING_PROPERTY_BAG pBag);
+
+int __cdecl main()
+{
+    MAPPING_ENUM_OPTIONS    EnumOptions;
+    PMAPPING_SERVICE_INFO   prgServices = NULL;
+    DWORD                   dwServicesCount = 0;
+    HRESULT                 hResult;
+
+    ZeroMemory(&amp;EnumOptions, sizeof (MAPPING_ENUM_OPTIONS));
+    EnumOptions.Size = sizeof (MAPPING_ENUM_OPTIONS);
+    // Using the Language Auto-Detection GUID to enumerate LAD only:
+    EnumOptions.pGuid = (GUID *)&amp;ELS_GUID_LANGUAGE_DETECTION;
+    hResult = MappingGetServices(&amp;EnumOptions, &amp;prgServices, &amp;dwServicesCount);
+
+    if (SUCCEEDED(hResult))
+    {
+        hResult = CallMappingRecognizeText(&amp;prgServices[0]);
+        if (SUCCEEDED(hResult))
+        {
+            printf(&quot;Calling the service %ws has succeeded!\n&quot;,
+                prgServices[0].pszDescription);
+        }
+        else
+        {
+            printf(&quot;Calling the service %ws has failed, failure = 0x%x!\n&quot;,
+                prgServices[0].pszDescription, hResult);
+        }
+        MappingFreeServices(prgServices);
+    }
+
+    return 0;
+}
+
+HRESULT CallMappingRecognizeText(PMAPPING_SERVICE_INFO pService)
+{
+    MAPPING_PROPERTY_BAG bag;
+    HRESULT hResult;
+
+    ZeroMemory(&amp;bag, sizeof (MAPPING_PROPERTY_BAG));
+    bag.Size = sizeof (MAPPING_PROPERTY_BAG);
+
+    // MappingRecognizeText's dwIndex parameter specifies the first
+    // index inside the text from where the recognition should start.
+    // We pass USER_TEXT_SKIP, thus skipping the &quot;Skip &quot; part
+    // of the input string.
+    // Calling without MAPPING_OPTIONS:
+    hResult = MappingRecognizeText(pService, USER_TEXT, wcslen(USER_TEXT), USER_TEXT_SKIP, NULL, &amp;bag);
+    if (SUCCEEDED(hResult))
+    {
+        printf(&quot;Results from service: %ws\n&quot;, pService-&gt;pszDescription);
+        PrintAllResults(&amp;bag);
+        hResult = MappingFreePropertyBag(&amp;bag);
+    }
+    return hResult;
+}
+
+void PrintAllResults(PMAPPING_PROPERTY_BAG pBag)
+{
+    WCHAR * p;
+
+    // The return format of the Language Auto-Detection is a
+    // double null-terminated registry-formatted array of strings.
+    // Every string of the array is null-terminated and there's an
+    // empty string specifying the end of the array.
+    for (p = (WCHAR *)pBag-&gt;prgResultRanges[0].pData; *p; p += wcslen(p) + 1)
+    {
+        printf(&quot;%ws\n&quot;, p);
+    }
+}
+</code></pre>
+<p><strong>Synchronous Text Recognition with Microsoft Script Detection Service</strong></p>
+<p>The next example illustrates the use of <a href="/windows/desktop/api/Elscore/nf-elscore-mappingrecognizetext"><strong>MappingRecognizeText</strong></a> with the Microsoft Script Detection service, and prints all the retrieved results. The output format of this service is an array of <a href="/windows/desktop/api/Elscore/ns-elscore-mapping_data_range"><strong>MAPPING_DATA_RANGE</strong></a> structures, each specifying text written in the same script. Common (Zyyy) characters are added to the previous range, or to the next range if the previous range does not exist. The <strong>pData</strong> member of each structure points to a Unicode null-terminated string containing the standard Unicode name of the script for the particular range.</p>
+<blockquote>
+<p>[!Note]<br />
+As of WindowsÂ 7, the Microsoft Script Detection service complies with Unicode 5.1.</p>
+</blockquote>
+<p>Â </p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;elscore.h&gt;
+#include &lt;elssrvc.h&gt;
+
+#define USER_TEXT ( \
+    L&quot;Skip This is a simple sentence. &quot; \
+    L&quot;\x0422\x0445\x0438\x0441 \x0438\x0441 \x0415\x043d\x0433\x043b\x0438\x0441\x0445.&quot;)
+#define USER_TEXT_SKIP (5)
+
+int __cdecl main();
+HRESULT CallMappingRecognizeText(PMAPPING_SERVICE_INFO pService);
+void PrintAllResults(PMAPPING_PROPERTY_BAG pBag);
+
+int __cdecl main()
+{
+    MAPPING_ENUM_OPTIONS    EnumOptions;
+    PMAPPING_SERVICE_INFO   prgServices = NULL;
+    DWORD                   dwServicesCount = 0;
+    HRESULT                 hResult;
+
+    ZeroMemory(&amp;EnumOptions, sizeof (MAPPING_ENUM_OPTIONS));
+    EnumOptions.Size = sizeof (MAPPING_ENUM_OPTIONS);
+    // Using the Script Detection GUID to enumerate SD only:
+    EnumOptions.pGuid = (GUID *)&amp;ELS_GUID_SCRIPT_DETECTION;
+    hResult = MappingGetServices(&amp;EnumOptions, &amp;prgServices, &amp;dwServicesCount);
+
+    if (SUCCEEDED(hResult))
+    {
+        hResult = CallMappingRecognizeText(&amp;prgServices[0]);
+        if (SUCCEEDED(hResult))
+        {
+            printf(&quot;Calling the service %ws has succeeded!\n&quot;,
+                prgServices[0].pszDescription);
+        }
+        else
+        {
+            printf(&quot;Calling the service %ws has failed, failure = 0x%x!\n&quot;,
+                prgServices[0].pszDescription, hResult);
+        }
+        MappingFreeServices(prgServices);
+    }
+
+    return 0;
+}
+
+HRESULT CallMappingRecognizeText(PMAPPING_SERVICE_INFO pService)
+{
+    MAPPING_PROPERTY_BAG bag;
+    HRESULT hResult;
+
+    ZeroMemory(&amp;bag, sizeof (MAPPING_PROPERTY_BAG));
+    bag.Size = sizeof (MAPPING_PROPERTY_BAG);
+
+    // MappingRecognizeText's dwIndex parameter specifies the first
+    // index inside the text from where the recognition should start.
+    // We pass USER_TEXT_SKIP, thus skipping the &quot;Skip &quot; part
+    // of the input string.
+    // Calling without MAPPING_OPTIONS:
+    hResult = MappingRecognizeText(pService, USER_TEXT, wcslen(USER_TEXT), USER_TEXT_SKIP, NULL, &amp;bag);
+    if (SUCCEEDED(hResult))
+    {
+        printf(&quot;Results from service: %ws\n&quot;, pService-&gt;pszDescription);
+        PrintAllResults(&amp;bag);
+        hResult = MappingFreePropertyBag(&amp;bag);
+    }
+    return hResult;
+}
+
+void PrintAllResults(PMAPPING_PROPERTY_BAG pBag)
+{
+    DWORD dwRangeIndex;
+
+    for (dwRangeIndex = 0; dwRangeIndex &lt; pBag-&gt;dwRangesCount; ++dwRangeIndex)
+    {
+        if (dwRangeIndex &gt; 0)
+        {
+            printf(&quot;   ----\n&quot;);
+        }
+        printf(&quot;Range from %u to %u\n&quot;,
+            (unsigned)pBag-&gt;prgResultRanges[dwRangeIndex].dwStartIndex,
+            (unsigned)pBag-&gt;prgResultRanges[dwRangeIndex].dwEndIndex);
+        printf(&quot;Data size in WCHARs: %u\n&quot;,
+            (unsigned)pBag-&gt;prgResultRanges[dwRangeIndex].dwDataSize / 2);
+        printf(&quot;\&quot;%ws\&quot;\n&quot;, (WCHAR *)pBag-&gt;prgResultRanges[dwRangeIndex].pData);
+    }
+}
+</code></pre>
+<p><strong>Synchronous Text Recognition with Microsoft Cyrillic to Latin Transliteration Service</strong></p>
+<p>The following example illustrates the use of <a href="/windows/desktop/api/Elscore/nf-elscore-mappingrecognizetext"><strong>MappingRecognizeText</strong></a> with the Microsoft Cyrillic to Latin transliteration service, and prints the retrieved results. Note the two different ways to enumerate this service, either by GUID or by category and input script.</p>
+<p>The output format is the same for all available transliteration services. It is a single <a href="/windows/desktop/api/Elscore/ns-elscore-mapping_data_range"><strong>MAPPING_DATA_RANGE</strong></a> structure with its <strong>pData</strong> member pointing to an array of Unicode characters representing the original text transliterated into the output script by applying only the rules of the specific transliteration service. This service does not null-terminate its output if the input does not contain the terminating null character.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;elscore.h&gt;
+#include &lt;elssrvc.h&gt;
+
+#define USER_TEXT (L&quot;Skip The russian word for 'yes' is transliterated to Latin as '\x0434\x0430'.&quot;)
+#define USER_TEXT_SKIP (5)
+
+int __cdecl main();
+HRESULT CallMappingRecognizeText(PMAPPING_SERVICE_INFO pService);
+void PrintAllResults(PMAPPING_PROPERTY_BAG pBag);
+
+int __cdecl main()
+{
+    MAPPING_ENUM_OPTIONS    EnumOptions;
+    PMAPPING_SERVICE_INFO   prgServices;
+    DWORD                   dwServicesCount;
+    HRESULT                 hResult;
+
+    // 1. Enumerate by GUID:
+    prgServices = NULL;
+    dwServicesCount = 0;
+    ZeroMemory(&amp;EnumOptions, sizeof (MAPPING_ENUM_OPTIONS));
+    EnumOptions.Size = sizeof (MAPPING_ENUM_OPTIONS);
+    // Use the Cyrl-&gt;Latn Transliteration GUID to enumerate only this service:
+    EnumOptions.pGuid = (GUID *)&amp;ELS_GUID_TRANSLITERATION_CYRILLIC_TO_LATIN;
+    hResult = MappingGetServices(&amp;EnumOptions, &amp;prgServices, &amp;dwServicesCount);
+
+    if (SUCCEEDED(hResult))
+    {
+        hResult = CallMappingRecognizeText(&amp;prgServices[0]);
+        if (SUCCEEDED(hResult))
+        {
+            printf(&quot;Calling the service %ws has succeeded!\n&quot;,
+                prgServices[0].pszDescription);
+        }
+        else
+        {
+            printf(&quot;Calling the service %ws has failed, failure = 0x%x!\n&quot;,
+                prgServices[0].pszDescription, hResult);
+        }
+        MappingFreeServices(prgServices);
+    }
+
+    printf(&quot;--\n&quot;);
+
+    // 2. Enumerate by input script and category:
+    prgServices = NULL;
+    dwServicesCount = 0;
+    ZeroMemory(&amp;EnumOptions, sizeof (MAPPING_ENUM_OPTIONS));
+    EnumOptions.Size = sizeof (MAPPING_ENUM_OPTIONS);
+    EnumOptions.pszCategory = L&quot;Transliteration&quot;;
+    EnumOptions.pszInputScript = L&quot;Cyrl&quot;;
+    hResult = MappingGetServices(&amp;EnumOptions, &amp;prgServices, &amp;dwServicesCount);
+
+    if (SUCCEEDED(hResult))
+    {
+        hResult = CallMappingRecognizeText(&amp;prgServices[0]);
+        if (SUCCEEDED(hResult))
+        {
+            printf(&quot;Calling the service %ws has succeeded!\n&quot;,
+                prgServices[0].pszDescription);
+        }
+        else
+        {
+            printf(&quot;Calling the service %ws has failed, failure = 0x%x!\n&quot;,
+                prgServices[0].pszDescription, hResult);
+        }
+        MappingFreeServices(prgServices);
+    }
+
+    return 0;
+}
+
+HRESULT CallMappingRecognizeText(PMAPPING_SERVICE_INFO pService)
+{
+    MAPPING_PROPERTY_BAG bag;
+    HRESULT hResult;
+
+    ZeroMemory(&amp;bag, sizeof (MAPPING_PROPERTY_BAG));
+    bag.Size = sizeof (MAPPING_PROPERTY_BAG);
+
+    // MappingRecognizeText's dwIndex parameter specifies the first
+    // index inside the text from where the recognition should start.
+    // We pass USER_TEXT_SKIP, thus skipping the &quot;Skip &quot; part
+    // of the input string.
+    // Calling without MAPPING_OPTIONS:
+    // We want the result to be null-terminated for display.
+    // That's why we will also pass the input null terminator:
+    hResult = MappingRecognizeText(pService, USER_TEXT, wcslen(USER_TEXT) + 1, USER_TEXT_SKIP, NULL, &amp;bag);
+    if (SUCCEEDED(hResult))
+    {
+        printf(&quot;Results from service: %ws\n&quot;, pService-&gt;pszDescription);
+        PrintAllResults(&amp;bag);
+        hResult = MappingFreePropertyBag(&amp;bag);
+    }
+    return hResult;
+}
+
+void PrintAllResults(PMAPPING_PROPERTY_BAG pBag)
+{
+    printf(&quot;\&quot;%ws\&quot;\n&quot;, (WCHAR *)pBag-&gt;prgResultRanges[0].pData);
+}
+</code></pre>
+<p><strong>Synchronous Text Recognition with a Call to All Available Services</strong></p>
+<p>The following example shows the use of <a href="/windows/desktop/api/Elscore/nf-elscore-mappingrecognizetext"><strong>MappingRecognizeText</strong></a> with all available services, and prints the retrieved results for all the services. This example provides a good illustration of the operation of each service. By looking at the output of the example application, it is easy to find out what is happening internally with the services. This example also shows that almost all code used to call any of the ELS services is the same.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;elscore.h&gt;
+
+#define USER_TEXT ( \
+    L&quot;Skip This is a simple sentence. &quot; \
+    L&quot;\x0422\x0445\x0438\x0441 \x0438\x0441 \x0415\x043d\x0433\x043b\x0438\x0441\x0445.&quot;)
+#define USER_TEXT_SKIP (5)
+
+int __cdecl main();
+HRESULT CallMappingRecognizeText(PMAPPING_SERVICE_INFO pService);
+void PrintAllResults(PMAPPING_PROPERTY_BAG pBag);
+
+int __cdecl main()
+{
+    PMAPPING_SERVICE_INFO   prgServices = NULL;
+    DWORD                   dwServicesCount = 0;
+    HRESULT                 hResult;
+
+    DWORD i;
+
+    // Get all installed ELS services:
+    hResult = MappingGetServices(NULL, &amp;prgServices, &amp;dwServicesCount);
+
+    if (SUCCEEDED(hResult))
+    {
+        for (i = 0; i &lt; dwServicesCount; ++i)
+        {
+            // Do something with each service:
+            // ... prgServices[i] ...
+            if (i &gt; 0)
+            {
+                printf(&quot;--\n&quot;);
+            }
+            hResult = CallMappingRecognizeText(&amp;prgServices[i]);
+            if (SUCCEEDED(hResult))
+            {
+                printf(&quot;Calling the service %ws has succeeded!\n&quot;,
+                    prgServices[i].pszDescription);
+            }
+            else
+            {
+                printf(&quot;Calling the service %ws has failed, failure = 0x%x!\n&quot;,
+                    prgServices[i].pszDescription, hResult);
+            }
+        }
+        MappingFreeServices(prgServices);
+    }
+
+    return 0;
+}
+
+HRESULT CallMappingRecognizeText(PMAPPING_SERVICE_INFO pService)
+{
+    MAPPING_PROPERTY_BAG bag;
+    HRESULT hResult;
+
+    ZeroMemory(&amp;bag, sizeof (MAPPING_PROPERTY_BAG));
+    bag.Size = sizeof (MAPPING_PROPERTY_BAG);
+
+    // MappingRecognizeText's dwIndex parameter specifies the first
+    // index inside the text from where the recognition should start.
+    // We pass USER_TEXT_SKIP, thus skipping the &quot;Skip &quot; part
+    // of the input string.
+    // Calling without MAPPING_OPTIONS:
+    hResult = MappingRecognizeText(pService, USER_TEXT, wcslen(USER_TEXT), USER_TEXT_SKIP, NULL, &amp;bag);
+    if (SUCCEEDED(hResult))
+    {
+        printf(&quot;Results from service: %ws\n&quot;, pService-&gt;pszDescription);
+        PrintAllResults(&amp;bag);
+        hResult = MappingFreePropertyBag(&amp;bag);
+    }
+    return hResult;
+}
+
+void PrintAllResults(PMAPPING_PROPERTY_BAG pBag)
+{
+    DWORD dwRangeIndex;
+    DWORD dwDataIndex;
+    WCHAR c;
+
+    for (dwRangeIndex = 0; dwRangeIndex &lt; pBag-&gt;dwRangesCount; ++dwRangeIndex)
+    {
+        if (dwRangeIndex &gt; 0)
+        {
+            printf(&quot;   ----\n&quot;);
+        }
+        printf(&quot;Range from %u to %u\n&quot;,
+            (unsigned)pBag-&gt;prgResultRanges[dwRangeIndex].dwStartIndex,
+            (unsigned)pBag-&gt;prgResultRanges[dwRangeIndex].dwEndIndex);
+        // Currently, we can treat all results as arrays of unicode WCHAR
+        // characters, but there can be services in the future
+        // that use different formatting, i.e. XML, HTML, etc.
+        printf(&quot;Data size in WCHARs: %u\n&quot;,
+            (unsigned)pBag-&gt;prgResultRanges[dwRangeIndex].dwDataSize / 2);
+        printf(&quot;\&quot;&quot;);
+        for (dwDataIndex = 0; dwDataIndex &lt; pBag-&gt;prgResultRanges[dwRangeIndex].dwDataSize / 2; ++dwDataIndex)
+        {
+            c = ((WCHAR *)pBag-&gt;prgResultRanges[dwRangeIndex].pData)[dwDataIndex];
+            if (c &gt;= 32 &amp;&amp; c &lt; 128 &amp;&amp; c != '&quot;') printf(&quot;%wc&quot;, c);
+            else printf(&quot;#%x&quot;, (unsigned)c);
+        }
+        printf(&quot;\&quot;\n&quot;);
+    }
+}
+
+void CallRecognizeText(LPCWSTR Category, LPCWSTR Text)
+{
+    HRESULT               Result;
+    PMAPPING_SERVICE_INFO rgServices;
+    DWORD                 ServicesCount;
+    MAPPING_ENUM_OPTIONS  options = {sizeof(MAPPING_ENUM_OPTIONS), (LPWSTR) Category, 0};
+
+    Result = MappingGetServices(&amp;options, &amp;rgServices, &amp;ServicesCount);
+    if (Result == S_OK &amp;&amp; ServicesCount &gt; 0)
+    {
+        MAPPING_PROPERTY_BAG bag = { sizeof(MAPPING_PROPERTY_BAG), 0};
+        Result = MappingRecognizeText(&amp;rgServices[0], Text, wcslen(Text), 0, NULL, &amp;bag);
+        if (Result == S_OK)
+        {
+            MappingFreePropertyBag(&amp;bag);
+        }
+
+        MappingFreeServices(rgServices);
+    }
+}
+int _tmain(int argc, _TCHAR* argv[])
+{
+    CallRecognizeText(L&quot;Language Detection&quot;, L&quot;Text to be recognized&quot;);
+  
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    return 0;
+}
+</code></pre>
+<h2>Use Asynchronous Text Recognition</h2>
+<p>The following example shows the use of <a href="/windows/desktop/api/Elscore/nf-elscore-mappingrecognizetext"><strong>MappingRecognizeText</strong></a> for asynchronous text recognition. When the callback is used, the application must make sure that the property bag, the input text, the options, and the service are all valid until after the callback has finished executing.</p>
+<p>The application must call <a href="/windows/desktop/api/Elscore/nf-elscore-mappingfreepropertybag"><strong>MappingFreePropertyBag</strong></a> immediately after the bag is consumed by the callback function. For more information, see <a href="providing-callbacks-for-els-services.html">Providing Callbacks for ELS Services</a>.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;elscore.h&gt;
+#include &lt;elssrvc.h&gt;
+
+#define USER_TEXT ( \
+    L&quot;Skip This is a simple sentence. &quot; \
+    L&quot;\x0422\x0445\x0438\x0441 \x0438\x0441 \x0415\x043d\x0433\x043b\x0438\x0441\x0445.&quot;)
+#define USER_TEXT_SKIP (5)
+
+int __cdecl main();
+HRESULT CallMappingRecognizeText(PMAPPING_SERVICE_INFO pService);
+void RecognizeCallback(PMAPPING_PROPERTY_BAG pBag, LPVOID data, DWORD dwDataSize, HRESULT Result);
+
+int __cdecl main()
+{
+    MAPPING_ENUM_OPTIONS    EnumOptions;
+    PMAPPING_SERVICE_INFO   prgServices = NULL;
+    DWORD                   dwServicesCount = 0;
+    HRESULT                 hResult;
+
+    ZeroMemory(&amp;EnumOptions, sizeof (MAPPING_ENUM_OPTIONS));
+    EnumOptions.Size = sizeof (MAPPING_ENUM_OPTIONS);
+    // Using the Language Auto-Detection GUID to enumerate LAD only:
+    EnumOptions.pGuid = (GUID *)&amp;ELS_GUID_LANGUAGE_DETECTION;
+    hResult = MappingGetServices(&amp;EnumOptions, &amp;prgServices, &amp;dwServicesCount);
+
+    if (SUCCEEDED(hResult))
+    {
+        hResult = CallMappingRecognizeText(&amp;prgServices[0]);
+        if (SUCCEEDED(hResult))
+        {
+            printf(&quot;Calling the service %ws has succeeded!\n&quot;,
+                prgServices[0].pszDescription);
+        }
+        else
+        {
+            printf(&quot;Calling the service %ws has failed, failure = 0x%x!\n&quot;,
+                prgServices[0].pszDescription, hResult);
+        }
+        MappingFreeServices(prgServices);
+    }
+
+    return 0;
+}
+
+HRESULT CallMappingRecognizeText(PMAPPING_SERVICE_INFO pService)
+{
+    MAPPING_PROPERTY_BAG    bag;
+    MAPPING_OPTIONS         Options;
+    HRESULT                 hResult;
+    HANDLE                  SyncEvent;
+    DWORD                   dwWaitResult;
+
+    SyncEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+
+    if (SyncEvent == NULL)
+    {
+        hResult = E_FAIL;
+    }
+    else
+    {
+        ZeroMemory(&amp;bag, sizeof (MAPPING_PROPERTY_BAG));
+        bag.Size = sizeof (MAPPING_PROPERTY_BAG);
+
+        ZeroMemory(&amp;Options, sizeof (MAPPING_OPTIONS));
+        Options.Size = sizeof (MAPPING_OPTIONS);
+        Options.pfnRecognizeCallback = (PFN_MAPPINGCALLBACKPROC)RecognizeCallback;
+        Options.pRecognizeCallerData = &amp;SyncEvent;
+        Options.dwRecognizeCallerDataSize = sizeof (HANDLE);
+
+        // MappingRecognizeText's dwIndex parameter specifies the first
+        // index inside the text from where the recognition should start.
+        // We pass USER_TEXT_SKIP, thus skipping the &quot;Skip &quot; part
+        // of the input string.
+        hResult = MappingRecognizeText(pService, USER_TEXT, wcslen(USER_TEXT), USER_TEXT_SKIP, &amp;Options, &amp;bag);
+        if (SUCCEEDED(hResult))
+        {
+            // We are using an event to synchronize our waiting for the call to end,
+            // because some objects have to be valid till the end of the callback call:
+            // - the input text
+            // - the property bag
+            // - the options
+            // - the service
+            dwWaitResult = WaitForSingleObject(SyncEvent, INFINITE);
+            if (dwWaitResult != WAIT_OBJECT_0)
+            {
+                hResult = E_FAIL;
+            }
+        }
+        CloseHandle(SyncEvent);
+    }
+    return hResult;
+}
+
+void RecognizeCallback(PMAPPING_PROPERTY_BAG pBag, LPVOID data, DWORD dwDataSize, HRESULT Result)
+{
+    HANDLE SyncEvent;
+    WCHAR * p;
+
+    UNREFERENCED_PARAMETER(dwDataSize);
+
+    if (SUCCEEDED(Result))
+    {
+        for (p = (WCHAR *)pBag-&gt;prgResultRanges[0].pData; *p; p += wcslen(p) + 1)
+        {
+            printf(&quot;%ws\n&quot;, p);
+        }
+        MappingFreePropertyBag(pBag);
+    }
+
+    SyncEvent = *((HANDLE *)data);
+    SetEvent(SyncEvent);
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-extended-linguistic-services.html">Using Extended Linguistic Services</a></p>
+<!-- raw HTML omitted -->
+<p><a href="providing-callbacks-for-els-services.html">Providing Callbacks for ELS Services</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Elscore/nf-elscore-mappingfreepropertybag"><strong>MappingFreePropertyBag</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Elscore/nf-elscore-mappinggetservices"><strong>MappingGetServices</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Elscore/nf-elscore-mappingrecognizetext"><strong>MappingRecognizeText</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

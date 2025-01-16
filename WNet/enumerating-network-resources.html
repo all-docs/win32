@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Enumerating Network Resources</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Enumerating Network Resources
+description: The following example illustrates an application-defined function (EnumerateFunc) that enumerates all the resources on a network.
+ms.assetid: f5872ee7-483d-406a-b7d8-4ce93613fd29
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Enumerating Network Resources</h1>
+<p>The following example illustrates an application-defined function (EnumerateFunc) that enumerates all the resources on a network. The sample specifies <strong>NULL</strong> for the pointer to the <a href="/windows/desktop/api/Winnetwk/ns-winnetwk-netresourcea"><strong>NETRESOURCE</strong></a> structure because when <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetopenenuma"><strong>WNetOpenEnum</strong></a> receives a <strong>NULL</strong> pointer, it retrieves a handle to the root of the network.</p>
+<p>To begin the enumeration of a network container resource, your application should perform the following steps:</p>
+<ol>
+<li>Pass the address of a <a href="/windows/desktop/api/Winnetwk/ns-winnetwk-netresourcea"><strong>NETRESOURCE</strong></a> structure that represents the resource to the <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetopenenuma"><strong>WNetOpenEnum</strong></a> function.</li>
+<li>Allocate a buffer large enough to hold the array of <a href="/windows/desktop/api/Winnetwk/ns-winnetwk-netresourcea"><strong>NETRESOURCE</strong></a> structures that the <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetenumresourcea"><strong>WNetEnumResource</strong></a> function returns, plus the strings to which their members point.</li>
+<li>Pass the resource handle returned by <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetopenenuma"><strong>WNetOpenEnum</strong></a> to the <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetenumresourcea"><strong>WNetEnumResource</strong></a> function.</li>
+<li>Close the resource handle when it is no longer needed by calling the <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetcloseenum"><strong>WNetCloseEnum</strong></a> function.</li>
+</ol>
+<p>You can continue enumerating a container resource described in the array of <a href="/windows/desktop/api/Winnetwk/ns-winnetwk-netresourcea"><strong>NETRESOURCE</strong></a> structures retrieved by <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetenumresourcea"><strong>WNetEnumResource</strong></a>. If the <strong>dwUsage</strong> member of the <strong>NETRESOURCE</strong> structure is equal to RESOURCEUSAGE_CONTAINER, pass the address of the structure to the <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetopenenuma"><strong>WNetOpenEnum</strong></a> function to open the container and continue the enumeration. If <strong>dwUsage</strong> is equal to RESOURCEUSAGE_CONNECTABLE, the application can pass the structure's address to the <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetaddconnection2a"><strong>WNetAddConnection2</strong></a> function or the <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetaddconnection3a"><strong>WNetAddConnection3</strong></a> function to connect to the resource.</p>
+<p>First the sample calls the <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetopenenuma"><strong>WNetOpenEnum</strong></a> function to begin the enumeration. The sample calls the <a href="/windows/desktop/api/winbase/nf-winbase-globalalloc"><strong>GlobalAlloc</strong></a> function to allocate the required buffer, and then calls the <a href="/previous-versions/windows/desktop/legacy/aa366920(v=vs.85)"><strong>ZeroMemory</strong></a> function to set the buffer contents to zero. Then the sample calls the <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetenumresourcea"><strong>WNetEnumResource</strong></a> function to continue the enumeration. Whenever the <strong>dwUsage</strong> member of a <a href="/windows/desktop/api/Winnetwk/ns-winnetwk-netresourcea"><strong>NETRESOURCE</strong></a> structure retrieved by <strong>WNetEnumResource</strong> is equal to RESOURCEUSAGE_CONTAINER, the EnumerateFunc function calls itself recursively and uses a pointer to that structure in its call to <strong>WNetOpenEnum</strong>. Finally, the sample calls the <a href="/windows/desktop/api/winbase/nf-winbase-globalfree"><strong>GlobalFree</strong></a> function to free the allocated memory, and the <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetcloseenum"><strong>WNetCloseEnum</strong></a> to end the enumeration.</p>
+<pre lang="C++"><code>#ifndef UNICODE
+#define UNICODE
+#endif
+#pragma comment(lib, &quot;mpr.lib&quot;)
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;winnetwk.h&gt;
+
+BOOL WINAPI EnumerateFunc(LPNETRESOURCE lpnr);
+void DisplayStruct(int i, LPNETRESOURCE lpnrLocal);
+
+int main()
+{
+
+    LPNETRESOURCE lpnr = NULL;
+
+    if (EnumerateFunc(lpnr) == FALSE) {
+        printf(&quot;Call to EnumerateFunc failed\n&quot;);
+        return 1;
+    } else
+        return 0;
+
+}
+
+BOOL WINAPI EnumerateFunc(LPNETRESOURCE lpnr)
+{
+    DWORD dwResult, dwResultEnum;
+    HANDLE hEnum;
+    DWORD cbBuffer = 16384;     // 16K is a good size
+    DWORD cEntries = -1;        // enumerate all possible entries
+    LPNETRESOURCE lpnrLocal;    // pointer to enumerated structures
+    DWORD i;
+    //
+    // Call the WNetOpenEnum function to begin the enumeration.
+    //
+    dwResult = WNetOpenEnum(RESOURCE_GLOBALNET, // all network resources
+                            RESOURCETYPE_ANY,   // all resources
+                            0,  // enumerate all resources
+                            lpnr,       // NULL first time the function is called
+                            &amp;hEnum);    // handle to the resource
+
+    if (dwResult != NO_ERROR) {
+        printf(&quot;WnetOpenEnum failed with error %d\n&quot;, dwResult);
+        return FALSE;
+    }
+    //
+    // Call the GlobalAlloc function to allocate resources.
+    //
+    lpnrLocal = (LPNETRESOURCE) GlobalAlloc(GPTR, cbBuffer);
+    if (lpnrLocal == NULL) {
+        printf(&quot;WnetOpenEnum failed with error %d\n&quot;, dwResult);
+//      NetErrorHandler(hwnd, dwResult, (LPSTR)&quot;WNetOpenEnum&quot;);
+        return FALSE;
+    }
+
+    do {
+        //
+        // Initialize the buffer.
+        //
+        ZeroMemory(lpnrLocal, cbBuffer);
+        //
+        // Call the WNetEnumResource function to continue
+        //  the enumeration.
+        //
+        dwResultEnum = WNetEnumResource(hEnum,  // resource handle
+                                        &amp;cEntries,      // defined locally as -1
+                                        lpnrLocal,      // LPNETRESOURCE
+                                        &amp;cbBuffer);     // buffer size
+        //
+        // If the call succeeds, loop through the structures.
+        //
+        if (dwResultEnum == NO_ERROR) {
+            for (i = 0; i &lt; cEntries; i++) {
+                // Call an application-defined function to
+                //  display the contents of the NETRESOURCE structures.
+                //
+                DisplayStruct(i, &amp;lpnrLocal[i]);
+
+                // If the NETRESOURCE structure represents a container resource, 
+                //  call the EnumerateFunc function recursively.
+
+                if (RESOURCEUSAGE_CONTAINER == (lpnrLocal[i].dwUsage
+                                                &amp; RESOURCEUSAGE_CONTAINER))
+//          if(!EnumerateFunc(hwnd, hdc, &amp;lpnrLocal[i]))
+                    if (!EnumerateFunc(&amp;lpnrLocal[i]))
+                        printf(&quot;EnumerateFunc returned FALSE\n&quot;);
+//            TextOut(hdc, 10, 10, &quot;EnumerateFunc returned FALSE.&quot;, 29);
+            }
+        }
+        // Process errors.
+        //
+        else if (dwResultEnum != ERROR_NO_MORE_ITEMS) {
+            printf(&quot;WNetEnumResource failed with error %d\n&quot;, dwResultEnum);
+
+//      NetErrorHandler(hwnd, dwResultEnum, (LPSTR)&quot;WNetEnumResource&quot;);
+            break;
+        }
+    }
+    //
+    // End do.
+    //
+    while (dwResultEnum != ERROR_NO_MORE_ITEMS);
+    //
+    // Call the GlobalFree function to free the memory.
+    //
+    GlobalFree((HGLOBAL) lpnrLocal);
+    //
+    // Call WNetCloseEnum to end the enumeration.
+    //
+    dwResult = WNetCloseEnum(hEnum);
+
+    if (dwResult != NO_ERROR) {
+        //
+        // Process errors.
+        //
+        printf(&quot;WNetCloseEnum failed with error %d\n&quot;, dwResult);
+//    NetErrorHandler(hwnd, dwResult, (LPSTR)&quot;WNetCloseEnum&quot;);
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+void DisplayStruct(int i, LPNETRESOURCE lpnrLocal)
+{
+    printf(&quot;NETRESOURCE[%d] Scope: &quot;, i);
+    switch (lpnrLocal-&gt;dwScope) {
+    case (RESOURCE_CONNECTED):
+        printf(&quot;connected\n&quot;);
+        break;
+    case (RESOURCE_GLOBALNET):
+        printf(&quot;all resources\n&quot;);
+        break;
+    case (RESOURCE_REMEMBERED):
+        printf(&quot;remembered\n&quot;);
+        break;
+    default:
+        printf(&quot;unknown scope %d\n&quot;, lpnrLocal-&gt;dwScope);
+        break;
+    }
+
+    printf(&quot;NETRESOURCE[%d] Type: &quot;, i);
+    switch (lpnrLocal-&gt;dwType) {
+    case (RESOURCETYPE_ANY):
+        printf(&quot;any\n&quot;);
+        break;
+    case (RESOURCETYPE_DISK):
+        printf(&quot;disk\n&quot;);
+        break;
+    case (RESOURCETYPE_PRINT):
+        printf(&quot;print\n&quot;);
+        break;
+    default:
+        printf(&quot;unknown type %d\n&quot;, lpnrLocal-&gt;dwType);
+        break;
+    }
+
+    printf(&quot;NETRESOURCE[%d] DisplayType: &quot;, i);
+    switch (lpnrLocal-&gt;dwDisplayType) {
+    case (RESOURCEDISPLAYTYPE_GENERIC):
+        printf(&quot;generic\n&quot;);
+        break;
+    case (RESOURCEDISPLAYTYPE_DOMAIN):
+        printf(&quot;domain\n&quot;);
+        break;
+    case (RESOURCEDISPLAYTYPE_SERVER):
+        printf(&quot;server\n&quot;);
+        break;
+    case (RESOURCEDISPLAYTYPE_SHARE):
+        printf(&quot;share\n&quot;);
+        break;
+    case (RESOURCEDISPLAYTYPE_FILE):
+        printf(&quot;file\n&quot;);
+        break;
+    case (RESOURCEDISPLAYTYPE_GROUP):
+        printf(&quot;group\n&quot;);
+        break;
+    case (RESOURCEDISPLAYTYPE_NETWORK):
+        printf(&quot;network\n&quot;);
+        break;
+    default:
+        printf(&quot;unknown display type %d\n&quot;, lpnrLocal-&gt;dwDisplayType);
+        break;
+    }
+
+    printf(&quot;NETRESOURCE[%d] Usage: 0x%x = &quot;, i, lpnrLocal-&gt;dwUsage);
+    if (lpnrLocal-&gt;dwUsage &amp; RESOURCEUSAGE_CONNECTABLE)
+        printf(&quot;connectable &quot;);
+    if (lpnrLocal-&gt;dwUsage &amp; RESOURCEUSAGE_CONTAINER)
+        printf(&quot;container &quot;);
+    printf(&quot;\n&quot;);
+
+    printf(&quot;NETRESOURCE[%d] Localname: %S\n&quot;, i, lpnrLocal-&gt;lpLocalName);
+    printf(&quot;NETRESOURCE[%d] Remotename: %S\n&quot;, i, lpnrLocal-&gt;lpRemoteName);
+    printf(&quot;NETRESOURCE[%d] Comment: %S\n&quot;, i, lpnrLocal-&gt;lpComment);
+    printf(&quot;NETRESOURCE[%d] Provider: %S\n&quot;, i, lpnrLocal-&gt;lpProvider);
+    printf(&quot;\n&quot;);
+}
+
+</code></pre>
+<p>For more information about using an application-defined error handler, see <a href="retrieving-network-errors.html">Retrieving Network Errors</a>.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

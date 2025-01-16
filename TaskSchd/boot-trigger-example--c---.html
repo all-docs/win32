@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Boot Trigger Example (C++)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Boot Trigger Example (C++)
+description: This topic contains a C++ code example that shows how to create a task that is scheduled to execute Notepad.exe when the system is started.
+ms.assetid: d4dbbfe5-bde9-4a1c-8e11-24cd1e14646c
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Boot Trigger Example (C++)</h1>
+<p>This topic contains a C++ code example that shows how to create a task that is scheduled to execute Notepad.exe when the system is started. The task contains a boot trigger that specifies a start boundary and delay time for the task to start after the system is started. The task also contains an action that specifies the task execute Notepad.exe. The task is registered using the Local Service account as a security context to run the task.</p>
+<p>The following procedure describes how to schedule a task to start an executable when the system is started.</p>
+<p><strong>To schedule Notepad to start when the system is started</strong></p>
+<ol>
+<li>
+<p>Initialize COM and set general COM security.</p>
+</li>
+<li>
+<p>Create the <a href="/windows/desktop/api/taskschd/nn-taskschd-itaskservice"><strong>ITaskService</strong></a> object.</p>
+<p>This object enables you to create tasks in a specified folder.</p>
+</li>
+<li>
+<p>Get a task folder to create a task in.</p>
+<p>Use the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskservice-getfolder"><strong>ITaskService::GetFolder</strong></a> method to get the folder, and the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskservice-newtask"><strong>ITaskService::NewTask</strong></a> method to create the <a href="/windows/desktop/api/taskschd/nn-taskschd-itaskdefinition"><strong>ITaskDefinition</strong></a> object.</p>
+</li>
+<li>
+<p>Define information about the task using the <a href="/windows/desktop/api/taskschd/nn-taskschd-itaskdefinition"><strong>ITaskDefinition</strong></a> object, such as the registration information for the task.</p>
+<p>Use the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskdefinition-get_registrationinfo"><strong>RegistrationInfo property of ITaskDefinition</strong></a> and other properties of the <a href="/windows/desktop/api/taskschd/nn-taskschd-itaskdefinition"><strong>ITaskDefinition</strong></a> interface to define the task information.</p>
+</li>
+<li>
+<p>Create a boot trigger using the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskdefinition-get_triggers"><strong>Triggers property of ITaskDefinition</strong></a> to access the <a href="/windows/desktop/api/taskschd/nn-taskschd-itriggercollection"><strong>ITriggerCollection</strong></a> for the task.</p>
+<p>Use the <a href="/windows/desktop/api/taskschd/nf-taskschd-itriggercollection-create"><strong>ITriggerCollection::Create</strong></a> method to specify that you want to create a boot trigger. You can set the start boundary and delay for the trigger so that the task actions will be scheduled to execute at a specified time when the system is started.</p>
+</li>
+<li>
+<p>Create an action for the task to execute by using the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskdefinition-get_actions"><strong>Actions property of ITaskDefinition</strong></a> to access the <a href="/windows/desktop/api/taskschd/nn-taskschd-iactioncollection"><strong>IActionCollection</strong></a> collection for the task.</p>
+<p>Use the <a href="/windows/desktop/api/taskschd/nf-taskschd-iactioncollection-create"><strong>IActionCollection::Create</strong></a> method to specify the type of action you want to create. This example uses an <a href="/windows/desktop/api/taskschd/nn-taskschd-iexecaction"><strong>IExecAction</strong></a> object, which represents an action that executes a command-line operation.</p>
+</li>
+<li>
+<p>Register the task using the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskfolder-registertaskdefinition"><strong>ITaskFolder::RegisterTaskDefinition</strong></a> method.</p>
+</li>
+</ol>
+<p>The following C++ code example shows how to schedule a task to execute Notepad.exe 30 seconds after the system is started.</p>
+<pre lang="C++"><code>/********************************************************************
+ This sample schedules a task to start Notepad.exe 30 seconds after
+ the system is started. 
+********************************************************************/
+
+#define _WIN32_DCOM
+
+#include &lt;windows.h&gt;
+#include &lt;iostream&gt;
+#include &lt;stdio.h&gt;
+#include &lt;comdef.h&gt;
+//  Include the task header file.
+#include &lt;taskschd.h&gt;
+#pragma comment(lib, &quot;taskschd.lib&quot;)
+#pragma comment(lib, &quot;comsupp.lib&quot;)
+
+
+using namespace std;
+
+int __cdecl wmain()
+{
+    //  ------------------------------------------------------
+    //  Initialize COM.
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCoInitializeEx failed: %x&quot;, hr );
+        return 1;
+    }
+
+    //  Set general COM security levels.
+    hr = CoInitializeSecurity(
+        NULL,
+        -1,
+        NULL,
+        NULL,
+        RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
+        RPC_C_IMP_LEVEL_IMPERSONATE,
+        NULL,
+        0,
+        NULL);
+
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCoInitializeSecurity failed: %x&quot;, hr );
+        CoUninitialize();
+        return 1;
+    }
+
+    //  ------------------------------------------------------
+    //  Create a name for the task.
+    LPCWSTR wszTaskName = L&quot;Boot Trigger Test Task&quot;;
+
+    //  Get the Windows directory and set the path to Notepad.exe.
+    wstring wstrExecutablePath = _wgetenv( L&quot;WINDIR&quot;);
+    wstrExecutablePath += L&quot;\\SYSTEM32\\NOTEPAD.EXE&quot;;
+
+
+    //  ------------------------------------------------------
+    //  Create an instance of the Task Service. 
+    ITaskService *pService = NULL;
+    hr = CoCreateInstance( CLSID_TaskScheduler,
+                           NULL,
+                           CLSCTX_INPROC_SERVER,
+                           IID_ITaskService,
+                           (void**)&amp;pService );  
+    if (FAILED(hr))
+    {
+          printf(&quot;Failed to create an instance of ITaskService: %x&quot;, hr);
+          CoUninitialize();
+          return 1;
+    }
+        
+    //  Connect to the task service.
+    hr = pService-&gt;Connect(_variant_t(), _variant_t(),
+        _variant_t(), _variant_t());
+    if( FAILED(hr) )
+    {
+        printf(&quot;ITaskService::Connect failed: %x&quot;, hr );
+        pService-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+
+    //  ------------------------------------------------------
+    //  Get the pointer to the root task folder.  
+    //  This folder will hold the new task that is registered.
+    ITaskFolder *pRootFolder = NULL;
+    hr = pService-&gt;GetFolder( _bstr_t( L&quot;\\&quot;) , &amp;pRootFolder );
+    if( FAILED(hr) )
+    {
+        printf(&quot;Cannot get Root Folder pointer: %x&quot;, hr );
+        pService-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+    
+    //  If the same task exists, remove it.
+    pRootFolder-&gt;DeleteTask( _bstr_t( wszTaskName), 0  );
+    
+    //  Create the task builder object to create the task.
+    ITaskDefinition *pTask = NULL;
+    hr = pService-&gt;NewTask( 0, &amp;pTask );
+
+    pService-&gt;Release();  // COM clean up.  Pointer is no longer used.
+    if (FAILED(hr))
+    {
+          printf(&quot;Failed to create a task definition: %x&quot;, hr);
+          pRootFolder-&gt;Release();
+          CoUninitialize();
+          return 1;
+    }
+    
+        
+    //  ------------------------------------------------------
+    //  Get the registration info for setting the identification.
+    IRegistrationInfo *pRegInfo= NULL;
+    hr = pTask-&gt;get_RegistrationInfo( &amp;pRegInfo );
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot get identification pointer: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+    
+    hr = pRegInfo-&gt;put_Author(L&quot;Author Name&quot;);
+    pRegInfo-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot put identification info: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+
+    //  ------------------------------------------------------
+    //  Create the settings for the task
+    ITaskSettings *pSettings = NULL;
+    hr = pTask-&gt;get_Settings( &amp;pSettings );
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot get settings pointer: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+    
+    //  Set setting values for the task. 
+    hr = pSettings-&gt;put_StartWhenAvailable(VARIANT_TRUE);
+    pSettings-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot put setting info: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+       
+
+    //  ------------------------------------------------------
+    //  Get the trigger collection to insert the boot trigger.
+    ITriggerCollection *pTriggerCollection = NULL;
+    hr = pTask-&gt;get_Triggers( &amp;pTriggerCollection );
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot get trigger collection: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+
+    //  Add the boot trigger to the task.
+    ITrigger *pTrigger = NULL;
+    hr = pTriggerCollection-&gt;Create( TASK_TRIGGER_BOOT, &amp;pTrigger ); 
+    pTriggerCollection-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot create the trigger: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+    
+    IBootTrigger *pBootTrigger = NULL;
+    hr = pTrigger-&gt;QueryInterface( 
+        IID_IBootTrigger, (void**) &amp;pBootTrigger );
+    pTrigger-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nQueryInterface call failed for IBootTrigger: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+
+    hr = pBootTrigger-&gt;put_Id( _bstr_t( L&quot;Trigger1&quot; ) );
+    if( FAILED(hr) )
+       printf(&quot;\nCannot put the trigger ID: %x&quot;, hr);
+    
+    //  Set the task to start at a certain time. The time 
+    //  format should be YYYY-MM-DDTHH:MM:SS(+-)(timezone).
+    //  For example, the start boundary below
+    //  is January 1st 2005 at 12:05
+    hr = pBootTrigger-&gt;put_StartBoundary( _bstr_t(L&quot;2005-01-01T12:05:00&quot;) );
+    if( FAILED(hr) )
+       printf(&quot;\nCannot put the start boundary: %x&quot;, hr);
+  
+    hr = pBootTrigger-&gt;put_EndBoundary( _bstr_t(L&quot;2015-05-02T08:00:00&quot;) );
+    if( FAILED(hr) )
+       printf(&quot;\nCannot put the end boundary: %x&quot;, hr);
+
+    // Delay the task to start 30 seconds after system start. 
+    hr = pBootTrigger-&gt;put_Delay( L&quot;PT30S&quot; );
+    pBootTrigger-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot put delay for boot trigger: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    } 
+       
+
+    //  ------------------------------------------------------
+    //  Add an Action to the task. This task will execute Notepad.exe.     
+    IActionCollection *pActionCollection = NULL;
+
+    //  Get the task action collection pointer.
+    hr = pTask-&gt;get_Actions( &amp;pActionCollection );
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot get Task collection pointer: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+        
+    //  Create the action, specifying it as an executable action.
+    IAction *pAction = NULL;
+    hr = pActionCollection-&gt;Create( TASK_ACTION_EXEC, &amp;pAction );
+    pActionCollection-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot create the action: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+
+    IExecAction *pExecAction = NULL;
+    //  QI for the executable task pointer.
+    hr = pAction-&gt;QueryInterface( 
+        IID_IExecAction, (void**) &amp;pExecAction );
+    pAction-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nQueryInterface call failed for IExecAction: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+
+    //  Set the path of the executable to Notepad.exe.
+    hr = pExecAction-&gt;put_Path( _bstr_t( wstrExecutablePath.c_str() ) ); 
+    pExecAction-&gt;Release(); 
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot set path of executable: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+      
+    
+    //  ------------------------------------------------------
+    //  Save the task in the root folder.
+    IRegisteredTask *pRegisteredTask = NULL;
+    VARIANT varPassword;
+    varPassword.vt = VT_EMPTY;
+    hr = pRootFolder-&gt;RegisterTaskDefinition(
+            _bstr_t( wszTaskName ),
+            pTask,
+            TASK_CREATE_OR_UPDATE, 
+            _variant_t(L&quot;Local Service&quot;), 
+            varPassword, 
+            TASK_LOGON_SERVICE_ACCOUNT,
+            _variant_t(L&quot;&quot;),
+            &amp;pRegisteredTask);
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nError saving the Task : %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return 1;
+    }
+    
+    printf(&quot;\n Success! Task successfully registered. &quot; );
+
+    //  Clean up.
+    pRootFolder-&gt;Release();
+    pTask-&gt;Release();
+    pRegisteredTask-&gt;Release();
+    CoUninitialize();
+    return 0;
+}
+
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-the-task-scheduler.html">Using the Task Scheduler</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Shadow Copy Creation Process</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The Shadow Copy Creation Process
+ms.assetid: ca484eec-31c6-4790-9232-3ed67263f6fb
+title: The Shadow Copy Creation Process
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>The Shadow Copy Creation Process</h1>
+<p>The following is a detailed description of the hardware provider's role in the creation of a shadow copy set. For a diagram of this process, see <a href="shadow-copy-creation-for-providers.html">Shadow Copy Creation for Providers</a>.</p>
+<ol>
+<li>
+<p>As the requester adds each volume to the shadow copy set, VSS determines the associated LUNs. For example, a spanned volume could be composed of multiple LUNs. VSS creates an initial <a href="/windows/win32/api/vdslun/ns-vdslun-vds_lun_information"><strong>VDS_LUN_INFORMATION</strong></a> using physical device information for each LUN.</p>
+</li>
+<li>
+<p>VSS calls <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-arelunssupported"><strong>AreLunsSupported</strong></a> to determine if the provider supports a shadow copy for that LUN. The hardware provider uses the <a href="/windows/win32/api/vdslun/ns-vdslun-vds_lun_information"><strong>VDS_LUN_INFORMATION</strong></a> to determine whether the LUNs are supported. This determination must be all or nothingâ€”the same hardware provider must support all LUNs contributing to a specific volume. In the spanned volume example, the provider cannot indicate that it supports only one of the LUNs that comprise the volume.</p>
+</li>
+<li>
+<p>For each volume in the shadow copy set, VSS calls <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-beginpreparesnapshot"><strong>IVssHardwareSnapshotProvider::BeginPrepareSnapshot</strong></a> with the same array of <a href="/windows/win32/api/vdslun/ns-vdslun-vds_lun_information"><strong>VDS_LUN_INFORMATION</strong></a> structures. Within a single call, all LUNs in the array are unique, but the same LUN may appear in a subsequent call whenever the same LUN contributes to multiple volumes. The provider must handle that case correctly.</p>
+</li>
+<li>
+<p>Immediately after <a href="/windows/desktop/api/VsProv/nf-vsprov-ivssprovidercreatesnapshotset-endpreparesnapshots"><strong>IVssProviderCreateSnapshotSet::EndPrepareSnapshots</strong></a>, VSS will set the read-only, hidden, no drive letter, and shadow copy flags on all affected LUNs. The flags are implemented using hidden sectors on MBR disks or operating-system-specific bits in the partition header entry on GPT disks. The flags will cause all volumes on the affected disks to be surfaced on the receiving machines as read-only and hidden. Note that the shadow-copied LUNs have not been committed at this stage, so that in the event of a system crash, the flags will be cleared and the original LUN will not be affected. That is, all volumes on the original LUN will be treated as normalâ€”and keep their original drive-letter assignments, mounted folders, and read/write status.</p>
+<blockquote>
+<p>[!Note]<br />
+Providers should not attempt to modify any of the LUN flags.</p>
+</blockquote>
+<p>Â </p>
+</li>
+<li>
+<p>At <a href="/windows/desktop/api/VsProv/nf-vsprov-ivssprovidercreatesnapshotset-commitsnapshots"><strong>CommitSnapshots</strong></a>, the shadow copy LUNs are committed. <strong>CommitSnapshots</strong> should be returned within a few seconds or the whole shadow copy creation process will probably fail.</p>
+</li>
+<li>
+<p>After <a href="/windows/desktop/api/VsProv/nf-vsprov-ivssprovidercreatesnapshotset-commitsnapshots"><strong>CommitSnapshots</strong></a>, VSS clears the flags on all original LUNs involved in the shadow copy. Since the shadow copy LUNs have been committed at this point, the shadow copy LUNs retain these flags.</p>
+</li>
+<li>
+<p>After <a href="/windows/desktop/api/VsProv/nf-vsprov-ivssprovidercreatesnapshotset-postcommitsnapshots"><strong>IVssProviderCreateSnapshotSet::PostCommitSnapshots</strong></a>, VSS clears the LUN flags (that it set after <a href="/windows/desktop/api/VsProv/nf-vsprov-ivssprovidercreatesnapshotset-endpreparesnapshots"><strong>IVssProviderCreateSnapshotSet::EndPrepareSnapshots</strong></a>) and notifies the writers to thaw. VSS then calls the provider's <a href="/windows/desktop/api/VsProv/nf-vsprov-ivssprovidercreatesnapshotset-prefinalcommitsnapshots"><strong>IVssProviderCreateSnapshotSet::PreFinalCommitSnapshots</strong></a> and <a href="/windows/desktop/api/VsProv/nf-vsprov-ivssprovidercreatesnapshotset-postfinalcommitsnapshots"><strong>IVssProviderCreateSnapshotSet::PostFinalCommitSnapshots</strong></a> methods.</p>
+</li>
+<li>
+<p>VSS retrieves an array of <a href="/windows/win32/api/vdslun/ns-vdslun-vds_lun_information"><strong>VDS_LUN_INFORMATION</strong></a> structures, one for each newly created shadow copy LUN, by calling <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-gettargetluns"><strong>IVssHardwareSnapshotProvider::GetTargetLuns</strong></a>. The provider must provide enough information to allow VSS and the provider to identify the shadow copies at any later time and on any system connected to the subsystem. At this time, the shadow copy LUNs should be inaccessible to this machineâ€”the provider must use some mechanism other than by simply reading the information from the LUN.</p>
+</li>
+<li>
+<p>For transportable shadow copies, VSS appends the following to the Backup Components Document describing the shadow copy set:</p>
+<ol>
+<li>The original LUN <a href="/windows/win32/api/vdslun/ns-vdslun-vds_lun_information"><strong>VDS_LUN_INFORMATION</strong></a> array.</li>
+<li>The new shadow copy LUN <a href="/windows/win32/api/vdslun/ns-vdslun-vds_lun_information"><strong>VDS_LUN_INFORMATION</strong></a> array.</li>
+<li>The disk extents for each volume in the shadow copy set.</li>
+</ol>
+</li>
+<li>
+<p>For auto-import shadow copies, the import process begins. In <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-locateluns"><strong>IVssHardwareSnapshotProvider::LocateLuns</strong></a>, the provider will be given the <a href="/windows/win32/api/vdslun/ns-vdslun-vds_lun_information"><strong>VDS_LUN_INFORMATION</strong></a> generated in <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-gettargetluns"><strong>GetTargetLuns</strong></a> at creation time. During <strong>LocateLuns</strong>, the provider should make those shadow copy LUNs visible to the system. The provider should not cause a bus rescan. VSS will cause the rescan and enumeration to allow the LUNs to be discovered by PNP and the volumes to come online.</p>
+</li>
+<li>
+<p>VSS calls <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-fillinluninfo"><strong>IVssHardwareSnapshotProvider::FillInLunInfo</strong></a> for the newly arrived disks in the system. VSS uses the shadow copy LUN <a href="/windows/win32/api/vdslun/ns-vdslun-vds_lun_information"><strong>VDS_LUN_INFORMATION</strong></a> array from <strong>FillInLunInfo</strong>, comparing it with the <strong>VDS_LUN_INFORMATION</strong> generated during creation in <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-gettargetluns"><strong>GetTargetLuns</strong></a> and the disk extents for each volume in the shadow copy set to identify the newly arrived shadow copy LUNs.</p>
+</li>
+<li>
+<p>At this point, all volumes contained on the shadow copy LUNs are mounted hidden and read-only, and VSS has a mapping from original volume to shadow copy volume.</p>
+</li>
+</ol>
+<p>Because a single LUN can contain portions of multiple volumes, the set of shadow copy LUNs may include &quot;extra&quot; volumes. Those volumes are not part of the shadow copy set and should not be used as they are not guaranteed to be consistent.</p>
+<p>After import, the shadow copy can be accessed via the <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-query"><strong>IVssBackupComponents::Query</strong></a> method. A shadow copy can also be exposed as a drive letter, mounted folder, or share using <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-exposesnapshot"><strong>IVssBackupComponents::ExposeSnapshot</strong></a>. A shadow copy set may also be converted to a regular LUN by using the <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-breaksnapshotset"><strong>IVssBackupComponents::BreakSnapshotSet</strong></a> method. From there management applications can use appropriate disk management APIs to further manage the LUN (such as changing the read/write attributes).</p>
+<h3>Transportable Shadow Copies on a SAN</h3>
+<p>Beginning with Windows ServerÂ 2003, Datacenter Edition and Windows ServerÂ 2003, Enterprise Edition, VSS enables transportable shadow copy sets on a SAN. From the point of view of a provider capable of transporting LUNs between hosts, there is little or no difference between a non-transportable and a transportable shadow copy set.</p>
+<p><strong>Windows ServerÂ 2003, Standard Edition, Windows ServerÂ 2003, Web Edition and WindowsÂ XP:</strong> Transportable shadow copy sets are not supported. All editions of Windows ServerÂ 2003 with Service PackÂ 1 (SP1) support transportable shadow copy sets.</p>
+<p>Transportable shadow copy sets must be created with the <strong>VSS_VOLSNAP_ATTR_TRANSPORTABLE</strong> attribute added to the shadow copy context described by the <a href="/windows/desktop/api/Vss/ne-vss-vss_volume_snapshot_attributes"><strong>_VSS_VOLUME_SNAPSHOT_ATTRIBUTES</strong></a> enumeration. All volumes in the set must be transportable. By returning success from <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-arelunssupported"><strong>IVssHardwareSnapshotProvider::AreLunsSupported</strong></a>, the provider is indicating that not only does it support the LUN, but also that it can transport the LUN. The creation of a transportable shadow copy set concludes when VSS records the LUN information in the Backup Components Document. A shadow copy set may only be imported once after initial creation.</p>
+<p>On the receiving machine, the requester imports the shadow copy set. The <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-importsnapshots"><strong>IVssBackupComponents::ImportSnapshots</strong></a> method uses the Backup Components Document describing the shadow copy set as input. Importing proceeds by:</p>
+<ol>
+<li>VSS constructs an array of shadow copy <a href="/windows/win32/api/vdslun/ns-vdslun-vds_lun_information"><strong>VDS_LUN_INFORMATION</strong></a> structures from the Backup Components Document.</li>
+<li>When VSS calls <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-locateluns"><strong>IVssHardwareSnapshotProvider::LocateLuns</strong></a>, the array of <a href="/windows/win32/api/vdslun/ns-vdslun-vds_lun_information"><strong>VDS_LUN_INFORMATION</strong></a> structures generated in <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-gettargetluns"><strong>IVssHardwareSnapshotProvider::GetTargetLuns</strong></a> will be passed to the provider. While processing this method, the provider should make those shadow copy LUNs visible to the system. The provider should not cause a bus rescan. VSS will trigger the rescan and enumeration to allow the LUNs to be discovered by PNP and the volumes to come online.</li>
+<li>VSS calls <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-fillinluninfo"><strong>IVssHardwareSnapshotProvider::FillInLunInfo</strong></a> for the newly arrived disks in the system. VSS uses the shadow copy LUN array of <a href="/windows/win32/api/vdslun/ns-vdslun-vds_lun_information"><strong>VDS_LUN_INFORMATION</strong></a> structures from <strong>FillInLunInfo</strong>, comparing it with the <strong>VDS_LUN_INFORMATION</strong> generated during shadow copy set creation in <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-gettargetluns"><strong>GetTargetLuns</strong></a> and the disk extents for each volume in the shadow copy set to identify the newly arrived shadow copy LUNs.</li>
+<li>At this point, all volumes contained on the transported LUNs are mounted hidden and read-only and VSS has a mapping from the original volume to the shadow copy volume.</li>
+</ol>
+<p>For both the single machine and transportable case, the sequence is similar starting with the point that <a href="/windows/desktop/api/VsProv/nf-vsprov-ivsshardwaresnapshotprovider-gettargetluns"><strong>GetTargetLuns</strong></a> is called. For auto-import, the steps happen directly after creation.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

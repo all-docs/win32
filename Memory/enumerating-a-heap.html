@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Enumerating a Heap</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example illustrates the use of the HeapWalk function to enumerate a heap.
+ms.assetid: ef37d644-473f-4e51-9785-5b44fe0dce42
+title: Enumerating a Heap
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Enumerating a Heap</h1>
+<p>The following example illustrates the use of the <a href="/windows/desktop/api/HeapApi/nf-heapapi-heapwalk"><strong>HeapWalk</strong></a> function to enumerate a heap.</p>
+<p>First, the example creates a private heap with the <a href="/windows/desktop/api/HeapApi/nf-heapapi-heapcreate"><strong>HeapCreate</strong></a> function. Then it uses <a href="/windows/desktop/api/HeapApi/nf-heapapi-heaplock"><strong>HeapLock</strong></a> to lock the heap so other threads cannot access the heap while it is being enumerated. The example then calls <a href="/windows/desktop/api/HeapApi/nf-heapapi-heapwalk"><strong>HeapWalk</strong></a> with a pointer to a <a href="/windows/win32/api/minwinbase/ns-minwinbase-process_heap_entry"><strong>PROCESS_HEAP_ENTRY</strong></a> structure and iterates through the heap, printing each entry to the console.</p>
+<p>After enumeration is finished, the example uses <a href="/windows/desktop/api/HeapApi/nf-heapapi-heapunlock"><strong>HeapUnlock</strong></a> to unlock the heap so that other threads can access it. Finally, the example calls <a href="/windows/desktop/api/HeapApi/nf-heapapi-heapdestroy"><strong>HeapDestroy</strong></a> to destroy the private heap.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;stdio.h&gt;
+
+int __cdecl _tmain()
+{
+    DWORD LastError;
+    HANDLE hHeap;
+    PROCESS_HEAP_ENTRY Entry;
+
+    //
+    // Create a new heap with default parameters.
+    //
+    hHeap = HeapCreate(0, 0, 0);
+    if (hHeap == NULL) {
+        _tprintf(TEXT(&quot;Failed to create a new heap with LastError %d.\n&quot;),
+                 GetLastError());
+        return 1;
+    }
+
+    //
+    // Lock the heap to prevent other threads from accessing the heap 
+    // during enumeration.
+    //
+    if (HeapLock(hHeap) == FALSE) {
+        _tprintf(TEXT(&quot;Failed to lock heap with LastError %d.\n&quot;),
+                 GetLastError());
+        return 1;
+    }
+
+    _tprintf(TEXT(&quot;Walking heap %#p...\n\n&quot;), hHeap);
+
+    Entry.lpData = NULL;
+    while (HeapWalk(hHeap, &amp;Entry) != FALSE) {
+        if ((Entry.wFlags &amp; PROCESS_HEAP_ENTRY_BUSY) != 0) {
+            _tprintf(TEXT(&quot;Allocated block&quot;));
+
+            if ((Entry.wFlags &amp; PROCESS_HEAP_ENTRY_MOVEABLE) != 0) {
+                _tprintf(TEXT(&quot;, movable with HANDLE %#p&quot;), Entry.Block.hMem);
+            }
+
+            if ((Entry.wFlags &amp; PROCESS_HEAP_ENTRY_DDESHARE) != 0) {
+                _tprintf(TEXT(&quot;, DDESHARE&quot;));
+            }
+        }
+        else if ((Entry.wFlags &amp; PROCESS_HEAP_REGION) != 0) {
+            _tprintf(TEXT(&quot;Region\n  %d bytes committed\n&quot;) \
+                     TEXT(&quot;  %d bytes uncommitted\n  First block address: %#p\n&quot;) \
+                     TEXT(&quot;  Last block address: %#p\n&quot;),
+                     Entry.Region.dwCommittedSize,
+                     Entry.Region.dwUnCommittedSize,
+                     Entry.Region.lpFirstBlock,
+                     Entry.Region.lpLastBlock);
+        }
+        else if ((Entry.wFlags &amp; PROCESS_HEAP_UNCOMMITTED_RANGE) != 0) {
+            _tprintf(TEXT(&quot;Uncommitted range\n&quot;));
+        }
+        else {
+            _tprintf(TEXT(&quot;Block\n&quot;));
+        }
+
+        _tprintf(TEXT(&quot;  Data portion begins at: %#p\n  Size: %d bytes\n&quot;) \
+                 TEXT(&quot;  Overhead: %d bytes\n  Region index: %d\n\n&quot;),
+                 Entry.lpData,
+                 Entry.cbData,
+                 Entry.cbOverhead,
+                 Entry.iRegionIndex);
+    }
+    LastError = GetLastError();
+    if (LastError != ERROR_NO_MORE_ITEMS) {
+        _tprintf(TEXT(&quot;HeapWalk failed with LastError %d.\n&quot;), LastError);
+    }
+
+    //
+    // Unlock the heap to allow other threads to access the heap after 
+    // enumeration has completed.
+    //
+    if (HeapUnlock(hHeap) == FALSE) {
+        _tprintf(TEXT(&quot;Failed to unlock heap with LastError %d.\n&quot;),
+                 GetLastError());
+    }
+
+    //
+    // When a process terminates, allocated memory is reclaimed by the operating
+    // system so it is not really necessary to call HeapDestroy in this example.
+    // However, it may be advisable to call HeapDestroy in a longer running
+    // application.
+    //
+    if (HeapDestroy(hHeap) == FALSE) {
+        _tprintf(TEXT(&quot;Failed to destroy heap with LastError %d.\n&quot;),
+                 GetLastError());
+    }
+
+    return 0;
+}
+</code></pre>
+<p>The following output shows typical results for a newly created heap.</p>
+<pre lang="syntax"><code>Walking heap 0X00530000...
+
+Region
+  4096 bytes committed
+  258048 bytes uncommitted
+  First block address: 0X00530598
+  Last block address: 0X00570000
+  Data portion begins at: 0X00530000
+  Size: 1416 bytes
+  Overhead: 0 bytes
+  Region index: 0
+
+Block
+  Data portion begins at: 0X005307D8
+  Size: 2056 bytes
+  Overhead: 16 bytes
+  Region index: 0
+
+Uncommitted range
+  Data portion begins at: 0X00531000
+  Size: 258048 bytes
+  Overhead: 0 bytes
+  Region index: 0
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

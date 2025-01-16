@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Media Sinks</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Media sinks are the pipeline objects that receive media data.
+ms.assetid: 'a0fbce1b-0a16-4449-9eca-906fd9056a1c'
+title: Media Sinks
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Media Sinks</h1>
+<p><em>Media sinks</em> are the pipeline objects that receive media data. A media sink is the destination for one or more media streams. Media sinks fall into two general categories:</p>
+<ul>
+<li>
+<p>A <em>renderer</em> is a media sink that presents data for playback. The enhanced video renderer (EVR) displays video frames, and the audio renderer plays audio streams through the sound card or other audio device.</p>
+</li>
+<li>
+<p>An <em>archive sink</em> is a media sink that writes data to a file or other storage.</p>
+</li>
+</ul>
+<p>The main difference between them is that an archive sink does not consume the data at a fixed playback rate. Instead, it writes the data that it receives as quickly as possible.</p>
+<p>Media sinks expose the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasink"><strong>IMFMediaSink</strong></a> interface. Each media sink contains one or more <em>stream sinks</em>. Each stream sink receives the data from one stream. Stream sinks expose the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfstreamsink"><strong>IMFStreamSink</strong></a> interface. Typically an application does not create media sinks directly. Instead, the application creates one or more activation objects, which the Media Session uses to create the sink. All other operations on the sink are handled by the Media Session, and the application does not call any methods on the media sink or any of the stream sinks. For more information about activation objects, see <a href="activation-objects.html">Activation Objects</a>.</p>
+<p>You should read the remainder of this topic if you are writing a custom media sink, or if you want to use a media sink directly without the Media Session.</p>
+<ul>
+<li><a href="#stream-sinks">Stream Sinks</a></li>
+<li><a href="#presentation-clock">Presentation Clock</a></li>
+<li><a href="#stream-formats">Stream Formats</a></li>
+<li><a href="#data-flow">Data Flow</a></li>
+<li><a href="#markers">Markers</a></li>
+<li><a href="#state-changes">State Changes</a></li>
+<li><a href="#finalizing">Finalizing</a></li>
+<li><a href="#shutting-down">Shutting Down</a></li>
+<li><a href="#media-sink-interfaces">Media Sink Interfaces</a></li>
+<li><a href="#stream-sink-interfaces">Stream Sink Interfaces</a></li>
+<li><a href="#stream-sink-events">Stream Sink Events</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Stream Sinks</h2>
+<p>A media sink can have a fixed number of stream sinks, or it can support adding and removing stream sinks. If it has a fixed number of stream sinks, the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-getcharacteristics"><strong>IMFMediaSink::GetCharacteristics</strong></a> method returns the MEDIASINK_FIXED_STREAMS flag. Otherwise, you can add and remove stream sinks. To add a new stream sink, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-addstreamsink"><strong>IMFMediaSink::AddStreamSink</strong></a>. To remove a stream sink, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-removestreamsink"><strong>IMFMediaSink::RemoveStreamSink</strong></a>. The MEDIASINK_FIXED_STREAMS flag indicates that the media sink does not support these two methods. (It might support some other way to configure the number of streams, for example by setting initialization parameters when the sink is created.) The list of stream sinks is ordered. To enumerate them by index value, call the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-getstreamsinkbyindex"><strong>IMFMediaSink::GetStreamSinkByIndex</strong></a> method.</p>
+<p>Stream sinks also have identifiers. Stream identifiers are unique within the media sink, but do not have to be consecutive. Depending on the media sink, the stream identifiers might have some meaning that is related to the content. For example, an archive sink might write the stream identifiers into the file header. Otherwise, they are arbitrary. To get a stream sink by its identifier, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-getstreamsinkbyid"><strong>IMFMediaSink::GetStreamSinkById</strong></a>.</p>
+<h2>Presentation Clock</h2>
+<p>The rate at which a media sink consumes samples is controlled by the <a href="presentation-clock.html">Presentation Clock</a>. The Media Session selects the presentation clock and sets it on the media sink by calling the media sink's <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-setpresentationclock"><strong>IMFMediaSink::SetPresentationClock</strong></a> method. The presentation clock must be set on the media sink before streaming can begin. Every media sink requires a presentation clock to run. The media sink uses the presentation clock for two purposes:</p>
+<ul>
+<li>
+<p>To receive notifications when streaming starts or stops. The media sink receives these notifications through the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfclockstatesink"><strong>IMFClockStateSink</strong></a> interface, which all media sinks must implement.</p>
+</li>
+<li>
+<p>To determine when it should render samples. When the media sink receives a new sample, it gets the time stamp from the sample and tries to render the sample at that presentation time.</p>
+</li>
+</ul>
+<p>The presentation clock derives its clock times from another object called the <em>presentation time source</em>. Presentation time sources expose the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfpresentationtimesource"><strong>IMFPresentationTimeSource</strong></a> interface. Some media sinks have access to an accurate clock, so they expose this interface. This means that a media sink might schedule samples against a time provided by its own clock. However, the media sink cannot assume this to be the case. It must always use the time from the presentation clock, regardless of whether the presentation clock is driven by the media sink itself, or by some other clock.</p>
+<p>If a media sink cannot match rates with a clock other than its own, the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-getcharacteristics"><strong>GetCharacteristics</strong></a> method returns the MEDIASINK_CANNOT_MATCH_CLOCK flag. If this flag is present and the presentation clock uses a different presentation time source, the media sink is likely to perform poorly. For example, it might glitch during playback.</p>
+<p>A <em>rateless</em> sink is a media sink that ignores the time stamps on samples and consumes data as soon as each sample arrives. A rateless media sink returns the MEDIASINK_RATELESS flag from the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-getcharacteristics"><strong>GetCharacteristics</strong></a> method. Typically this flag applies to archive sinks. If every media sink in the pipeline is rateless, the Media Session uses a special rateless presentation clock. This clock runs as quickly as the sinks consume samples.</p>
+<h2>Stream Formats</h2>
+<p>Before the media sink can receive samples, the client must set the media type on the stream sinks. To set the media type, call the stream sink's <a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-getmediatypehandler"><strong>IMFStreamSink::GetMediaTypeHandler</strong></a> method. This method returns a pointer to the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediatypehandler"><strong>IMFMediaTypeHandler</strong></a> interface. Use this interface to get the list of preferred media types, get the current media type, and set the media type.</p>
+<p>To get the list of preferred media types, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediatypehandler-getmediatypebyindex"><strong>IMFMediaTypeHandler::GetMediaTypeByIndex</strong></a>. The preferred types should be taken as a hint to the client. The list might be incomplete or include partial media types. A partial media type is one that does not have all of the attributes needed to describe a valid format. For example, a partial video type might specify the color space and bit depth but not the image width or height. A partial audio type might specify the compression format and the sample rate but not the number of audio channels.</p>
+<p>To get the stream sink's current media type, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediatypehandler-getcurrentmediatype"><strong>IMFMediaTypeHandler::GetCurrentMediaType</strong></a>. When a stream sink is first created, it might have a default media type already set, or it might have no media type until the client sets one.</p>
+<p>To set the media type, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediatypehandler-setcurrentmediatype"><strong>IMFMediaTypeHandler::SetCurrentMediaType</strong></a>. Some stream sinks might not support changing the type after is has been set. Therefore, it useful to test media types before setting them. To test whether the media sink will accept a media type, (without setting the type), call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediatypehandler-ismediatypesupported"><strong>IMFMediaTypeHandler::IsMediaTypeSupported</strong></a>.</p>
+<h2>Data Flow</h2>
+<p>Media sinks use a <em>pull model</em>, which means that the stream sinks request data as they need it. The client should respond in a timely manner to avoid any glitching.</p>
+<p>Some media sinks support <em>prerolling</em>. Prerolling is the process of giving data to the media sink before the presentation clock starts. If a media sink supports prerolling, the media sink exposes the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasinkpreroll"><strong>IMFMediaSinkPreroll</strong></a> interface, and the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-getcharacteristics"><strong>GetCharacteristics</strong></a> method returns the MEDIASINK_CAN_PREROLL flag. Prerolling ensures that the media sink is ready to present the first sample when the presentation clock starts. It is recommended that the client always preroll if the media sink supports it, because it can prevent glitching or gaps during playback.</p>
+<p>Data flow to a media sink works as follows:</p>
+<ol>
+<li>The client sets the media types and the presentation clock. The media sink registers itself with the presentation clock to receive notifications about clock state changes.</li>
+<li>Optionally, the client queries for <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasinkpreroll"><strong>IMFMediaSinkPreroll</strong></a>. If the media sink exposes this interface, the client calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasinkpreroll-notifypreroll"><strong>IMFMediaSinkPreroll::NotifyPreroll</strong></a>. Otherwise, the client skips to step 5.</li>
+<li>Each stream sink sends one or more <a href="mestreamsinkrequestsample.html">MEStreamSinkRequestSample</a> events. In response to each of these events, the client gets the next sample of data for that stream and calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-processsample"><strong>IMFStreamSink::ProcessSample</strong></a>.</li>
+<li>When each stream sink receives enough preroll data, it sends an <a href="mestreamsinkprerolled.html">MEStreamSinkPrerolled</a> event.</li>
+<li>The client calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfpresentationclock-start"><strong>IMFPresentationClock::Start</strong></a> to start the presentation clock.</li>
+<li>The presentation clock notifies the media sink that the clock is starting, by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclockstart"><strong>IMFClockStateSink::OnClockStart</strong></a>.</li>
+<li>To get more data, each stream sink sends <a href="mestreamsinkrequestsample.html">MEStreamSinkRequestSample</a> events. In response to each of these events, the client gets the next sample and calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-processsample"><strong>ProcessSample</strong></a>. This step is repeated until the presentation ends.</li>
+</ol>
+<p>Most media sinks process samples asynchronously, so the stream sinks can send out more than one sample request at a time.</p>
+<p>During streaming, the client can call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-placemarker"><strong>IMFStreamSink::PlaceMarker</strong></a> and <a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-flush"><strong>IMFStreamSink::Flush</strong></a> at any time. Markers are described in the next section. Flushing causes the stream sink to drop any samples that it has queued but not rendered yet.</p>
+<h2>Markers</h2>
+<p>Markers provide a way for the client to indicate specific points in the stream. A marker consists of the following information:</p>
+<ul>
+<li>The marker type, defined as a member of the <a href="/windows/desktop/api/mfidl/ne-mfidl-mfstreamsink_marker_type"><strong>MFSTREAMSINK_MARKER_TYPE</strong></a> enumeration.</li>
+<li>Data associated with the marker. The meaning of the data depends on the marker type. Some marker types do not have data.</li>
+<li>Optional data for the client's own use.</li>
+</ul>
+<p>To place a marker, the client calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-placemarker"><strong>IMFStreamSink::PlaceMarker</strong></a>. The stream sink finishes processing any samples that it received before the <strong>PlaceMarker</strong> call, and then sends an <a href="mestreamsinkmarker.html">MEStreamSinkMarker</a> event.</p>
+<p>Most media sinks keep a queue of pending samples, which they process asynchronously. Marker events must be serialized with sample processing, so the media sink should place the markers in the same queue. For example, suppose the client makes the following method calls:</p>
+<ol>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-processsample"><strong>ProcessSample</strong></a> (Sample #1)</li>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-processsample"><strong>ProcessSample</strong></a> (Sample #2)</li>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-placemarker"><strong>PlaceMarker</strong></a> (Marker #1)</li>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-processsample"><strong>ProcessSample</strong></a> (Sample #3)</li>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-placemarker"><strong>PlaceMarker</strong></a> (Marker #2)</li>
+</ol>
+<p>In this example, the stream sink must send the <a href="mestreamsinkmarker.html">MEStreamSinkMarker</a> event for marker #1 after it processes sample #2, and the event for marker #2 after it processes sample #3.</p>
+<p>If the client flushes a stream sink, the stream sink immediately processes any markers that were in the queue. It sets the status code to E_ABORT on these events.</p>
+<p>Some markers contain information that is relevant to the media sink:</p>
+<ul>
+<li><strong>MFSTREAMSINK_MARKER_TICK</strong>: Indicates there is a gap in the stream. The next sample will be a discontinuity.</li>
+<li><strong>MFSTREAMSINK_MARKER_ENDOFSEGMENT</strong>: Indicates the end of a segment or the end of a stream. The next sample (if any) might be a discontinuity.</li>
+<li><strong>MFSTREAMSINK_MARKER_EVENT</strong>: Contains an event. Depending on the event type and the implementation of the media sink, the media sink might handle the event or ignore it.</li>
+</ul>
+<h2>State Changes</h2>
+<p>A media sink is notified of state changes in the presentation clock through the media sink's <a href="/windows/desktop/api/mfidl/nn-mfidl-imfclockstatesink"><strong>IMFClockStateSink</strong></a> interface. When the client sets the presentation clock, the media sink calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfpresentationclock-addclockstatesink"><strong>IMFPresentationClock::AddClockStateSink</strong></a> to register itself for notifications from the clock. The following table summarizes how a media sink behaves in response to clock state changes.</p>
+<table>
+<thead>
+<tr>
+<th>Clock state change</th>
+<th>Sample processing</th>
+<th>Marker processing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclockstart"><strong>OnClockStart</strong></a></td>
+<td>Process samples whose time stamp is equal to or later than the clock start time.</td>
+<td>Send the <a href="mestreamsinkmarker.html">MEStreamSinkMarker</a> event when all of the samples received before the marker have been processed.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclockpause"><strong>OnClockPause</strong></a></td>
+<td>The media sink can fail <a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-processsample"><strong>ProcessSample</strong></a> while paused.<!-- raw HTML omitted --> If the media sink accepts samples while paused, it must queue them until the clock restarts. Do not process any queued samples while paused.<!-- raw HTML omitted --></td>
+<td>If there are queued samples, put markers onto the same queue. Send the marker event when the clock restarts.<!-- raw HTML omitted --> Otherwise, send the marker event immediately.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclockrestart"><strong>OnClockRestart</strong></a></td>
+<td>Process any samples that were queued while paused, and then treat the same as <a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclockstart"><strong>OnClockStart</strong></a>.</td>
+<td>Send <a href="mestreamsinkmarker.html">MEStreamSinkMarker</a> events for queued markers (serialized with sample processing), and then treat the same as <a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclockstart"><strong>OnClockStart</strong></a>.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclockstop"><strong>OnClockStop</strong></a></td>
+<td>Drop all queued samples. Further calls to <a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-processsample"><strong>ProcessSample</strong></a> can fail.</td>
+<td>Send queued marker events. On subsequent calls to <a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamsink-placemarker"><strong>PlaceMarker</strong></a>, send the marker event immediately.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>In addition, stream sinks must send the following events when they have completed the state transitions:</p>
+<ul>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclockstart"><strong>OnClockStart</strong></a>, <a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclockrestart"><strong>OnClockRestart</strong></a>: <a href="mestreamsinkstarted.html">MEStreamSinkStarted</a> event</li>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclockpause"><strong>OnClockPause</strong></a>: <a href="mestreamsinkpaused.html">MEStreamSinkPaused</a> event</li>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-imfclockstatesink-onclockstop"><strong>OnClockStop</strong></a>: <a href="mestreamsinkstopped.html">MEStreamSinkStopped</a> event</li>
+</ul>
+<h2>Finalizing</h2>
+<p>Some media sinks require an extra processing step after the last sample is delivered. Typically this requirement applies to archive sinks, which must write headers or indexes into the file. If a media sink requires any final processing, it exposes the <a href="/windows/desktop/api/mfidl/nn-mfidl-imffinalizablemediasink"><strong>IMFFinalizableMediaSink</strong></a> interface.</p>
+<p>After the client delivers the last sample, the client queries for this interface. If the media sink supports the interface, the client calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imffinalizablemediasink-beginfinalize"><strong>IMFFinalizableMediaSink::BeginFinalize</strong></a> to perform the final processing asynchronously. This method follows the standard Media Foundation asynchronous model, described in <a href="asynchronous-callback-methods.html">Asynchronous Callback Methods</a>. The media sink can assume that the client will call <strong>BeginFinalize</strong>. Failure to call <strong>BeginFinalize</strong> can result in an incorrectly authored file.</p>
+<h2>Shutting Down</h2>
+<p>When the client is done using the media sink, the client calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-shutdown"><strong>IMFMediaSink::Shutdown</strong></a>. Inside this method, the media sink should break any circular reference counts. Typically, there will be circular references between the media sink and the stream sinks.</p>
+<p>If you are using the event queue helper object to implement <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a>, call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaeventqueue-shutdown"><strong>IMFMediaEventQueue::Shutdown</strong></a> on the event queue. This method shuts down the event queue and signals any caller that is currently waiting for an event.</p>
+<p>After shutdown, all methods on the media sink return MF_E_SHUTDOWN, with the exception of <strong>IUnknown</strong> methods.</p>
+<h2>Media Sink Interfaces</h2>
+<p>The following table lists the standard interfaces that media sinks can expose through <strong>QueryInterface</strong>. Media sinks can also expose custom interfaces.</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasink"><strong>IMFMediaSink</strong></a></td>
+<td>The primary interface for media sinks. (Required.)</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfclockstatesink"><strong>IMFClockStateSink</strong></a></td>
+<td>Used to notify the media sink when presentation clock changes state. (Required.)</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imffinalizablemediasink"><strong>IMFFinalizableMediaSink</strong></a></td>
+<td>Implement if the media sink must perform a final processing step. (Optional.)</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfgetservice"><strong>IMFGetService</strong></a></td>
+<td>Implement if the media sink exposes any service interfaces. (Optional.)</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a></td>
+<td>Implement if the media sink sends any events. (Optional.)</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasinkpreroll"><strong>IMFMediaSinkPreroll</strong></a></td>
+<td>Implement if the media sink supports preroll. (Optional.)</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfpresentationtimesource"><strong>IMFPresentationTimeSource</strong></a></td>
+<td>Implement if the media sink can provide a time source for the presentation clock. (Optional.)</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfqualityadvise"><strong>IMFQualityAdvise</strong></a></td>
+<td>Implement if the media sink can adjust playback quality. (Optional.)</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Optionally, a media sink can implement the following interface as a service.</p>
+<table>
+<thead>
+<tr>
+<th>Service interface</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a></td>
+<td>Reports the range of supported playback rates.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>For more information about service interfaces and <a href="/windows/desktop/api/mfidl/nn-mfidl-imfgetservice"><strong>IMFGetService</strong></a>, see <a href="service-interfaces.html">Service Interfaces</a>.</p>
+<h2>Stream Sink Interfaces</h2>
+<p>Stream sinks must expose the following interfaces through <strong>QueryInterface</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfstreamsink"><strong>IMFStreamSink</strong></a></td>
+<td>The primary interface for stream sinks. (Required.)</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a></td>
+<td>Queues events. The <a href="/windows/desktop/api/mfidl/nn-mfidl-imfstreamsink"><strong>IMFStreamSink</strong></a> interface inherits this interface. (Required.)</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Currently no service interfaces are defined for stream sinks.</p>
+<h2>Stream Sink Events</h2>
+<p>The following table lists the events that are defined for generic stream sinks. Stream sinks can also send custom events not listed here.</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="mestreamsinkformatchanged.html">MEStreamSinkFormatChanged</a></td>
+<td>The stream sink's media type is no longer valid. (Optional.)</td>
+</tr>
+<tr>
+<td><a href="mestreamsinkmarker.html">MEStreamSinkMarker</a></td>
+<td>A marker was processed. (Required.)</td>
+</tr>
+<tr>
+<td><a href="mestreamsinkpaused.html">MEStreamSinkPaused</a></td>
+<td>The stream sink has paused. (Required.)</td>
+</tr>
+<tr>
+<td><a href="mestreamsinkprerolled.html">MEStreamSinkPrerolled</a></td>
+<td>Preroll is complete. (Optional.)</td>
+</tr>
+<tr>
+<td><a href="mestreamsinkratechanged.html">MEStreamSinkRateChanged</a></td>
+<td>The stream sink has changed playback rate. (Optional.)</td>
+</tr>
+<tr>
+<td><a href="mestreamsinkrequestsample.html">MEStreamSinkRequestSample</a></td>
+<td>A new sample is requested. (Required.)</td>
+</tr>
+<tr>
+<td><a href="mestreamsinkscrubsamplecomplete.html">MEStreamSinkScrubSampleComplete</a></td>
+<td>A scrub request was completed. (Optional.)</td>
+</tr>
+<tr>
+<td><a href="mestreamsinkstarted.html">MEStreamSinkStarted</a></td>
+<td>The stream sink has started. (Required.)</td>
+</tr>
+<tr>
+<td><a href="mestreamsinkstopped.html">MEStreamSinkStopped</a></td>
+<td>The stream sink has stopped. (Required.)</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Currently no general-purpose events are defined for media sinks. Some media sinks might send custom events.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="media-foundation-pipeline.html">Media Foundation Pipeline</a></p>
+<!-- raw HTML omitted -->
+<p><a href="media-foundation-architecture.html">Media Foundation Architecture</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

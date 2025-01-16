@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Verify Document Signatures and Certificates</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to verify the signatures in an XPS document and how to verify the certificates that are related to those signatures.
+ms.assetid: fd12abaf-dc0f-4db1-837d-c116627bcc7e
+title: Verify Document Signatures and Certificates
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Verify Document Signatures and Certificates</h1>
+<p>This topic describes how to verify the signatures in an XPS document and how to verify the certificates that are related to those signatures.</p>
+<p>Before using the following code examples in your program, read the disclaimer in <a href="basic-digital-signature-programming-tasks.html">Common Digital Signature Programming Tasks</a>.</p>
+<p>The following code example checks the digital signatures that are found in an XPS document.</p>
+<p>To check the signatures in an XPS document, perform the following steps:</p>
+<ol>
+<li>Load the document into a signature manager, as described in <a href="initialize-the-signature-manager.html">Initialize the Signature Manager</a>.</li>
+<li>Get the collection of signatures from the digital signature manager.</li>
+<li>Get the number of signatures in the collection.</li>
+<li>For each signature in the collection, call the <a href="/windows/desktop/api/xpsdigitalsignature/nf-xpsdigitalsignature-ixpssignature-verify"><strong>Verify</strong></a> method as shown in the code example that follows.</li>
+</ol>
+<pre lang="C++"><code>HRESULT
+VerifyAllDigitalSignaturesAndAuthenticateCertificates(
+    IXpsSignatureManager *signatureManager
+)
+{
+    HRESULT                       hr                              = S_OK;
+    IXpsSignature                 *signature                      = NULL;
+    IXpsSignatureCollection       *signaturesInDocument           = NULL;
+    UINT32                        numberOfSignaturesInDocument    = NULL;
+
+    hr = signatureManager-&gt;GetSignatures(&amp;signaturesInDocument);
+    if (SUCCEEDED(hr)) {
+        hr = signaturesInDocument-&gt;GetCount(&amp;numberOfSignaturesInDocument);
+    }
+
+    if (SUCCEEDED(hr)) {
+        // Check each signature in the XPS document that was opened in
+        //  the signature manager.
+        for (UINT32 index = 0; index &lt; numberOfSignaturesInDocument; index++)
+        {
+            // Get the signature in the current index of the 
+            //  IXpsSignatureCollection object
+            hr = signaturesInDocument-&gt;GetAt(index, &amp;signature);
+
+            if (SUCCEEDED(hr)) {
+                PCCERT_CONTEXT       signingCertificate = NULL;
+                XPS_SIGNATURE_STATUS signatureStatus; 
+
+                signatureStatus = XPS_SIGNATURE_STATUS_BROKEN;
+                // Verify the signature and authenticate 
+                //  its signing certificate
+                hr = VerifySignatureAndCertificates (
+                        signature,
+                        &amp;signingCertificate,
+                        &amp;signatureStatus);
+                if (FAILED(hr)) {
+                    // If a FACILITY_SECURITY error code is returned then 
+                    //  the current certificate was not the 
+                    //    signing certificate, so continue with 
+                    //  the enumeration.
+                    if (HRESULT_FACILITY(hr) != FACILITY_SECURITY)
+                    {
+                        // If the error was not a FACILITY_SECURITY error  
+                        //  then exit and return the error
+                        break; // out of for loop
+                    }
+                }
+                // release pointers for next loop
+                if (NULL != signature) {
+                    signature-&gt;Release(); 
+                    signature = NULL; 
+                }
+                if (NULL != signingCertificate) {
+                    CertFreeCertificateContext (signingCertificate); 
+                    signingCertificate = NULL;
+                }
+            }
+        }
+    }
+    if (NULL != signaturesInDocument) signaturesInDocument-&gt;Release();
+    
+    return hr;
+}
+</code></pre>
+<p>To verify a digital signature, first verify the signature created by the signing certificate, then validate the signing certificate. The validation method used in the following code example caches the certificates in a temporary certificate store, which the Crypto API functions use when they are called later in this example.</p>
+<p>To create a temporary certificate store, perform the following steps:</p>
+<ol>
+<li>Create a temporary certificate store to hold the certificates used by the signature.</li>
+<li>Iterate through the signature's certificate set, and load each certificate into the temporary certificate store.</li>
+</ol>
+<pre lang="C++"><code>HRESULT VerifySignatureAndCertificates (
+    IXpsSignature           *signature,
+    PCCERT_CONTEXT          *signingCertificate,
+    XPS_SIGNATURE_STATUS    *signatureStatus
+)
+{
+    HRESULT                         hr                        = S_OK;
+    BOOL                            moreCertificates          = FALSE;
+    IOpcCertificateEnumerator       *certificatesInSignature  = NULL;
+    
+    HCERTSTORE                      signatureCertificateStore = NULL;
+    
+    // Create a temporary certificate store.  
+    signatureCertificateStore = CertOpenStore(
+        CERT_STORE_PROV_MEMORY, 
+        X509_ASN_ENCODING, 
+        NULL, 
+        0, 
+        NULL);
+
+    // Create a certificate enumerator to store the certificates 
+    //  that are associated with the current signature.
+    hr = signature-&gt;GetCertificateEnumerator(&amp;certificatesInSignature);
+
+    if (SUCCEEDED(hr))
+    {
+    // We need to call the MoveNext method to initialize the enumerator.
+        hr = certificatesInSignature-&gt;MoveNext(&amp;moreCertificates);
+    }
+    if (SUCCEEDED(hr))
+    {
+        // Iterate through the certificates in the signature, 
+        //  and add each one to the temporary certificate store.  
+        //  This temporary  certificate store simplifies 
+        //  authentication of the signing certificate.
+        while (moreCertificates)
+        {
+            PCCERT_CONTEXT certificate  = NULL;
+            hr = certificatesInSignature-&gt;GetCurrent(&amp;certificate);
+            if (SUCCEEDED(hr))
+            {
+                // got the next certificate so
+                // add the current certificate to the temporary certificate store.
+                if (!CertAddCertificateContextToStore(signatureCertificateStore,
+                    certificate,
+                    CERT_STORE_ADD_REPLACE_EXISTING,
+                    NULL))
+                {
+                    hr = E_FAIL;
+                    // ERROR: could not add the certificate to the certificate store
+                    break; // out of while loop
+                }
+                CertFreeCertificateContext (certificate);
+            }
+            else
+            {
+                // unable to get the certificate so skip
+            }
+
+            // move to next certificate in set
+            if (FAILED(hr = certificatesInSignature-&gt;MoveNext(&amp;moreCertificates)))
+            {
+                // ERROR: could not move to the next certificate in the enumerator
+                break; // out of while loop
+            }
+            // moreCertificates == FALSE when the end of the set has been reached.
+        }//End while
+    }
+    if (NULL != certificatesInSignature) certificatesInSignature-&gt;Release();
+
+</code></pre>
+<p>To verify the digital signature and the certificate used to sign the document, perform the following steps:</p>
+<ol>
+<li>Find the signing certificate by iterating through the certificates that are used by the signature.</li>
+<li>Test the certificate by verifying the signature against the certificate. The signing certificate is found when the <a href="/windows/desktop/api/xpsdigitalsignature/nf-xpsdigitalsignature-ixpssignature-verify"><strong>Verify</strong></a> method returns an <a href="/windows/win32/api/xpsdigitalsignature/ne-xpsdigitalsignature-xps_signature_status"><strong>XPS_SIGNATURE_STATUS</strong></a> of <strong>XPS_SIGNATURE_STATUS_VALID</strong> or <strong>XPS_SIGNATURE_STATUS_QUESTIONABLE</strong>, and does not return a <strong>FACILITY_SECURITY</strong> error.</li>
+</ol>
+<pre lang="C++"><code>    // Reset the enumerator
+    hr = signature-&gt;GetCertificateEnumerator(&amp;certificatesInSignature);
+    if (SUCCEEDED (hr))
+    {
+        moreCertificates = FALSE;
+        hr = certificatesInSignature-&gt;MoveNext(&amp;moreCertificates);
+    }
+    if (SUCCEEDED(hr))
+    {
+        // Iterate through the certificates in the signature,
+        //  and call the IXpsSignature.Verify() method
+        //  on each certificate.  
+        // A signature can include an entire certificate chain, and so 
+        //  only one of the certificates found in this enumeration 
+        //  is the certificate that was used to sign the package. 
+        //  The signing certificate is the one to authenticate.  
+        // To find the signing certificate,  iterate through 
+        //  the certificates in the signature and select the certificate that 
+        //  returns an XPS_SIGNATURE_STATUS of XPS_SIGNATURE_STATUS_VALID
+        //  or XPS_SIGNATURE_STATUS_QUESTIONABLE and does not return a
+        //  FACILITY_SECURITY error.
+        XPS_SIGNATURE_STATUS localSignatureStatus;
+        localSignatureStatus = XPS_SIGNATURE_STATUS_INCOMPLIANT;
+        do
+        {
+            PCCERT_CONTEXT certificate = NULL;
+            DWORD certificateStatus = NULL;
+
+            if (FAILED(hr = certificatesInSignature-&gt;GetCurrent(&amp;certificate)))
+            {
+                // We will skip corrupted certificates
+                // free this one and move to the next
+                CertFreeCertificateContext (certificate);
+                hr = certificatesInSignature-&gt;MoveNext(&amp;moreCertificates);
+                if (FAILED(hr))
+                {
+                    // ERROR: could not move to the next 
+                    //  certificate in the enumerator
+                    break; // out of do loop with failed hr
+                }
+                // continue with next loop iteration
+                continue;
+            }
+            
+            // Verify that the signature conforms to the XPS signing policy.
+            hr = signature-&gt;Verify(certificate, &amp;localSignatureStatus);
+            if (FAILED(hr))
+            {
+                // If a FACILITY_SECURITY error code is returned, then the
+                //  current certificate was not the signing certificate,
+                //  so continue to the next certificate.
+                if (HRESULT_FACILITY(hr) == FACILITY_SECURITY)
+                {
+                    // free this one and move to the next
+                    CertFreeCertificateContext (certificate);
+                    hr = certificatesInSignature-&gt;MoveNext(&amp;moreCertificates);
+                    if (FAILED(hr))
+                    {
+                        // ERROR: could not move to the next certificate 
+                        //  in the enumerator
+                        break; // out of do loop with failed hr
+                    }
+                    continue;
+                }
+                // ERROR: An attempt to verify the signature has failed
+                break; // out of do loop with failed hr
+            }
+            // if verification was successful, localSignatureStatus will
+            //  contain the status of the signature.
+            //
+            // do loop continues in next code example
+</code></pre>
+<p>When the signing certificate has been found, perform the following steps:</p>
+<ol>
+<li>Save the returned signature status.</li>
+<li>Update the local status, if necessary, to perform subsequent certificate tests:
+<ol>
+<li>If the signature status is successful, set the local status to questionable in order to test the certificates.</li>
+<li>If the signature status is incompliant, leave the local status as incompliant.</li>
+<li>If the signature status is broken or incomplete, set the local status to broken.</li>
+</ol>
+</li>
+</ol>
+<p>A signature status of <strong>XPS_SIGNATURE_STATUS_INCOMPLIANT</strong> means that parts of the XPS document that should not have been signed were signed, or parts of the XPS document that should have been signed were not. If <a href="/windows/desktop/api/xpsdigitalsignature/nf-xpsdigitalsignature-ixpssignature-verify"><strong>Verify</strong></a> returns this signature status, further checking of the signature will be unnecessary.</p>
+<pre lang="C++"><code>            // continuing do loop from previous code example
+            *signingCertificate = certificate;
+            *signatureStatus = localSignatureStatus;
+            
+            // note that this test should only downgrade the 
+            // signature status, it should not upgrade it.
+            switch (localSignatureStatus) {
+                case XPS_SIGNATURE_STATUS_VALID:
+                case XPS_SIGNATURE_STATUS_QUESTIONABLE:
+                    // the signature is valid or questionable so
+                    // save the actual status and set the new status
+                    // to questionable so the certificates will be checked.
+                    localSignatureStatus = XPS_SIGNATURE_STATUS_QUESTIONABLE;
+                    break;
+
+                case XPS_SIGNATURE_STATUS_INCOMPLIANT:
+                    // the signature is not compliant 
+                    break;
+
+                case XPS_SIGNATURE_STATUS_INCOMPLETE:
+                case XPS_SIGNATURE_STATUS_BROKEN:
+                    // The Windows 7 XPS viewer displays incomplete signatures
+                    // and broken signatures as broken.
+                    *signatureStatus = XPS_SIGNATURE_STATUS_BROKEN;
+                    localSignatureStatus = XPS_SIGNATURE_STATUS_BROKEN;
+                    break;
+
+                default:
+                    // there should be no other possible status values
+                    break;
+            }
+            // do loop continues in next code example
+</code></pre>
+<p>To verify the certificate trust if the signature status was valid or questionable, perform the following steps:</p>
+<ol>
+<li>Get the certificate trust status.</li>
+<li>Evaluate the returned certificate trust status.</li>
+<li>Return the resulting status.</li>
+</ol>
+<p>The next code example does not test for every possible certificate trust status. For additional details on the status values that can be returned, see <a href="/windows/desktop/api/wincrypt/ns-wincrypt-cert_trust_status"><strong>CERT_TRUST_STATUS</strong></a>.</p>
+<pre lang="C++"><code>            // continuing do loop from previous code example
+            //
+            // at this point, localSignatureStatus should be less than or 
+            // equal to what it was before the test.
+
+            // Check the certificate to see if it is valid
+            if ((localSignatureStatus == XPS_SIGNATURE_STATUS_VALID) || 
+                (localSignatureStatus == XPS_SIGNATURE_STATUS_QUESTIONABLE))
+            {
+                // This call builds the certificate trust chain from the 
+                //  supplied certificate.  The certificate chain is used to
+                //  authenticate the supplied certificate.
+                hr = GetCertificateTrustStatus (
+                    *signingCertificate, 
+                    &amp;signatureCertificateStore,
+                    &amp;certificateStatus);
+                if (FAILED(hr))
+                {
+                    // ERROR: An attempt to authenticate the certificate 
+                    //  has failed
+                    break; // out of do loop with failed hr
+                }
+
+                // The Crypt API returns a status that can contain more than
+                //  one status value.
+                // statusFlagMask is set to test all bits except for the
+                //  CERT_TRUST_REVOCATION_STATUS_UNKNOWN
+                //  CERT_TRUST_IS_OFFLINE_REVOCATION
+                //  CERT_TRUST_IS_NOT_TIME_VALID
+                //  values because, for this test, these are not considered
+                //  to be error conditions.
+                DWORD statusFlagMask = ~(
+                    CERT_TRUST_REVOCATION_STATUS_UNKNOWN | 
+                    CERT_TRUST_IS_OFFLINE_REVOCATION | 
+                    CERT_TRUST_IS_NOT_TIME_VALID);
+
+                if (CERT_TRUST_NO_ERROR == (certificateStatus &amp; statusFlagMask))
+                {
+                    // If *signatureStatus is already 
+                    //    XPS_SIGNATURE_STATUS_VALID then there is no need to 
+                    //    change the status as the certificate status has no 
+                    //    certificate trust errors.
+                    // If *signatureStatus is already 
+                    //  XPS_SIGNATURE_STATUS_QUESTIONABLE then we will not
+                    //  upgrade the trust status of the signature just 
+                    //  because there is no trust issue with the certificate.
+                }
+                else
+                {
+                    // If trust errors were detected with the certificate, 
+                    //  then this XPS signature is given a status of 
+                    //  XPS_SIGNATURE_STATUS_QUESTIONABLE
+                    *signatureStatus = XPS_SIGNATURE_STATUS_QUESTIONABLE;
+                }
+
+                // Handle additional certificate errors.  
+                //  This is not an exhaustive list of possible errors.
+
+                if (certificateStatus &amp; CERT_TRUST_IS_NOT_TIME_VALID)
+                {
+                    // The XPS Viewer considers signatures with 
+                    //  expired certificates as valid.
+                }
+                if (certificateStatus &amp; CERT_TRUST_IS_PARTIAL_CHAIN)
+                {
+                    // This test ensures that we only degrade the 
+                    //  trust status and never upgrade it
+                    if (XPS_SIGNATURE_STATUS_VALID == *signatureStatus)
+                    {
+                        *signatureStatus = XPS_SIGNATURE_STATUS_QUESTIONABLE;
+                    }
+                }
+
+                if (certificateStatus &amp; CERT_TRUST_IS_NOT_SIGNATURE_VALID)
+                {
+                    // This test ensures that we only degrade the 
+                    //  trust status and never upgrade it
+                    if (XPS_SIGNATURE_STATUS_VALID == *signatureStatus)
+                    {
+                        *signatureStatus = XPS_SIGNATURE_STATUS_QUESTIONABLE;
+                    }
+                }
+
+                if (certificateStatus &amp; CERT_TRUST_IS_SELF_SIGNED)
+                {
+                    // This test ensures that we only degrade the 
+                    //  trust status and never upgrade it
+                    if (XPS_SIGNATURE_STATUS_VALID == *signatureStatus)
+                    {
+                        *signatureStatus = XPS_SIGNATURE_STATUS_QUESTIONABLE;
+                    }
+                }
+                
+                if (certificateStatus &amp; CERT_TRUST_IS_UNTRUSTED_ROOT)
+                {
+                    // This test ensures that we only degrade the 
+                    //  trust status and never upgrade it
+                    if (XPS_SIGNATURE_STATUS_VALID == *signatureStatus)
+                    {
+                        *signatureStatus = XPS_SIGNATURE_STATUS_QUESTIONABLE;
+                    }
+                }
+            }//End if
+
+            hr = certificatesInSignature-&gt;MoveNext(&amp;moreCertificates);
+            if (FAILED(hr))
+            {
+                // ERROR: could not move to the next 
+                //  certificate in the enumerator
+                break; // out of do loop with failed hr
+            }
+        } while((*signatureStatus != XPS_SIGNATURE_STATUS_VALID) &amp;&amp; 
+                    moreCertificates);
+    } // end if successful
+
+    if (NULL != certificatesInSignature) certificatesInSignature-&gt;Release();
+
+    return hr;
+}
+</code></pre>
+<p>In the next code example, the certificate trust status is obtained by calling the method shown in the code example that follows.</p>
+<pre lang="C++"><code>HRESULT GetCertificateTrustStatus(
+    __in PCCERT_CONTEXT certificate,
+    __in HCERTSTORE* certificateStore,
+    __out DWORD* certificateStatus
+)
+{
+    HRESULT    hr = S_OK;
+
+    // The certificate chain that will be created from 
+    //  the PCCERT_CONTEXT object passed in.  
+    PCCERT_CHAIN_CONTEXT    certificateChain =    NULL;
+
+    hr = CreateCertificateChain(
+        certificate, 
+        *certificateStore, 
+        &amp;certificateChain);
+
+    if (SUCCEEDED(hr)) { 
+        *certificateStatus = 
+            certificateChain-&gt;TrustStatus.dwErrorStatus;
+    }
+
+    return hr;
+}
+</code></pre>
+<p>The certificate chain used in the preceding code example is created by calling the method shown in the following code example.</p>
+<pre lang="C++"><code>HRESULT 
+CreateCertificateChain (
+    __in PCCERT_CONTEXT            certificate,
+    __in HCERTSTORE                certificateStore,
+    __out PCCERT_CHAIN_CONTEXT* certificateChain
+)
+{
+    HRESULT  hr = S_OK;
+
+    CERT_CHAIN_PARA certificateChainParameters = {0};
+
+    certificateChainParameters.cbSize = sizeof(CERT_CHAIN_PARA);
+    certificateChainParameters.RequestedUsage.dwType = USAGE_MATCH_TYPE_AND;
+
+    // CertGetCertificateChain builds a certificate chain that starts 
+    //  from the PCCERT_CONTEXT structure provided by the caller.
+    //  After the certificate chain has been successfully created, 
+    //  then the authenticity of the certificate can be determined 
+    //  by examining the errors, if any, that occurred while the chain
+    //  was created.
+    BOOL successCreatingCertChain = CertGetCertificateChain (
+        NULL,
+        certificate,
+        NULL,
+        certificateStore,
+        &amp;certificateChainParameters,
+        CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT,
+        NULL,
+        certificateChain);
+
+    if (!successCreatingCertChain)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+    }
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Used in This Section</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/wincrypt/ns-wincrypt-cert_chain_context"><strong>CERT_CHAIN_CONTEXT</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/wincrypt/ns-wincrypt-cert_context"><strong>CERT_CONTEXT</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/wincrypt/ns-wincrypt-cert_trust_status"><strong>CERT_TRUST_STATUS</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/wincrypt/nf-wincrypt-certaddcertificatecontexttostore"><strong>CertAddCertificateContextToStore</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/wincrypt/nf-wincrypt-certopenstore"><strong>CertOpenStore</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/wincrypt/nf-wincrypt-certgetcertificatechain"><strong>CertGetCertificateChain</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/desktop/api/msopc/nn-msopc-iopccertificateenumerator"><strong>IOpcCertificateEnumerator</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/desktop/api/msopc/nf-msopc-iopccertificateenumerator-getcurrent"><strong>IOpcCertificateEnumerator::GetCurrent</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/desktop/api/msopc/nf-msopc-iopccertificateenumerator-movenext"><strong>IOpcCertificateEnumerator::MoveNext</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsdigitalsignature/nn-xpsdigitalsignature-ixpssignature"><strong>IXpsSignature</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsdigitalsignature/nf-xpsdigitalsignature-ixpssignature-getcertificateenumerator"><strong>IXpsSignature::GetCertificateEnumerator</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsdigitalsignature/nf-xpsdigitalsignature-ixpssignature-verify"><strong>IXpsSignature::Verify</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsdigitalsignature/nn-xpsdigitalsignature-ixpssignaturecollection"><strong>IXpsSignatureCollection</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsdigitalsignature/nf-xpsdigitalsignature-ixpssignaturecollection-getat"><strong>IXpsSignatureCollection::GetAt</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsdigitalsignature/nf-xpsdigitalsignature-ixpssignaturecollection-getcount"><strong>IXpsSignatureCollection::GetCount</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsdigitalsignature/nn-xpsdigitalsignature-ixpssignaturemanager"><strong>IXpsSignatureManager</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsdigitalsignature/nf-xpsdigitalsignature-ixpssignaturemanager-getsignatures"><strong>IXpsSignatureManager::GetSignatures</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/win32/api/xpsdigitalsignature/ne-xpsdigitalsignature-xps_signature_status"><strong>XPS_SIGNATURE_STATUS</strong></a></p>
+<!-- raw HTML omitted -->
+<p><strong>For More Information</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="embedding-certificate-trust-chains-in-a-document.html">Embed Certificate Chains in a Document</a></p>
+<!-- raw HTML omitted -->
+<p><a href="xps-digital-signatures-errors.html">XPS Digital Signature API Errors</a></p>
+<!-- raw HTML omitted -->
+<p><a href="xps-document-errors.html">XPS Document Errors</a></p>
+<!-- raw HTML omitted -->
+<p><a href="https://en.wikipedia.org/wiki/Open_XML_Paper_Specification">XML Paper Specification</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

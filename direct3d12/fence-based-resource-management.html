@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fence-Based Resource Management</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Fence-Based Resource Management
+description: Shows how to manage resource data life-span by tracking GPU progress via fences. Memory can be effectively re-used with fences carefully managing the availability of free space in memory, such as in a ring buffer implementation for an Upload heap.
+ms.assetid: A7AB6569-EC6B-4B1B-9266-D05B6DB3A27B
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Fence-Based Resource Management</h1>
+<p>Shows how to manage resource data life-span by tracking GPU progress via fences. Memory can be effectively re-used with fences carefully managing the availability of free space in memory, such as in a ring buffer implementation for an Upload heap.</p>
+<ul>
+<li><a href="#ring-buffer-scenario">Ring buffer scenario</a></li>
+<li><a href="#ring-buffer-sample">Ring buffer sample</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Ring buffer scenario</h2>
+<p>The following is an example in which an app experiences a rare demand for upload heap memory.</p>
+<p>A ring buffer is one way to manage an upload heap. The ring buffer holds data required for the next few frames. The app maintains a current data input pointer, and a frame offset queue to record each frame and starting offset of resource data for that frame.</p>
+<p>An app creates a ring-buffer based upon a buffer to upload data to the GPU for each frame. Currently frame 2 has been rendered, the ring buffer wraps around the data for frame 4, all the data required for frame 5 is present, and a large constant buffer required for frame 6 needs to be sub-allocated.</p>
+<p><strong>Figure 1</strong> : the app tries to sub-allocate for the constant buffer, but finds insufficient free memory.</p>
+<p><img src="images/ring-buffer-1.png" alt="insufficient free memory in this ring buffer" /></p>
+<p><strong>Figure 2</strong> : through fence polling, the app discovers that frame 3 has been rendered, the frame offset queue is then updated, and the current state of the ring buffer follows - however, free memory is still not large enough to accommodate the constant buffer.</p>
+<p><img src="images/ring-buffer-2.png" alt="still insufficient memory after frame 3 has rendered" /></p>
+<p><strong>Figure 3</strong> : given the situation, the CPU blocks itself (via fence waiting) until frame 4 has been rendered, which frees up the memory sub-allocated for frame 4.</p>
+<p><img src="images/ring-buffer-3.png" alt="rendering frame 4 frees up more of the ring buffer" /></p>
+<p><strong>Figure 4</strong> : now free memory is large enough for the constant buffer, and sub-allocation succeeds; the app copies the big constant buffer data to memory previously used by resource data for both frames 3 and 4. The current input pointer is finally updated.</p>
+<p><img src="images/ring-buffer-4.png" alt="now there is room from frame 6 in the ring buffer" /></p>
+<p>If an app implements a ring buffer, the ring buffer must be large enough to cope with the worse-case scenario of the sizes of resource data.</p>
+<h2>Ring buffer sample</h2>
+<p>The following sample code shows how a ring buffer can be managed, paying attention to the sub-allocation routine that handles fence polling and waiting. For simplicity, the sample uses NOT_SUFFICIENT_MEMORY to hide the details of â€œnot sufficient free memory found in the heapâ€ since that logic (based on <em>m_pDataCur</em> and offsets inside <em>FrameOffsetQueue</em>) is not tightly related to heaps or fences. The sample is simplified to sacrifice frame rate instead of memory utilization.</p>
+<p>Note that, ring-buffer support is expected to be a popular scenario; however, the heap design does not preclude other usage, such as command list parameterization and re-use.</p>
+<pre lang="syntax"><code>struct FrameResourceOffset
+{
+    UINT frameIndex;
+    UINT8* pResourceOffset;
+};
+std::queue&lt;FrameResourceOffset&gt; frameOffsetQueue;
+
+void DrawFrame()
+{
+    float vertices[] = ...;
+    UINT verticesOffset = 0;
+    ThrowIfFailed(
+        SetDataToUploadHeap(
+            vertices, sizeof(float), sizeof(vertices) / sizeof(float), 
+            4, // Max alignment requirement for vertex data is 4 bytes.
+            verticesOffset
+            ));
+
+    float constants[] = ...;
+    UINT constantsOffset = 0;
+    ThrowIfFailed(
+        SetDataToUploadHeap(
+            constants, sizeof(float), sizeof(constants) / sizeof(float), 
+            D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT,
+            constantsOffset
+            ));
+
+    // Create vertex buffer views for the new binding model. 
+    // Create constant buffer views for the new binding model. 
+    // ...
+
+    commandQueue-&gt;Execute(commandList);
+    commandQueue-&gt;AdvanceFence();
+}
+
+HRESULT SuballocateFromHeap(SIZE_T uSize, UINT uAlign)
+{
+    if (NOT_SUFFICIENT_MEMORY(uSize, uAlign))
+    {
+        // Free up resources for frames processed by GPU; see Figure 2.
+        UINT lastCompletedFrame = commandQueue-&gt;GetLastCompletedFence();
+        FreeUpMemoryUntilFrame( lastCompletedFrame );
+
+        while ( NOT_SUFFICIENT_MEMORY(uSize, uAlign)
+            &amp;&amp; !frameOffsetQueue.empty() )
+        {
+            // Block until a new frame is processed by GPU, then free up more memory; see Figure 3.
+            UINT nextGPUFrame = frameOffsetQueue.front().frameIndex;
+            commandQueue-&gt;SetEventOnFenceCompletion(nextGPUFrame, hEvent);
+            WaitForSingleObject(hEvent, INFINITE);
+            FreeUpMemoryUntilFrame( nextGPUFrame );
+        }
+    }
+
+    if (NOT_SUFFICIENT_MEMORY(uSize, uAlign))
+    {
+        // Apps need to create a new Heap that is large enough for this resource.
+        return E_HEAPNOTLARGEENOUGH;
+    }
+    else
+    {
+        // Update current data pointer for the new resource.
+        m_pDataCur = reinterpret_cast&lt;UINT8*&gt;(
+            Align(reinterpret_cast&lt;SIZE_T&gt;(m_pHDataCur), uAlign)
+            );
+
+        // Update frame offset queue if this is the first resource for a new frame; see Figure 4.
+        UINT currentFrame = commandQueue-&gt;GetCurrentFence();
+        if ( frameOffsetQueue.empty()
+            || frameOffsetQueue.back().frameIndex &lt; currentFrame )
+        {
+            FrameResourceOffset offset = {currentFrame, m_pDataCur};
+            frameOffsetQueue.push(offset);
+        }
+
+        return S_OK;
+    }
+}
+
+void FreeUpMemoryUntilFrame(UINT lastCompletedFrame)
+{
+    while ( !frameOffsetQueue.empty() 
+        &amp;&amp; frameOffsetQueue.first().frameIndex &lt;= lastCompletedFrame )
+    {
+        frameOffsetQueue.pop();
+    }
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/d3d12/nn-d3d12-id3d12fence"><strong>ID3D12Fence</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="large-buffers.html">Suballocation Within Buffers</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

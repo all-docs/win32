@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ASF Media Source</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Media Foundation provides the ASF media source that an application can use to represent an ASF file in the pipeline layer of the architecture.
+ms.assetid: a2d2b382-d666-4a37-a6a9-0b839fbfbec3
+title: ASF Media Source
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>ASF Media Source</h1>
+<p>Media Foundation provides the ASF media source that an application can use to represent an ASF file in the pipeline layer of the architecture.</p>
+<p>In order to play an ASF file, an application can use the ASF media source to feed data into a playback pipeline. In an encoding scenario, application can use the ASF media source as the source to convert into another format or for converting a higher bit-rate file to a lower bit-rate file without changing formats. The ASF media source must be used in the pipeline layer, that is, an application must use the Media Session to control the operation. This level of access allows the applications to get events while the Media Session is in progress. To get lower-level access to the ASF content, an application must use the WMContainer Layer ASF components.</p>
+<p>The ASF media source implements the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasource"><strong>IMFMediaSource</strong></a> interface, which is the generic interface for media sources in Media Foundation. Like any other media source, the ASF media source provides a presentation descriptor that primarily describes the ASF Header Object. In addition, the ASF media source provides stream descriptors that represent each stream in the media content. For more information, see <a href="asf-file-structure.html">ASF File Structure</a>.</p>
+<ul>
+<li><a href="#creating-the-asf-media-source">Creating the ASF Media Source</a></li>
+<li><a href="#configuration-settings-for-the-asf-media-source">Configuration Settings for the ASF Media Source</a></li>
+<li><a href="#asf-media-source-object-model">ASF Media Source Object Model</a></li>
+<li><a href="#asf-media-source-services">ASF Media Source Services</a>
+<ul>
+<li><a href="#timecode-translation">Timecode Translation</a></li>
+</ul>
+</li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Creating the ASF Media Source</h2>
+<p>To create the ASF media source, the application must use the <a href="source-resolver.html">Source Resolver</a>. In order to create the ASF media source, the application must provide the source for which the source resolver creates the ASF media source. The source information must be provided by either specifying the URL of the source file or the byte stream that contains the media. If the application chooses to create the ASF media source by specifying the URL, it must call either <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsourceresolver-createobjectfromurl"><strong>IMFSourceResolver::CreateObjectFromURL</strong></a> for synchronous operation or <strong>IMFSourceResolver::Beginâ€¦EndCreateObjectFromURL</strong> for asynchronous operation. The process for creating the media source from a byte stream is similar. The application must call either <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsourceresolver-createobjectfrombytestream"><strong>IMFSourceResolver::CreateObjectFromByteStream</strong></a> for synchronous operation or <strong>IMFSourceResolver::Beginâ€¦EndCreateObjectFromBytestream</strong> for asynchronous operation. These calls must specify MF_RESOLUTION_MEDIASOURCE in <em>dwFlags</em> parameter. For more information about using this flag, see Using the Source Resolver.</p>
+<p>If the application specifies a URL, for a local file, the URL string can contain the path of the media file or can be prefixed with the â€œfile: â€œscheme. The file name extension must be &quot;.asf&quot;, &quot;.wm&quot;, L&quot;.wma&quot;, or &quot;.wmv&quot;. For an ASF file on the network, the source resolver creates the <a href="network-source-features.html">Network Source</a>, which uses the ASF media source.</p>
+<p>During the object creation process, the source resolver looks up the list of scheme handlers and the byte stream handlers in the system registry and loads the closest matching handler that can parse the media content and also create the media source object underneath. Irrespective of the method used to create the media source (URL and byte stream), the source resolver creates a byte stream and reads the contents of source media into the byte stream. For more information, see <a href="scheme-handlers-and-byte-stream-handlers.html">Scheme Handlers and Byte-Stream Handlers</a>.</p>
+<p>For code example about how to create a media source, see <a href="using-the-source-resolver.html">Using the Source Resolver</a>.</p>
+<h2>Configuration Settings for the ASF Media Source</h2>
+<p>The source resolver queries for the capabilities of the underlying byte stream and determines the operations are allowed on the newly created media source. One of such capabilities is seeking. If a seek operation is allowed, the application can specify the seeking mode that the media source uses while seeking to a particular point in the presentation.</p>
+<p>An application can set the seek mode, for the media source to use, during object creation. After the ASF media source is created with the specified seek mode, it cannot be modified on the media source or dynamically changed during a presentation. Seeking preferences are specified as properties in the applicationâ€™s call to the relevant source resolver methods that are used to create the media source. These set of properties are set in a property store and passed to the <em>pProps</em> parameter. If these properties are not passed, the media source functions with the default settings. For more information about setting these properties, see <a href="configuring-a-media-source.html">Configuring a Media Source</a>.</p>
+<p>If seeking is allowed, the ASF media source supports the following seek modes:</p>
+<ul>
+<li>Exact seeking: In this mode, the ASF media source relies on the ASF Index Object of the ASF file. If the file does not have the Index Object, exact seeking is disabled and one of the other modes are used depending on the application-specified properties that are set on the media source.</li>
+<li>Approximate seeking: This mode is requested by the application by passing <a href="mfpkey-asfmediasource-approxseek-property.html"><strong>MFPKEY_ASFMediaSource_ApproxSeek</strong></a> in the property store to the relevant source resolver methods. However, approximate seeking is only used if the byte stream does not support time-based seeking. In this mode, the media source determine a start time that is relatively closer to the seek time. If the ASF file contains an ASF Index Object, it is used to calculate the start time. Approximate seeking is less accurate but faster than exact seeking because the time taken render the first sample at the predetermined start time is faster.</li>
+<li>Iterative seeking: To set this mode, the application must set the <a href="mfpkey-asfmediasource-iterativeseekifnoindex.html">MFPKEY_ASFMediaSource_IterativeSeekIfNoIndex</a> property. Iterative seeking is an algorithm to find a position in an ASF file that contains no ASF Index Object. In this mode, the media source determines a rough estimate of the seek point by reading the byte stream offset. It uses a series of approximations, based on the average bit rate, to get progressively closer to the target seek time. (The algorithm is similar to a binary search.) Iterative seeking can take longer than seeking by using the Index Object, so it is disabled by default. If you set this property, use the following properties to set the search parameters: <a href="mfpkey-asfmediasource-iterativeseek-max-count.html">MFPKEY_ASFMediaSource_IterativeSeek_Max_Count</a><a href="mfpkey-asfmediasource-iterativeseek-tolerance-in-millisecond.html">MFPKEY_ASFMediaSource_IterativeSeek_Tolerance_In_MilliSecond</a>. These properties set the maximum number of iterations and the tolerance, respectively. The algorithm halts when it reaches the maximum number of iterations, or when it finds a packet whose distance from the seek time is within the specified tolerance.</li>
+</ul>
+<p>In a nutshell, the application has the option of choosing approximate or iterative seeking when the ASF file does not contain an ASF Index Object.</p>
+<h2>ASF Media Source Object Model</h2>
+<p>The ASF media source implements the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasource"><strong>IMFMediaSource</strong></a> interface and exposes the following interfaces. An application can get a reference to these interfaces by calling <strong>IMFMediaSource::QueryInterface</strong> on the ASF media source.</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasource"><strong>IMFMediaSource</strong></a></td>
+<td>Required for all media sources.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a></td>
+<td>Required for all media sources. Allows applications to get events from the media source through the Media Session.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfgetservice"><strong>IMFGetService</strong></a></td>
+<td>Queries the media source for the specified service interface.</td>
+</tr>
+<tr>
+<td><a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a></td>
+<td>Sets and gets properties on the media source. Each property contains a descriptive name and a value.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfmetadata"><strong>IMFMetadata</strong></a></td>
+<td>Describes the metadata for the ASF file.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfmetadataprovider"><strong>IMFMetadataProvider</strong></a></td>
+<td>Retrieves a collection of metadata, either for an entire presentation, or for one stream in the presentation.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a></td>
+<td>Queries the range of playback rates that are supported, including reverse playback.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfratecontrol"><strong>IMFRateControl</strong></a></td>
+<td>Gets or sets the playback rate.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imftrustedinput"><strong>IMFTrustedInput</strong></a></td>
+<td>Gets the ITA for each of the ASF streams contained in the source.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfpmpclient"><strong>IMFPMPClient</strong></a></td>
+<td>Enables a media source to receive a pointer to the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfpmphost"><strong>IMFPMPHost</strong></a> interface, which is used to create objects in the PMP process.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imftimecodetranslate"><strong>IMFTimecodeTranslate</strong></a></td>
+<td>Converts between Society of Motion Picture and Television Engineers (SMPTE) time codes and 100-nanosecond time units.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>ASF Media Source Services</h2>
+<p>The ASF media source provides various services that are scoped for ASF file. To get a pointer to a particular service, the application must use one of the following service identifiers in its call to <a href="/windows/desktop/api/mfidl/nf-mfidl-mfgetservice"><strong>MFGetService</strong></a>. For information, see <a href="service-interfaces.html">Service Interfaces</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Service Identifier</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MF_RATE_CONTROL_SERVICE</td>
+<td>By using this identifier, an application can get a pointer to either <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a> or <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratecontrol"><strong>IMFRateControl</strong></a> interfaces. By using the rate support object implemented by the media source, the application can check if a particular rate is supported by the underlying ASF media file also get the fastest and the slowest rate. By using the rate control object the application can get and set the playback rate. If the application specifies a particular rate for playback, the ASF media source first checks if the requested rate is within the rate limits (determined by fasted and slowest rates) and then sets the rate. This does not check for variable conditions as the bitrate might change any moment depending on the network bandwidth. For more information, <a href="rate-control.html">Rate Control</a>.</td>
+</tr>
+<tr>
+<td>MF_METADATA_PROVIDER_SERVICE</td>
+<td>By using this identifier, the application can get a pointer to the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmetadataprovider"><strong>IMFMetadataProvider</strong></a> interface of the ASF media source. This interface provides access to information about ASF file specifically the ASF Header Objects and the streams contained within the media content. Header information is exposes through presentation descriptor attributes and stream information is provided through stream descriptor attributes. For more information about these attributes, see <a href="media-foundation-attributes-for-asf-header-objects.html">Media Foundation Attributes for ASF Header Objects</a>. In addition to information that is exposed through attributes, there also exists descriptive metadata, which are set as properties.</td>
+</tr>
+<tr>
+<td>MF_PROPERTY_HANDLER_SERVICE</td>
+<td>By using this identifier, the application can get a pointer to the <a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a> interface of the ASF media source. The property store contains all the metadata related to the ASF file. This identifier is new in Windows 7 and replaces MF_METADATA_PROVIDER_SERVICE for getting metadata properties.</td>
+</tr>
+<tr>
+<td>MFNETSOURCE_STATISTICS_SERVICE</td>
+<td>For more information, see Retrieving Network Statistics in <a href="client-logging.html">Client Logging</a>.</td>
+</tr>
+<tr>
+<td>MF_TIMECODE_SERVICE</td>
+<td>By using this identifier, the application can get a pointer to the media sourceâ€™s <a href="/windows/desktop/api/mfidl/nn-mfidl-imftimecodetranslate"><strong>IMFTimecodeTranslate</strong></a> interface. This implementation can be used to perform time code translations such as converting SMPTE time code to 100-nano second units and back.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h3>Timecode Translation</h3>
+<p>The ASF media source provides a time code translation service that allows your application to convert SMPTE time code to the closest presentation time (in 100-nanosecond unit). Conversely, the application can also get the time code for a requested presentation time. The service is available through the <a href="/windows/desktop/api/mfidl/nn-mfidl-imftimecodetranslate"><strong>IMFTimecodeTranslate</strong></a> interface, which the ASF media source implements. The method calls on this interface pointer are asynchronous that can run from your main application thread without blocking the user interface of your application.</p>
+<p>The following steps summarize the procedure for time code translation:</p>
+<ol>
+<li>Get pointer to the <a href="/windows/desktop/api/mfidl/nn-mfidl-imftimecodetranslate"><strong>IMFTimecodeTranslate</strong></a> interface of the ASF media source by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-mfgetservice"><strong>MFGetService</strong></a> and specifying the <strong>MF_TIMECODE_SERVICE</strong> identifier.</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imftimecodetranslate-beginconverttimecodetohns"><strong>IMFTimecodeTranslate::BeginConvertTimecodeToHNS</strong></a> or <a href="/windows/desktop/api/mfidl/nf-mfidl-imftimecodetranslate-beginconverthnstotimecode"><strong>IMFTimecodeTranslate::BeginConvertHNSToTimecode</strong></a> and specify the time that is to be translated.. For <strong>BeginConvertTimecodeToHNS</strong> the time code must be specified as a <a href="/windows/win32/api/propidl/ns-propidl-propvariant"><strong>PROPVARIANT</strong></a> variable with <strong>VT_I8</strong> data type. The <strong>BeginConvertHNSToTimecode</strong> method requires the time in 100-nanosecond units as the <a href="mftime.html"><strong>MFTIME</strong></a> type.</li>
+<li>Complete the asynchronous operation by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imftimecodetranslate-endconverttimecodetohns"><strong>IMFTimecodeTranslate::EndConvertTimecodeToHNS</strong></a> or <strong>IMFTimecodeTranslate::EndConvertTimecodeToHNS</strong> appropriately.</li>
+</ol>
+<p>During the creation of the media source, the source resolver creates a byte stream for the file from which the media source reads the ASF content. In order for the time conversions to be successful, the byte stream associated with the ASF file must have seeking capabilities; otherwise, the application gets the MF_E_BYTESTREAM_NOT_SEEKABLE error from the <strong>Begin...</strong> call. Another requirement for time conversions is that the ASF file, represented by the ASF media source, must have ASF Index Objects. The presentation times and the time codes are extracted from the ASF Index Objects that maintain all the indexes and the corresponding seek- points for the ASF file. For presentation time-to-time code translation, the ASF file must contain a Simple Index Object; for time code-to-presentation time translation, the ASF file must have an Index Object. The conversion operations rely on the underlying <em>indexer</em> (WMContainer component) to parse and read the Index Object associated with the ASF file. If the file does not contain an Index Object, the application asynchronously receives the MF_E_NO_INDEX error code.</p>
+<p>To translate the time requested by the application, the media source enumerates the streams within the file and finds the stream that contains the appropriate ASF Index Object. If such a stream is found, the media source parses the streamâ€™s ASF packets are parsed until the correct time code is reached. After it finds the correct sample it retrieves the corresponding presentation time or the time code from the sample, and returns it to the caller.</p>
+<h3>Script Command Support</h3>
+<p>When you build an ASF topology that contains a script stream a Script Stream node is added to the topology. This node will send IMFSamples at the appropriate time. The IMFSample provided by the script source node stores the data in the IMFMediaBuffer associated with the sample. You can call CopyToBuffer on the sample to get an IMFMediaBuffer and then call Lock on the buffer to get the data.</p>
+<p>Script stream payloads are packed into the buffer as a type string, followed by NULL, followed by the command string, followed by NULL. Strings are Unicode in the ASF format.</p>
+<p>For example, a payload might look like the following (where \0 indicates a NULL character):</p>
+<p><em>URL\0<a href="http://contoso.com%5C0">http://contoso.com\0</a></em></p>
+<p><em>Text\0This is a caption\0</em></p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="pipeline-layer-asf-components.html">Pipeline Layer ASF Components</a></p>
+<!-- raw HTML omitted -->
+<p><a href="asf-support-in-media-foundation.html">ASF Support in Media Foundation</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

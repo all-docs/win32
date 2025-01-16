@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Learning When an Event Occurs</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Learning When an Event Occurs
+ms.assetid: 4e44089b-676b-4220-9721-54ddf56bf760
+title: Learning When an Event Occurs
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Learning When an Event Occurs</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>To process DirectShow events, an application needs a way to find out when events are waiting in the queue. The Filter Graph Manager provides two ways to do this:</p>
+<ul>
+<li><strong>Window notification:</strong> The Filter Graph Manager sends a user-defined Windows message to an application window whenever there is a new event.</li>
+<li><strong>Event signaling:</strong> The Filter Graph Manager signals a Windows event if there are DirectShow events in the queue, and reset the event if the queue is empty.</li>
+</ul>
+<p>An application can use either technique. Window notification is usually simpler.</p>
+<p><strong>Window Notification</strong></p>
+<p>To set up window notification, call the <a href="/windows/desktop/api/Control/nf-control-imediaeventex-setnotifywindow"><strong>IMediaEventEx::SetNotifyWindow</strong></a> method and specify a private message. Applications can use message numbers in the range from WM_APP through 0xBFFF as private messages. Whenever the Filter Graph Manager places a new event notification in the queue, it posts this message to the designated window. The application responds to the message from within the window's message loop.</p>
+<p>The following code example shows how to set the notification window.</p>
+<pre lang="C++"><code>#define WM_GRAPHNOTIFY WM_APP + 1   // Private message.
+pEvent-&gt;SetNotifyWindow((OAHWND)g_hwnd, WM_GRAPHNOTIFY, 0);
+</code></pre>
+<p>The message is an ordinary Windows message, and is posted separately from the DirectShow event notification queue. The advantage of this approach is that most applications already implement a message loop. Therefore, you can incorporate DirectShow event handling without much additional work.</p>
+<p>The following code example shows an outline of how to respond to the notification message. For a complete example, see <a href="responding-to-events.html">Responding to Events</a>.</p>
+<pre lang="C++"><code>LRESULT CALLBACK WindowProc( HWND hwnd, UINT msg, UINT wParam, LONG lParam)
+{
+    switch (msg)
+    {
+        case WM_GRAPHNOTIFY:
+            HandleEvent();  // Application-defined function.
+            break;
+        // Handle other Windows messages here too.
+    }
+    return (DefWindowProc(hwnd, msg, wParam, lParam));
+}
+</code></pre>
+<p>Because event notification and the message loop are both asynchronous, the queue might contain more than one event by the time your application responds to the message. Also, events can sometimes be cleared from the queue if they become invalid. Therefore, in your event handling code, call <a href="/windows/desktop/api/Control/nf-control-imediaevent-getevent"><strong>IAMMediaEvent::GetEvent</strong></a> until it returns a failure code, indicating that the queue is empty.</p>
+<p>Before you release the <a href="/windows/desktop/api/Control/nn-control-imediaeventex"><strong>IMediaEventEx</strong></a> pointer, cancel event notification by calling <a href="/windows/desktop/api/Control/nf-control-imediaeventex-setnotifywindow"><strong>SetNotifyWindow</strong></a> with a <strong>NULL</strong> pointer. In your event processing code, check whether your <strong>IMediaEventEx</strong> pointer is valid before calling <a href="/windows/desktop/api/Control/nf-control-imediaevent-getevent"><strong>GetEvent</strong></a>. These steps prevent a possible error, in which the application receives the event notification after it has released the <strong>IMediaEventEx</strong> pointer.</p>
+<p><strong>Event Signaling</strong></p>
+<p>The Filter Graph Manager keeps a manual-reset event that reflects the state of the event queue. If the queue contains pending event notifications, the Filter Graph Manager signals the manual-reset event. If the queue is empty, a call to the <a href="/windows/desktop/api/Control/nf-control-imediaevent-getevent"><strong>IMediaEvent::GetEvent</strong></a> method resets the event. An application can use this event to determine the state of the queue.</p>
+<blockquote>
+<p>[!Note]<br />
+The terminology can be confusing here. The manual-reset event is the type of event created by the Windows <a href="/windows/win32/api/synchapi/nf-synchapi-createeventa"><strong>CreateEvent</strong></a> function; it has nothing to do with the events defined by DirectShow.</p>
+</blockquote>
+<p>Â </p>
+<p>Call the <a href="/windows/desktop/api/Control/nf-control-imediaevent-geteventhandle"><strong>IMediaEvent::GetEventHandle</strong></a> method to get a handle to the manual-reset event. Wait for the event to be signaled by calling a function such as <a href="/windows/win32/api/winuser/nf-winuser-msgwaitformultipleobjects"><strong>WaitForMultipleObjects</strong></a>. Once the event is signaled, call <a href="/windows/desktop/api/Control/nf-control-imediaevent-getevent"><strong>IMediaEvent::GetEvent</strong></a> to get the DirectShow event.</p>
+<p>The following code example illustrates this approach. It gets the event handle, then waits in 100-millisecond intervals for the event to be signaled. If the event is signaled, it calls <strong>GetEvent</strong> and prints the event code and event parameters to the console window. The loop terminates when the <a href="ec-complete.html"><strong>EC_COMPLETE</strong></a> event occurs, indicating that playback has completed.</p>
+<pre lang="C++"><code>HANDLE  hEvent; 
+long    evCode, param1, param2;
+BOOLEAN bDone = FALSE;
+HRESULT hr = S_OK;
+hr = pEvent-&gt;GetEventHandle((OAEVENT*)&amp;hEvent);
+if (FAILED(hr))
+{
+    /* Insert failure-handling code here. */
+}
+
+while(!bDone) 
+{
+    if (WAIT_OBJECT_0 == WaitForSingleObject(hEvent, 100))
+    { 
+        while (S_OK == pEvent-&gt;GetEvent(&amp;evCode, &amp;param1, &amp;param2, 0)) 
+        {
+            printf(&quot;Event code: %#04x\n Params: %d, %d\n&quot;, evCode, param1, param2);
+            pEvent-&gt;FreeEventParams(evCode, param1, param2);
+            bDone = (EC_COMPLETE == evCode);
+        }
+    }
+} 
+</code></pre>
+<p>Because the filter graph automatically sets or resets the event when appropriate, your application should not do so. Also, when you release the filter graph, the filter graph closes the event handle, so do not use the event handle after that point.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Compile an Effect (Direct3D 11)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Compile an Effect (Direct3D 11)
+description: After an effect has been authored, the next step is to compile the code to check for syntax problems.
+ms.assetid: 7624d55e-6466-4156-8f31-30f0d25a2883
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Compile an Effect (Direct3D 11)</h1>
+<p>After an effect has been authored, the next step is to compile the code to check for syntax problems.</p>
+<p>You do so by calling one of the compile APIs (<a href="d3dx11compilefromfile.html"><strong>D3DX11CompileFromFile</strong></a>, <a href="d3dx11compilefrommemory.html"><strong>D3DX11CompileFromMemory</strong></a>, or <a href="d3dx11compilefromresource.html"><strong>D3DX11CompileFromResource</strong></a> ). These APIs invoke the effect compiler fxc.exe, which compiles HLSL code. This is why the syntax for code in an effect looks very much like HLSL code. (There are a few exceptions that will be handled later). The effect compiler/hlsl compiler, fxc.exe, is available in the SDK in the utilities folder so that shaders (or effects) can be compiled offline if you choose. See the documentation for running the compiler from the command line.</p>
+<ul>
+<li><a href="#example">Example</a></li>
+<li><a href="#includes">Includes</a></li>
+<li><a href="#searching-for-include-files">Searching for Include Files</a></li>
+<li><a href="#macros">Macros</a></li>
+<li><a href="#hlsl-shader-flags">HLSL Shader Flags</a></li>
+<li><a href="#fx-flags">FX Flags</a></li>
+<li><a href="#checking-errors">Checking Errors</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Example</h2>
+<p>Here's an example of compiling an effect file.</p>
+<pre><code>WCHAR str[MAX_PATH];
+DXUTFindDXSDKMediaFileCch( str, MAX_PATH, L&quot;BasicHLSL10.fx&quot; );
+
+hr = D3DX11CompileFromFile( str, NULL, NULL, pFunctionName, pProfile, D3D10_SHADER_ENABLE_STRICTNESS, NULL, NULL, &amp;pBlob, &amp;pErrorBlob, NULL );
+</code></pre>
+<h2>Includes</h2>
+<p>One parameter of the compile APIs is an include interface. Generate one of these if you want to include a customized behavior when the compiler reads an include file. The compiler executes this custom behavior each time it creates or compiles an effect (that uses the include pointer). To implement customized include behavior, derive a class from the <a href="/windows/desktop/api/D3Dcommon/nn-d3dcommon-id3dinclude"><strong>ID3DInclude</strong></a> interface. This provides your class with two methods: <a href="/windows/desktop/api/D3DCommon/nf-d3dcommon-id3dinclude-open"><strong>Open</strong></a> and <a href="/windows/desktop/api/D3DCommon/nf-d3dcommon-id3dinclude-close"><strong>Close</strong></a>. Implement the custom behavior in these methods.</p>
+<h2>Searching for Include Files</h2>
+<p>The pointer that the compiler passes in the <em>pParentData</em> parameter to your include handler's <a href="/windows/desktop/api/D3DCommon/nf-d3dcommon-id3dinclude-open"><strong>Open</strong></a> method might not point to the container that includes the #include file that the compiler needs to compile your shader code. That is, the compiler might pass <strong>NULL</strong> in <em>pParentData</em>. Therefore, we recommend that your include handler search its own list of include locations for content. Your include handler can dynamically add new include locations as it receives those locations in calls to its <strong>Open</strong> method.</p>
+<p>In the following example, suppose that the shader code's include files are both stored in the <em>somewhereelse</em> directory. When the compiler calls the include handler's <a href="/windows/desktop/api/D3DCommon/nf-d3dcommon-id3dinclude-open"><strong>Open</strong></a> method to open and read the contents of <em>somewhereelse\foo.h</em>, the include handler can save the location of the <strong>somewhereelse</strong> directory. Later, when the compiler calls the include handler's <strong>Open</strong> method to open and read the contents of <em>bar.h</em>, the include handler can automatically search in the <em>somewhereelse</em> directory for <em>bar.h</em>.</p>
+<pre><code>Main.hlsl:
+#include &quot;somewhereelse\foo.h&quot;
+
+Foo.h:
+#include &quot;bar.h&quot;
+</code></pre>
+<h2>Macros</h2>
+<p>Effect compilation can also take a pointer to macros that are defined elsewhere. For example, suppose you want to modify the effect in BasicHLSL10, to use two macros: zero and one. The effect code that uses the two macros is shown here.</p>
+<pre><code>if( bAnimate )
+    vAnimatedPos += float4(vNormal, zero) *  
+        (sin(g_fTime+5.5)+0.5)*5;
+        
+    Output.Diffuse.a = one;         
+</code></pre>
+<p>Here is the declaration for the two macros.</p>
+<pre><code>D3D10_SHADER_MACRO Shader_Macros[3] = { &quot;zero&quot;, &quot;0&quot;, &quot;one&quot;, &quot;1.0f&quot;, NULL, NULL };
+</code></pre>
+<p>The macros are a NULL-terminated array of macros; where each macro is defined by using a <a href="/windows/desktop/api/d3dcommon/ns-d3dcommon-d3d_shader_macro"><strong>D3D10_SHADER_MACRO</strong></a> struct.</p>
+<p>Modify the compile effect call to take a pointer to the macros.</p>
+<pre><code>D3DX11CompileFromFile( str, Shader_Macros, NULL, pFunctionName, 
+                       pProfile, D3D10_SHADER_ENABLE_STRICTNESS, NULL, 
+                       NULL, &amp;pBlob, &amp;pErrorBlob, NULL );    
+</code></pre>
+<h2>HLSL Shader Flags</h2>
+<p>Shader flags specify shader constraints to the HLSL compiler. These flags affect the code generated by the shader compiler in the following ways:</p>
+<ul>
+<li>Optimize the code size.</li>
+<li>Including debug information, which prevents flow control.</li>
+<li>Affects the compile target and whether a shader can run on legacy hardware.</li>
+</ul>
+<p>These flags can be logically combined if you have not specified two conflicting characteristics. For a listing of the flags see <a href="/windows/desktop/direct3d10/d3d10-shader">D3D10_SHADER Constants</a>.</p>
+<h2>FX Flags</h2>
+<p>Use these flags when you create an effect to define either compilation behavior or runtime effect behavior. For a listing of the flags see <a href="/windows/desktop/direct3d10/d3d10-effect">D3D10_EFFECT Constants</a>.</p>
+<h2>Checking Errors</h2>
+<p>If during compilation an error occurs, the API returns an interface that contains the errors from the effect compiler. This interface is called <a href="/previous-versions/windows/desktop/legacy/ff728743(v=vs.85)"><strong>ID3DBlob</strong></a>. It is not directly readable; however, by returning a pointer to the buffer that contains the data (which is a string), you can see any compilation errors.</p>
+<p>This example contains an error in the BasicHLSL.fx, the first variable declaration occurs twice.</p>
+<pre><code>//-------------------------------------------------------------------
+// Global variables
+//-------------------------------------------------------------------
+float4 g_MaterialAmbientColor;      // Material's ambient color
+
+// Declare the same variable twice
+float4 g_MaterialAmbientColor;      // Material's ambient color
+</code></pre>
+<p>This error causes the compiler to return the following error, as shown in the following screen shot of the Watch window in Microsoft Visual Studio.</p>
+<p><img src="images/effect-compile-errors-2.jpg" alt="screen shot of the visual studio watch window with a 0x01997fb8 error" /></p>
+<p>Because the compiler returns the error in a LPVOID pointer, cast it to a character string in the Watch window.</p>
+<p>Here is the code that returns the error from the failed compile.</p>
+<pre><code>// Read the D3DX effect file
+WCHAR str[MAX_PATH];
+ID3DBlob*   l_pBlob_Effect = NULL;
+ID3DBlob*   l_pBlob_Errors = NULL;
+hr = DXUTFindDXSDKMediaFileCch( str, MAX_PATH, L&quot;BasicHLSL10.fx&quot; );
+hr = D3DX11CompileFromFile( str, NULL, NULL, pFunctionName, 
+                       pProfile, D3D10_SHADER_ENABLE_STRICTNESS, NULL, 
+                       NULL, &amp;pBlob, &amp;pErrorBlob, NULL );      
+
+LPVOID l_pError = NULL;
+if( pErrorBlob )
+{
+    l_pError = pErrorBlob-&gt;GetBufferPointer();
+    // then cast to a char* to see it in the locals window
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="d3d11-graphics-programming-guide-effects-render.html">Rendering an Effect (Direct3D 11)</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

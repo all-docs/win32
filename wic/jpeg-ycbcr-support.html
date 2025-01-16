@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>JPEG YCbCr Support</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Starting with Windows 8.1, the Windows Imaging Component (WIC) JPEG codec supports reading and writing image data in its native YCbCr form.
+ms.assetid: 50B89A96-72E8-4771-9109-207F4CDD06CB
+title: JPEG YCbCr Support
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>JPEG YCbCr Support</h1>
+<p>Starting with Windows 8.1, the <a href="-wic-about-windows-imaging-codec.html">Windows Imaging Component (WIC)</a> JPEG codec supports reading and writing image data in its native YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> form. WIC YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> support can be used in conjunction with <a href="../direct2d/direct2d-portal.html">Direct2D</a> to render YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data with an image effect. In addition, the WIC JPEG codec can consume YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data produced by certain camera drivers via Media Foundation.</p>
+<p>YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data consumes significantly less memory than standard BGRA pixel formats. In addition, accessing YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data allows you to offload some stages of the JPEG decode/encode pipeline to Direct2D which is GPU accelerated. By using YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted -->, your app can reduce JPEG memory consumption and load times for the same size and quality images. Or, your app can use more, higher resolution JPEG images without suffering from performance penalties.</p>
+<p>This topic describes how YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data works and how to use it in WIC and Direct2D.</p>
+<ul>
+<li><a href="#about-jpeg-ycbcr-data">About JPEG YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Data</a>
+<ul>
+<li><a href="#ycbcr-color-model">YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Color Model</a></li>
+<li><a href="#planar-versus-interleaved-memory-layouts">Planar Versus Interleaved Memory Layouts</a></li>
+<li><a href="#chroma-subsampling">Chroma Subsampling</a></li>
+<li><a href="#jpeg-usage-of-ycbcr">JPEG Usage of YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --></a></li>
+</ul>
+</li>
+<li><a href="#using-jpeg-ycbcr-data">Using JPEG YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Data</a>
+<ul>
+<li><a href="#using-ycbcr-jpeg-images">Using YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> JPEG images</a></li>
+<li><a href="#windows-imaging-component-apis">Windows Imaging Component APIs</a></li>
+<li><a href="#direct2d-apis">Direct2D APIs</a></li>
+<li><a href="#determining-if-the-ycbcr-configuration-is-supported">Determining if the YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Configuration is Supported</a></li>
+<li><a href="#decoding-ycbcr-pixel-data">Decoding YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Pixel Data</a></li>
+<li><a href="#transforming-ycbcr-pixel-data">Transforming YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Pixel Data</a></li>
+<li><a href="#encoding-ycbcr-pixel-data">Encoding YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Pixel Data</a></li>
+<li><a href="#decoding-ycbcr-pixel-data-in-windows-10">Decoding YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data in Windows 10</a></li>
+</ul>
+</li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>About JPEG YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Data</h2>
+<p>This section explains some key concepts necessary to understand how YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> support in WIC works and its key benefits.</p>
+<h3>YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Color Model</h3>
+<p>WIC in Windows 8 and earlier supports four different <a href="-wic-codec-native-pixel-formats.html">color models</a>, the most common of which is RGB/BGR. This color model defines color data using red, green and blue components; a fourth alpha component may also be used.</p>
+<p>Here is an image decomposed into its red, green and blue components.</p>
+<p><img src="graphics/ycbcr1.png" alt="an image decomposed into its red, green and blue components." /></p>
+<p>YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> is an alternate color model that defines color data using a luminance component (Y) and two chrominance components (C<!-- raw HTML omitted -->b<!-- raw HTML omitted --> and C<!-- raw HTML omitted -->r<!-- raw HTML omitted -->). It is commonly used in digital imaging and video scenarios. The term YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> is often used interchangeably with YUV, although the two are technically distinct.</p>
+<p>There are several variations of YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> which differ in color space and dynamic range definitions â€“ WIC specifically supports JPEG JFIF YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data. For more information, refer to the <a href="https://www.w3.org/Graphics/JPEG/itu-t81.pdf">JPEG ITU-T81 specification</a>.</p>
+<p>Here is an image decomposed into its Y, C<!-- raw HTML omitted -->b<!-- raw HTML omitted -->, and C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> components.</p>
+<p><img src="graphics/ycbcr2.png" alt="an image decomposed into its y, cb, and cr components." /></p>
+<h3>Planar Versus Interleaved Memory Layouts</h3>
+<p>This section describes some differences between accessing and storing RGB pixel data in memory versus YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data.</p>
+<p>RGB pixel data is typically stored using an interleaved memory layout. This means that data for a single color component is interleaved between pixels, and each pixel is stored contiguously in memory.</p>
+<p>Here is a figure showing RGBA pixel data stored in an interleaved memory layout.</p>
+<p><img src="graphics/ycbcr3.png" alt="a figure showing rgba pixel data stored in an interleaved memory layout." /></p>
+<p>YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data is typically stored using a planar memory layout. This means that each color component is stored separately in its own contiguous plane, for a total of three planes. In another common configuration, the C<!-- raw HTML omitted -->b<!-- raw HTML omitted --> and C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> components are interleaved and stored together, while the Y component remains in its own plane, for a total of two planes.</p>
+<p>Here is a figure showing planar Y and interleaved C<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data, a common YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> memory layout.</p>
+<p><img src="graphics/ycbcr4.png" alt="a figure showing planar y and interleaved cbcr pixel data, a common ycbcr memory layout." /></p>
+<p>In both WIC and Direct2D, each color plane is treated as its own distinct object (either an <a href="-wic-imp-iwicbitmapsource.html">IWICBitmapSource</a> or <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1bitmap"><strong>ID2D1Bitmap</strong></a>), and collectively these planes form the backing data for a YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> image.</p>
+<p>While WIC supports accessing YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data in both the 2 and 3 plane configurations, Direct2D only supports the former (Y and C<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted -->). Therefore, when using WIC and Direct2D together you should always use the 2 plane YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> configuration.</p>
+<h3>Chroma Subsampling</h3>
+<p>The YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> color model is well suited for digital imaging scenarios because it can take advantage of certain aspects of the human visual system. In particular, humans are more sensitive to changes in the luminance (brightness) of an image and less sensitive to chrominance (color). By splitting the color data into separate luminance and chrominance components, we can selectively compress just the chrominance components to achieve space savings with a minimal loss in quality.</p>
+<p>One technique for doing this is called chroma subsampling. The C<!-- raw HTML omitted -->b<!-- raw HTML omitted --> and C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> planes are subsampled (downscaled) in one or both of the horizontal and vertical dimensions. For historical reasons, each chroma subsampling mode is commonly referred to using a three part J:a:b ratio.</p>
+<table>
+<thead>
+<tr>
+<th>Subsampling mode</th>
+<th>Horizontal downscale</th>
+<th>Vertical downscale</th>
+<th>Bits per pixel*</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>4:4:4</td>
+<td>1x</td>
+<td>1x</td>
+<td>24</td>
+</tr>
+<tr>
+<td>4:2:2</td>
+<td>2x</td>
+<td>1x</td>
+<td>16</td>
+</tr>
+<tr>
+<td>4:4:0</td>
+<td>1x</td>
+<td>2x</td>
+<td>16</td>
+</tr>
+<tr>
+<td>4:2:0</td>
+<td>2x</td>
+<td>2x</td>
+<td>12</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>* Includes Y data.</p>
+<p>From the above table, if you use YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> to store uncompressed image data you can achieve a memory savings of 25% to 62.5% versus 32 bit per pixel RGBA data, depending on which chroma subsampling mode is used.</p>
+<h3>JPEG Usage of YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --></h3>
+<p>At a high level, the JPEG decompression pipeline consists of the following stages:</p>
+<ol>
+<li>Perform entropy (e.g. Huffman) decompression</li>
+<li>Perform dequantization</li>
+<li>Perform inverse discrete cosine transform</li>
+<li>Perform chroma upsampling on C<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data</li>
+<li>Convert YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data to RGBA (if needed)</li>
+</ol>
+<p>By having the JPEG codec produce YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data, we can avoid the final two steps of the decode process, or defer them to the GPU. In addition to the memory savings listed in the previous section, this significantly reduces overall time needed to decode the image. The same savings apply when encoding YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data.</p>
+<h2>Using JPEG YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Data</h2>
+<p>This section explains how to use WIC and Direct2D to operate on YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data.</p>
+<p>To see the guidance from this document used in practice, see the <a href="https://github.com/microsoftarchive/msdn-code-gallery-microsoft/tree/master/Official%20Windows%20Platform%20Sample/JPEG%20YCbCr%20optimizations%20in%20Direct2D%20and%20WIC%20sample">JPEG YCbCr optimizations in Direct2D and WIC sample</a> which demonstrates all of the steps needed to decode and render YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> content in a Direct2D app.</p>
+<h3>Using YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> JPEG images</h3>
+<p>The vast majority of JPEG images are stored as YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted -->. Some JPEGs contain CMYK or grayscale data and do not use YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted -->. This means that you typically, but not always, can directly use pre-existing JPEG content without any modifications.</p>
+<p>WIC and Direct2D do not support every possible YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> configuration, and YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> support in Direct2D is dependent upon the underlying graphics hardware and driver. Because of this, a general purpose imaging pipeline needs to be robust to images that do not use YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> (including other common image formats such as PNG or BMP) or to cases where YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> support is not available. We recommend that you keep your existing BGRA based imaging pipeline and enable YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> as a performance optimization when available.</p>
+<h3>Windows Imaging Component APIs</h3>
+<p>WIC in Windows 8.1 adds three new interfaces to provide access to JPEG YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data.</p>
+<h3>IWICPlanarBitmapSourceTransform</h3>
+<p><a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicplanarbitmapsourcetransform"><strong>IWICPlanarBitmapSourceTransform</strong></a> is analogous to <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapsourcetransform"><strong>IWICBitmapSourceTransform</strong></a>, except that it produces pixels in a planar configuration, including YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data. You can obtain this interface by calling QueryInterface on an implementation of <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapsource"><strong>IWICBitmapSource</strong></a> that supports planar access. This includes the JPEG codecâ€™s implementation of <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframedecode"><strong>IWICBitmapFrameDecode</strong></a> as well as <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapscaler"><strong>IWICBitmapScaler</strong></a>, <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapfliprotator"><strong>IWICBitmapFlipRotator</strong></a>, and <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwiccolortransform"><strong>IWICColorTransform</strong></a>.</p>
+<h3>IWICPlanarBitmapFrameEncode</h3>
+<p><a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicplanarbitmapframeencode"><strong>IWICPlanarBitmapFrameEncode</strong></a> provides the ability to encode planar pixel data, including YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data. You can obtain this interface by calling QueryInterface on the JPEG codecâ€™s implementation of <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a>.</p>
+<h3>IWICPlanarFormatConverter</h3>
+<p><a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicplanarformatconverter"><strong>IWICPlanarFormatConverter</strong></a> allows <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicformatconverter"><strong>IWICFormatConverter</strong></a> to consume planar pixel data, including YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted -->, and convert it to an interleaved pixel format. It does not expose the ability to convert interleaved pixel data to a planar format. You can obtain this interface by calling QueryInterface on the Windows provided implementation of <strong>IWICFormatConverter</strong>.</p>
+<h3>Direct2D APIs</h3>
+<p>Direct2D in Windows 8.1 supports YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> planar pixel data with the new YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> image effect . This effect provides the ability to render YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data. The effect takes as input two <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1bitmap"><strong>ID2D1Bitmap</strong></a> interfaces: one containing planar Y data in the DXGI_FORMAT_R8_UNORM format, and one containing interleaved CbCr data in the DXGI_FORMAT_R8G8_UNORM format. You typically use this effect in place of the <strong>ID2D1Bitmap</strong> that would have contained BGRA pixel data.</p>
+<p>The YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> image effect is intended to be used in conjunction with the WIC YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> APIs which provide the YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data. This effectively acts to offload some of the decode work from the CPU to the GPU, where it can be processed much quicker and in parallel.</p>
+<h3>Determining if the YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Configuration is Supported</h3>
+<p>As noted before, your app should be robust to cases where YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> support is not available. This section discusses the conditions that your app should check for. If any of the following checks fail, your app should fall back to a standard BGRA-based pipeline.</p>
+<h3>Does the WIC component support YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data access?</h3>
+<p>Only the Windows provided JPEG codec and certain WIC transforms support YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data access. For a complete list, refer to the <a href="#windows-imaging-component-apis">Windows Imaging Component APIs</a> section.</p>
+<p>To obtain one of the planar YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> interfaces, call QueryInterface on the original interface. This will fail if the component does not support YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data access.</p>
+<h3>Is the requested WIC transform supported for YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted -->?</h3>
+<p>After obtaining an <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicplanarbitmapsourcetransform"><strong>IWICPlanarBitmapSourceTransform</strong></a>, you should first call <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicplanarbitmapsourcetransform-doessupporttransform"><strong>DoesSupportTransform</strong></a>. This method takes as input parameters the complete set of transforms that you want to be applied to the planar YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data, and returns a Boolean indicating support, as well as the closest dimensions to the requested size that can be returned. You should check all three values before accessing the pixel data with <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicplanarbitmapsourcetransform-copypixels"><strong>IWICPlanarBitmapSourceTransform::CopyPixels</strong></a>.</p>
+<p>This pattern is similar to how <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapsourcetransform"><strong>IWICBitmapSourceTransform</strong></a> is used.</p>
+<h3>Does the graphics driver support the features necessary to use YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> with Direct2D?</h3>
+<p>This check is only necessary if you are using the Direct2D YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> effect to render YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> content. Direct2D stores YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data using the DXGI_FORMAT_R8_UNORM and DXGI_FORMAT_R8G8_UNORM pixel formats, which are not available from all graphics drivers.</p>
+<p>Before using the YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> image effect, you should call <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1devicecontext-isdxgiformatsupported"><strong>ID2D1DeviceContext::IsDxgiFormatSupported</strong></a> to ensure that both formats are supported by the driver.</p>
+<h3>Sample code</h3>
+<p>Below is a code example demonstrating the recommended checks. This example was taken from the <a href="https://github.com/microsoftarchive/msdn-code-gallery-microsoft/tree/master/Official%20Windows%20Platform%20Sample/JPEG%20YCbCr%20optimizations%20in%20Direct2D%20and%20WIC%20sample">JPEG YCbCr optimizations in Direct2D and WIC sample</a>.</p>
+<pre lang="C++"><code>bool DirectXSampleRenderer::DoesWicSupportRequestedYCbCr()
+{
+    ComPtr&lt;IWICPlanarBitmapSourceTransform&gt; wicPlanarSource;
+    HRESULT hr = m_wicScaler.As(&amp;wicPlanarSource);
+    if (SUCCEEDED(hr))
+    {
+        BOOL isTransformSupported;
+        uint32 supportedWidth = m_cachedBitmapPixelWidth;
+        uint32 supportedHeight = m_cachedBitmapPixelHeight;
+        DX::ThrowIfFailed(
+            wicPlanarSource-&gt;DoesSupportTransform(
+                &amp;supportedWidth,
+                &amp;supportedHeight,
+                WICBitmapTransformRotate0,
+                WICPlanarOptionsDefault,
+                SampleConstants::WicYCbCrFormats,
+                m_planeDescriptions,
+                SampleConstants::NumPlanes,
+                &amp;isTransformSupported
+                )
+            );
+
+        // The returned width and height may be larger if IWICPlanarBitmapSourceTransform does not
+        // exactly support what is requested.
+        if ((isTransformSupported == TRUE) &amp;&amp;
+            (supportedWidth == m_cachedBitmapPixelWidth) &amp;&amp;
+            (supportedHeight == m_cachedBitmapPixelHeight))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool DirectXSampleRenderer::DoesDriverSupportYCbCr()
+{
+    auto d2dContext = m_deviceResources-&gt;GetD2DDeviceContext();
+
+    return (d2dContext-&gt;IsDxgiFormatSupported(DXGI_FORMAT_R8_UNORM)) &amp;&amp;
+        (d2dContext-&gt;IsDxgiFormatSupported(DXGI_FORMAT_R8G8_UNORM));
+}
+</code></pre>
+<h3>Decoding YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Pixel Data</h3>
+<p>If you want to obtain YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data you should call <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicplanarbitmapsourcetransform-copypixels"><strong>IWICPlanarBitmapSourceTransform::CopyPixels</strong></a>. This method copies pixel data into an array of filled-out <a href="/windows/desktop/api/Wincodec/ns-wincodec-wicbitmapplane"><strong>WICBitmapPlane</strong></a> structures, one for each plane of data you want (for example, Y and C<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted -->). A <strong>WICBitmapPlane</strong> contains info about the pixel data and points to the memory buffer that will receive the data.</p>
+<p>If you want to use the YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data with other WIC APIs you should create an appropriately configured <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmap"><strong>IWICBitmap</strong></a>, call <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmap-lock"><strong>Lock</strong></a> to obtain the underlying memory buffer, and associate the buffer with the <a href="/windows/desktop/api/Wincodec/ns-wincodec-wicbitmapplane"><strong>WICBitmapPlane</strong></a> used to receive the YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data. You can then use the <a href="-wic-imp-iwicbitmapdecoder.html">IWICBitmap</a> normally.</p>
+<p>Finally, if you want to render the YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data in Direct2D, you should create an <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1bitmap"><strong>ID2D1Bitmap</strong></a> from each <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmap"><strong>IWICBitmap</strong></a> and use them as source for the YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> image effect. WIC allows you to request multiple planar configurations. When interoperating with Direct2D you should request two planes, one using GUID_WICPixelFormat8bppY and the other using GUID_WICPixelFormat16bppCbCr, as this is the configuration expected by Direct2D.</p>
+<h3>Code Sample</h3>
+<p>Below is a code example demonstrating the steps to decode and render YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data in Direct2D. This example was taken from the <a href="https://github.com/microsoftarchive/msdn-code-gallery-microsoft/tree/master/Official%20Windows%20Platform%20Sample/JPEG%20YCbCr%20optimizations%20in%20Direct2D%20and%20WIC%20sample">JPEG YCbCr optimizations in Direct2D and WIC sample</a>.</p>
+<pre lang="C++"><code>void DirectXSampleRenderer::CreateYCbCrDeviceResources()
+{
+    auto wicFactory = m_deviceResources-&gt;GetWicImagingFactory();
+    auto d2dContext = m_deviceResources-&gt;GetD2DDeviceContext();
+
+    ComPtr&lt;IWICPlanarBitmapSourceTransform&gt; wicPlanarSource;
+    DX::ThrowIfFailed(
+        m_wicScaler.As(&amp;wicPlanarSource)
+        );
+
+    ComPtr&lt;IWICBitmap&gt; bitmaps[SampleConstants::NumPlanes];
+    ComPtr&lt;IWICBitmapLock&gt; locks[SampleConstants::NumPlanes];
+    WICBitmapPlane planes[SampleConstants::NumPlanes];
+
+    for (uint32 i = 0; i &lt; SampleConstants::NumPlanes; i++)
+    {
+        DX::ThrowIfFailed(
+            wicFactory-&gt;CreateBitmap(
+                m_planeDescriptions[i].Width,
+                m_planeDescriptions[i].Height,
+                m_planeDescriptions[i].Format,
+                WICBitmapCacheOnLoad,
+                &amp;bitmaps[i]
+                )
+            );
+
+        LockBitmap(bitmaps[i].Get(), WICBitmapLockWrite, nullptr, &amp;locks[i], &amp;planes[i]);
+    }
+
+    DX::ThrowIfFailed(
+        wicPlanarSource-&gt;CopyPixels(
+            nullptr, // Copy the entire source region.
+            m_cachedBitmapPixelWidth,
+            m_cachedBitmapPixelHeight,
+            WICBitmapTransformRotate0,
+            WICPlanarOptionsDefault,
+            planes,
+            SampleConstants::NumPlanes
+            )
+        );
+
+    DX::ThrowIfFailed(d2dContext-&gt;CreateEffect(CLSID_D2D1YCbCr, &amp;m_d2dYCbCrEffect));
+
+    ComPtr&lt;ID2D1Bitmap1&gt; d2dBitmaps[SampleConstants::NumPlanes];
+    for (uint32 i = 0; i &lt; SampleConstants::NumPlanes; i++)
+    {
+        // IWICBitmapLock must be released before using the IWICBitmap.
+        locks[i] = nullptr;
+
+        // First ID2D1Bitmap1 is DXGI_FORMAT_R8 (Y), second is DXGI_FORMAT_R8G8 (CbCr).
+        DX::ThrowIfFailed(d2dContext-&gt;CreateBitmapFromWicBitmap(bitmaps[i].Get(), &amp;d2dBitmaps[i]));
+        m_d2dYCbCrEffect-&gt;SetInput(i, d2dBitmaps[i].Get());
+    }
+}
+
+void DirectXSampleRenderer::LockBitmap(
+    _In_ IWICBitmap *pBitmap,
+    DWORD bitmapLockFlags,
+    _In_opt_ const WICRect *prcSource,
+    _Outptr_ IWICBitmapLock **ppBitmapLock,
+    _Out_ WICBitmapPlane *pPlane
+    )
+{
+    // ComPtr guarantees the IWICBitmapLock is released if an exception is thrown.
+    ComPtr&lt;IWICBitmapLock&gt; lock;
+    DX::ThrowIfFailed(pBitmap-&gt;Lock(prcSource, bitmapLockFlags, &amp;lock));
+    DX::ThrowIfFailed(lock-&gt;GetStride(&amp;pPlane-&gt;cbStride));
+    DX::ThrowIfFailed(lock-&gt;GetDataPointer(&amp;pPlane-&gt;cbBufferSize, &amp;pPlane-&gt;pbBuffer));
+    DX::ThrowIfFailed(lock-&gt;GetPixelFormat(&amp;pPlane-&gt;Format));
+    *ppBitmapLock = lock.Detach();
+}
+</code></pre>
+<h3>Transforming YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Pixel Data</h3>
+<p>Transforming YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data is nearly identical to decoding, as both involve <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicplanarbitmapsourcetransform"><strong>IWICPlanarBitmapSourceTransform</strong></a>. The only difference is which WIC object you obtained the interface from. The Windows provided scaler, flip rotator and color transform all support YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> access.</p>
+<h3>Chaining Transforms Together</h3>
+<p>WIC supports the notion of chaining together multiple transforms. For example, you can create the following WIC pipeline:</p>
+<p><img src="graphics/ycbcr5.png" alt="a diagram of a wic pipeline starting with a jpeg decoder." /></p>
+<p>You can then call QueryInterface on the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwiccolortransform"><strong>IWICColorTransform</strong></a> to obtain <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicplanarbitmapsourcetransform"><strong>IWICPlanarBitmapSourceTransform</strong></a>. The color transform can communicate with the preceding transforms and can expose the aggregate capabilities of every stage in the pipeline. WIC ensures that the YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data is preserved through the entire process. This chaining only works when using components that support YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> access.</p>
+<h3>JPEG Codec Optimizations</h3>
+<p>Similar to the JPEG frame decode implementation of <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapsourcetransform"><strong>IWICBitmapSourceTransform</strong></a>, the JPEG frame decode implementation of <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicplanarbitmapsourcetransform"><strong>IWICPlanarBitmapSourceTransform</strong></a> supports native JPEG DCT domain scaling and rotation. You can request a power of two downscale or a rotation directly from the JPEG decoder. This typically results in higher quality and performance than using the discrete transforms.</p>
+<p>In addition, when you chain one or more WIC transforms after the JPEG decoder, it can leverage native JPEG scaling and rotation to satisfy the aggregate requested operation.</p>
+<h3>Format Conversions</h3>
+<p>Use <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicplanarformatconverter"><strong>IWICPlanarFormatConverter</strong></a> to convert planar YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data to an interleaved pixel format such as GUID_WICPixelFormat32bppPBGRA. WIC in Windows 8.1 does not provide the ability to convert to a planar YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel format.</p>
+<h3>Encoding YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> Pixel Data</h3>
+<p>Use <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicplanarbitmapframeencode"><strong>IWICPlanarBitmapFrameEncode</strong></a> to encode YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data to the JPEG encoder. Encoding YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> data <strong>IWICPlanarBitmapFrameEncode</strong> is similar but not identical to encoding interleaved data using <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a>. The planar interface only exposes the ability to write planar frame image data, and you should continue to use the frame encode interface to set metadata or a thumbnail and to commit at the end of the operation.</p>
+<p>For the typical case, you should follow these steps:</p>
+<ol>
+<li>Obtain the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a> as normal. If you want to configure chroma subsampling, set the <a href="/windows/desktop/api/Wincodec/ne-wincodec-wicjpegycrcbsubsamplingoption"><strong>JpegYCrCbSubsampling</strong></a> encoder option when creating the frame.</li>
+<li>If you need to set metadata or a thumbnail, do this using <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a> as normal.</li>
+<li>QueryInterface for the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicplanarbitmapframeencode"><strong>IWICPlanarBitmapFrameEncode</strong></a>.</li>
+<li>Set the YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data using <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicplanarbitmapframeencode-writesource"><strong>IWICPlanarBitmapFrameEncode::WriteSource</strong></a> or <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicplanarbitmapframeencode-writepixels"><strong>IWICPlanarBitmapFrameEncode::WritePixels</strong></a>. Unlike with their <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a> counterparts, you provide these methods with an array of <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapsource"><strong>IWICBitmapSource</strong></a> or <a href="/windows/desktop/api/Wincodec/ns-wincodec-wicbitmapplane"><strong>WICBitmapPlane</strong></a> which contain the YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel planes.</li>
+<li>When you are finished, call <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapframeencode-commit"><strong>IWICBitmapFrameEncode::Commit</strong></a>.</li>
+</ol>
+<h3>Decoding YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> pixel data in Windows 10</h3>
+<p>Starting in Windows 10 build 1507, Direct2D provides <a href="/windows/win32/api/d2d1_3/nn-d2d1_3-id2d1imagesourcefromwic"><strong>ID2D1ImageSourceFromWic</strong></a>, a simpler way to decode JPEGs into Direct2D while leveraging YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> optimizations. <strong>ID2D1ImageSourceFromWic</strong> automatically performs all of the necessary YC<!-- raw HTML omitted -->b<!-- raw HTML omitted -->C<!-- raw HTML omitted -->r<!-- raw HTML omitted --> capability checks for you; it uses the optimized codepath when possible, and uses a fallback otherwise. It also enables new optimizations such as only caching subregions of the image that are needed at a time.</p>
+<p>For more information about using <a href="/windows/win32/api/d2d1_3/nn-d2d1_3-id2d1imagesourcefromwic"><strong>ID2D1ImageSourceFromWic</strong></a>, refer to the Direct2D Photo Adjustment SDK <a href="https://github.com/Microsoft/Windows-universal-samples/tree/master/Samples/D2DPhotoAdjustment">sample</a>.</p>
+<h2>Related topics</h2>
+<ul>
+<li><a href="https://github.com/microsoftarchive/msdn-code-gallery-microsoft/tree/master/Official%20Windows%20Platform%20Sample/JPEG%20YCbCr%20optimizations%20in%20Direct2D%20and%20WIC%20sample">JPEG YCbCr optimizations in Direct2D and WIC sample</a></li>
+</ul>
+</body>

@@ -1,0 +1,1466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Keyboard Input Overview</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Keyboard Input Overview
+description: This topic discusses keyboard input.
+ms.assetid: de34727e-e8c7-481d-982d-0e42a02704db
+keywords:</p>
+<ul>
+<li>user input,keyboard input</li>
+<li>capturing user input,keyboard input</li>
+<li>keyboard input</li>
+<li>keyboard focus</li>
+<li>keystroke messages</li>
+<li>character messages</li>
+<li>system keystrokes</li>
+<li>nonsystem keystrokes</li>
+<li>nonsystem character messages</li>
+<li>dead keys</li>
+<li>dead-character messages
+ms.topic: article
+ms.date: 08/01/2022</li>
+</ul>
+<hr />
+<h1>Keyboard Input Overview</h1>
+<p>Applications should accept user input from the keyboard as well as from the mouse. An application receives keyboard input in the form of messages posted to its windows.</p>
+<h2>Keyboard Input Model</h2>
+<p>The system provides device-independent keyboard support for applications by installing a keyboard device driver appropriate for the current keyboard. The system provides language-independent keyboard support by using the language-specific keyboard layout currently selected by the user or the application. The keyboard device driver receives scan codes from the keyboard, which are sent to the keyboard layout where they are translated into messages and posted to the appropriate windows in your application.</p>
+<p>Assigned to each key on a keyboard is a unique value called a <em>scan code</em>, a device-dependent identifier for the key on the keyboard. A keyboard generates two scan codes when the user types a keyâ€”one when the user presses the key and another when the user releases the key.</p>
+<p>The keyboard device driver interprets a scan code and translates (maps) it to a <em>virtual-key code</em>, a device-independent value defined by the system that identifies the purpose of a key. After translating a scan code, the keyboard layout creates a message that includes the scan code, the virtual-key code, and other information about the keystroke, and then places the message in the system message queue. The system removes the message from the system message queue and posts it to the message queue of the appropriate thread. Eventually, the thread's message loop removes the message and passes it to the appropriate window procedure for processing. The following figure illustrates the keyboard input model.</p>
+<p><img src="images/csinp-01.png" alt="keyboard input processing model" /></p>
+<h2>Keyboard Focus and Activation</h2>
+<p>The system posts keyboard messages to the message queue of the foreground thread that created the window with the keyboard focus. The <em>keyboard focus</em> is a temporary property of a window. The system shares the keyboard among all windows on the display by shifting the keyboard focus, at the user's direction, from one window to another. The window that has the keyboard focus receives (from the message queue of the thread that created it) all keyboard messages until the focus changes to a different window.</p>
+<p>A thread can call the <a href="/windows/win32/api/winuser/nf-winuser-getfocus"><strong>GetFocus</strong></a> function to determine which of its windows (if any) currently has the keyboard focus. A thread can give the keyboard focus to one of its windows by calling the <a href="/windows/win32/api/winuser/nf-winuser-setfocus"><strong>SetFocus</strong></a> function. When the keyboard focus changes from one window to another, the system sends a <a href="wm-killfocus.html"><strong>WM_KILLFOCUS</strong></a> message to the window that has lost the focus, and then sends a <a href="wm-setfocus.html"><strong>WM_SETFOCUS</strong></a> message to the window that has gained the focus.</p>
+<p>The concept of keyboard focus is related to that of the active window. The <em>active window</em> is the top-level window the user is currently working with. The window with the keyboard focus is either the active window, or a child window of the active window. To help the user identify the active window, the system places it at the top of the Z order and highlights its title bar (if it has one) and border.</p>
+<p>The user can activate a top-level window by clicking it, selecting it using the ALT+TAB or ALT+ESC key combination, or selecting it from the Task List. A thread can activate a top-level window by using the <a href="/windows/win32/api/winuser/nf-winuser-setactivewindow"><strong>SetActiveWindow</strong></a> function. It can determine whether a top-level window it created is active by using the <a href="/windows/win32/api/winuser/nf-winuser-getactivewindow"><strong>GetActiveWindow</strong></a> function.</p>
+<p>When one window is deactivated and another activated, the system sends the <a href="wm-activate.html"><strong>WM_ACTIVATE</strong></a> message. The low-order word of the <em>wParam</em> parameter is zero if the window is being deactivated and nonzero if it is being activated. When the default window procedure receives the <strong>WM_ACTIVATE</strong> message, it sets the keyboard focus to the active window.</p>
+<p>To block keyboard and mouse input events from reaching applications, use <a href="/windows/win32/api/winuser/nf-winuser-blockinput"><strong>BlockInput</strong></a>. Note, the <strong>BlockInput</strong> function will not interfere with the asynchronous keyboard input-state table. This means that calling the <a href="/windows/win32/api/winuser/nf-winuser-sendinput"><strong>SendInput</strong></a> function while input is blocked will change the asynchronous keyboard input-state table.</p>
+<h2>Keystroke Messages</h2>
+<p>Pressing a key causes a <a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a> or <a href="wm-syskeydown.html"><strong>WM_SYSKEYDOWN</strong></a> message to be placed in the thread message queue attached to the window that has the keyboard focus. Releasing a key causes a <a href="wm-keyup.html"><strong>WM_KEYUP</strong></a> or <a href="wm-syskeyup.html"><strong>WM_SYSKEYUP</strong></a> message to be placed in the queue.</p>
+<p>Key-up and key-down messages typically occur in pairs, but if the user holds down a key long enough to start the keyboard's automatic repeat feature, the system generates a number of <a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a> or <a href="wm-syskeydown.html"><strong>WM_SYSKEYDOWN</strong></a> messages in a row. It then generates a single <a href="wm-keyup.html"><strong>WM_KEYUP</strong></a> or <a href="wm-syskeyup.html"><strong>WM_SYSKEYUP</strong></a> message when the user releases the key.</p>
+<p>This section covers the following topics:</p>
+<ul>
+<li><a href="#system-and-nonsystem-keystrokes">System and Nonsystem Keystrokes</a></li>
+<li><a href="#virtual-key-codes-described">Virtual-Key Codes Described</a></li>
+<li><a href="#keystroke-message-flags">Keystroke Message Flags</a></li>
+</ul>
+<h3>System and Nonsystem Keystrokes</h3>
+<p>The system makes a distinction between system keystrokes and nonsystem keystrokes. System keystrokes produce system keystroke messages, <a href="wm-syskeydown.html"><strong>WM_SYSKEYDOWN</strong></a> and <a href="wm-syskeyup.html"><strong>WM_SYSKEYUP</strong></a>. Nonsystem keystrokes produce nonsystem keystroke messages, <a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a> and <a href="wm-keyup.html"><strong>WM_KEYUP</strong></a>.</p>
+<p>If your window procedure must process a system keystroke message, make sure that after processing the message the procedure passes it to the <a href="/windows/desktop/api/winuser/nf-winuser-defwindowproca"><strong>DefWindowProc</strong></a> function. Otherwise, all system operations involving the ALT key will be disabled whenever the window has the keyboard focus. That is, the user won't be able to access the window's menus or System menu, or use the ALT+ESC or ALT+TAB key combination to activate a different window.</p>
+<p>System keystroke messages are primarily for use by the system rather than by an application. The system uses them to provide its built-in keyboard interface to menus and to allow the user to control which window is active. System keystroke messages are generated when the user types a key in combination with the ALT key, or when the user types and no window has the keyboard focus (for example, when the active application is minimized). In this case, the messages are posted to the message queue attached to the active window.</p>
+<p>Nonsystem keystroke messages are for use by application windows; the <a href="/windows/desktop/api/winuser/nf-winuser-defwindowproca"><strong>DefWindowProc</strong></a> function does nothing with them. A window procedure can discard any nonsystem keystroke messages that it does not need.</p>
+<h3>Virtual-Key Codes Described</h3>
+<p>The <strong>wParam</strong> parameter of a keystroke message contains the <a href="virtual-key-codes.html">virtual-key code</a> of the key that was pressed or released. A window procedure processes or ignores a keystroke message, depending on the value of the virtual-key code.</p>
+<p>A typical window procedure processes only a small subset of the keystroke messages that it receives and ignores the rest. For example, a window procedure might process only <a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a> keystroke messages, and only those that contain virtual-key codes for the cursor movement keys, shift keys (also called control keys), and function keys. A typical window procedure does not process keystroke messages from character keys. Instead, it uses the <a href="/windows/desktop/api/winuser/nf-winuser-translatemessage"><strong>TranslateMessage</strong></a> function to convert the message into character messages. For more information about <strong>TranslateMessage</strong> and character messages, see <a href="#character-messages">Character Messages</a>.</p>
+<h3>Keystroke Message Flags</h3>
+<p>The <strong>lParam</strong> parameter of a keystroke message contains additional information about the keystroke that generated the message. This information includes the <a href="#repeat-count">repeat count</a>, the <a href="#scan-codes">scan code</a>, the <a href="#extended-key-flag">extended-key flag</a>, the <a href="#context-code">context code</a>, the <a href="#previous-key-state-flag">previous key-state flag</a>, and the <a href="#transition-state-flag">transition-state flag</a>. The following illustration shows the locations of these flags and values in the <strong>lParam</strong> parameter.</p>
+<p><img src="images/csinp-02.png" alt="the locations of the flags and values in the lparam parameter of a keystroke message" /></p>
+<p>An application can use the following values to get the keystroke flags from high-order word of the <strong>lParam</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>KF_EXTENDED</strong><!-- raw HTML omitted -->0x0100</td>
+<td>Manipulates the <a href="#extended-key-flag">extended key flag</a>.</td>
+</tr>
+<tr>
+<td><strong>KF_DLGMODE</strong><!-- raw HTML omitted -->0x0800</td>
+<td>Manipulates the dialog mode flag, which indicates whether a dialog box is active.</td>
+</tr>
+<tr>
+<td><strong>KF_MENUMODE</strong><!-- raw HTML omitted -->0x1000</td>
+<td>Manipulates the menu mode flag, which indicates whether a menu is active.</td>
+</tr>
+<tr>
+<td><strong>KF_ALTDOWN</strong><!-- raw HTML omitted -->0x2000</td>
+<td>Manipulates the <a href="#context-code">context code flag</a>.</td>
+</tr>
+<tr>
+<td><strong>KF_REPEAT</strong><!-- raw HTML omitted -->0x4000</td>
+<td>Manipulates the <a href="#previous-key-state-flag">previous key state flag</a>.</td>
+</tr>
+<tr>
+<td><strong>KF_UP</strong><!-- raw HTML omitted -->0x8000</td>
+<td>Manipulates the <a href="#previous-key-state-flag">transition state flag</a>.</td>
+</tr>
+</tbody>
+</table>
+<p>Example code:</p>
+<pre lang="cpp"><code>case WM_KEYDOWN:
+case WM_KEYUP:
+case WM_SYSKEYDOWN:
+case WM_SYSKEYUP:
+{
+    WORD vkCode = LOWORD(wParam);                                 // virtual-key code
+    
+    WORD keyFlags = HIWORD(lParam);
+
+    WORD scanCode = LOBYTE(keyFlags);                             // scan code
+    BOOL isExtendedKey = (keyFlags &amp; KF_EXTENDED) == KF_EXTENDED; // extended-key flag, 1 if scancode has 0xE0 prefix
+    
+    if (isExtendedKey)
+        scanCode = MAKEWORD(scanCode, 0xE0);
+
+    BOOL wasKeyDown = (keyFlags &amp; KF_REPEAT) == KF_REPEAT;        // previous key-state flag, 1 on autorepeat
+    WORD repeatCount = LOWORD(lParam);                            // repeat count, &gt; 0 if several keydown messages was combined into one message
+
+    BOOL isKeyReleased = (keyFlags &amp; KF_UP) == KF_UP;             // transition-state flag, 1 on keyup
+
+    // if we want to distinguish these keys:
+    switch (vkCode)
+    {
+    case VK_SHIFT:   // converts to VK_LSHIFT or VK_RSHIFT
+    case VK_CONTROL: // converts to VK_LCONTROL or VK_RCONTROL
+    case VK_MENU:    // converts to VK_LMENU or VK_RMENU
+        vkCode = LOWORD(MapVirtualKeyW(scanCode, MAPVK_VSC_TO_VK_EX));
+        break;
+    }
+
+    // ...
+}
+break;
+</code></pre>
+<h3>Repeat Count</h3>
+<p>You can check the repeat count to determine whether a keystroke message represents more than one keystroke. The system increments the count when the keyboard generates <a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a> or <a href="wm-syskeydown.html"><strong>WM_SYSKEYDOWN</strong></a> messages faster than an application can process them. This often occurs when the user holds down a key long enough to start the keyboard's automatic repeat feature. Instead of filling the system message queue with the resulting key-down messages, the system combines the messages into a single key down message and increments the repeat count. Releasing a key cannot start the automatic repeat feature, so the repeat count for <a href="wm-keyup.html"><strong>WM_KEYUP</strong></a> and <a href="wm-syskeyup.html"><strong>WM_SYSKEYUP</strong></a> messages is always set to 1.</p>
+<h3>Scan Codes</h3>
+<p>:::image type=&quot;content&quot; source=&quot;images/keyboard-key-locations.png&quot; alt-text=&quot;Diagram of a Type 4 keyboard with the key locations for each key.&quot;:::</p>
+<p>The scan code is the value that the system generates when the user presses a key. It is a value that identifies the key pressed regardless of the active <a href="/globalization/windows-keyboard-layouts">keyboard layout</a>, as opposed to the character represented by the key. An application typically ignores scan codes. Instead, it uses the virtual-key codes to interpret keystroke messages.</p>
+<p>Modern keyboards are using <a href="https://www.usb.org/hid">Human Interface Devices (HID)</a> specification to communicate with a computer. <a href="/windows-hardware/drivers/hid/keyboard-and-mouse-class-drivers">Keyboard driver</a> converts reported HID Usage values sent from the keyboard to scan codes and passes them on to applications.</p>
+<blockquote>
+<p>[!NOTE]
+While virtual key codes are typically more useful to desktop applications, scan codes might be required in specific cases when you need to know which key is pressed regardless of the current <a href="/globalization/windows-keyboard-layouts">keyboard layout</a>. For example, the WASD (W is up, A is left, S is down, and D is right) key bindings for games, which ensure a consistent key formation across <a href="/globalization/keyboards/kbdus_7">US QWERTY</a> or <a href="/globalization/keyboards/kbdfr">French AZERTY</a> keyboard layouts.</p>
+</blockquote>
+<p>The following table lists the set of Scan Codes as presently recognized by Windows. <strong>HID Usage Page</strong>/<strong>HID Usage ID</strong>/<strong>HID Usage Name</strong> values reference the <a href="https://www.usb.org/hid">HID Usage Tables</a> document. The <strong>Key Location</strong> values reference the preceding keyboard image.</p>
+<p>The <strong>Scan 1 Make</strong> code is delivered in <a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a>/<a href="wm-keyup.html"><strong>WM_KEYUP</strong></a>/<a href="wm-syskeydown.html"><strong>WM_SYSKEYDOWN</strong></a>/<a href="wm-syskeyup.html"><strong>WM_SYSKEYUP</strong></a> and <a href="wm-input.html"><strong>WM_INPUT</strong></a> messages.</p>
+<table>
+<thead>
+<tr>
+<th>HID Usage Page Name</th>
+<th>HID Usage Name</th>
+<th align="center">HID Usage Page</th>
+<th align="center">HID Usage ID</th>
+<th align="center">Scan 1 Make</th>
+<th align="center">Key Location</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Generic Desktop</td>
+<td>System Power Down</td>
+<td align="center">0x0001</td>
+<td align="center">0x0081</td>
+<td align="center">0xE05E</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Generic Desktop</td>
+<td>System Sleep</td>
+<td align="center">0x0001</td>
+<td align="center">0x0082</td>
+<td align="center">0xE05F</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Generic Desktop</td>
+<td>System Wake Up</td>
+<td align="center">0x0001</td>
+<td align="center">0x0083</td>
+<td align="center">0xE063</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>ErrorRollOver</td>
+<td align="center">0x0007</td>
+<td align="center">0x0001</td>
+<td align="center">0x00FF</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard A</td>
+<td align="center">0x0007</td>
+<td align="center">0x0004</td>
+<td align="center">0x001E</td>
+<td align="center">31</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard B</td>
+<td align="center">0x0007</td>
+<td align="center">0x0005</td>
+<td align="center">0x0030</td>
+<td align="center">50</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard C</td>
+<td align="center">0x0007</td>
+<td align="center">0x0006</td>
+<td align="center">0x002E</td>
+<td align="center">48</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard D</td>
+<td align="center">0x0007</td>
+<td align="center">0x0007</td>
+<td align="center">0x0020</td>
+<td align="center">33</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard E</td>
+<td align="center">0x0007</td>
+<td align="center">0x0008</td>
+<td align="center">0x0012</td>
+<td align="center">19</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F</td>
+<td align="center">0x0007</td>
+<td align="center">0x0009</td>
+<td align="center">0x0021</td>
+<td align="center">34</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard G</td>
+<td align="center">0x0007</td>
+<td align="center">0x000A</td>
+<td align="center">0x0022</td>
+<td align="center">35</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard H</td>
+<td align="center">0x0007</td>
+<td align="center">0x000B</td>
+<td align="center">0x0023</td>
+<td align="center">36</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard I</td>
+<td align="center">0x0007</td>
+<td align="center">0x000C</td>
+<td align="center">0x0017</td>
+<td align="center">24</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard J</td>
+<td align="center">0x0007</td>
+<td align="center">0x000D</td>
+<td align="center">0x0024</td>
+<td align="center">37</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard K</td>
+<td align="center">0x0007</td>
+<td align="center">0x000E</td>
+<td align="center">0x0025</td>
+<td align="center">38</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard L</td>
+<td align="center">0x0007</td>
+<td align="center">0x000F</td>
+<td align="center">0x0026</td>
+<td align="center">39</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard M</td>
+<td align="center">0x0007</td>
+<td align="center">0x0010</td>
+<td align="center">0x0032</td>
+<td align="center">52</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard N</td>
+<td align="center">0x0007</td>
+<td align="center">0x0011</td>
+<td align="center">0x0031</td>
+<td align="center">51</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard O</td>
+<td align="center">0x0007</td>
+<td align="center">0x0012</td>
+<td align="center">0x0018</td>
+<td align="center">25</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard P</td>
+<td align="center">0x0007</td>
+<td align="center">0x0013</td>
+<td align="center">0x0019</td>
+<td align="center">26</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Q</td>
+<td align="center">0x0007</td>
+<td align="center">0x0014</td>
+<td align="center">0x0010</td>
+<td align="center">17</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard R</td>
+<td align="center">0x0007</td>
+<td align="center">0x0015</td>
+<td align="center">0x0013</td>
+<td align="center">20</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard S</td>
+<td align="center">0x0007</td>
+<td align="center">0x0016</td>
+<td align="center">0x001F</td>
+<td align="center">32</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard T</td>
+<td align="center">0x0007</td>
+<td align="center">0x0017</td>
+<td align="center">0x0014</td>
+<td align="center">21</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard U</td>
+<td align="center">0x0007</td>
+<td align="center">0x0018</td>
+<td align="center">0x0016</td>
+<td align="center">23</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard V</td>
+<td align="center">0x0007</td>
+<td align="center">0x0019</td>
+<td align="center">0x002F</td>
+<td align="center">49</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard W</td>
+<td align="center">0x0007</td>
+<td align="center">0x001A</td>
+<td align="center">0x0011</td>
+<td align="center">18</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard X</td>
+<td align="center">0x0007</td>
+<td align="center">0x001B</td>
+<td align="center">0x002D</td>
+<td align="center">47</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Y</td>
+<td align="center">0x0007</td>
+<td align="center">0x001C</td>
+<td align="center">0x0015</td>
+<td align="center">22</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Z</td>
+<td align="center">0x0007</td>
+<td align="center">0x001D</td>
+<td align="center">0x002C</td>
+<td align="center">46</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard 1 and Bang</td>
+<td align="center">0x0007</td>
+<td align="center">0x001E</td>
+<td align="center">0x0002</td>
+<td align="center">2</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard 2 and At</td>
+<td align="center">0x0007</td>
+<td align="center">0x001F</td>
+<td align="center">0x0003</td>
+<td align="center">3</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard 3 And Hash</td>
+<td align="center">0x0007</td>
+<td align="center">0x0020</td>
+<td align="center">0x0004</td>
+<td align="center">4</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard 4 and Dollar</td>
+<td align="center">0x0007</td>
+<td align="center">0x0021</td>
+<td align="center">0x0005</td>
+<td align="center">5</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard 5 and Percent</td>
+<td align="center">0x0007</td>
+<td align="center">0x0022</td>
+<td align="center">0x0006</td>
+<td align="center">6</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard 6 and Caret</td>
+<td align="center">0x0007</td>
+<td align="center">0x0023</td>
+<td align="center">0x0007</td>
+<td align="center">7</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard 7 and Ampersand</td>
+<td align="center">0x0007</td>
+<td align="center">0x0024</td>
+<td align="center">0x0008</td>
+<td align="center">8</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard 8 and Star</td>
+<td align="center">0x0007</td>
+<td align="center">0x0025</td>
+<td align="center">0x0009</td>
+<td align="center">9</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard 9 and Left Bracket</td>
+<td align="center">0x0007</td>
+<td align="center">0x0026</td>
+<td align="center">0x000A</td>
+<td align="center">10</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard 0 and Right Bracket</td>
+<td align="center">0x0007</td>
+<td align="center">0x0027</td>
+<td align="center">0x000B</td>
+<td align="center">11</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Return Enter</td>
+<td align="center">0x0007</td>
+<td align="center">0x0028</td>
+<td align="center">0x001C</td>
+<td align="center">43</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Escape</td>
+<td align="center">0x0007</td>
+<td align="center">0x0029</td>
+<td align="center">0x0001</td>
+<td align="center">110</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Delete</td>
+<td align="center">0x0007</td>
+<td align="center">0x002A</td>
+<td align="center">0x000E</td>
+<td align="center">15</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Tab</td>
+<td align="center">0x0007</td>
+<td align="center">0x002B</td>
+<td align="center">0x000F</td>
+<td align="center">16</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Spacebar</td>
+<td align="center">0x0007</td>
+<td align="center">0x002C</td>
+<td align="center">0x0039</td>
+<td align="center">61</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Dash and Underscore</td>
+<td align="center">0x0007</td>
+<td align="center">0x002D</td>
+<td align="center">0x000C</td>
+<td align="center">12</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Equals and Plus</td>
+<td align="center">0x0007</td>
+<td align="center">0x002E</td>
+<td align="center">0x000D</td>
+<td align="center">13</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Left Brace</td>
+<td align="center">0x0007</td>
+<td align="center">0x002F</td>
+<td align="center">0x001A</td>
+<td align="center">27</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Right Brace</td>
+<td align="center">0x0007</td>
+<td align="center">0x0030</td>
+<td align="center">0x001B</td>
+<td align="center">28</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Pipe and Slash</td>
+<td align="center">0x0007</td>
+<td align="center">0x0031</td>
+<td align="center">0x002B</td>
+<td align="center">29</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Non-US</td>
+<td align="center">0x0007</td>
+<td align="center">0x0032</td>
+<td align="center">0x002B</td>
+<td align="center">42</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard SemiColon and Colon</td>
+<td align="center">0x0007</td>
+<td align="center">0x0033</td>
+<td align="center">0x0027</td>
+<td align="center">40</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Apostrophe and Double Quotation Mark</td>
+<td align="center">0x0007</td>
+<td align="center">0x0034</td>
+<td align="center">0x0028</td>
+<td align="center">41</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Grave Accent and Tilde</td>
+<td align="center">0x0007</td>
+<td align="center">0x0035</td>
+<td align="center">0x0029</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Comma</td>
+<td align="center">0x0007</td>
+<td align="center">0x0036</td>
+<td align="center">0x0033</td>
+<td align="center">53</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Period</td>
+<td align="center">0x0007</td>
+<td align="center">0x0037</td>
+<td align="center">0x0034</td>
+<td align="center">54</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard QuestionMark</td>
+<td align="center">0x0007</td>
+<td align="center">0x0038</td>
+<td align="center">0x0035</td>
+<td align="center">55</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Caps Lock</td>
+<td align="center">0x0007</td>
+<td align="center">0x0039</td>
+<td align="center">0x003A</td>
+<td align="center">30</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F1</td>
+<td align="center">0x0007</td>
+<td align="center">0x003A</td>
+<td align="center">0x003B</td>
+<td align="center">112</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F2</td>
+<td align="center">0x0007</td>
+<td align="center">0x003B</td>
+<td align="center">0x003C</td>
+<td align="center">113</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F3</td>
+<td align="center">0x0007</td>
+<td align="center">0x003C</td>
+<td align="center">0x003D</td>
+<td align="center">114</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F4</td>
+<td align="center">0x0007</td>
+<td align="center">0x003D</td>
+<td align="center">0x003E</td>
+<td align="center">115</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F5</td>
+<td align="center">0x0007</td>
+<td align="center">0x003E</td>
+<td align="center">0x003F</td>
+<td align="center">116</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F6</td>
+<td align="center">0x0007</td>
+<td align="center">0x003F</td>
+<td align="center">0x0040</td>
+<td align="center">117</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F7</td>
+<td align="center">0x0007</td>
+<td align="center">0x0040</td>
+<td align="center">0x0041</td>
+<td align="center">118</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F8</td>
+<td align="center">0x0007</td>
+<td align="center">0x0041</td>
+<td align="center">0x0042</td>
+<td align="center">119</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F9</td>
+<td align="center">0x0007</td>
+<td align="center">0x0042</td>
+<td align="center">0x0043</td>
+<td align="center">120</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F10</td>
+<td align="center">0x0007</td>
+<td align="center">0x0043</td>
+<td align="center">0x0044</td>
+<td align="center">121</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F11</td>
+<td align="center">0x0007</td>
+<td align="center">0x0044</td>
+<td align="center">0x0057</td>
+<td align="center">122</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F12</td>
+<td align="center">0x0007</td>
+<td align="center">0x0045</td>
+<td align="center">0x0058</td>
+<td align="center">123</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard PrintScreen</td>
+<td align="center">0x0007</td>
+<td align="center">0x0046</td>
+<td align="center">0xE037<!-- raw HTML omitted -->0x0054 *Note 1</td>
+<td align="center">124</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Scroll Lock</td>
+<td align="center">0x0007</td>
+<td align="center">0x0047</td>
+<td align="center">0x0046</td>
+<td align="center">125</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Pause</td>
+<td align="center">0x0007</td>
+<td align="center">0x0048</td>
+<td align="center">0xE11D45<!-- raw HTML omitted -->0xE046 *Note 2<!-- raw HTML omitted -->0x0045 *Note 3</td>
+<td align="center">126</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Insert</td>
+<td align="center">0x0007</td>
+<td align="center">0x0049</td>
+<td align="center">0xE052</td>
+<td align="center">75</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Home</td>
+<td align="center">0x0007</td>
+<td align="center">0x004A</td>
+<td align="center">0xE047</td>
+<td align="center">80</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard PageUp</td>
+<td align="center">0x0007</td>
+<td align="center">0x004B</td>
+<td align="center">0xE049</td>
+<td align="center">85</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Delete Forward</td>
+<td align="center">0x0007</td>
+<td align="center">0x004C</td>
+<td align="center">0xE053</td>
+<td align="center">76</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard End</td>
+<td align="center">0x0007</td>
+<td align="center">0x004D</td>
+<td align="center">0xE04F</td>
+<td align="center">81</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard PageDown</td>
+<td align="center">0x0007</td>
+<td align="center">0x004E</td>
+<td align="center">0xE051</td>
+<td align="center">86</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard RightArrow</td>
+<td align="center">0x0007</td>
+<td align="center">0x004F</td>
+<td align="center">0xE04D</td>
+<td align="center">89</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard LeftArrow</td>
+<td align="center">0x0007</td>
+<td align="center">0x0050</td>
+<td align="center">0xE04B</td>
+<td align="center">79</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard DownArrow</td>
+<td align="center">0x0007</td>
+<td align="center">0x0051</td>
+<td align="center">0xE050</td>
+<td align="center">84</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard UpArrow</td>
+<td align="center">0x0007</td>
+<td align="center">0x0052</td>
+<td align="center">0xE048</td>
+<td align="center">83</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad Num Lock and Clear</td>
+<td align="center">0x0007</td>
+<td align="center">0x0053</td>
+<td align="center">0x0045<!-- raw HTML omitted -->0xE045 *Note 3</td>
+<td align="center">90</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad Forward Slash</td>
+<td align="center">0x0007</td>
+<td align="center">0x0054</td>
+<td align="center">0xE035</td>
+<td align="center">95</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad Star</td>
+<td align="center">0x0007</td>
+<td align="center">0x0055</td>
+<td align="center">0x0037</td>
+<td align="center">100</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad Dash</td>
+<td align="center">0x0007</td>
+<td align="center">0x0056</td>
+<td align="center">0x004A</td>
+<td align="center">105</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad Plus</td>
+<td align="center">0x0007</td>
+<td align="center">0x0057</td>
+<td align="center">0x004E</td>
+<td align="center">106</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad ENTER</td>
+<td align="center">0x0007</td>
+<td align="center">0x0058</td>
+<td align="center">0xE01C</td>
+<td align="center">108</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad 1 and End</td>
+<td align="center">0x0007</td>
+<td align="center">0x0059</td>
+<td align="center">0x004F</td>
+<td align="center">93</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad 2 and Down Arrow</td>
+<td align="center">0x0007</td>
+<td align="center">0x005A</td>
+<td align="center">0x0050</td>
+<td align="center">98</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad 3 and PageDn</td>
+<td align="center">0x0007</td>
+<td align="center">0x005B</td>
+<td align="center">0x0051</td>
+<td align="center">103</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad 4 and Left Arrow</td>
+<td align="center">0x0007</td>
+<td align="center">0x005C</td>
+<td align="center">0x004B</td>
+<td align="center">92</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad 5</td>
+<td align="center">0x0007</td>
+<td align="center">0x005D</td>
+<td align="center">0x004C</td>
+<td align="center">97</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad 6 and Right Arrow</td>
+<td align="center">0x0007</td>
+<td align="center">0x005E</td>
+<td align="center">0x004D</td>
+<td align="center">102</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad 7 and Home</td>
+<td align="center">0x0007</td>
+<td align="center">0x005F</td>
+<td align="center">0x0047</td>
+<td align="center">91</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad 8 and Up Arrow</td>
+<td align="center">0x0007</td>
+<td align="center">0x0060</td>
+<td align="center">0x0048</td>
+<td align="center">96</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad 9 and PageUp</td>
+<td align="center">0x0007</td>
+<td align="center">0x0061</td>
+<td align="center">0x0049</td>
+<td align="center">101</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad 0 and Insert</td>
+<td align="center">0x0007</td>
+<td align="center">0x0062</td>
+<td align="center">0x0052</td>
+<td align="center">99</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad Period</td>
+<td align="center">0x0007</td>
+<td align="center">0x0063</td>
+<td align="center">0x0053</td>
+<td align="center">104</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Non-US Slash Bar</td>
+<td align="center">0x0007</td>
+<td align="center">0x0064</td>
+<td align="center">0x0056</td>
+<td align="center">45</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Application</td>
+<td align="center">0x0007</td>
+<td align="center">0x0065</td>
+<td align="center">0xE05D</td>
+<td align="center">129</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Power</td>
+<td align="center">0x0007</td>
+<td align="center">0x0066</td>
+<td align="center">0xE05E</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad Equals</td>
+<td align="center">0x0007</td>
+<td align="center">0x0067</td>
+<td align="center">0x0059</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F13</td>
+<td align="center">0x0007</td>
+<td align="center">0x0068</td>
+<td align="center">0x0064</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F14</td>
+<td align="center">0x0007</td>
+<td align="center">0x0069</td>
+<td align="center">0x0065</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F15</td>
+<td align="center">0x0007</td>
+<td align="center">0x006A</td>
+<td align="center">0x0066</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F16</td>
+<td align="center">0x0007</td>
+<td align="center">0x006B</td>
+<td align="center">0x0067</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F17</td>
+<td align="center">0x0007</td>
+<td align="center">0x006C</td>
+<td align="center">0x0068</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F18</td>
+<td align="center">0x0007</td>
+<td align="center">0x006D</td>
+<td align="center">0x0069</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F19</td>
+<td align="center">0x0007</td>
+<td align="center">0x006E</td>
+<td align="center">0x006A</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F20</td>
+<td align="center">0x0007</td>
+<td align="center">0x006F</td>
+<td align="center">0x006B</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F21</td>
+<td align="center">0x0007</td>
+<td align="center">0x0070</td>
+<td align="center">0x006C</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F22</td>
+<td align="center">0x0007</td>
+<td align="center">0x0071</td>
+<td align="center">0x006D</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F23</td>
+<td align="center">0x0007</td>
+<td align="center">0x0072</td>
+<td align="center">0x006E</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard F24</td>
+<td align="center">0x0007</td>
+<td align="center">0x0073</td>
+<td align="center">0x0076</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keypad Comma</td>
+<td align="center">0x0007</td>
+<td align="center">0x0085</td>
+<td align="center">0x007E</td>
+<td align="center">107 *Note 4</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard International1</td>
+<td align="center">0x0007</td>
+<td align="center">0x0087</td>
+<td align="center">0x0073</td>
+<td align="center">56 *Note 4, 5</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard International2</td>
+<td align="center">0x0007</td>
+<td align="center">0x0088</td>
+<td align="center">0x0070</td>
+<td align="center">133 *Note 5</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard International3</td>
+<td align="center">0x0007</td>
+<td align="center">0x0089</td>
+<td align="center">0x007D</td>
+<td align="center">14 *Note 5</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard International4</td>
+<td align="center">0x0007</td>
+<td align="center">0x008A</td>
+<td align="center">0x0079</td>
+<td align="center">132 *Note 5</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard International5</td>
+<td align="center">0x0007</td>
+<td align="center">0x008B</td>
+<td align="center">0x007B</td>
+<td align="center">131 *Note 5</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard International6</td>
+<td align="center">0x0007</td>
+<td align="center">0x008C</td>
+<td align="center">0x005C</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard LANG1</td>
+<td align="center">0x0007</td>
+<td align="center">0x0090</td>
+<td align="center">0x0072 *Note 6<!-- raw HTML omitted -->0x00F2 *Note 3, 6</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard LANG2</td>
+<td align="center">0x0007</td>
+<td align="center">0x0091</td>
+<td align="center">0x0071 *Note 6<!-- raw HTML omitted -->0x00F1 *Note 3, 6</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard LANG3</td>
+<td align="center">0x0007</td>
+<td align="center">0x0092</td>
+<td align="center">0x0078</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard LANG4</td>
+<td align="center">0x0007</td>
+<td align="center">0x0093</td>
+<td align="center">0x0077</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard LANG5</td>
+<td align="center">0x0007</td>
+<td align="center">0x0094</td>
+<td align="center">0x0076</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard LeftControl</td>
+<td align="center">0x0007</td>
+<td align="center">0x00E0</td>
+<td align="center">0x001D</td>
+<td align="center">58</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard LeftShift</td>
+<td align="center">0x0007</td>
+<td align="center">0x00E1</td>
+<td align="center">0x002A</td>
+<td align="center">44</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard LeftAlt</td>
+<td align="center">0x0007</td>
+<td align="center">0x00E2</td>
+<td align="center">0x0038</td>
+<td align="center">60</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Left GUI</td>
+<td align="center">0x0007</td>
+<td align="center">0x00E3</td>
+<td align="center">0xE05B</td>
+<td align="center">127</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard RightControl</td>
+<td align="center">0x0007</td>
+<td align="center">0x00E4</td>
+<td align="center">0xE01D</td>
+<td align="center">64</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard RightShift</td>
+<td align="center">0x0007</td>
+<td align="center">0x00E5</td>
+<td align="center">0x0036</td>
+<td align="center">57</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard RightAlt</td>
+<td align="center">0x0007</td>
+<td align="center">0x00E6</td>
+<td align="center">0xE038</td>
+<td align="center">62</td>
+</tr>
+<tr>
+<td>Keyboard/Keypad</td>
+<td>Keyboard Right GUI</td>
+<td align="center">0x0007</td>
+<td align="center">0x00E7</td>
+<td align="center">0xE05C</td>
+<td align="center">128</td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>Scan Next Track</td>
+<td align="center">0x000C</td>
+<td align="center">0x00B5</td>
+<td align="center">0xE019</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>Scan Previous Track</td>
+<td align="center">0x000C</td>
+<td align="center">0x00B6</td>
+<td align="center">0xE010</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>Stop</td>
+<td align="center">0x000C</td>
+<td align="center">0x00B7</td>
+<td align="center">0xE024</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>Play/Pause</td>
+<td align="center">0x000C</td>
+<td align="center">0x00CD</td>
+<td align="center">0xE022</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>Mute</td>
+<td align="center">0x000C</td>
+<td align="center">0x00E2</td>
+<td align="center">0xE020</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>Volume Increment</td>
+<td align="center">0x000C</td>
+<td align="center">0x00E9</td>
+<td align="center">0xE030</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>Volume Decrement</td>
+<td align="center">0x000C</td>
+<td align="center">0x00EA</td>
+<td align="center">0xE02E</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>AL Consumer Control Configuration</td>
+<td align="center">0x000C</td>
+<td align="center">0x0183</td>
+<td align="center">0xE06D</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>AL Email Reader</td>
+<td align="center">0x000C</td>
+<td align="center">0x018A</td>
+<td align="center">0xE06C</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>AL Calculator</td>
+<td align="center">0x000C</td>
+<td align="center">0x0192</td>
+<td align="center">0xE021</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>AL Local Machine Browser</td>
+<td align="center">0x000C</td>
+<td align="center">0x0194</td>
+<td align="center">0xE06B</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>AC Search</td>
+<td align="center">0x000C</td>
+<td align="center">0x0221</td>
+<td align="center">0xE065</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>AC Home</td>
+<td align="center">0x000C</td>
+<td align="center">0x0223</td>
+<td align="center">0xE032</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>AC Back</td>
+<td align="center">0x000C</td>
+<td align="center">0x0224</td>
+<td align="center">0xE06A</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>AC Forward</td>
+<td align="center">0x000C</td>
+<td align="center">0x0225</td>
+<td align="center">0xE069</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>AC Stop</td>
+<td align="center">0x000C</td>
+<td align="center">0x0226</td>
+<td align="center">0xE068</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>AC Refresh</td>
+<td align="center">0x000C</td>
+<td align="center">0x0227</td>
+<td align="center">0xE067</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td>Consumer</td>
+<td>AC Bookmarks</td>
+<td align="center">0x000C</td>
+<td align="center">0x022A</td>
+<td align="center">0xE066</td>
+<td align="center"></td>
+</tr>
+</tbody>
+</table>
+<p>Notes:</p>
+<ol>
+<li><em>SysRq</em> key scan code is emitted on <em>Alt+Print screen</em> keystroke</li>
+<li><em>Break</em> key scan code is emitted on <em>Control+Pause</em> keystroke</li>
+<li>As seen in <a href="keyboard-input-notifications.html">legacy keyboard messages</a></li>
+<li>The key is present on Brazilian keyboards</li>
+<li>The key is present on Japanese keyboards</li>
+<li>The scan code is emitted in key release event only</li>
+</ol>
+<h3>Extended-Key Flag</h3>
+<p>The extended-key flag indicates whether the keystroke message originated from one of the additional keys on the Enhanced 101/102-key keyboard. The extended keys consist of the ALT and CTRL keys on the right-hand side of the keyboard; the INS, DEL, HOME, END, PAGE UP, PAGE DOWN, and arrow keys in the clusters to the left of the numeric keypad; the NUM LOCK key; the BREAK (CTRL+PAUSE) key; the PRINT SCRN key; and the divide (/) and ENTER keys in the numeric keypad. The right-hand SHIFT key is not considered an extended-key, it has a separate scan code instead.</p>
+<p>If specified, the scan code consists of a sequence of two bytes, where the first byte has a value of 0xE0.</p>
+<h3>Context Code</h3>
+<p>The context code indicates whether the ALT key was down when the keystroke message was generated. The code is 1 if the ALT key was down and 0 if it was up.</p>
+<h3>Previous Key-State Flag</h3>
+<p>The previous key-state flag indicates whether the key that generated the keystroke message was previously up or down. It is 1 if the key was previously down and 0 if the key was previously up. You can use this flag to identify keystroke messages generated by the keyboard's automatic repeat feature. This flag is set to 1 for <a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a> and <a href="wm-syskeydown.html"><strong>WM_SYSKEYDOWN</strong></a> keystroke messages generated by the automatic repeat feature. It is always set to 1 for <a href="wm-keyup.html"><strong>WM_KEYUP</strong></a> and <a href="wm-syskeyup.html"><strong>WM_SYSKEYUP</strong></a> messages.</p>
+<h3>Transition-State Flag</h3>
+<p>The transition-state flag indicates whether pressing a key or releasing a key generated the keystroke message. This flag is always set to 0 for <a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a> and <a href="wm-syskeydown.html"><strong>WM_SYSKEYDOWN</strong></a> messages; it is always set to 1 for <a href="wm-keyup.html"><strong>WM_KEYUP</strong></a> and <a href="wm-syskeyup.html"><strong>WM_SYSKEYUP</strong></a> messages.</p>
+<h2>Character Messages</h2>
+<p>Keystroke messages provide a lot of information about keystrokes, but they do not provide character codes for character keystrokes. To retrieve character codes, an application must include the <a href="/windows/desktop/api/winuser/nf-winuser-translatemessage"><strong>TranslateMessage</strong></a> function in its thread message loop. <strong>TranslateMessage</strong> passes a <a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a> or <a href="wm-syskeydown.html"><strong>WM_SYSKEYDOWN</strong></a> message to the keyboard layout. The layout examines the message's virtual-key code and, if it corresponds to a character key, provides the character code equivalent (taking into account the state of the SHIFT and CAPS LOCK keys). It then generates a character message that includes the character code and places the message at the top of the message queue. The next iteration of the message loop removes the character message from the queue and dispatches the message to the appropriate window procedure.</p>
+<p>This section covers the following topics:</p>
+<ul>
+<li><a href="#nonsystem-character-messages">Nonsystem Character Messages</a></li>
+<li><a href="#dead-character-messages">Dead-Character Messages</a></li>
+</ul>
+<h3>Nonsystem Character Messages</h3>
+<p>A window procedure can receive the following character messages: <a href="wm-char.html"><strong>WM_CHAR</strong></a>, <a href="wm-deadchar.html"><strong>WM_DEADCHAR</strong></a>, <a href="/windows/desktop/menurc/wm-syschar"><strong>WM_SYSCHAR</strong></a>, <a href="wm-sysdeadchar.html"><strong>WM_SYSDEADCHAR</strong></a>, and <a href="wm-unichar.html"><strong>WM_UNICHAR</strong></a>. The <a href="/windows/desktop/api/winuser/nf-winuser-translatemessage"><strong>TranslateMessage</strong></a> function generates a <strong>WM_CHAR</strong> or <strong>WM_DEADCHAR</strong> message when it processes a <a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a> message. Similarly, it generates a <strong>WM_SYSCHAR</strong> or <strong>WM_SYSDEADCHAR</strong> message when it processes a <a href="wm-syskeydown.html"><strong>WM_SYSKEYDOWN</strong></a> message.</p>
+<p>An application that processes keyboard input typically ignores all but the <a href="wm-char.html"><strong>WM_CHAR</strong></a> and <a href="wm-unichar.html"><strong>WM_UNICHAR</strong></a> messages, passing any other messages to the <a href="/windows/desktop/api/winuser/nf-winuser-defwindowprocw"><strong>DefWindowProc</strong></a> function. Note that <strong>WM_CHAR</strong> uses UTF-16 (16-bit Unicode Transformation Format) or ANSI character set while <strong>WM_UNICHAR</strong> always uses UTF-32 (32-bit Unicode Transformation Format). The system uses the <a href="/windows/desktop/menurc/wm-syschar"><strong>WM_SYSCHAR</strong></a> and <a href="wm-sysdeadchar.html"><strong>WM_SYSDEADCHAR</strong></a> messages to implement menu mnemonics.</p>
+<p>The <strong>wParam</strong> parameter of all character messages contains the character code of the character key that was pressed. The value of the character code depends on the window class of the window receiving the message. If the Unicode version of the <a href="/windows/win32/api/winuser/nf-winuser-registerclassw"><strong>RegisterClass</strong></a> function was used to register the window class, the system provides Unicode characters to all windows of that class. Otherwise, the system provides ANSI character codes. For more information, see <a href="/windows/win32/intl/registering-window-classes">Registering Window Classes</a> and <a href="/windows/apps/design/globalizing/use-utf8-code-page">Use UTF-8 code pages in Windows apps</a>.</p>
+<p>The contents of the <strong>lParam</strong> parameter of a character message are identical to the contents of the <strong>lParam</strong> parameter of the key-down message that was translated to produce the character message. For information, see <a href="#keystroke-message-flags">Keystroke Message Flags</a>.</p>
+<h3>Dead-Character Messages</h3>
+<p>Some non-English keyboards contain character keys that are not expected to produce characters by themselves. Instead, they are used to add a diacritic to the character produced by the subsequent keystroke. These keys are called <em>dead keys</em>. The circumflex key on a German keyboard is an example of a dead key. To enter the character consisting of an &quot;o&quot; with a circumflex, a German user would type the circumflex key followed by the &quot;o&quot; key. The window with the keyboard focus would receive the following sequence of messages:</p>
+<ol>
+<li><a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a></li>
+<li><a href="wm-deadchar.html"><strong>WM_DEADCHAR</strong></a></li>
+<li><a href="wm-keyup.html"><strong>WM_KEYUP</strong></a></li>
+<li><a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a></li>
+<li><a href="wm-char.html"><strong>WM_CHAR</strong></a></li>
+<li><a href="wm-keyup.html"><strong>WM_KEYUP</strong></a></li>
+</ol>
+<p><a href="/windows/desktop/api/winuser/nf-winuser-translatemessage"><strong>TranslateMessage</strong></a> generates the <a href="wm-deadchar.html"><strong>WM_DEADCHAR</strong></a> message when it processes the <a href="wm-keydown.html"><strong>WM_KEYDOWN</strong></a> message from a dead key. Although the <em>wParam</em> parameter of the <strong>WM_DEADCHAR</strong> message contains the character code of the diacritic for the dead key, an application typically ignores the message. Instead, it processes the <a href="wm-char.html"><strong>WM_CHAR</strong></a> message generated by the subsequent keystroke. The <em>wParam</em> parameter of the <strong>WM_CHAR</strong> message contains the character code of the letter with the diacritic. If the subsequent keystroke generates a character that cannot be combined with a diacritic, the system generates two <strong>WM_CHAR</strong> messages. The <em>wParam</em> parameter of the first contains the character code of the diacritic; the <em>wParam</em> parameter of the second contains the character code of the subsequent character key.</p>
+<p>The <a href="/windows/desktop/api/winuser/nf-winuser-translatemessage"><strong>TranslateMessage</strong></a> function generates the <a href="wm-sysdeadchar.html"><strong>WM_SYSDEADCHAR</strong></a> message when it processes the <a href="wm-syskeydown.html"><strong>WM_SYSKEYDOWN</strong></a> message from a system dead key (a dead key that is pressed in combination with the ALT key). An application typically ignores the <strong>WM_SYSDEADCHAR</strong> message.</p>
+<h2>Key Status</h2>
+<p>While processing a keyboard message, an application may need to determine the status of another key besides the one that generated the current message. For example, a word-processing application that allows the user to press SHIFT+END to select a block of text must check the status of the SHIFT key whenever it receives a keystroke message from the END key. The application can use the <a href="/windows/win32/api/winuser/nf-winuser-getkeystate"><strong>GetKeyState</strong></a> function to determine the status of a virtual key at the time the current message was generated; it can use the <a href="/windows/win32/api/winuser/nf-winuser-getasynckeystate"><strong>GetAsyncKeyState</strong></a> function to retrieve the current status of a virtual key.</p>
+<p>The keyboard layout maintains a list of names. The name of a key that produces a single character is the same as the character produced by the key. The name of a noncharacter key such as TAB and ENTER is stored as a character string. An application can retrieve the name of any key from the device driver by calling the <a href="/windows/win32/api/winuser/nf-winuser-getkeynametexta"><strong>GetKeyNameText</strong></a> function.</p>
+<h2>Keystroke and Character Translations</h2>
+<p>The system includes several special purpose functions that translate scan codes, character codes, and virtual-key codes provided by various keystroke messages. These functions include <a href="/windows/win32/api/winuser/nf-winuser-mapvirtualkeya"><strong>MapVirtualKey</strong></a>, <a href="/windows/win32/api/winuser/nf-winuser-toascii"><strong>ToAscii</strong></a>, <a href="/windows/win32/api/winuser/nf-winuser-tounicode"><strong>ToUnicode</strong></a>, and <a href="/windows/win32/api/winuser/nf-winuser-vkkeyscana"><strong>VkKeyScan</strong></a>.</p>
+<p>In addition, Microsoft Rich Edit 3.0 supports the <a href="/windows/desktop/Intl/hextounicode-ime">HexToUnicode IME</a>, which allows a user to convert between hexadecimal and Unicode characters by using hot keys. This means that when Microsoft Rich Edit 3.0 is incorporated into an application, the application will inherit the features of the HexToUnicode IME.</p>
+<h2>Hot-Key Support</h2>
+<p>A <em>hot key</em> is a key combination that generates a <a href="wm-hotkey.html"><strong>WM_HOTKEY</strong></a> message, a message the system places at the top of a thread's message queue, bypassing any existing messages in the queue. Applications use hot keys to obtain high-priority keyboard input from the user. For example, by defining a hot key consisting of the CTRL+C key combination, an application can allow the user to cancel a lengthy operation.</p>
+<p>To define a hot key, an application calls the <a href="/windows/win32/api/winuser/nf-winuser-registerhotkey"><strong>RegisterHotKey</strong></a> function, specifying the combination of keys that generates the <a href="wm-hotkey.html"><strong>WM_HOTKEY</strong></a> message, the handle to the window to receive the message, and the identifier of the hot key. When the user presses the hot key, a <strong>WM_HOTKEY</strong> message is placed in the message queue of the thread that created the window. The <em>wParam</em> parameter of the message contains the identifier of the hot key. The application can define multiple hot keys for a thread, but each hot key in the thread must have a unique identifier. Before the application terminates, it should use the <a href="/windows/win32/api/winuser/nf-winuser-unregisterhotkey"><strong>UnregisterHotKey</strong></a> function to destroy the hot key.</p>
+<p>Applications can use a hot key control to make it easy for the user to choose a hot key. Hot key controls are typically used to define a hot key that activates a window; they do not use the <a href="/windows/win32/api/winuser/nf-winuser-registerhotkey"><strong>RegisterHotKey</strong></a> and <a href="/windows/win32/api/winuser/nf-winuser-unregisterhotkey"><strong>UnregisterHotKey</strong></a> functions. Instead, an application that uses a hot key control typically sends the <a href="wm-sethotkey.html"><strong>WM_SETHOTKEY</strong></a> message to set the hot key. Whenever the user presses the hot key, the system sends a <a href="/windows/desktop/menurc/wm-syscommand"><strong>WM_SYSCOMMAND</strong></a> message specifying SC_HOTKEY. For more information about hot key controls, see &quot;Using Hot Key Controls&quot; in <a href="../controls/hot-key-controls.html">Hot Key Controls</a>.</p>
+<h2>Keyboard Keys for Browsing and Other Functions</h2>
+<p>Windows provides support for keyboards with special keys for browser functions, media functions, application launching, and power management. The <a href="wm-appcommand.html"><strong>WM_APPCOMMAND</strong></a> supports the extra keyboard keys. In addition, the <a href="../winmsg/shellproc.html"><strong>ShellProc</strong></a> function is modified to support the extra keyboard keys.</p>
+<p>It is unlikely that a child window in a component application will be able to directly implement commands for these extra keyboard keys. So when one of these keys is pressed, <a href="/windows/desktop/api/winuser/nf-winuser-defwindowproca"><strong>DefWindowProc</strong></a> will send a <a href="wm-appcommand.html"><strong>WM_APPCOMMAND</strong></a> message to a window. <strong>DefWindowProc</strong> will also bubble the <strong>WM_APPCOMMAND</strong> message to its parent window. This is similar to the way context menus are invoked with the right mouse button, which is that <strong>DefWindowProc</strong> sends a <a href="/windows/desktop/menurc/wm-contextmenu"><strong>WM_CONTEXTMENU</strong></a> message on a right button click, and bubbles it to its parent. Additionally, if <strong>DefWindowProc</strong> receives a <strong>WM_APPCOMMAND</strong> message for a top-level window, it will call a shell hook with code <strong>HSHELL_APPCOMMAND</strong>.</p>
+<p>Windows also supports the Microsoft IntelliMouse Explorer, which is a mouse with five buttons. The two extra buttons support forward and backward browser navigation. For more information, see <a href="about-mouse-input.html">XBUTTONs</a>.</p>
+<h2>Simulating Input</h2>
+<p>To simulate an uninterrupted series of user input events, use the <a href="/windows/win32/api/winuser/nf-winuser-sendinput"><strong>SendInput</strong></a> function. The function accepts three parameters. The first parameter, <em>cInputs</em>, indicates the number of input events that will be simulated. The second parameter, <em>rgInputs</em>, is an array of <a href="/windows/win32/api/winuser/ns-winuser-input"><strong>INPUT</strong></a> structures, each describing a type of input event and additional information about that event. The last parameter, <em>cbSize</em>, accepts the size of the <strong>INPUT</strong> structure, in bytes.</p>
+<p>The <a href="/windows/win32/api/winuser/nf-winuser-sendinput"><strong>SendInput</strong></a> function works by injecting a series of simulated input events into a device's input stream. The effect is similar to calling the <a href="/windows/win32/api/winuser/nf-winuser-keybd_event"><strong>keybd_event</strong></a> or <a href="/windows/win32/api/winuser/nf-winuser-mouse_event"><strong>mouse_event</strong></a> function repeatedly, except that the system ensures that no other input events intermingle with the simulated events. When the call completes, the return value indicates the number of input events successfully played. If this value is zero, then input was blocked.</p>
+<p>The <a href="/windows/win32/api/winuser/nf-winuser-sendinput"><strong>SendInput</strong></a> function does not reset the keyboard's current state. Therefore, if the user has any keys pressed when you call this function, they might interfere with the events that this function generates. If you are concerned about possible interference, check the keyboard's state with the <a href="/windows/win32/api/winuser/nf-winuser-getasynckeystate"><strong>GetAsyncKeyState</strong></a> function and correct as necessary.</p>
+<h2>Languages, Locales, and Keyboard Layouts</h2>
+<p>A <em>language</em> is a natural language, such as English, French, and Japanese. A <em>sublanguage</em> is a variant of a natural language that is spoken in a specific geographical region, such as the English sublanguages spoken in the United Kingdom and the United States. Applications use values, called <a href="/windows/desktop/Intl/language-identifiers">language identifiers</a>, to uniquely identify languages and sublanguages.</p>
+<p>Applications typically use <em>locales</em> to set the language in which input and output is processed. Setting the locale for the keyboard, for example, affects the character values generated by the keyboard. Setting the locale for the display or printer affects the glyphs displayed or printed. Applications set the locale for a keyboard by loading and using keyboard layouts. They set the locale for a display or printer by selecting a font that supports the specified locale.</p>
+<p>A keyboard layout not only specifies the physical position of the keys on the keyboard but also determines the character values generated by pressing those keys. Each layout identifies the current input language and determines which character values are generated by which keys and key combinations.</p>
+<p>Every keyboard layout has a corresponding handle that identifies the layout and language. The low word of the handle is a language identifier. The high word is a device handle, specifying the physical layout, or is zero, indicating a default physical layout. The user can associate any input language with a physical layout. For example, an English-speaking user who very occasionally works in French can set the input language of the keyboard to French without changing the physical layout of the keyboard. This means the user can enter text in French using the familiar English layout.</p>
+<p>Applications are generally not expected to manipulate input languages directly. Instead, the user sets up language and layout combinations, then switches among them. When the user clicks into text marked with a different language, the application calls the <a href="/windows/win32/api/winuser/nf-winuser-activatekeyboardlayout"><strong>ActivateKeyboardLayout</strong></a> function to activate the user's default layout for that language. If the user edits text in a language which is not in the active list, the application can call the <a href="/windows/win32/api/winuser/nf-winuser-loadkeyboardlayouta"><strong>LoadKeyboardLayout</strong></a> function with the language to get a layout based on that language.</p>
+<p>The <a href="/windows/win32/api/winuser/nf-winuser-activatekeyboardlayout"><strong>ActivateKeyboardLayout</strong></a> function sets the input language for the current task. The <em>hkl</em> parameter can be either the handle to the keyboard layout or a zero-extended language identifier. Keyboard layout handles can be obtained from the <a href="/windows/win32/api/winuser/nf-winuser-loadkeyboardlayouta"><strong>LoadKeyboardLayout</strong></a> or <a href="/windows/win32/api/winuser/nf-winuser-getkeyboardlayoutlist"><strong>GetKeyboardLayoutList</strong></a> function. The <strong>HKL_NEXT</strong> and <strong>HKL_PREV</strong> values can also be used to select the next or previous keyboard.</p>
+<p>The <a href="/windows/win32/api/winuser/nf-winuser-getkeyboardlayoutnamea"><strong>GetKeyboardLayoutName</strong></a> function retrieves the name of the active keyboard layout for the calling thread. If an application creates the active layout using the <a href="/windows/win32/api/winuser/nf-winuser-loadkeyboardlayouta"><strong>LoadKeyboardLayout</strong></a> function, <strong>GetKeyboardLayoutName</strong> retrieves the same string used to create the layout. Otherwise, the string is the primary language identifier corresponding to the locale of the active layout. This means the function may not necessarily differentiate among different layouts with the same primary language, so cannot return specific information about the input language. The <a href="/windows/win32/api/winuser/nf-winuser-getkeyboardlayout"><strong>GetKeyboardLayout</strong></a> function, however, can be used to determine the input language.</p>
+<p>The <a href="/windows/win32/api/winuser/nf-winuser-loadkeyboardlayouta"><strong>LoadKeyboardLayout</strong></a> function loads a keyboard layout and makes the layout available to the user. Applications can make the layout immediately active for the current thread by using the <strong>KLF_ACTIVATE</strong> value. An application can use the <strong>KLF_REORDER</strong> value to reorder the layouts without also specifying the <strong>KLF_ACTIVATE</strong> value. Applications should always use the <strong>KLF_SUBSTITUTE_OK</strong> value when loading keyboard layouts to ensure that the user's preference, if any, is selected.</p>
+<p>For multilingual support, the <a href="/windows/win32/api/winuser/nf-winuser-loadkeyboardlayouta"><strong>LoadKeyboardLayout</strong></a> function provides the <strong>KLF_REPLACELANG</strong> and <strong>KLF_NOTELLSHELL</strong> flags. The <strong>KLF_REPLACELANG</strong> flag directs the function to replace an existing keyboard layout without changing the language. Attempting to replace an existing layout using the same language identifier but without specifying <strong>KLF_REPLACELANG</strong> is an error. The <strong>KLF_NOTELLSHELL</strong> flag prevents the function from notifying the shell when a keyboard layout is added or replaced. This is useful for applications that add multiple layouts in a consecutive series of calls. This flag should be used in all but the last call.</p>
+<p>The <a href="/windows/win32/api/winuser/nf-winuser-unloadkeyboardlayout"><strong>UnloadKeyboardLayout</strong></a> function is restricted in that it cannot unload the system default input language. This ensures that the user always has one layout available for enter text using the same character set as used by the shell and file system.</p>
+</body>

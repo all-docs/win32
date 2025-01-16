@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MessageEncodingExample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: MessageEncodingExample
+description: This example encodes and decodes a message.
+ms.assetid: b1f0a1df-22be-4c86-9a7a-0a4d4f363206
+keywords:</p>
+<ul>
+<li>MessageEncodingExample Web Services for Windows</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>MessageEncodingExample</h1>
+<p>This example encodes and decodes a message.</p>
+<ul>
+<li><a href="#messageencodingcpp">MessageEncoding.cpp</a></li>
+<li><a href="#purchaseorderwsdl">PurchaseOrder.wsdl</a></li>
+<li><a href="#makefile">Makefile</a></li>
+</ul>
+<h2>MessageEncoding.cpp</h2>
+<pre lang="C++"><code>//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;string.h&quot;
+#include &quot;PurchaseOrder.wsdl.h&quot;
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+#define MaxMessageSize 2048
+
+struct MyCallbackState
+{
+    BYTE messageBuffer[MaxMessageSize];
+    ULONG messageSize;
+};
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_ERROR* error = NULL;
+    WS_XML_WRITER* xmlWriter = NULL;
+    WS_XML_READER* xmlReader = NULL;
+    WS_MESSAGE* message = NULL;
+    WS_HEAP* heap = NULL;
+    
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Create a heap to store deserialized data
+    hr = WsCreateHeap(
+        /*maxSize*/ 2048, 
+        /*trimSize*/ 512, 
+        NULL, 
+        0, 
+        &amp;heap, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Create an XML writer
+    hr = WsCreateWriter(
+        NULL, 
+        0, 
+        &amp;xmlWriter, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Create an XML reader
+    hr = WsCreateReader(
+        NULL,
+        0, 
+        &amp;xmlReader, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Create a message
+    hr = WsCreateMessage(
+        WS_ENVELOPE_VERSION_SOAP_1_2, 
+        WS_ADDRESSING_VERSION_1_0, 
+        NULL, 
+        0, 
+        &amp;message, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Encode some messages
+    for (int i = 0; i &lt; 100; i++)
+    {
+        // Initialize the message
+        hr = WsInitializeMessage(message, WS_BLANK_MESSAGE, NULL, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Set the writer to buffer the output
+        WS_XML_WRITER_BUFFER_OUTPUT writerOutput;
+        ZeroMemory(&amp;writerOutput, sizeof(writerOutput));
+        writerOutput.output.outputType = WS_XML_WRITER_OUTPUT_TYPE_BUFFER;
+    
+        WS_XML_WRITER_TEXT_ENCODING writerEncoding;
+        ZeroMemory(&amp;writerEncoding, sizeof(writerEncoding));
+        writerEncoding.encoding.encodingType = WS_XML_WRITER_ENCODING_TYPE_TEXT;
+        writerEncoding.charSet = WS_CHARSET_UTF8;
+        hr = WsSetOutput(xmlWriter, &amp;writerEncoding.encoding, &amp;writerOutput.output, NULL, 0, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Write the message start (headers)
+        hr = WsWriteEnvelopeStart(message, xmlWriter, NULL, NULL, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Initialize purchase order
+        _PurchaseOrderType purchaseOrderToWrite;
+        purchaseOrderToWrite.quantity = 100;
+        purchaseOrderToWrite.productName.chars = L&quot;Pencil&quot;;
+        purchaseOrderToWrite.productName.length = 6;
+    
+        // Write purchase order as the body of the message
+        hr = WsWriteBody(
+            message, 
+            &amp;PurchaseOrder_wsdl.globalElements.PurchaseOrderType, 
+            WS_WRITE_REQUIRED_VALUE,
+            &amp;purchaseOrderToWrite, 
+            sizeof(purchaseOrderToWrite), 
+            error);
+    
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Write the end of the message
+        hr = WsWriteEnvelopeEnd(message, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Flush the xml writer to make sure all data has been written to callback
+        hr = WsFlushWriter(xmlWriter, 0, NULL, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Reset message so we can reuse it
+        hr = WsResetMessage(message, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        WS_BYTES buffer;
+        hr = WsGetWriterProperty(xmlWriter, WS_XML_WRITER_PROPERTY_BYTES, &amp;buffer, sizeof(buffer), error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Set the reader input to be the encoded message
+        WS_XML_READER_BUFFER_INPUT bufferInput;
+        ZeroMemory(&amp;bufferInput, sizeof(bufferInput));
+        bufferInput.input.inputType = WS_XML_READER_INPUT_TYPE_BUFFER;
+        bufferInput.encodedData = buffer.bytes;
+        bufferInput.encodedDataSize = buffer.length;
+    
+        WS_XML_READER_TEXT_ENCODING readerEncoding;
+        readerEncoding.encoding.encodingType = WS_XML_READER_ENCODING_TYPE_TEXT;
+        readerEncoding.charSet = WS_CHARSET_UTF8;
+        hr = WsSetInput(xmlReader, &amp;readerEncoding.encoding, &amp;bufferInput.input, NULL, 0, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Read the message start (headers)
+        hr = WsReadEnvelopeStart(message, xmlReader, NULL, NULL, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Read the body of the message as a purchase order
+        _PurchaseOrderType* purchaseOrder;
+        hr = WsReadBody(message, &amp;PurchaseOrder_wsdl.globalElements.PurchaseOrderType, 
+            WS_READ_REQUIRED_POINTER, heap, &amp;purchaseOrder, sizeof(purchaseOrder), error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Print out purchase order
+        wprintf(L&quot;%ld, %.*s\n&quot;, 
+            purchaseOrder-&gt;quantity, 
+            purchaseOrder-&gt;productName.length,
+            purchaseOrder-&gt;productName.chars);
+    
+        // Read the end of the message
+        hr = WsReadEnvelopeEnd(message, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Reset message so we can reuse it
+        hr = WsResetMessage(message, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Reset heap
+        hr = WsResetHeap(heap, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    }
+    
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    
+    if (message != NULL)
+    {
+        WsFreeMessage(message);
+    }
+    if (xmlReader != NULL)
+    {
+        WsFreeReader(xmlReader);
+    }
+    if (xmlWriter != NULL)
+    {
+        WsFreeWriter(xmlWriter);
+    }
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    if (heap != NULL)
+    {
+        WsFreeHeap(heap);
+    }
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+
+</code></pre>
+<h2>PurchaseOrder.wsdl</h2>
+<pre lang="syntax"><code>&lt;wsdl:definitions 
+    xmlns:soap=&quot;http://schemas.xmlsoap.org/wsdl/soap/&quot; 
+    xmlns:tns=&quot;http://example.org&quot; 
+    xmlns:xsd=&quot;http://www.w3.org/2001/XMLSchema&quot; 
+    xmlns:wsaw=&quot;http://www.w3.org/2006/05/addressing/wsdl&quot; 
+    xmlns:soap12=&quot;http://schemas.xmlsoap.org/wsdl/soap12/&quot; 
+    xmlns:wsdl=&quot;http://schemas.xmlsoap.org/wsdl/&quot; 
+    targetNamespace=&quot;http://example.org&quot;&gt;
+    &lt;wsdl:types&gt;
+        &lt;xsd:schema targetNamespace=&quot;http://example.org&quot; elementFormDefault=&quot;qualified&quot;&gt;
+            &lt;xsd:element name=&quot;PurchaseOrderType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;quantity&quot; type=&quot;xsd:int&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;productName&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;OrderConfirmationType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;expectedShipDate&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;GetOrderStatusType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;GetOrderStatusResponseType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;status&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;OrderNotFoundFaultType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+        &lt;/xsd:schema&gt;
+    &lt;/wsdl:types&gt;
+    &lt;wsdl:message name=&quot;PurchaseOrder&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:PurchaseOrderType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;OrderConfirmation&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:OrderConfirmationType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;GetOrderStatus&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetOrderStatusType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;GetOrderStatusResponse&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetOrderStatusResponseType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;OrderNotFoundFault&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:OrderNotFoundFaultType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:portType name=&quot;IPurchaseOrder&quot;&gt;
+        &lt;wsdl:operation name=&quot;Order&quot;&gt;
+            &lt;wsdl:input message=&quot;tns:PurchaseOrder&quot; wsaw:Action=&quot;http://example.org/purchaseorder&quot;/&gt;
+            &lt;wsdl:output message=&quot;tns:OrderConfirmation&quot; wsaw:Action=&quot;http://example.org/orderconfirmation&quot;/&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;OrderStatus&quot;&gt;
+            &lt;wsdl:input message=&quot;tns:GetOrderStatus&quot; wsaw:Action=&quot;http://example.org/getorderstatus&quot;/&gt;
+            &lt;wsdl:output message=&quot;tns:GetOrderStatusResponse&quot; wsaw:Action=&quot;http://example.org/getorderstatusresponse&quot;/&gt;
+            &lt;wsdl:fault name=&quot;OrderNotFound&quot; message=&quot;tns:OrderNotFoundFault&quot; wsaw:Action=&quot;http://example.org/ordernotfound&quot;/&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:portType&gt;
+    &lt;wsdl:binding name=&quot;PurchaseOrderBinding&quot; type=&quot;tns:IPurchaseOrder&quot;&gt;
+        &lt;soap:binding transport=&quot;http://schemas.xmlsoap.org/soap/http&quot;/&gt;
+        &lt;wsdl:operation name=&quot;Order&quot;&gt;
+            &lt;soap:operation soapAction=&quot;http://example.org/purchaseorder&quot; style=&quot;document&quot;/&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;OrderStatus&quot;&gt;
+            &lt;soap:operation soapAction=&quot;http://example.org/getorderstatus&quot; style=&quot;document&quot;/&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:output&gt;
+            &lt;wsdl:fault name=&quot;OrderNotFound&quot;&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:fault&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:binding&gt;
+    &lt;wsdl:service name=&quot;PurchaseOrderService&quot;&gt;
+        &lt;wsdl:port name=&quot;IPurchaseOrder&quot; binding=&quot;tns:PurchaseOrderBinding&quot;&gt;
+            &lt;soap:address location=&quot;http://example.org/IPurchaseOrder&quot;/&gt;
+        &lt;/wsdl:port&gt;
+    &lt;/wsdl:service&gt;
+&lt;/wsdl:definitions&gt;
+</code></pre>
+<h2>Makefile</h2>
+<pre lang="syntax"><code>!include &lt;Win32.Mak&gt;
+
+EXTRA_LIBS = WebServices.lib rpcrt4.lib Iphlpapi.lib
+
+all: $(OUTDIR) $(OUTDIR)\WsMessageEncoding.exe
+
+&quot;$(OUTDIR)&quot; :
+    if not exist &quot;$(OUTDIR)/$(NULL)&quot; mkdir &quot;$(OUTDIR)&quot;
+    
+$(OUTDIR)\PurchaseOrder.wsdl.c: PurchaseOrder.wsdl
+     Wsutil.exe /wsdl:PurchaseOrder.wsdl /string:WS_STRING /out:$(OUTDIR)
+    
+$(OUTDIR)\PurchaseOrder.wsdl.obj: $(OUTDIR)\PurchaseOrder.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; $(OUTDIR)\PurchaseOrder.wsdl.c
+
+$(OUTDIR)\MessageEncoding.obj: MessageEncoding.cpp $(OUTDIR)\PurchaseOrder.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; MessageEncoding.cpp
+
+$(OUTDIR)\WsMessageEncoding.exe: $(OUTDIR)\MessageEncoding.obj $(OUTDIR)\PurchaseOrder.wsdl.obj
+    $(link) $(ldebug) $(conlflags) $(conlibsmt) $(EXTRA_LIBS) -out:$(OUTDIR)\WsMessageEncoding.exe $(OUTDIR)\MessageEncoding.obj $(OUTDIR)\PurchaseOrder.wsdl.obj /PDB:$(OUTDIR)\WsMessageEncoding.PDB
+
+clean:
+    $(CLEANUP)
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

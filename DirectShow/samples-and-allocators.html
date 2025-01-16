@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Samples and Allocators</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Samples and Allocators
+ms.assetid: '1fbea741-f29a-4815-9885-94ca9cf4bb95'
+title: Samples and Allocators
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Samples and Allocators</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>When a pin delivers media data to another pin, it does not pass a direct pointer to the memory buffer. Instead, it delivers a pointer to a COM object that manages the memory. This object, called a <em>media sample</em>, exposes the <a href="/windows/desktop/api/Strmif/nn-strmif-imediasample"><strong>IMediaSample</strong></a> interface. The receiving pin accesses the memory buffer by calling <strong>IMediaSample</strong> methods, such as <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample-getpointer"><strong>IMediaSample::GetPointer</strong></a>, <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample-getsize"><strong>IMediaSample::GetSize</strong></a>, and <a href="/windows/win32/api/strmif/nf-strmif-imediasample-getactualdatalength"><strong>IMediaSample::GetActualDataLength</strong></a>.</p>
+<p>Samples always travel downstream, from output pin to input pin. In the push model, the output pin delivers a sample by calling <a href="/windows/desktop/api/Strmif/nf-strmif-imeminputpin-receive"><strong>IMemInputPin::Receive</strong></a> on the input pin. The input pin will either process the data synchronously (that is, completely inside the <strong>Receive</strong> method), or process it asynchronously on a worker thread. The input pin is allowed to block within the <strong>Receive</strong> method, if it needs to wait for resources.</p>
+<p>Another COM object, called an <em>allocator</em>, is responsible for creating and managing media samples. Allocators expose the <a href="/windows/desktop/api/Strmif/nn-strmif-imemallocator"><strong>IMemAllocator</strong></a> interface. Whenever a filter needs a media sample with an empty buffer, it calls the <a href="/windows/desktop/api/Strmif/nf-strmif-imemallocator-getbuffer"><strong>IMemAllocator::GetBuffer</strong></a> method, which returns a pointer to the sample. Every pin connection shares one allocator. When two pins connect, they decide which filter will provide the allocator. The pins also set properties on the allocator, such as the number of buffers and the size of each buffer. (For details, see <a href="how-filters-connect.html">How Filters Connect</a> and <a href="negotiating-allocators.html">Negotiating Allocators</a>.)</p>
+<p>The following illustration shows the relationships among the allocator, the media samples, and the filter.</p>
+<p><img src="images/mediasamples.png" alt="media samples and allocators" /></p>
+<p><strong>Media Sample Reference Counts</strong></p>
+<p>An allocator creates a finite pool of samples. At any time, some samples may be in use, while others are available for <strong>GetBuffer</strong> calls. The allocator uses reference counting to keep track of the samples. The <strong>GetBuffer</strong> method returns a sample with a reference count of 1. If the reference count goes to zero, the sample goes back into the allocator's pool, where it can be used in the next <strong>GetBuffer</strong> call. As long as the reference count remains above zero, the sample is not available to <strong>GetBuffer</strong>. If every sample belonging to the allocator is in use, the <strong>GetBuffer</strong> method blocks until a sample becomes available.</p>
+<p>For example, suppose that an input pin receives a sample. If it processes the sample synchronously, inside the <strong>Receive</strong> method, it does not increment the reference count. After <strong>Receive</strong> returns, the output pin releases the sample, the reference count goes to zero, and the sample returns to the allocator's pool. On the other hand, if the input pin processes the sample on a worker thread, it increments the reference count before leaving the <strong>Receive</strong> method. The reference count is now 2. When the output pin releases the sample, the count goes to 1; the sample does not yet return to the pool. After the worker thread is done with the sample, it calls <strong>Release</strong> to free the sample. Now the sample returns to the pool.</p>
+<p>When a pin receives a sample, it can copy the data to another sample, or it can modify the original sample and deliver that one to the next filter. Potentially, a sample can travel the entire length of the graph, each filter calling <strong>AddRef</strong> and <strong>Release</strong> in turn. Therefore, the output pin must never re-use a sample after it calls <strong>Receive</strong>, because a downstream filter may be using the sample. The output pin must always call <strong>GetBuffer</strong> to get a new sample.</p>
+<p>This mechanism reduces the amount of memory allocation, because filters re-use the same buffers. It also prevents filters from accidentally writing over data that has not been processed, because the allocator maintains a list of available samples.</p>
+<p>A filter can use separate allocators for input and output. It might do this if it expands the input data (for example, by decompressing it). If the output is no larger than the input, a filter might process the data in place, without copying it to a new sample. In that case, two or more pin connections can share one allocator.</p>
+<p><strong>Committing and Decommitting Allocators</strong></p>
+<p>When a filter first creates an allocator, the allocator has not reserved any memory buffers. At this point, any calls to the <strong>GetBuffer</strong> method will fail. When streaming starts, the output pin calls <a href="/windows/desktop/api/Strmif/nf-strmif-imemallocator-commit"><strong>IMemAllocator::Commit</strong></a>, which commits the allocator, causing it to allocate memory. Pins can now call <strong>GetBuffer</strong>.</p>
+<p>When streaming stops, the pin calls <a href="/windows/desktop/api/Strmif/nf-strmif-imemallocator-decommit"><strong>IMemAllocator::Decommit</strong></a>, which decommits the allocator. All subsequent calls to <strong>GetBuffer</strong> fail until the allocator is committed again. Also, if any calls to <strong>GetBuffer</strong> are currently blocked waiting for a sample, they immediately return a failure code. The <strong>Decommit</strong> method may or may not free the memory, depending on the implementation. For example, the <a href="cmemallocator.html"><strong>CMemAllocator</strong></a> class waits until its destructor method to free memory.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="data-flow-in-the-filter-graph.html">Data Flow in the Filter Graph</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

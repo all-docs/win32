@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Getting Started with the Stream-Output Stage</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Getting Started with the Stream-Output Stage
+description: This section describes how to use a geometry shader with the stream output stage.
+ms.assetid: 37146486-5922-4833-850c-cc4a51de0957
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Getting Started with the Stream-Output Stage</h1>
+<p>This section describes how to use a geometry shader with the stream output stage.</p>
+<h2>Compile a Geometry Shader</h2>
+<p>This geometry shader (GS) calculates a face normal for each triangle, and outputs position, normal and texture coordinate data.</p>
+<pre><code>struct GSPS_INPUT
+{
+    float4 Pos : SV_POSITION;
+    float3 Norm : TEXCOORD0;
+    float2 Tex : TEXCOORD1;
+};
+
+[maxvertexcount(12)]
+void GS( triangle GSPS_INPUT input[3], inout TriangleStream&lt;GSPS_INPUT&gt; TriStream )
+{
+    GSPS_INPUT output;
+    
+    //
+    // Calculate the face normal
+    //
+    float3 faceEdgeA = input[1].Pos - input[0].Pos;
+    float3 faceEdgeB = input[2].Pos - input[0].Pos;
+    float3 faceNormal = normalize( cross(faceEdgeA, faceEdgeB) );
+    float3 ExplodeAmt = faceNormal*Explode;
+    
+    //
+    // Calculate the face center
+    //
+    float3 centerPos = (input[0].Pos.xyz + input[1].Pos.xyz + input[2].Pos.xyz)/3.0;
+    float2 centerTex = (input[0].Tex + input[1].Tex + input[2].Tex)/3.0;
+    centerPos += faceNormal*Explode;
+    
+    //
+    // Output the pyramid
+    //
+    for( int i=0; i&lt;3; i++ )
+    {
+        output.Pos = input[i].Pos + float4(ExplodeAmt,0);
+        output.Pos = mul( output.Pos, View );
+        output.Pos = mul( output.Pos, Projection );
+        output.Norm = input[i].Norm;
+        output.Tex = input[i].Tex;
+        TriStream.Append( output );
+        
+        int iNext = (i+1)%3;
+        output.Pos = input[iNext].Pos + float4(ExplodeAmt,0);
+        output.Pos = mul( output.Pos, View );
+        output.Pos = mul( output.Pos, Projection );
+        output.Norm = input[iNext].Norm;
+        output.Tex = input[iNext].Tex;
+        TriStream.Append( output );
+        
+        output.Pos = float4(centerPos,1) + float4(ExplodeAmt,0);
+        output.Pos = mul( output.Pos, View );
+        output.Pos = mul( output.Pos, Projection );
+        output.Norm = faceNormal;
+        output.Tex = centerTex;
+        TriStream.Append( output );
+        
+        TriStream.RestartStrip();
+    }
+    
+    for( int i=2; i&gt;=0; i-- )
+    {
+        output.Pos = input[i].Pos + float4(ExplodeAmt,0);
+        output.Pos = mul( output.Pos, View );
+        output.Pos = mul( output.Pos, Projection );
+        output.Norm = -input[i].Norm;
+        output.Tex = input[i].Tex;
+        TriStream.Append( output );
+    }
+    TriStream.RestartStrip();
+}
+</code></pre>
+<p>Keeping that code in mind, consider that a geometry shader looks much like a vertex or pixel shader, but with the following exceptions: the type returned by the function, the input parameter declarations, and the intrinsic function.</p>
+<!-- raw HTML omitted -->
+<p>defines the output to be a maximum of 12 vertices.<!-- raw HTML omitted --></p>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<p>The rest of the shader looks very similar to a vertex or pixel shader. The geometry shader uses a structure to declare input parameters and marks the position member with the SV_POSITION semantic to tell the hardware that this is positional data. The input structure identifies the other two input parameters as texture coordinates (even though one of them will contain a face normal). You could use your own custom semantic for the face normal if you prefer.</p>
+<p>Having designed the geometry shader, call <a href="/windows/desktop/direct3dhlsl/d3dcompile"><strong>D3DCompile</strong></a> to compile as shown in the following code example.</p>
+<pre><code>DWORD dwShaderFlags = D3DCOMPILE_ENABLE_STRICTNESS;
+ID3DBlob** ppShader;
+
+D3DCompile( pSrcData, sizeof( pSrcData ), 
+  &quot;Tutorial13.fx&quot;, NULL, NULL, &quot;GS&quot;, &quot;gs_4_0&quot;, 
+  dwShaderFlags, 0, &amp;ppShader, NULL );
+</code></pre>
+<p>Just like vertex and pixel shaders, you need a shader flag to tell the compiler how you want the shader compiled (for debugging, optimized for speed, and so on), the entry point function, and the shader model to validate against. This example creates a geometry shader built from the Tutorial13.fx file, by using the GS function. The shader is compiled for shader model 4.0.</p>
+<h2>Create a Geometry-Shader Object with Stream Output</h2>
+<p>Once you know that you will be streaming the data from the geometry, and you have successfully compiled the shader, the next step is to call <a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11device-creategeometryshaderwithstreamoutput"><strong>ID3D11Device::CreateGeometryShaderWithStreamOutput</strong></a> to create the geometry shader object.</p>
+<p>But first, you need to declare the stream output (SO) stage input signature. This signature matches or validates the GS outputs and the SO inputs at the time of object creation. The following code is an example of the SO declaration.</p>
+<pre><code>D3D11_SO_DECLARATION_ENTRY pDecl[] =
+{
+    // semantic name, semantic index, start component, component count, output slot
+    { &quot;SV_POSITION&quot;, 0, 0, 4, 0 },   // output all components of position
+    { &quot;TEXCOORD0&quot;, 0, 0, 3, 0 },     // output the first 3 of the normal
+    { &quot;TEXCOORD1&quot;, 0, 0, 2, 0 },     // output the first 2 texture coordinates
+};
+
+D3D11Device-&gt;CreateGeometryShaderWithStreamOut( pShaderBytecode, ShaderBytecodesize, pDecl, 
+    sizeof(pDecl), NULL, 0, 0, NULL, &amp;pStreamOutGS );
+</code></pre>
+<p>This function takes several parameters including:</p>
+<ul>
+<li>A pointer to the compiled geometry shader (or vertex shader if no geometry shader will be present and data will be streamed out directly from the vertex shader). For information about how to get this pointer, see <a href="/windows/desktop/direct3dhlsl/dx-graphics-hlsl-using-shaders-10">Getting a Pointer to a Compiled Shader</a>.</li>
+<li>A pointer to an array of declarations that describe the input data for the stream output stage. (See <a href="/windows/desktop/api/D3D11/ns-d3d11-d3d11_so_declaration_entry"><strong>D3D11_SO_DECLARATION_ENTRY</strong></a>.) You can supply up to 64 declarations, one for each different type of element to be output from the SO stage. The array of declaration entries describes the data layout regardless of whether only a single buffer or multiple buffers are to be bound for stream output.</li>
+<li>The number of elements that are written out by the SO stage.</li>
+<li>A pointer to the geometry shader object that is created (see <a href="/windows/win32/api/d3d11/nn-d3d11-id3d11geometryshader"><strong>ID3D11GeometryShader</strong></a>).</li>
+</ul>
+<p>In this situation, the buffer stride is NULL, the index of the stream to be sent to the rasterizer is 0, and the class linkage interface is NULL.</p>
+<p>The stream output declaration defines the way that data is written to a buffer resource. You can add as many components as you want to the output declaration. Use the SO stage to write to a single buffer resource or many buffer resources. For a single buffer, the SO stage can write many different elements per-vertex. For multiple buffers, the SO stage can only write a single element of per-vertex data to each buffer.</p>
+<p>To use the SO stage without using a geometry shader, call <a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11device-creategeometryshaderwithstreamoutput"><strong>ID3D11Device::CreateGeometryShaderWithStreamOutput</strong></a> and pass a pointer to a vertex shader to the <em>pShaderBytecode</em> parameter.</p>
+<h2>Set the Output Targets</h2>
+<p>The last step is to set the SO stage buffers. Data can be streamed into one or more buffers in memory for use later. The following code shows how to create a single buffer that can be used for vertex data, as well as for the SO stage to stream data into.</p>
+<pre><code>ID3D11Buffer *m_pBuffer;
+int m_nBufferSize = 1000000;
+
+D3D11_BUFFER_DESC bufferDesc =
+{
+    m_nBufferSize,
+    D3D11_USAGE_DEFAULT,
+    D3D11_BIND_STREAM_OUTPUT,
+    0,
+    0,
+    0
+};
+D3D11Device-&gt;CreateBuffer( &amp;bufferDesc, NULL, &amp;m_pBuffer );
+</code></pre>
+<p>Create a buffer by calling <a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11device-createbuffer"><strong>ID3D11Device::CreateBuffer</strong></a>. This example illustrates default usage, which is typical for a buffer resource that is expected to be updated fairly frequently by the CPU. The binding flag identifies the pipeline stage that the resource can be bound to. Any resource used by the SO stage must also be created with the bind flag D3D10_BIND_STREAM_OUTPUT.</p>
+<p>Once the buffer is successfully created, set it to the current device by calling <a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-sosettargets"><strong>ID3D11DeviceContext::SOSetTargets</strong></a>:</p>
+<pre><code>UINT offset[1] = 0;
+D3D11Device-&gt;SOSetTargets( 1, &amp;m_pBuffer, offset );
+</code></pre>
+<p>This call takes the number of buffers, a pointer to the buffers, and an array of offsets (one offset into each of the buffers that indicates where to begin writing data). Data will be written to these streaming-output buffers when a draw function is called. An internal variable keeps track of the position for where to begin writing data to the streaming-output buffers, and that variables will continue to increment until <a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-sosettargets"><strong>SOSetTargets</strong></a> is called again and a new offset value is specified.</p>
+<p>All data written out to the target buffers will be 32-bit values.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="d3d10-graphics-programming-guide-output-stream-stage.html">Stream-Output Stage</a></p>
+<!-- raw HTML omitted -->
+</body>

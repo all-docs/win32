@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Receiving Events Securely</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Temporary and permanent consumers have different methods of securing event delivery.
+ms.assetid: cd02e5db-f9e2-438b-9632-0a1387a6d4e3
+ms.tgt_platform: multiple
+title: Receiving Events Securely
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Receiving Events Securely</h1>
+<p>Temporary and permanent consumers have different methods of securing event delivery.</p>
+<p>The following sections are discussed in this topic:</p>
+<ul>
+<li><a href="#securing-temporary-consumers">Securing Temporary Consumers</a></li>
+<li><a href="#securing-permanent-consumers">Securing Permanent Consumers</a></li>
+<li><a href="#securing-the-permanent-subscription">Securing the Permanent Subscription</a></li>
+<li><a href="#setting-an-administrator-only-sd">Setting an Administrator-Only SD</a></li>
+<li><a href="#impersonating-the-event-provider-identity">Impersonating the Event Provider Identity</a></li>
+<li><a href="#sids-and-permanent-subscriptions">SIDs and Permanent Subscriptions</a></li>
+<li><a href="#creating-permanent-subscriptions-using-domain-accounts">Creating Permanent Subscriptions Using Domain Accounts</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Securing Temporary Consumers</h2>
+<p>A <a href="gloss-t.html"><em>temporary consumers</em></a> runs until the system is rebooted or WMI is stopped but cannot be started if a specific event is raised. For example, a call to <a href="swbemservices-execnotificationqueryasync.html"><strong>SWbemServices.ExecNotificationQueryAsync</strong></a> creates a temporary consumer.</p>
+<p>The calls <a href="swbemservices-execnotificationquery.html"><strong>SWbemServices.ExecNotificationQuery</strong></a> or <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-execnotificationquery"><strong>IWbemServices::ExecNotificationQuery</strong></a> create temporary event consumers. Temporary consumers cannot control who provides events to the event <a href="gloss-s.html"><em>sink</em></a> they create.</p>
+<p>Calls to <a href="swbemservices-execnotificationquery.html"><strong>ExecNotificationQuery</strong></a> methods can be made synchronously, <a href="gloss-s.html"><em>semisynchronously</em></a>, or asynchronously. For example, <a href="swbemservices-execnotificationquery.html"><strong>SWbemServices.ExecNotificationQuery</strong></a> is a synchronous method that can be called semisynchronously, depending on how the <em>iflags</em> parameter is set. <a href="swbemservices-execnotificationqueryasync.html"><strong>SWbemServices.ExecNotificationQueryAsync</strong></a> is an asynchronous call.</p>
+<p>Be aware that the callback to the sink for the asynchronous versions of these calls might not be returned at the same authentication level as the call the script made. Therefore, it is recommended that you use semisynchronous instead of asynchronous calls. If you require asynchronous communication, see <a href="calling-a-method.html">Calling a Method</a> and <a href="setting-security-on-an-asynchronous-call.html">Setting Security on an Asynchronous Call</a>.</p>
+<p>Scripting subscribers cannot check the access rights of an event provider to provide events to the sink created by the script. Therefore, it is recommended that calls to <a href="swbemservices-execnotificationquery.html"><strong>SWbemServices.ExecNotificationQuery</strong></a> use the semisynchronous form of the call and use specific security settings. For more information, see <a href="making-a-semisynchronous-call-with-vbscript.html">Making a Semisynchronous Call with VBScript</a>.</p>
+<h2>Securing Permanent Consumers</h2>
+<p>A <a href="gloss-p.html"><em>permanent consumers</em></a> has a permanent subscription to events from an event provider that will persist after the operating system is restarted. An event provider that supports permanent consumers is a <a href="gloss-e.html"><em>event consumer provider</em></a>. If the event provider is not running when an event occurs, then WMI starts the provider when it needs to deliver events. WMI identifies which consumer provider the events should be delivered to, based on the <a href="--eventconsumerproviderregistration.html"><strong>__EventConsumerProviderRegistration</strong></a> instance, which associates the consumer provider <a href="--win32provider.html"><strong>__Win32Provider</strong></a> instance with a <a href="gloss-l.html"><em>logical consumer class</em></a> defined by the consumer provider. For more information about the role of consumer providers, see <a href="writing-an-event-consumer-provider.html">Writing an Event Consumer Provider</a>.</p>
+<p>Permanent consumers can control who sends them events and event providers can control who accesses their events.</p>
+<p>Client scripts and applications create instances of the logical consumer class as part of a subscription. The logical consumer class defines what information the event contains, what the client can do with the event, and how the event is delivered.</p>
+<p>The WMI <a href="standard-consumer-classes.html">Standard Consumer Classes</a> provide examples of the role of logical consumer classes. For more information, see <a href="monitoring-and-responding-to-events-with-standard-consumers.html">Monitoring and Responding to Events with Standard Consumers</a>.</p>
+<h2>Securing the Permanent Subscription</h2>
+<p>Permanent subscriptions have greater potential to cause security problems in WMI and therefore have the following security requirements:</p>
+<ul>
+<li>
+<p>The logical consumer instance, the <a href="--eventfilter.html"><strong>__EventFilter</strong></a>, and the <a href="--filtertoconsumerbinding.html"><strong>__FilterToConsumerBinding</strong></a> instances must have the same individual security identifier (SID) in the <strong>CreatorSID</strong> property. For more information, see <a href="#sids-and-permanent-subscriptions">Keeping the same SID in all instances of a permanent subscription</a>.</p>
+</li>
+<li>
+<p>The account that creates the subscription must be either a domain account with local administrator privileges or the local Administrators group account. Using the Administrators group SID allows the subscription to continue to work on the local computer, even if it is disconnected from the network. Using a domain account allows exact identification of the user.</p>
+<p>However, if the computer is not connected and the creating account is a domain account, the consumer fails because WMI cannot verify the identity of the account. To avoid subscription failure if the computer is disconnected from the network, use the Administrators group SID for a subscription. In this case, you should ensure that the LocalSystem account can access group membership data on the domain. Some event consumer providers have particularly high security requirements, since a rogue subscription can cause great damage. Examples are the standard consumers, <a href="activescripteventconsumer.html"><strong>ActiveScriptEventConsumer</strong></a> and <a href="commandlineeventconsumer.html"><strong>CommandLineEventConsumer</strong></a>.</p>
+</li>
+<li>
+<p>You can configure the permanent subscription to only accept events from specific event provider identities. Set the security descriptor in the <strong>EventAccess</strong> property of the <a href="--eventfilter.html"><strong>__EventFilter</strong></a> instance to the event provider identities. WMI compares the identity of the event provider to the security descriptor to determine if the provider has <strong>WBEM_RIGHT_PUBLISH</strong> access. For more information, see <a href="wmi-security-constants.html">WMI Security Constants</a>.</p>
+<p>If the filter allows access to the event provider identity, then it also trusts the event. This allows the consumer that received the event to raise a delegated event.</p>
+<p><strong>Note</strong>Â Â The default for the security descriptor in <strong>EventAccess</strong> is <strong>NULL</strong>, which allows access to everyone. Limiting access in the subscription instance of <a href="--eventfilter.html"><strong>__EventFilter</strong></a> is recommended for better event security.</p>
+</li>
+</ul>
+<h2>Setting an Administrator-Only SD</h2>
+<p>The following C++ code example creates an administrator-only security descriptor on the <a href="--eventfilter.html"><strong>__EventFilter</strong></a> instance. This example creates the security descriptor using <a href="/windows/desktop/SecAuthZ/security-descriptor-definition-language">Security Descriptor Definition Language</a> (SDDL). For more information about <strong>WBEM_RIGHT_SUBSCRIBE</strong>, see <a href="wmi-security-constants.html">WMI Security Constants</a>.</p>
+<pre lang="C++"><code>// Create SD that allows only administrators 
+//    to send events to this filter. 
+// The SDDL settings are O:BAG:BAD:(A;;0x80;;;BA)
+// Set the EventAccess property in the 
+//    IWbemClassObject of the __EventFilter instance. 
+   long lMask = WBEM_RIGHT_PUBLISH;
+     WCHAR wBuf[MAX_PATH];
+     _ltow( lMask, wBuf, 16 );
+ 
+HRESULT hRes = pEventFilterInstance-&gt;Put( L&quot;EventAccess&quot;, 0,
+    &amp;_variant_t( L&quot;O:BAG:BAD:(A;;0x80;;;BA)&quot; ), NULL );
+</code></pre>
+<p>The previous code example requires the following reference and #include statements.</p>
+<pre lang="C++"><code>#define _WIN32_DCOM
+#include &lt;wbemidl.h&gt;
+#include &lt;comdef.h&gt;
+
+#pragma comment(lib, &quot;wbemuuid.lib&quot;)
+</code></pre>
+<h2>Impersonating the Event Provider Identity</h2>
+<p>A permanent consumer may need to impersonate the event provider to process the event. Permanent consumers can only impersonate the event provider when the following conditions exist:</p>
+<ul>
+<li>The instance of <a href="--filtertoconsumerbinding.html"><strong>__FilterToConsumerBinding</strong></a> has the <strong>MaintainSecurityContext</strong> property set to <strong>True</strong>.</li>
+<li>An event is delivered in the same security context that the provider was in when it generated the event. Only a consumer implemented as a DLL, an in-process consumer, can receive events in the security context of the provider. For more information about security of in-process providers and consumers, see <a href="provider-hosting-and-security.html">Provider Hosting and Security</a>.</li>
+<li>The event provider is running in a process that allows impersonation.</li>
+</ul>
+<p>The account running the consumer process must have <strong>FULL_WRITE</strong> access to the WMI repository (also known as the CIM repository). In the subscription, the <a href="--filtertoconsumerbinding.html"><strong>__FilterToConsumerBinding</strong></a>, <a href="--eventconsumer.html"><strong>__EventConsumer</strong></a>, and <a href="--eventfilter.html"><strong>__EventFilter</strong></a> instances must have the same individual security identifier (SID) value in the <strong>CreatorSID</strong> property. WMI stores the SID in the <strong>CreatorSID</strong> for each instance.</p>
+<h2>SIDs and Permanent Subscriptions</h2>
+<p>A permanent subscription does not work when the binding, the consumer, and the filter are not created by the same user, which means that the <a href="--filtertoconsumerbinding.html"><strong>__FilterToConsumerBinding</strong></a>, <a href="--eventconsumer.html"><strong>__EventConsumer</strong></a>, and <a href="--eventfilter.html"><strong>__EventFilter</strong></a> must have the same individual security identifier (SID) value in the <strong>CreatorSID</strong> property. Windows Management Instrumentation (WMI) stores this value.</p>
+<h2>Creating Permanent Subscriptions Using Domain Accounts</h2>
+<p>Several issues must be considered when using domain accounts to create permanent subscriptions. Every permanent subscription should still work when no user is logged on, which means they function under the built-in LocalSystem account.</p>
+<p>If a domain user is the creator of a permanent subscription for security sensitive consumers (<a href="activescripteventconsumer.html"><strong>ActiveScriptEventConsumer</strong></a>, <a href="commandlineeventconsumer.html"><strong>CommandLineEventConsumer</strong></a>), then WMI verifies whether the <strong>CreatorSID</strong> property of the <a href="--eventfilter.html"><strong>__EventFilter</strong></a> class, <a href="--filtertoconsumerbinding.html"><strong>__FilterToConsumerBinding</strong></a> class, and the consumer instances belong to a user who is member of local Administrators group.</p>
+<p>The following code example shows how you can specify the <strong>CreatorSID</strong> property.</p>
+<pre lang="syntax"><code> instance of __EventFilter as $FILTER
+    {
+        // this is the Administrators SID in array of bytes format
+        CreatorSID = {1,2,0,0,0,0,0,5,32,0,0,0,32,2,0,0};    
+        // Add filter code here ...
+    }
+
+    instance of ActiveScriptEventConsumer as $CONSUMER
+    {
+       CreatorSID = {1,2,0,0,0,0,0,5,32,0,0,0,32,2,0,0};
+       // Add consumer code here ...
+    }
+
+    instance of __FilterToConsumerBinding
+    {
+       CreatorSID = {1,2,0,0,0,0,0,5,32,0,0,0,32,2,0,0};
+       Consumer = $CONSUMER;
+       Filter = $FILTER;
+       // Add binding code here ...
+    }
+</code></pre>
+<p>For cross domain situations, add Authenticated Users to the &quot;Windows Authorization Access Group&quot;.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="securing-wmi-events.html">Securing WMI Events</a></p>
+<!-- raw HTML omitted -->
+<p><a href="receiving-a-wmi-event.html">Receiving a WMI Event</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating a Local Group and Adding a User</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Creating a Local Group and Adding a User
+description: To create a new local group, call the NetLocalGroupAdd function. To add a user to that group, call the NetLocalGroupAddMembers function.
+ms.assetid: 28bba4bd-5e6b-4139-8fd0-a00fb6e82902
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Creating a Local Group and Adding a User</h1>
+<p>To create a new local group, call the <a href="/windows/desktop/api/Lmaccess/nf-lmaccess-netlocalgroupadd"><strong>NetLocalGroupAdd</strong></a> function. To add a user to that group, call the <a href="/windows/desktop/api/Lmaccess/nf-lmaccess-netlocalgroupaddmembers"><strong>NetLocalGroupAddMembers</strong></a> function.</p>
+<p>The following program allows you to create a user and a local group and add the user to the local group.</p>
+<pre lang="C++"><code>#ifndef UNICODE
+#define UNICODE
+#endif 
+
+#include &lt;windows.h&gt;
+#include &lt;lmcons.h&gt;
+#include &lt;lmaccess.h&gt;
+#include &lt;lmerr.h&gt;
+#include &lt;lmapibuf.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+#pragma comment(lib, &quot;netapi32.lib&quot;)
+
+NET_API_STATUS NetSample( LPWSTR lpszDomain,
+                          LPWSTR lpszUser,
+                          LPWSTR lpszPassword,
+                          LPWSTR lpszLocalGroup )
+{
+
+    USER_INFO_1               user_info;
+    LOCALGROUP_INFO_1         localgroup_info;
+    LOCALGROUP_MEMBERS_INFO_3 localgroup_members;
+    LPWSTR                    lpszPrimaryDC = NULL;
+    NET_API_STATUS            err = 0;
+    DWORD                     parm_err = 0;
+
+// First get the name of the primary domain controller. 
+// Be sure to free the returned buffer. 
+
+    err = NetGetDCName( NULL,                    // local computer 
+                   lpszDomain,                   // domain name 
+                   (LPBYTE *) &amp;lpszPrimaryDC );  // returned PDC 
+
+    if ( err != 0 )
+    {
+        printf( &quot;Error getting DC name: %d\n&quot;, err );
+        return( err );
+    }
+
+// Set up the USER_INFO_1 structure. 
+
+    user_info.usri1_name = lpszUser;
+    user_info.usri1_password = lpszPassword;
+    user_info.usri1_priv = USER_PRIV_USER;
+    user_info.usri1_home_dir = TEXT(&quot;&quot;);
+    user_info.usri1_comment = TEXT(&quot;Sample User&quot;);
+    user_info.usri1_flags = UF_SCRIPT;
+    user_info.usri1_script_path = TEXT(&quot;&quot;);
+
+    err = NetUserAdd( lpszPrimaryDC,        // PDC name 
+                      1,                    // level 
+                      (LPBYTE) &amp;user_info,  // input buffer 
+                      &amp;parm_err );          // parameter in error 
+
+    switch ( err )
+    {
+    case 0:
+        printf(&quot;User successfully created.\n&quot;);
+        break;
+    case NERR_UserExists:
+        printf(&quot;User already exists.\n&quot;);
+        err = 0;
+        break;
+    case ERROR_INVALID_PARAMETER:
+        printf(&quot;Invalid parameter error adding user; parameter index = %d\n&quot;,
+                parm_err);
+        NetApiBufferFree( lpszPrimaryDC );
+        return( err );
+    default:
+        printf(&quot;Error adding user: %d\n&quot;, err);
+        NetApiBufferFree( lpszPrimaryDC );
+        return( err );
+    }
+
+// Set up the LOCALGROUP_INFO_1 structure. 
+
+    localgroup_info.lgrpi1_name = lpszLocalGroup;
+    localgroup_info.lgrpi1_comment = TEXT(&quot;Sample local group.&quot;);
+
+    err = NetLocalGroupAdd( lpszPrimaryDC,    // PDC name 
+                  1,                          // level 
+                  (LPBYTE) &amp;localgroup_info,  // input buffer 
+                  &amp;parm_err );                // parameter in error 
+
+    switch ( err )
+    {
+    case 0:
+        printf(&quot;Local group successfully created.\n&quot;);
+        break;
+    case ERROR_ALIAS_EXISTS:
+        printf(&quot;Local group already exists.\n&quot;);
+        err = 0;
+        break;
+    case ERROR_INVALID_PARAMETER:
+        printf(&quot;Invalid parameter error adding local group; parameter index = %d\n&quot;,
+                err, parm_err);
+        NetApiBufferFree( lpszPrimaryDC );
+        return( err );
+    default:
+        printf(&quot;Error adding local group: %d\n&quot;, err);
+        NetApiBufferFree( lpszPrimaryDC );
+        return( err );
+    }
+
+// Now add the user to the local group. 
+
+    localgroup_members.lgrmi3_domainandname = lpszUser;
+
+    err = NetLocalGroupAddMembers( lpszPrimaryDC,        // PDC name 
+                           lpszLocalGroup,               // group name 
+                           3,                            // name 
+                           (LPBYTE) &amp;localgroup_members, // buffer 
+                           1 );                          // count
+
+    switch ( err )
+    {
+    case 0:
+        printf(&quot;User successfully added to local group.\n&quot;);
+        break;
+    case ERROR_MEMBER_IN_ALIAS:
+        printf(&quot;User already in local group.\n&quot;);
+        err = 0;
+        break;
+    default:
+        printf(&quot;Error adding user to local group: %d\n&quot;, err);
+        break;
+    }
+
+    NetApiBufferFree( lpszPrimaryDC );
+    return( err );
+}
+
+int main()
+{
+    NET_API_STATUS err = 0;
+
+    printf( &quot;Calling NetSample.\n&quot; );
+    err = NetSample( L&quot;SampleDomain&quot;,
+                     L&quot;SampleUser&quot;,
+                     L&quot;SamplePswd&quot;,
+                     L&quot;SampleLG&quot; );
+    printf( &quot;NetSample returned %d\n&quot;, err );
+    return( 0 );
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

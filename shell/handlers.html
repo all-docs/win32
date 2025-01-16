@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating Shell Extension Handlers</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The capabilities of the Shell can be extended with registry entries and .ini files.
+ms.assetid: '74a81e4f-7357-4901-a118-ba44e8892f25'
+title: Creating Shell Extension Handlers
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Creating Shell Extension Handlers</h1>
+<p>The capabilities of the Shell can be extended with registry entries and .ini files. While this approach to extending the Shell is simple, and adequate for many purposes, it is limited. For example, if you use the registry to specify a custom icon for a file type, the same icon will appear for every file of that type. Extending the Shell with the registry does not allow you to vary the icon for different files of the same type. Other aspects of the Shell, such as the <strong>Properties</strong> property sheet that can be displayed when a file is right-clicked, cannot be modified at all with the registry.</p>
+<p>A more powerful and flexible approach to extending the Shell is to implement <em>shell extension handlers</em>. These handlers can be implemented for a variety of actions that the Shell can perform. Before taking the action, the Shell queries the extension handler, giving it the opportunity to modify the action. A common example is a shortcut menu extension handler. If one is implemented for a file type, it will be queried every time one of the files is right-clicked. The handler can then specify additional menu items on a file-by-file basis, rather than having the same set for the entire file type.</p>
+<p>This document discusses how to implement the extension handlers that allow you to modify a variety of Shell actions. The following handlers are associated with a particular file type and allow you to specify on a file-by-file basis:</p>
+<table>
+<thead>
+<tr>
+<th>Handler</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="context-menu-handlers.html">Shortcut menu handler</a></td>
+<td>Called before a file's shortcut menu is displayed. It enables you to add items to the shortcut menu on a file-by-file basis.</td>
+</tr>
+<tr>
+<td><a href="how-to-create-data-handlers.html">Data handler</a></td>
+<td>Called when a drag-and-drop operation is performed on dragShell objects. It enables you to provide additional clipboard formats to the drop target.</td>
+</tr>
+<tr>
+<td><a href="how-to-create-drop-handlers.html">Drop handler</a></td>
+<td>Called when a data object is dragged over or dropped on a file. It enables you to make a file into a drop target.</td>
+</tr>
+<tr>
+<td><a href="how-to-create-icon-handlers.html">Icon handler</a></td>
+<td>Called before a file's icon is displayed. It enables you to replace the file's default icon with a custom icon on a file-by-file basis.</td>
+</tr>
+<tr>
+<td><a href="propsheet-handlers.html">Property sheet handler</a></td>
+<td>Called before an object's <strong>Properties</strong> property sheet is displayed. It enables you to add or replace pages.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Thumbcache/nn-thumbcache-ithumbnailprovider"><strong>Thumbnail Image handler</strong></a></td>
+<td>Provides an image to represent the item.</td>
+</tr>
+<tr>
+<td><a href="/windows/win32/api/shlobj_core/nn-shlobj_core-iqueryinfo"><strong>Infotip handler</strong></a></td>
+<td>Provides pop-up text when the user hovers the mouse pointer over the object.</td>
+</tr>
+<tr>
+<td><a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>Metadata handler</strong></a></td>
+<td>Provides read and write access to metadata (properties) stored in a file. This can be used to extend the Details view, infotips, the property page, and grouping features.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Other handlers are not associated with a particular file type but are called before some Shell operations:</p>
+<table>
+<thead>
+<tr>
+<th>Handler</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../lwef/column-handlers.html">Column handler</a></td>
+<td>Called by Windows Explorer before it displays the Details view of a folder. It enables you to add custom columns to the Details view.</td>
+</tr>
+<tr>
+<td><a href="how-to-create-copy-hook-handlers.html">Copy hook handler</a></td>
+<td>Called when a folder or printer object is about to be moved, copied, deleted, or renamed. It enables you to approve or veto the operation.</td>
+</tr>
+<tr>
+<td><a href="context-menu-handlers.html">Drag-and-drop handler</a></td>
+<td>Called when a file is dragged with the right mouse button. It enables you to modify the shortcut menu that is displayed.</td>
+</tr>
+<tr>
+<td><a href="how-to-implement-icon-overlay-handlers.html">Icon Overlay handler</a></td>
+<td>Called before a file's icon is displayed. It enables you to specify an overlay for the file's icon.</td>
+</tr>
+<tr>
+<td><a href="../lwef/search-handlers.html">Search handler</a></td>
+<td>Called to launch a search engine. It enables you to implement a custom search engine accessible from the <strong>Start</strong> menu or Windows Explorer.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The details of how to implement specific extension handlers are covered in the sections listed above. The remainder of this document covers some implementation issues that are common to all Shell extension handlers.</p>
+<ul>
+<li><a href="#implementing-shell-extension-handlers">Implementing Shell Extension Handlers</a>
+<ul>
+<li><a href="#implementing-ipersistfile">Implementing IPersistFile</a></li>
+<li><a href="#implementing-ishellextinit">Implementing IShellExtInit</a></li>
+<li><a href="#infotip-customization">Infotip Customization</a></li>
+</ul>
+</li>
+<li><a href="#enhancing-windows-search-with-shell-extension-handlers">Enhancing Windows Search with Shell Extension Handlers</a></li>
+<li><a href="#registering-shell-extension-handlers">Registering Shell Extension Handlers</a>
+<ul>
+<li><a href="#handler-names">Handler Names</a></li>
+<li><a href="#predefined-shell-objects">Predefined Shell Objects</a></li>
+<li><a href="#example-of-an-extension-handler-registration">Example of an Extension Handler Registration</a></li>
+</ul>
+</li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Implementing Shell Extension Handlers</h2>
+<p>Much of the implementation of a Shell extension handler object depends on its type. There are, however, some common elements. This section discusses those aspects of implementation that are shared by all Shell extension handlers.</p>
+<p>Many Shell extension handlers are in-process Component Object Model (COM) objects. They must be assigned a GUID and registered as described in Registering Shell Extension Handlers. They are implemented as DLLs and must export the following standard functions:</p>
+<ul>
+<li><a href="../dlls/dllmain.html"><strong>DllMain</strong></a>. The standard entry point to the DLL.</li>
+<li><a href="/windows/win32/api/combaseapi/nf-combaseapi-dllgetclassobject"><strong>DllGetClassObject</strong></a>. Exposes the object's class factory.</li>
+<li><a href="/windows/win32/api/combaseapi/nf-combaseapi-dllcanunloadnow"><strong>DllCanUnloadNow</strong></a>. COM calls this function to determine whether the object is serving any clients. If not, the system can unload the DLL and free the associated memory.</li>
+</ul>
+<p>Like all COM objects, Shell extension handlers must implement an <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> interface and a <a href="../com/implementing-iclassfactory.html">class factory</a>. Most extension handlers must also implement either an <a href="/windows/win32/api/objidl/nn-objidl-ipersistfile"><strong>IPersistFile</strong></a> or <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a> interface in WindowsÂ XP or earlier. These were replaced by <a href="/windows/desktop/api/Propsys/nn-propsys-iinitializewithstream"><strong>IInitializeWithStream</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-iinitializewithitem"><strong>IInitializeWithItem</strong></a> and <a href="/windows/desktop/api/Propsys/nn-propsys-iinitializewithfile"><strong>IInitializeWithFile</strong></a> in WindowsÂ Vista. The Shell uses these interfaces to initialize the handler.</p>
+<p>The <a href="/windows/win32/api/objidl/nn-objidl-ipersistfile"><strong>IPersistFile</strong></a> interface must be implemented by the following:</p>
+<ul>
+<li>Data handlers</li>
+<li>Drop handlers</li>
+</ul>
+<p>In the past, icon handlers were also required to implement <a href="/windows/win32/api/objidl/nn-objidl-ipersistfile"><strong>IPersistFile</strong></a>, but this is no longer true. For icon handlers, <strong>IPersistFile</strong> is now optional and other interfaces such as <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-iinitializewithitem"><strong>IInitializeWithItem</strong></a> are preferred.</p>
+<p>The <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a> interface must be implemented by the following:</p>
+<ul>
+<li>Shortcut menu handlers</li>
+<li>Drag-and-drop handlers</li>
+<li>Property sheet handlers</li>
+</ul>
+<h3>Implementing IPersistFile</h3>
+<p>The <a href="/windows/win32/api/objidl/nn-objidl-ipersistfile"><strong>IPersistFile</strong></a> interface is intended to permit an object to be loaded from or saved to a disk file. It has six methods in addition to <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a>, five of its own, and the <a href="/windows/win32/api/objidl/nf-objidl-ipersist-getclassid"><strong>GetClassID</strong></a> method that it inherits from <a href="/windows/win32/api/objidl/nn-objidl-ipersist"><strong>IPersist</strong></a>. With Shell extensions, <strong>IPersist</strong> is used only to initialize a Shell extension handler object. Because there is typically no need to read from or write to the disk, only the <strong>GetClassID</strong> and <a href="/windows/win32/api/objidl/nf-objidl-ipersistfile-load"><strong>Load</strong></a> methods require a nontoken implementation.</p>
+<p>The Shell calls <a href="/windows/win32/api/objidl/nf-objidl-ipersist-getclassid"><strong>GetClassID</strong></a> first, and the function returns the class identifier (CLSID) of the extension handler object. The Shell then calls <a href="/windows/win32/api/objidl/nf-objidl-ipersistfile-load"><strong>Load</strong></a> and passes in two values. The first, <em>pszFileName</em>, is a Unicode string with the name of the file or folder that Shell is about to operate on. The second is <em>dwMode</em>, which indicates the file access mode. Because there is typically no need to access files, <em>dwMode</em> is usually zero. The method stores these values as needed for later reference.</p>
+<p>The following code fragment illustrates how a typical Shell extension handler implements the <a href="/windows/win32/api/objidl/nf-objidl-ipersist-getclassid"><strong>GetClassID</strong></a> and <a href="/windows/win32/api/objidl/nf-objidl-ipersistfile-load"><strong>Load</strong></a> methods. It is designed to handle either ANSI or Unicode. CLSID_SampleExtHandler is the extension handler object's GUID, and CSampleExtHandler is the name of the class used to implement the interface. The <strong>m_szFileName</strong> and <strong>m_dwMode</strong> variables are private variables that are used to store the file's name and access flags.</p>
+<pre lang="C++"><code>wchar_t m_szFileName[MAX_PATH];    // The file name
+DWORD m_dwMode;                  // The file access mode
+
+CSampleExtHandler::GetClassID(CLSID *pCLSID)
+{
+    *pCLSID = CLSID_SampleExtHandler;
+}
+
+CSampleExtHandler::Load(PCWSTR pszFile, DWORD dwMode)
+{
+    m_dwMode = dwMode;
+    return StringCchCopy(_szFileName, ARRAYSIZE(m_szFileName), pszFile);
+}
+</code></pre>
+<h3>Implementing IShellExtInit</h3>
+<p>The <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a> interface has only one method, <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellextinit-initialize"><strong>IShellExtInit::Initialize</strong></a>, in addition to <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a>. The method has three parameters that the Shell can use to pass in various types of information. The values passed in depend on the type of handler, and some can be set to <strong>NULL</strong>.</p>
+<ul>
+<li><em>pIDFolder</em> holds a folder's pointer to an item identifier list (PIDL). For property sheet extensions, it is <strong>NULL</strong>. For shortcut menu extensions, it is the PIDL of the folder that contains the item whose shortcut menu is being displayed. For nondefault drag-and-drop handlers, it is the PIDL of the target folder.</li>
+<li><em>pDataObject</em> holds a pointer to a data object's <a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a> interface. The data object holds one or more file names in <a href="dragdrop.html">CF_HDROP</a> format.</li>
+<li><em>hRegKey</em> holds a registry key for the file object or folder type.</li>
+</ul>
+<p>The <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellextinit-initialize"><strong>IShellExtInit::Initialize</strong></a> method stores the file name, <a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a> pointer, and registry key as needed for later use. The following code fragment illustrates an implementation of <strong>IShellExtInit::Initialize</strong>. For simplicity, this example assumes that the data object contains only a single file. In general, it might contain multiple files that will each need to be extracted.</p>
+<pre lang="C++"><code>LPCITEMIDLIST  m_pIDFolder;           //The folder's PIDL
+wchar_t        m_szFile[MAX_PATH];    //The file name
+IDataObject   *m_pDataObj;            //The IDataObject pointer
+HKEY           m_hRegKey;             //The file or folder's registry key
+
+STDMETHODIMP CShellExt::Initialize(LPCITEMIDLIST pIDFolder, 
+                                   IDataObject *pDataObj, 
+                                   HKEY hRegKey) 
+{ 
+    // If Initialize has already been called, release the old PIDL
+    ILFree(m_pIDFolder);
+    m_pIDFolder = nullptr;
+
+    // Store the new PIDL.
+    if (pIDFolder)
+    {
+        m_pIDFolder = ILClone(pIDFolder);
+    }
+    
+    // If Initialize has already been called, release the old
+    // IDataObject pointer.
+    if (m_pDataObj)
+    { 
+        m_pDataObj-&gt;Release(); 
+    }
+     
+    // If a data object pointer was passed in, save it and
+    // extract the file name. 
+    if (pDataObj) 
+    { 
+        m_pDataObj = pDataObj; 
+        pDataObj-&gt;AddRef(); 
+      
+        STGMEDIUM   medium;
+        FORMATETC   fe = {CF_HDROP, NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        UINT        uCount;
+
+        if (SUCCEEDED(m_pDataObj-&gt;GetData(&amp;fe, &amp;medium)))
+        {
+            // Get the count of files dropped.
+            uCount = DragQueryFile((HDROP)medium.hGlobal, (UINT)-1, NULL, 0);
+
+            // Get the first file name from the CF_HDROP.
+            if (uCount)
+                DragQueryFile((HDROP)medium.hGlobal, 0, m_szFile, 
+                              sizeof(m_szFile)/sizeof(TCHAR));
+
+            ReleaseStgMedium(&amp;medium);
+        }
+    }
+
+    // Duplicate the registry handle. 
+    if (hRegKey) 
+        RegOpenKeyEx(hRegKey, nullptr, 0L, MAXIMUM_ALLOWED, &amp;m_hRegKey); 
+    return S_OK; 
+}
+</code></pre>
+<p>CSampleExtHandler is the name of the class used to implement the interface. The <strong>m_pIDFolder</strong>, <strong>m_pDataObject</strong>, <strong>m_szFileName</strong>, and <strong>m_hRegKey</strong> variables are private variables used to store the information that is passed in. For simplicity, this example assumes that only one file name will be held by the data object. After the <a href="/windows/win32/api/objidl/ns-objidl-formatetc"><strong>FORMATETC</strong></a> structure is retrieved from the data object, <a href="/windows/desktop/api/Shellapi/nf-shellapi-dragqueryfilea"><strong>DragQueryFile</strong></a> is used to extract the file name from the <strong>FORMATETC</strong> structure's <strong>medium.hGlobal</strong> member. If a registry key is passed in, the method uses <a href="/windows/win32/api/winreg/nf-winreg-regopenkeyexa"><strong>RegOpenKeyEx</strong></a> to open the key and assigns the handle to <strong>m_hRegKey</strong>.</p>
+<h3>Infotip Customization</h3>
+<p>There are two ways to customize infotips:</p>
+<ul>
+<li>Implement an object that supports <a href="/windows/win32/api/shlobj_core/nn-shlobj_core-iqueryinfo"><strong>IQueryInfo</strong></a> and then register that object under the proper subkey in the registry (see <a href="#registering-shell-extension-handlers">Registering Shell Extension Handlers</a> below).</li>
+<li>Specify a fixed string or a list of specific file properties to be displayed.</li>
+</ul>
+<p>To display a fixed string for a namespace extension, create an entry called <code>InfoTip</code> in the <em>{CLSID}</em> key of your namespace extension. Set the value of that entry to be either the literal string you want to display, as shown in this example, or an indirect string that specifies a resource and index within that resource (for localization purposes).</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â CLSID
+Â Â Â Â Â Â {CLSID}
+Â Â Â Â Â Â Â Â Â InfoTip = InfoTip string for your namespace extension
+</code></pre>
+<p>To display a fixed string for a file type, create an entry called <code>InfoTip</code> in the <em>ProgID</em> key of that file type. Set the value of that entry to be either the literal string you want to display or an indirect string that specifies a resource and index within that resource (for localization purposes), as shown in this example.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â ProgID
+Â Â Â Â Â Â InfoTip = Resource.dll, 3
+</code></pre>
+<p>If you want the Shell to display specific file properties in the infotip for a specific file type, create an entry called <code>InfoTip</code> in the <em>ProgID</em> key for that file type. Set the value of that entry to be a semicolon-delineated list of canonical property names, format identifier (FMTID)/property identifier (PID) pairs, or both. This value must begin with &quot;prop:&quot; to identify it as a property list string. If you omit &quot;prop:&quot;, the value is seen as a literal string and displayed as such.</p>
+<p>In the following example, <em>propname</em> is a canonical property name (such as System.Date) and <em>{fmtid},pid</em> is an <a href="./objects.html"><strong>FMTID/PID</strong></a> pair.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â ProgID
+Â Â Â Â Â Â InfoTip = prop:propname;propname;{fmtid},pid;{fmtid},pid
+</code></pre>
+<p>The following property names can be used:</p>
+<table>
+<thead>
+<tr>
+<th>Property Name</th>
+<th>Description</th>
+<th>Retrieved From</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Author</td>
+<td>Author of the document</td>
+<td><a href="../stg/the-summary-information-property-set.html"><strong>PIDSI_AUTHOR</strong></a></td>
+</tr>
+<tr>
+<td>Title</td>
+<td>Title of the document</td>
+<td><a href="../stg/the-summary-information-property-set.html"><strong>PIDSI_TITLE</strong></a></td>
+</tr>
+<tr>
+<td>Subject</td>
+<td>Subject summary</td>
+<td><a href="../stg/the-summary-information-property-set.html"><strong>PIDSI_SUBJECT</strong></a></td>
+</tr>
+<tr>
+<td>Comment</td>
+<td>Document comments</td>
+<td><a href="../stg/the-summary-information-property-set.html"><strong>PIDSI_COMMENT</strong></a> or folder/driver properties</td>
+</tr>
+<tr>
+<td>PageCount</td>
+<td>Number of pages</td>
+<td><a href="../stg/the-summary-information-property-set.html"><strong>PIDSI_PAGECOUNT</strong></a></td>
+</tr>
+<tr>
+<td>Name</td>
+<td>Friendly name</td>
+<td>Standard folder view</td>
+</tr>
+<tr>
+<td>OriginalLocation</td>
+<td>Location of original file</td>
+<td>Briefcase folder and Recycle Bin folder</td>
+</tr>
+<tr>
+<td>DateDeleted</td>
+<td>Date file was deleted</td>
+<td>Recycle Bin folder</td>
+</tr>
+<tr>
+<td>Type</td>
+<td>Type of file</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>Size</td>
+<td>Size of file</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>SyncCopyIn</td>
+<td>Same as OriginalLocation</td>
+<td>Same as OriginalLocation</td>
+</tr>
+<tr>
+<td>Modified</td>
+<td>Date last modified</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>Created</td>
+<td>Date created</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>Accessed</td>
+<td>Date last accessed</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>InFolder</td>
+<td>Directory containing the file</td>
+<td>Document search results</td>
+</tr>
+<tr>
+<td>Rank</td>
+<td>Quality of search match</td>
+<td>Document search results</td>
+</tr>
+<tr>
+<td>FreeSpace</td>
+<td>Available storage space</td>
+<td>Disk drives</td>
+</tr>
+<tr>
+<td>NumberOfVisits</td>
+<td>Number of visits</td>
+<td>Favorites folder</td>
+</tr>
+<tr>
+<td>Attributes</td>
+<td>File Attributes</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>Company</td>
+<td>Company name</td>
+<td><a href="../stg/the-documentsummaryinformation-and-userdefined-property-sets.html"><strong>PIDDSI_COMPANY</strong></a></td>
+</tr>
+<tr>
+<td>Category</td>
+<td>Document category</td>
+<td><a href="../stg/the-documentsummaryinformation-and-userdefined-property-sets.html"><strong>PIDDSI_CATEGORY</strong></a></td>
+</tr>
+<tr>
+<td>Copyright</td>
+<td>Media copyright</td>
+<td><a href="../stg/the-documentsummaryinformation-and-userdefined-property-sets.html"><strong>PIDMSI_COPYRIGHT</strong></a></td>
+</tr>
+<tr>
+<td>HTMLInfoTipFile</td>
+<td>HTML InfoTip file</td>
+<td>Desktop.ini file for folder</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Enhancing Windows Search with Shell Extension Handlers</h2>
+<p>Shell extension handlers may be used to enhance the user experience provided by a Windows Search protocol handler. To enable such enhancements, the supporting Shell extension handler must be designed to integrate with the search protocol handler as a data source. For information about how to enhance a Windows Search protocol handler through integration with a Shell extension handler, see <a href="../search/-search-3x-wds-ph-ui-extensions.html">Adding Icons, Previews and Shortcut Menus</a>. For more information about Windows Search protocol handlers, see <a href="../search/-search-3x-wds-phaddins.html">Developing Protocol Handlers</a>.</p>
+<h2>Registering Shell Extension Handlers</h2>
+<p>A Shell extension handler object must be registered before the Shell can use it. This section is a general discussion of how to register a Shell extension handler.</p>
+<p>Any time you create or change a Shell extension handler, it is important to notify the system that you have made a change with <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shchangenotify"><strong>SHChangeNotify</strong></a>, specifying the <strong>SHCNE_ASSOCCHANGED</strong> event. If you do not call <strong>SHChangeNotify</strong>, the change might not be recognized until the system is rebooted.</p>
+<p>As with all COM objects, you must create a GUID for the handler using a tool such as UUIDGEN.exe. Create a key under <strong>HKEY_CLASSES_ROOT</strong>\<strong>CLSID</strong> whose name is the string form of the GUID. Because Shell extension handlers are in-process servers, you must create an <strong>InProcServer32</strong> key under the GUID key with the default value set to the path of the handler's DLL. Use the Apartment threading model.</p>
+<p>Any time the Shell takes an action that can involve a Shell extension handler, it checks the appropriate registry key. The key under which an extension handler is registered thus controls when it will be called. For instance, it is a common practice to have a shortcut menu handler called when the Shell displays a shortcut menu for a member of a <a href="fa-file-types.html">file type</a>. In this case, the handler must be registered under the file type's <strong>ProgID</strong> key.</p>
+<h3>Handler Names</h3>
+<p>To enable a Shell extension handler, create a subkey with the handler subkey name (see below) under the <strong>ShellEx</strong> subkey of either the <strong>ProgID</strong> (for file types) or the Shell object type name (for <a href="#predefined-shell-objects">Predefined Shell Objects</a>).</p>
+<p>For example, if you wanted to register a shortcut menu extension handler for MyProgram.1, you would begin by creating the following subkey:</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â MyProgram.1
+Â Â Â Â Â Â ShellEx
+Â Â Â Â Â Â Â Â Â ContextMenuHandlers
+</code></pre>
+<p>For the following handlers, create a subkey underneath the &quot;Handler Subkey name&quot; key whose name is the string version of the CLSID of the Shell extension. Multiple extensions can be registered under the handler subkey name key by creating multiple subkeys.</p>
+<table>
+<thead>
+<tr>
+<th>Handler</th>
+<th>Interface</th>
+<th>Handler Subkey Name</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Shortcut menu handler</td>
+<td>IContextMenu</td>
+<td><strong>ContextMenuHandlers</strong></td>
+</tr>
+<tr>
+<td>Copyhook handler</td>
+<td>ICopyHook</td>
+<td><strong>CopyHookHandlers</strong></td>
+</tr>
+<tr>
+<td>Drag-and-drop handler</td>
+<td>IContextMenu</td>
+<td><strong>DragDropHandlers</strong></td>
+</tr>
+<tr>
+<td>Property sheet handler</td>
+<td>IShellPropSheetExt</td>
+<td><strong>PropertySheetHandlers</strong></td>
+</tr>
+<tr>
+<td>Column provider handler (deprecated in WindowsÂ Vista)</td>
+<td>IColumnProvider</td>
+<td><strong>ColumnHandlers</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>For the following handlers, the default value of the &quot;Handler Subkey Name&quot; key is the string version of the CLSID of the Shell extension. Only one extension can be registered for these handlers.</p>
+<table>
+<thead>
+<tr>
+<th>Handler</th>
+<th>Interface</th>
+<th>Handler Subkey Name</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Data handler</td>
+<td>IDataObject</td>
+<td><strong>DataHandler</strong></td>
+</tr>
+<tr>
+<td>Drop handler</td>
+<td>IDropTarget</td>
+<td><strong>DropHandler</strong></td>
+</tr>
+<tr>
+<td>Icon handler</td>
+<td>IExtractIconA/W</td>
+<td><strong>IconHandler</strong></td>
+</tr>
+<tr>
+<td>Image handler</td>
+<td>IExtractImage</td>
+<td><strong>{BB2E617C-0920-11d1-9A0B-00C04FC2D6C1}</strong></td>
+</tr>
+<tr>
+<td>Thumbnail image handler</td>
+<td>IThumbnailProvider</td>
+<td><strong>{E357FCCD-A995-4576-B01F-234630154E96}</strong></td>
+</tr>
+<tr>
+<td>Infotip handler</td>
+<td>IQueryInfo</td>
+<td><strong>{00021500-0000-0000-C000-000000000046}</strong></td>
+</tr>
+<tr>
+<td>Shell link (ANSI )</td>
+<td>IShellLinkA</td>
+<td><strong>{000214EE-0000-0000-C000-000000000046}</strong></td>
+</tr>
+<tr>
+<td>Shell link (UNICODE)</td>
+<td>IShellLinkW</td>
+<td><strong>{000214F9-0000-0000-C000-000000000046}</strong></td>
+</tr>
+<tr>
+<td>Structured storage</td>
+<td>IStorage</td>
+<td><strong>{0000000B-0000-0000-C000-000000000046}</strong></td>
+</tr>
+<tr>
+<td>Metadata</td>
+<td>IPropertyStore</td>
+<td><strong>PropertyHandler</strong></td>
+</tr>
+<tr>
+<td>Metadata</td>
+<td>IPropertySetStorage (deprecated in WindowsÂ Vista)</td>
+<td><strong>PropertyHandler</strong></td>
+</tr>
+<tr>
+<td>Pin to Start Menu</td>
+<td>IStartMenuPinnedList</td>
+<td><strong>{a2a9545d-a0c2-42b4-9708-a0b2badd77c8}</strong></td>
+</tr>
+<tr>
+<td>Pin to Taskbar</td>
+<td></td>
+<td><strong>{90AA3A4E-1CBA-4233-B8BB-535773D48449}</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The subkeys specified to add <strong>Pin to Start Menu</strong> and <strong>Pin to Taskbar</strong> to an item's shortcut menu are only required for file types that include the <a href="./links.html">IsShortCut</a> entry.</p>
+<p>Support for column provider handlers was removed in WindowsÂ Vista. Also, as of WindowsÂ Vista, <a href="/windows/win32/api/propidl/nn-propidl-ipropertysetstorage"><strong>IPropertySetStorage</strong></a> has been deprecated in favor of <a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a>.</p>
+<p>While <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-iextractimage"><strong>IExtractImage</strong></a> remains supported, <a href="/windows/desktop/api/Thumbcache/nn-thumbcache-ithumbnailprovider"><strong>IThumbnailProvider</strong></a> is preferred for WindowsÂ Vista and later.</p>
+<h3>Predefined Shell Objects</h3>
+<p>The Shell defines additional objects under <strong>HKEY_CLASSES_ROOT</strong> which can be extended in the same way as file types. For example, to add a property sheet handler for all files, you can register under the <strong>PropertySheetHandlers</strong> key.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â *
+Â Â Â Â Â Â shellex
+Â Â Â Â Â Â Â Â Â PropertySheetHandlers
+</code></pre>
+<p>The following table gives the various subkeys of <strong>HKEY_CLASSES_ROOT</strong> under which extension handlers can be registered. Note that many extension handlers cannot be registered under all of the listed subkeys. For further details, see the specific handler's documentation.</p>
+<table>
+<thead>
+<tr>
+<th>Subkey</th>
+<th>Description</th>
+<th>Possible Handlers</th>
+<th>Version</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>*</strong></td>
+<td>All files</td>
+<td>Shortcut Menu, Property Sheet, Verbs (see below)</td>
+<td>All</td>
+</tr>
+<tr>
+<td><strong>AllFileSystemObjects</strong></td>
+<td>All files and file folders</td>
+<td>Shortcut Menu, Property Sheet, Verbs</td>
+<td>4.71</td>
+</tr>
+<tr>
+<td><strong>Folder</strong></td>
+<td>All folders</td>
+<td>Shortcut Menu, Property Sheet, Verbs</td>
+<td>All</td>
+</tr>
+<tr>
+<td><strong>Directory</strong></td>
+<td>File folders</td>
+<td>Shortcut Menu, Property Sheet, Verbs</td>
+<td>All</td>
+</tr>
+<tr>
+<td><strong>Directory\Background</strong></td>
+<td>File folder background</td>
+<td>Shortcut Menu only</td>
+<td>4.71</td>
+</tr>
+<tr>
+<td><strong>Drive</strong></td>
+<td>All drives in MyComputer, such as &quot;C:\&quot;</td>
+<td>Shortcut Menu, Property Sheet, Verbs</td>
+<td>All</td>
+</tr>
+<tr>
+<td><strong>Network</strong></td>
+<td>Entire network (under My Network Places)</td>
+<td>Shortcut Menu, Property Sheet, Verbs</td>
+<td>All</td>
+</tr>
+<tr>
+<td><strong>Network\Type\#</strong></td>
+<td>All objects of type # (see below)</td>
+<td>Shortcut menu, Property Sheet, Verbs</td>
+<td>4.71</td>
+</tr>
+<tr>
+<td><strong>NetShare</strong></td>
+<td>All network shares</td>
+<td>Shortcut menu, Property Sheet, Verbs</td>
+<td>4.71</td>
+</tr>
+<tr>
+<td><strong>NetServer</strong></td>
+<td>All network servers</td>
+<td>Shortcut menu, Property Sheet, Verbs</td>
+<td>4.71</td>
+</tr>
+<tr>
+<td><em>network_provider_name</em></td>
+<td>All objects provided by network provider &quot;<em>network_provider_name</em>&quot;</td>
+<td>Shortcut menu, Property Sheet, Verbs</td>
+<td>All</td>
+</tr>
+<tr>
+<td><strong>Printers</strong></td>
+<td>All printers</td>
+<td>Shortcut Menu, Property Sheet</td>
+<td>All</td>
+</tr>
+<tr>
+<td><strong>AudioCD</strong></td>
+<td>Audio CD in CD drive</td>
+<td>Verbs only</td>
+<td>All</td>
+</tr>
+<tr>
+<td><strong>DVD</strong></td>
+<td>DVD drive (Windows 2000)</td>
+<td>Shortcut Menu, Property Sheet, Verbs</td>
+<td>4.71</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Notes:</p>
+<ul>
+<li>The file folder background shortcut menu is accessed by right-clicking within a file folder, but not over any of the folder's contents.</li>
+<li>&quot;Verbs&quot; are special commands registered under <strong>HKEY_CLASSES_ROOT</strong>\<em>Subkey</em>\<strong>Shell</strong>\<strong>Verb</strong> .</li>
+<li>For <strong>Network</strong>\<strong>Type</strong>\<strong>#</strong> , &quot;#&quot; is a network provider type code in decimal. The network provider type code is the high word of a network type. The list of network types is given in the Winnetwk.h header file (WNNC_NET_* values). For example, WNNC_NET_SHIVA is 0x00330000, so the corresponding type key would be <strong>HKEY_CLASSES_ROOT</strong>\<strong>Network</strong>\<strong>Type</strong>\<strong>51</strong> .</li>
+<li>&quot;<em>network_provider_name</em>&quot; is a network provider name as specified by <a href="/windows/win32/api/winnetwk/nf-winnetwk-wnetgetprovidernamea"><strong>WNetGetProviderName</strong></a>, with the spaces converted into underscores. For example, if the Microsoft Networking network provider is installed, its provider name is &quot;Microsoft Windows Network&quot;, and the corresponding <em>network_provider_name</em> is <strong>Microsoft_Windows_Network</strong>.</li>
+</ul>
+<h3>Example of an Extension Handler Registration</h3>
+<p>To enable a particular handler, create a subkey under the extension handler type key with the name of the handler. The Shell does not use the handler's name, but it must be different from all other names under that type subkey. Set the default value of the name subkey to the string form of the handler's GUID.</p>
+<p>The following example illustrates registry entries that enable shortcut menu and property sheet extension handlers, using an example .myp file type:</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â .myp
+Â Â Â Â Â Â (Default) = MyProgram.1
+Â Â Â CLSID
+Â Â Â Â Â Â {00000000-1111-2222-3333-444444444444}
+Â Â Â Â Â Â Â Â Â InProcServer32
+Â Â Â Â Â Â Â Â Â Â Â Â (Default) = C:\MyDir\MyCommand.dll
+Â Â Â Â Â Â Â Â Â Â Â Â ThreadingModel = Apartment
+Â Â Â Â Â Â {11111111-2222-3333-4444-555555555555}
+Â Â Â Â Â Â Â Â Â InProcServer32
+Â Â Â Â Â Â Â Â Â Â Â Â (Default) = C:\MyDir\MyPropSheet.dll
+Â Â Â Â Â Â Â Â Â Â Â Â ThreadingModel = Apartment
+Â Â Â MyProgram.1
+Â Â Â Â Â Â (Default) = MyProgram Application
+Â Â Â Â Â Â Shellex
+Â Â Â Â Â Â Â Â Â ContextMenuHandler
+Â Â Â Â Â Â Â Â Â Â Â Â MyCommand
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â (Default) = {00000000-1111-2222-3333-444444444444}
+Â Â Â Â Â Â Â Â Â PropertySheetHandlers
+Â Â Â Â Â Â Â Â Â Â Â Â MyPropSheet
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â (Default) = {11111111-2222-3333-4444-555555555555}
+</code></pre>
+<p>The registration procedure discussed in this section must be followed for all Windows systems.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="shell-and-managed-code.html">Guidance for Implementing In-Process Extensions</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using the Indexer to Seek Within an ASF File</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The ASF indexer is a WMContainer layer component that is used to read or write Index Objects in an Advanced Systems Format (ASF) file. This topic provides information about using the ASF indexer to seek within an ASF file.
+ms.assetid: 9c501d33-847e-448e-a19c-39dfbc7757ca
+title: Using the Indexer to Seek Within an ASF File
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using the Indexer to Seek Within an ASF File</h1>
+<p>The ASF <em>indexer</em> is a WMContainer layer component that is used to read or write Index Objects in an Advanced Systems Format (ASF) file. This topic provides information about using the ASF indexer to seek within an ASF file.</p>
+<ul>
+<li><a href="#initializing-the-indexer-for-seeking">Initializing the Indexer for Seeking</a></li>
+<li><a href="#getting-the-seek-position">Getting the Seek Position.</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<p>For information about the structure of an ASF file, see <a href="asf-file-structure.html">ASF File Structure</a>.</p>
+<h2>Initializing the Indexer for Seeking</h2>
+<p>To initialize the ASF indexer for seeking:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-mfcreateasfindexer"><strong>MFCreateASFIndexer</strong></a> to create a new instance of the ASF indexer.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-initialize"><strong>IMFASFIndexer::Initialize</strong></a> to initialize the indexer. This method gets information from the ASF header to determine which ASF streams are indexed. By default, the indexer object is configured for seeking.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-getindexposition"><strong>IMFASFIndexer::GetIndexPosition</strong></a> to find the offset of the index within the ASF file.</li>
+<li>Call the <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-mfcreateasfindexerbytestream"><strong>MFCreateASFIndexerByteStream</strong></a> function to create a byte stream for reading the index. The input to this function is a pointer to a byte stream that contains the ASF file, and the offset of the index (from the previous step).</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-setindexbytestreams"><strong>IMFASFIndexer::SetIndexByteStreams</strong></a> to set the index byte stream on the indexer.</li>
+</ol>
+<p>The following code shows these steps:</p>
+<pre lang="C++"><code>HRESULT CreateASFIndexer(
+    IMFByteStream *pContentByteStream,  // Pointer to the content byte stream
+    IMFASFContentInfo *pContentInfo,
+    IMFASFIndexer **ppIndexer
+    )
+{
+    IMFASFIndexer *pIndexer = NULL;
+    IMFByteStream *pIndexerByteStream = NULL;
+
+    QWORD qwLength = 0, qwIndexOffset = 0, qwBytestreamLength = 0;
+
+    // Create the indexer.
+    HRESULT hr = MFCreateASFIndexer(&amp;pIndexer);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //Initialize the indexer to work with this ASF library
+    hr =  pIndexer-&gt;Initialize(pContentInfo);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //Check if the index exists. You can only do this after creating the indexer
+
+    //Get byte stream length
+    hr = pContentByteStream-&gt;GetLength(&amp;qwLength);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //Get index offset
+    hr = pIndexer-&gt;GetIndexPosition(pContentInfo, &amp;qwIndexOffset);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    if ( qwIndexOffset &gt;= qwLength)
+    {
+        //index object does not exist, release the indexer
+        goto done;
+    }
+    else
+    {
+        // initialize the indexer
+        // Create a byte stream that the Indexer will use to read in
+        // and parse the indexers.
+         hr = MFCreateASFIndexerByteStream(
+             pContentByteStream,
+             qwIndexOffset,
+             &amp;pIndexerByteStream
+             );
+
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+   }
+
+    hr = pIndexer-&gt;SetIndexByteStreams(&amp;pIndexerByteStream, 1);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Return the pointer to the caller.
+    *ppIndexer = pIndexer;
+    (*ppIndexer)-&gt;AddRef();
+
+done:
+    SafeRelease(&amp;pIndexer);
+    SafeRelease(&amp;pIndexerByteStream);
+    return hr;
+}
+</code></pre>
+<h2>Getting the Seek Position.</h2>
+<ol>
+<li>To find out if a particular stream is indexed, call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-getindexstatus"><strong>IMFASFIndexer::GetIndexStatus</strong></a>. If the stream is indexed, the <em>pfIsIndexed</em> parameter receives the value <strong>TRUE</strong>; otherwise it receives the value <strong>FALSE</strong>.</li>
+<li>By default, the indexer uses forward seeking. For reverse seeking (that is, seeking from the end of the file), call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-setflags"><strong>IMFASFIndexer::SetFlags</strong></a> and set the <strong>MFASF_INDEXER_READ_FOR_REVERSEPLAYBACK</strong> flag. Otherwise, skip this step.</li>
+<li>If the stream is indexed, get the seek position for a specified presentation time by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-getseekpositionforvalue"><strong>IMFASFIndexer::GetSeekPositionForValue</strong></a>. This method reads the ASF index and finds the index entry that is closest to the requested time. The method returns the byte offset of the data packet specified by the index entry. The byte offset is relative to the start of the ASF Data Object.</li>
+</ol>
+<p>The <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-getseekpositionforvalue"><strong>GetSeekPositionForValue</strong></a> method takes a pointer to the <a href="/windows/desktop/api/wmcontainer/ns-wmcontainer-asf_index_identifier"><strong>ASF_INDEX_IDENTIFIER</strong></a> structure. This structure specifies an index type and a stream identifier. Currently, the index type must be GUID_NULL, which specifies time-based indexing.</p>
+<p>The following code gets a seek position, given a stream identifier and target presentation time. If the call succeeds, it returns the data offset in the <em>pcbDataOffset</em> parameter and the approximate actual seek time in <em>phnsApproxSeekTime</em>.</p>
+<pre lang="C++"><code>HRESULT GetSeekPositionWithIndexer(
+    IMFASFIndexer *pIndexer,
+    WORD          wStreamNumber,
+    MFTIME        hnsSeekTime,          // Desired seek time, in 100-nsec.
+    BOOL          bReverse,
+    QWORD         *pcbDataOffset,       // Receives the offset in bytes.
+    MFTIME        *phnsApproxSeekTime   // Receives the approximate seek time.
+    )
+{
+    // Query whether the stream is indexed.
+
+    ASF_INDEX_IDENTIFIER IndexIdentifier = { GUID_NULL, wStreamNumber };
+
+    BOOL fIsIndexed = FALSE;
+
+    ASF_INDEX_DESCRIPTOR descriptor;
+
+    DWORD cbIndexDescriptor = sizeof(descriptor);
+
+    HRESULT hr = pIndexer-&gt;GetIndexStatus(
+        &amp;IndexIdentifier,
+        &amp;fIsIndexed,
+        (BYTE*)&amp;descriptor,
+        &amp;cbIndexDescriptor
+        );
+
+    if (hr == MF_E_BUFFERTOOSMALL)
+    {
+        hr = S_OK;
+    }
+    else if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    if (!fIsIndexed)
+    {
+        hr = MF_E_ASF_NOINDEX;
+        goto done;
+    }
+
+    if (bReverse)
+    {
+        hr = pIndexer-&gt;SetFlags(MFASF_INDEXER_READ_FOR_REVERSEPLAYBACK);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+    }
+
+    // Get the offset from the indexer.
+
+    PROPVARIANT var;
+
+    var.vt = VT_I8;
+    var.hVal.QuadPart = hnsSeekTime;
+
+    hr = pIndexer-&gt;GetSeekPositionForValue(
+        &amp;var,
+        &amp;IndexIdentifier,
+        pcbDataOffset,
+        phnsApproxSeekTime,
+        0
+        );
+
+done:
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="asf-index-object.html">ASF Indexer</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

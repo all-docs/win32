@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>User-Mode Scheduling</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: User-mode scheduling (UMS) is a lightweight mechanism that applications can use to schedule their own threads.
+ms.assetid: f9dd92fe-6d7a-452c-893e-e6df1757e377
+title: User-Mode Scheduling
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>User-Mode Scheduling</h1>
+<blockquote>
+<p>[!WARNING]
+As of Windows 11, user-mode scheduling is not supported. All calls fail with the error <code>ERROR_NOT_SUPPORTED</code>.</p>
+</blockquote>
+<p>User-mode scheduling (UMS) is a lightweight mechanism that applications can use to schedule their own threads. An application can switch between UMS threads in user mode without involving the <a href="scheduling.html">system scheduler</a> and regain control of the processor if a UMS thread blocks in the kernel. UMS threads differ from <a href="fibers.html">fibers</a> in that each UMS thread has its own thread context instead of sharing the thread context of a single thread. The ability to switch between threads in user mode makes UMS more efficient than <a href="thread-pools.html">thread pools</a> for managing large numbers of short-duration work items that require few system calls.</p>
+<p>UMS is recommended for applications with high performance requirements that need to efficiently run many threads concurrently on multiprocessor or multicore systems. To take advantage of UMS, an application must implement a scheduler component that manages the application's UMS threads and determines when they should run. Developers should consider whether their application performance requirements justify the work involved in developing such a component. Applications with moderate performance requirements might be better served by allowing the system scheduler to schedule their threads.</p>
+<p>UMS is available for 64-bit applications running on AMD64 and Itanium versions of WindowsÂ 7 and Windows ServerÂ 2008Â R2 through Windows 10 Version 21H2 and Windows Server 2022.
+This feature is not available on Arm64, 32-bit versions of Windows or on Windows 11.</p>
+<p>For details, see the following sections:</p>
+<ul>
+<li><a href="#ums-scheduler">UMS Scheduler</a></li>
+<li><a href="#ums-scheduler-thread">UMS Scheduler Thread</a></li>
+<li><a href="#ums-worker-threads-thread-contexts-and-completion-lists">UMS Worker Threads, Thread Contexts, and Completion Lists</a></li>
+<li><a href="#ums-scheduler-entry-point-function">UMS Scheduler Entry Point Function</a></li>
+<li><a href="#ums-thread-execution">UMS Thread Execution</a></li>
+<li><a href="#ums-best-practices">UMS Best Practices</a></li>
+</ul>
+<h2>UMS Scheduler</h2>
+<p>An application's UMS scheduler is responsible for creating, managing, and deleting UMS threads and determining which UMS thread to run. An application's scheduler performs the following tasks:</p>
+<ul>
+<li>Creates one UMS scheduler thread for each processor on which the application will run UMS worker threads.</li>
+<li>Creates UMS worker threads to perform the work of the application.</li>
+<li>Maintains its own ready-thread queue of worker threads that are ready to run, and selects threads to run based on the application's scheduling policies.</li>
+<li>Creates and monitors one or more completion lists where the system queues threads after they finish processing in the kernel. These include newly created worker threads and threads previously blocked on a system call that become unblocked.</li>
+<li>Provides a scheduler entry point function to handle notifications from the system. The system calls the entry point function when a scheduler thread is created, a worker thread blocks on a system call, or a worker thread explicitly yields control.</li>
+<li>Performs cleanup tasks for worker threads that have finished running.</li>
+<li>Performs an orderly shutdown of the scheduler when requested by the application.</li>
+</ul>
+<h2>UMS Scheduler Thread</h2>
+<p>A UMS scheduler thread is an ordinary thread that has converted itself to UMS by calling the <a href="/windows/desktop/api/WinBase/nf-winbase-enterumsschedulingmode"><strong>EnterUmsSchedulingMode</strong></a> function. The system scheduler determines when the UMS scheduler thread runs based on its priority relative to other ready threads. The processor on which the scheduler thread runs is influenced by the thread's affinity, same as for non-UMS threads.</p>
+<p>The caller of <a href="/windows/desktop/api/WinBase/nf-winbase-enterumsschedulingmode"><strong>EnterUmsSchedulingMode</strong></a> specifies a completion list and a <a href="/windows/desktop/api/WinNT/nc-winnt-rtl_ums_scheduler_entry_point"><em>UmsSchedulerProc</em></a> entry point function to associate with the UMS scheduler thread. The system calls the specified entry point function when it is finished converting the calling thread to UMS. The scheduler entry point function is responsible for determining the appropriate next action for the specified thread. For more information, see <a href="#ums-scheduler-entry-point-function">UMS Scheduler Entry Point Function</a> later in this topic.</p>
+<p>An application might create one UMS scheduler thread for each processor that will be used to run UMS threads. The application might also set the affinity of each UMS scheduler thread for a specific logical processor, which tends to exclude unrelated threads from running on that processor, effectively reserving it for that scheduler thread. Be aware that setting thread affinity in this way can affect overall system performance by starving other processes that may be running on the system. For more information about thread affinity, see <a href="multiple-processors.html">Multiple Processors</a>.</p>
+<h2>UMS Worker Threads, Thread Contexts, and Completion Lists</h2>
+<p>A UMS worker thread is created by calling <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-createremotethreadex"><strong>CreateRemoteThreadEx</strong></a> with the PROC_THREAD_ATTRIBUTE_UMS_THREAD attribute and specifying a UMS thread context and a completion list.</p>
+<p>A UMS thread context represents the UMS thread state of a worker thread and is used to identify the worker thread in UMS function calls. It is created by calling <a href="/windows/desktop/api/WinBase/nf-winbase-createumsthreadcontext"><strong>CreateUmsThreadContext</strong></a>.</p>
+<p>A completion list is created by calling the <a href="/windows/desktop/api/WinBase/nf-winbase-createumscompletionlist"><strong>CreateUmsCompletionList</strong></a> function. A completion list receives UMS worker threads that have completed execution in the kernel and are ready to run in user mode. Only the system can queue worker threads to a completion list. New UMS worker threads are automatically queued to the completion list specified when the threads were created. Previously blocked worker threads are also queued to the completion list when they are no longer blocked.</p>
+<p>Each UMS scheduler thread is associated with a single completion list. However, the same completion list can be associated with any number of UMS scheduler threads, and a scheduler thread can retrieve UMS contexts from any completion list for which it has a pointer.</p>
+<p>Each completion list has an associated event that is signaled by the system when it queues one or more worker threads to an empty list. The <a href="/windows/desktop/api/WinBase/nf-winbase-getumscompletionlistevent"><strong>GetUmsCompletionListEvent</strong></a> function retrieves a handle to the event for a specified completion list. An application can wait on more than one completion list event along with other events that make sense for the application.</p>
+<h2>UMS Scheduler Entry Point Function</h2>
+<p>An application's scheduler entry point function is implemented as a <a href="/windows/desktop/api/WinNT/nc-winnt-rtl_ums_scheduler_entry_point"><em>UmsSchedulerProc</em></a> function. The system calls the application's scheduler entry point function at the following times:</p>
+<ul>
+<li>When a non-UMS thread is converted to a UMS scheduler thread by calling <a href="/windows/desktop/api/WinBase/nf-winbase-enterumsschedulingmode"><strong>EnterUmsSchedulingMode</strong></a>.</li>
+<li>When a UMS worker thread calls <a href="/windows/desktop/api/WinBase/nf-winbase-umsthreadyield"><strong>UmsThreadYield</strong></a>.</li>
+<li>When a UMS worker thread blocks on a system service such as a system call or a page fault.</li>
+</ul>
+<p>The <em>Reason</em> parameter of the <a href="/windows/desktop/api/WinNT/nc-winnt-rtl_ums_scheduler_entry_point"><em>UmsSchedulerProc</em></a> function specifies the reason that the entry point function was called. If the entry point function was called because a new UMS scheduler thread was created, the <em>SchedulerParam</em> parameter contains data specified by the caller of <a href="/windows/desktop/api/WinBase/nf-winbase-enterumsschedulingmode"><strong>EnterUmsSchedulingMode</strong></a>. If the entry point function was called because a UMS worker thread yielded, the <em>SchedulerParam</em> parameter contains data specified by the caller of <a href="/windows/desktop/api/WinBase/nf-winbase-umsthreadyield"><strong>UmsThreadYield</strong></a>. If the entry point function was called because a UMS worker thread blocked in the kernel, the <em>SchedulerParam</em> parameter is NULL.</p>
+<p>The scheduler entry point function is responsible for determining the appropriate next action for the specified thread. For example, if a worker thread is blocked, the scheduler entry point function might run the next available ready UMS worker thread.</p>
+<p>When the scheduler entry point function is called, the application's scheduler should attempt to retrieve all of the items in its associated completion list by calling the <a href="/windows/desktop/api/WinBase/nf-winbase-dequeueumscompletionlistitems"><strong>DequeueUmsCompletionListItems</strong></a> function. This function retrieves a list of UMS thread contexts that have finished processing in the kernel and are ready to run in user mode. The application's scheduler should not run UMS threads directly from this list because this can cause unpredictable behavior in the application. Instead, the scheduler should retrieve all UMS thread contexts by calling the <a href="/windows/desktop/api/WinBase/nf-winbase-getnextumslistitem"><strong>GetNextUmsListItem</strong></a> function once for each context, insert the UMS thread contexts in the schedulerâ€™s ready thread queue, and only then run UMS threads from the ready thread queue.</p>
+<p>If the scheduler does not need to wait on multiple events, it should call <a href="/windows/desktop/api/WinBase/nf-winbase-dequeueumscompletionlistitems"><strong>DequeueUmsCompletionListItems</strong></a> with a nonzero timeout parameter so the function waits on the completion list event before returning. If the scheduler does need to wait on multiple completion list events, it should call <strong>DequeueUmsCompletionListItems</strong> with a timeout parameter of zero so the function returns immediately, even if the completion list is empty. In this case, the scheduler can wait explicitly on completion list events, for example, by using <a href="/windows/win32/api/synchapi/nf-synchapi-waitformultipleobjects"><strong>WaitForMultipleObjects</strong></a>.</p>
+<h2>UMS Thread Execution</h2>
+<p>A newly created UMS worker thread is queued to the specified completion list and does not begin running until the application's UMS scheduler selects it to run. This differs from non-UMS threads, which the system scheduler automatically schedules to run unless the caller explicitly creates the thread suspended.</p>
+<p>The scheduler runs a worker thread by calling <a href="/windows/desktop/api/WinBase/nf-winbase-executeumsthread"><strong>ExecuteUmsThread</strong></a> with the worker thread's UMS context. A UMS worker thread runs until it yields by calling the <a href="/windows/desktop/api/WinBase/nf-winbase-umsthreadyield"><strong>UmsThreadYield</strong></a> function, blocks, or terminates.</p>
+<h2>UMS Best Practices</h2>
+<p>Applications that implement UMS should follow these best practices:</p>
+<ul>
+<li>The underlying structures for UMS thread contexts are managed by the system and should not be modified directly. Instead, use <a href="/windows/desktop/api/WinBase/nf-winbase-queryumsthreadinformation"><strong>QueryUmsThreadInformation</strong></a> and <a href="/windows/desktop/api/WinBase/nf-winbase-setumsthreadinformation"><strong>SetUmsThreadInformation</strong></a> to retrieve and set information about a UMS worker thread.</li>
+<li>To help prevent deadlocks, the UMS scheduler thread should not share locks with UMS worker threads. This includes both application-created locks and system locks that are acquired indirectly by operations such as allocating from the heap or loading DLLs. For example, suppose the scheduler runs a UMS worker thread that loads a DLL. The worker thread acquires the loader lock and blocks. The system calls the scheduler entry point function, which then loads a DLL. This causes a deadlock, because the loader lock is already held and cannot be released until the first thread unblocks. To help avoid this problem, delegate work that might share locks with UMS worker threads to a dedicated UMS worker thread or a non-UMS thread.</li>
+<li>UMS is most efficient when most processing is done in user mode. Whenever possible, avoid making system calls in UMS worker threads.</li>
+<li>UMS worker threads should not assume the system scheduler is being used. This assumption can have subtle effects; for example, if a thread in the unknown code sets a thread priority or affinity, the UMS scheduler might still override it. Code that assumes the system scheduler is being used may not behave as expected and may break when called by a UMS thread.</li>
+<li>The system may need to lock the thread context of a UMS worker thread. For example, a kernel-mode asynchronous procedure call (APC) might change the context of the UMS thread, so the thread context must be locked. If the scheduler tries to execute the UMS thread context while it is locked, the call will fail. This behavior is by design, and the scheduler should be designed to retry access to the UMS thread context.</li>
+</ul>
+<p>Â </p>
+<p>Â </p>
+</body>

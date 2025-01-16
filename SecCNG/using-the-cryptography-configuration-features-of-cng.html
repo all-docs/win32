@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using the Cryptography Configuration Features of CNG</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Provides functions to enumerate and obtain information about registered providers.
+ms.assetid: 5b07060e-0c66-4bf2-b697-05231cb38375
+title: Using the Cryptography Configuration Features of CNG
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using the Cryptography Configuration Features of CNG</h1>
+<p>The CNG API provides functions to enumerate and obtain information about registered providers.</p>
+<ul>
+<li><a href="#enumerating-providers">Enumerating Providers</a></li>
+<li><a href="#getting-provider-registration-information">Getting Provider Registration Information</a></li>
+</ul>
+<h2>Enumerating Providers</h2>
+<p>You use the <a href="/windows/desktop/api/Bcrypt/nf-bcrypt-bcryptenumregisteredproviders"><strong>BCryptEnumRegisteredProviders</strong></a> function to enumerate the registered providers. The <strong>BCryptEnumRegisteredProviders</strong> function can be called in one of two ways:</p>
+<ol>
+<li>
+<p>The first is to have the <a href="/windows/desktop/api/Bcrypt/nf-bcrypt-bcryptenumregisteredproviders"><strong>BCryptEnumRegisteredProviders</strong></a> function allocate the memory. This is accomplished by passing the address of a <strong>NULL</strong> pointer for the <em>ppBuffer</em> parameter. This code will allocate the memory required for the <a href="/windows/desktop/api/Bcrypt/ns-bcrypt-crypt_providers"><strong>CRYPT_PROVIDERS</strong></a> structure and the associated strings. When the <strong>BCryptEnumRegisteredProviders</strong> function is used in this manner, you must free the memory when it is no longer needed by passing <em>ppBuffer</em> to the <a href="/windows/desktop/api/Bcrypt/nf-bcrypt-bcryptfreebuffer"><strong>BCryptFreeBuffer</strong></a> function.</p>
+<p>The following example shows how to use the <a href="/windows/desktop/api/Bcrypt/nf-bcrypt-bcryptenumregisteredproviders"><strong>BCryptEnumRegisteredProviders</strong></a> function to allocate the buffer for you.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) ((NTSTATUS)(Status) &gt;= 0)
+#endif
+
+void EnumProviders1()
+{
+    NTSTATUS status;
+    ULONG cbBuffer = 0;
+    PCRYPT_PROVIDERS pBuffer = NULL;
+
+    /*
+    Get the providers, letting the BCryptEnumRegisteredProviders 
+    function allocate the memory.
+    */
+    status = BCryptEnumRegisteredProviders(&amp;cbBuffer, &amp;pBuffer);
+
+    if (NT_SUCCESS(status))
+    {
+        if (pBuffer != NULL)
+        {
+            // Enumerate the providers.
+            for (ULONG i = 0; i &lt; pBuffer-&gt;cProviders; i++)
+            {
+                printf(&quot;%S\n&quot;, pBuffer-&gt;rgpszProviders[i]);
+            }
+        }
+    }
+    else
+    {
+        printf(&quot;BCryptEnumRegisteredProviders failed with error &quot; 
+            &quot;code 0x%08x\n&quot;, status);
+    }
+
+    if (NULL != pBuffer)
+    {
+        /*
+        Free the memory allocated by the 
+        BCryptEnumRegisteredProviders function.
+        */
+        BCryptFreeBuffer(pBuffer);
+    }
+}
+
+</code></pre>
+</li>
+<li>
+<p>The second method is to allocate the required memory yourself. This is accomplished by calling the <a href="/windows/desktop/api/Bcrypt/nf-bcrypt-bcryptenumregisteredproviders"><strong>BCryptEnumRegisteredProviders</strong></a> function with <strong>NULL</strong> for the <em>ppBuffer</em> parameter. The <strong>BCryptEnumRegisteredProviders</strong> function will place in the value pointed to by the <em>pcbBuffer</em> parameter, the required size, in bytes, of the <a href="/windows/desktop/api/Bcrypt/ns-bcrypt-crypt_providers"><strong>CRYPT_PROVIDERS</strong></a> structure and all strings. You then allocate the required memory and pass the address of this buffer pointer for the <em>ppBuffer</em> parameter in a second call to the <strong>BCryptEnumRegisteredProviders</strong> function.</p>
+<p>The following example shows how to use the <a href="/windows/desktop/api/Bcrypt/nf-bcrypt-bcryptenumregisteredproviders"><strong>BCryptEnumRegisteredProviders</strong></a> function to allocate and use your own buffer.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) ((NTSTATUS)(Status) &gt;= 0)
+#endif
+
+void EnumProviders2()
+{
+    NTSTATUS status;
+    ULONG cbBuffer = 0;
+
+    // Get the required size of the buffer.
+    status = BCryptEnumRegisteredProviders(&amp;cbBuffer, NULL);
+
+    if (STATUS_BUFFER_TOO_SMALL == status)
+    {
+        // Allocate the buffer.
+        PCRYPT_PROVIDERS pBuffer = 
+            (PCRYPT_PROVIDERS)LocalAlloc(LPTR, cbBuffer);
+        if (NULL != pBuffer)
+        {
+            // Get the providers in the buffer that was allocated.
+            status = BCryptEnumRegisteredProviders(
+                &amp;cbBuffer, 
+                &amp;pBuffer);
+            if (NT_SUCCESS(status))
+            {
+                for (ULONG i = 0; i &lt; pBuffer-&gt;cProviders; i++)
+                {
+                    // Enumerate the providers.
+                    printf(&quot;%S\n&quot;, pBuffer-&gt;rgpszProviders[i]);
+                }
+            }
+
+            // Free the memory that was allocated.
+            LocalFree(pBuffer);
+        }
+    }
+}
+
+</code></pre>
+</li>
+</ol>
+<h2>Getting Provider Registration Information</h2>
+<p>The <a href="/windows/desktop/api/Bcrypt/nf-bcrypt-bcryptqueryproviderregistration"><strong>BCryptQueryProviderRegistration</strong></a> function is used to obtain additional, registration-specific information about a provider. This function takes the name of the provider that you want to obtain information for, the desired provider mode (kernel mode, user mode, or both), and the identifier of the provider interface to retrieve the registration information for. For example, to obtain the user mode registration information for the cipher interface for the &quot;Microsoft Primitive Provider&quot; provider, you would make a call similar to the following.</p>
+<pre lang="C++"><code>BCryptQueryProviderRegistration(
+    MS_PRIMITIVE_PROVIDER,
+    CRYPT_UM,
+    BCRYPT_CIPHER_INTERFACE,
+    //...
+    );
+
+</code></pre>
+<p>Like the <a href="/windows/desktop/api/Bcrypt/nf-bcrypt-bcryptenumregisteredproviders"><strong>BCryptEnumRegisteredProviders</strong></a> function, the <a href="/windows/desktop/api/Bcrypt/nf-bcrypt-bcryptqueryproviderregistration"><strong>BCryptQueryProviderRegistration</strong></a> function can either allocate memory for you or you can allocate the memory yourself. The process is the same for the two functions.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

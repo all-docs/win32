@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Preview Handlers and Shell Preview Host</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Preview handlers are called when an item is selected to show a lightweight, rich, read-only preview of the file's contents in the view's reading pane. This is done without launching the file's associated application.
+ms.assetid: '166a4001-d237-44a4-a457-e320e995639c'
+title: Preview Handlers and Shell Preview Host
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Preview Handlers and Shell Preview Host</h1>
+<p>Preview handlers are called when an item is selected to show a lightweight, rich, <em>read-only</em> preview of the file's contents in the view's reading pane. This is done without launching the file's associated application.</p>
+<p>This topic discusses the following topics:</p>
+<ul>
+<li><a href="#preview-handler-architecture">Preview Handler Architecture</a></li>
+<li><a href="#server-model-options">Server Model Options</a></li>
+<li><a href="#initialization">Initialization</a></li>
+<li><a href="#preview-handler-data-flow">Preview Handler Data Flow</a></li>
+<li><a href="#debugging-a-preview-handler">Debugging a Preview Handler</a></li>
+<li><a href="#providing-your-own-process-for-a-preview-handler">Providing Your Own Process for a Preview Handler</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Preview Handler Architecture</h2>
+<p>A preview handler is a hosted application. Hosts include the Windows Explorer in WindowsÂ Vista or Microsoft Outlook 2007. Hosts implement <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ipreviewhandlerframe"><strong>IPreviewHandlerFrame</strong></a> as a method of communication between the preview handler and the host.</p>
+<p>The preview handler itself implements these interfaces:</p>
+<ul>
+<li><a href="/windows/desktop/api/Propsys/nn-propsys-iinitializewithstream"><strong>IInitializeWithStream</strong></a></li>
+<li><a href="/windows/win32/api/ocidl/nn-ocidl-iobjectwithsite"><strong>IObjectWithSite</strong></a></li>
+<li><a href="/windows/win32/api/oleidl/nn-oleidl-iolewindow"><strong>IOleWindow</strong></a></li>
+<li><a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ipreviewhandler"><strong>IPreviewHandler</strong></a></li>
+<li><a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ipreviewhandlervisuals"><strong>IPreviewHandlerVisuals</strong></a> (Optional)</li>
+</ul>
+<p>Your handler is called through its <a href="/windows/win32/api/ocidl/nn-ocidl-iobjectwithsite"><strong>IObjectWithSite</strong></a>, which returns an <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> pointer through which you request an <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ipreviewhandlerframe"><strong>IPreviewHandlerFrame</strong></a> object to interact with the host.</p>
+<h2>Server Model Options</h2>
+<p>Preview handlers always run out of process. There are two methods of implementing this:</p>
+<ol>
+<li>A preview handler can be built as an in-process server but run through an out-of-process surrogate host. This is the preferred method. The system provides a surrogate host for this in the Prevhost.exe file. Preview handlers built by this method are not compatible with Outlook 2007 on WindowsÂ XP. However, these same handlers will work in Windows Explorer and Outlook 2007 running on WindowsÂ Vista.</li>
+<li>A preview handler can be built as a local Component Object Model (COM) server. This is not recommended for several reasons. First, implementation of an in-process server is easier. More importantly, implementation as an in-process server provides greater control over the lifetime of the handler object, which allows for better cleanup and efficiency.</li>
+</ol>
+<p>By default, preview handlers run in a low integrity level (IL) process for security reasons. You can optionally disable running as a low IL process by setting the following value in the registry. However, it is not recommended to do so. Systems could eventually be configured to reject any process that is not low IL.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â CLSID
+Â Â Â Â Â Â {YOUR HANDLER'S CLSID}
+Â Â Â Â Â Â Â Â Â DisableLowILProcessIsolation [DWORD] = 1
+</code></pre>
+<p>Different preview handlers share the same process by default. Two instances of Prevhost.exe can be running simultaneously; one for handlers running as low IL processes, one for handlers that have opted out of that behavior.</p>
+<h2>Initialization</h2>
+<p>As with thumbnail and property handlers, it is strongly recommended that you initialize your handler with a stream. You can initialize through a file or item if necessary, but streams provide the most secure way to implement a handler. Initialization through a stream ensures file integrity and the stability benefits to the system of running the handler as a low IL process, such as protecting the system from buffer overruns, limiting where a handler can write information, and limiting communication with other windows.</p>
+<p>If you must initialize with a file or Shell item, store the file path or a reference to the <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellitem"><strong>IShellItem</strong></a>. Do not read data from these sources until <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ipreviewhandler-dopreview"><strong>IPreviewHandler::DoPreview</strong></a> is called.</p>
+<p>In general, initialization should not do any heavy work such as composing and storing a preview image. For optimal efficiency, that sort of processing should not be done until the preview is called for.</p>
+<h2>Preview Handler Data Flow</h2>
+<p>The data flow in the preview process follows the general path shown here. The host can be thought of as Windows Explorer in WindowsÂ Vista or Outlook 2007.</p>
+<ol>
+<li>The preview handler is initialized, preferably with a stream.</li>
+<li>The view window is passed from the host to the handler through <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ipreviewhandler-setwindow"><strong>IPreviewHandler::SetWindow</strong></a>.</li>
+<li>At this point, the handler should do nothing more until <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ipreviewhandler-dopreview"><strong>IPreviewHandler::DoPreview</strong></a> is called.</li>
+<li>The preview is displayed in the reading pane through a call to <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ipreviewhandler-dopreview"><strong>IPreviewHandler::DoPreview</strong></a>.</li>
+<li>The size of the window is set through <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ipreviewhandler-setrect"><strong>IPreviewHandler::SetRect</strong></a>.</li>
+<li>The window is resized when needed through <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ipreviewhandler-setrect"><strong>IPreviewHandler::SetRect</strong></a>.</li>
+<li>The preview is unloaded and its resources released when it is no longer needed, through a call to <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ipreviewhandler-unload"><strong>IPreviewHandler::Unload</strong></a>.</li>
+</ol>
+<h2>Debugging a Preview Handler</h2>
+<p>If you have followed the recommendations to implement your preview handler as an in-process server, to debug your preview handler, you can attach to Prevhost.exe. As mentioned earlier, be aware that there could be two instances of Prevhost.exe, one for normal low IL processes and one for those handlers that have opted out of running as a low IL process.</p>
+<p>If you do not find Prevhost.exe in your list of available processes, it probably has not been loaded at that point. Clicking on a file for a preview loads the surrogate and it should then appear as an attachable process.</p>
+<h2>Providing Your Own Process for a Preview Handler</h2>
+<p>If you want to force the creation of a new process for your handler rather than running under the default process, create a new subkey for your handler under <strong>AppID</strong> and set its DllSurrogate entry to &quot;Prevhost.exe&quot;. Use that <strong>AppID</strong> subkey instead of the default Prevhost.exe <strong>AppID</strong>.</p>
+<p>By providing a new process, the handler can avoid running under a shared process as it would do by default. This could allow you, for example, to ensure the specific version of the common language runtime (CLR) in the process. This is required if you are building a managed implementation of a preview handler.</p>
+<blockquote>
+<p>[!Note]<br />
+32-bit preview handlers should use <strong>AppID</strong> {534A1E02-D58F-44f0-B58B-36CBED287C7C} when installed on 64-bit operating systems.</p>
+</blockquote>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="building-preview-handlers.html">Building Preview Handlers</a></p>
+<!-- raw HTML omitted -->
+<p><a href="how-to-register-a-preview-handler.html">How to Register a Preview Handler</a></p>
+<!-- raw HTML omitted -->
+<p><a href="preview-handler-guidelines.html">Preview Handler Guidelines</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

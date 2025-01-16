@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to enable desktop toast notifications through an AppUserModelID</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>description: This topic shows you how to create a shortcut for your app, assign it an AppUserModelID, and install it in the Start screen.
+title: How to enable desktop toast notifications through an AppUserModelID
+ms.topic: article
+ms.date: 05/31/2018
+ms.assetid: BB32CD0A-99E6-47dc-A913-39A7B3027314
+api_name:
+api_type:
+api_location:
+topic_type:</p>
+<ul>
+<li>kbSyntax</li>
+</ul>
+<hr />
+<h1>How to enable desktop toast notifications through an AppUserModelID</h1>
+<p>This topic shows you how to create a shortcut for your app, assign it an <a href="appids.html">AppUserModelID</a>, and install it in the Start screen. We strongly recommend that you do this in the Windows Installer rather than in your app's code. Without a valid shortcut installed in the Start screen or in <strong>All Programs</strong>, you cannot raise a toast notification from a desktop app.</p>
+<blockquote>
+<p>[!Note]<br />
+The example methods used in this topic are taken from the <a href="https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/DesktopToasts">Desktop toast sample</a>.</p>
+</blockquote>
+<p>Â </p>
+<h2>What you need to know</h2>
+<h3>Technologies</h3>
+<ul>
+<li>COM</li>
+</ul>
+<h3>Prerequisites</h3>
+<ul>
+<li>Libraries
+<ul>
+<li>C++: Runtime.object.lib</li>
+<li>C#: Windows.Winmd</li>
+</ul>
+</li>
+<li>C#: Windows API Code Pack for Microsoft .NET Framework</li>
+<li>A version of Microsoft Visual Studio that supports at least WindowsÂ 8</li>
+</ul>
+<h2>Instructions</h2>
+<h3>Step 1: Prepare the shortcut to be created</h3>
+<p>This example first determines the path of the user's app data folder through the <a href="/windows/win32/api/processenv/nf-processenv-getenvironmentvariablea"><strong>GetEnvironmentVariable</strong></a> function. It then composes the full path to the shortcut, determines that a shortcut of that name does not already exist at that location, and passes that information to another method which creates and installs the shortcut.</p>
+<p>Note that the shortcut can be deployed per-user or per-app.</p>
+<pre lang="C++"><code>HRESULT DesktopToastsApp::TryCreateShortcut()
+{
+    wchar_t shortcutPath[MAX_PATH];
+    DWORD charWritten = GetEnvironmentVariable(L&quot;APPDATA&quot;, shortcutPath, MAX_PATH);
+    HRESULT hr = charWritten &gt; 0 ? S_OK : E_INVALIDARG;
+
+    if (SUCCEEDED(hr))
+    {
+        errno_t concatError = wcscat_s(shortcutPath, ARRAYSIZE(shortcutPath), L&quot;\\Microsoft\\Windows\\Start Menu\\Programs\\Desktop Toasts App.lnk&quot;);
+ 
+        hr = concatError == 0 ? S_OK : E_INVALIDARG;
+        if (SUCCEEDED(hr))
+        {
+            DWORD attributes = GetFileAttributes(shortcutPath);
+            bool fileExists = attributes &lt; 0xFFFFFFF;
+
+            if (!fileExists)
+            {
+                hr = InstallShortcut(shortcutPath);  // See step 2.
+            }
+            else
+            {
+                hr = S_FALSE;
+            }
+        }
+    }
+    return hr;
+}
+</code></pre>
+<h3>Step 2: Create the shortcut and install it in the Start screen</h3>
+<p>This example also retrieves the shortcut's property store and sets the required <a href="../properties/props-system-appusermodel-id.html">System.AppUserModel.ID</a> property from a previously defined variable, <code>AppID</code>.</p>
+<pre lang="C++"><code>HRESULT DesktopToastsApp::InstallShortcut(_In_z_ wchar_t *shortcutPath)
+{
+    wchar_t exePath[MAX_PATH];
+    
+    DWORD charWritten = GetModuleFileNameEx(GetCurrentProcess(), nullptr, exePath, ARRAYSIZE(exePath));
+
+    HRESULT hr = charWritten &gt; 0 ? S_OK : E_FAIL;
+    
+    if (SUCCEEDED(hr))
+    {
+        ComPtr&lt;IShellLink&gt; shellLink;
+        hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&amp;shellLink));
+
+        if (SUCCEEDED(hr))
+        {
+            hr = shellLink-&gt;SetPath(exePath);
+            if (SUCCEEDED(hr))
+            {
+                hr = shellLink-&gt;SetArguments(L&quot;&quot;);
+                if (SUCCEEDED(hr))
+                {
+                    ComPtr&lt;IPropertyStore&gt; propertyStore;
+
+                    hr = shellLink.As(&amp;propertyStore);
+                    if (SUCCEEDED(hr))
+                    {
+                        PROPVARIANT appIdPropVar;
+                        hr = InitPropVariantFromString(AppId, &amp;appIdPropVar);
+                        if (SUCCEEDED(hr))
+                        {
+                            hr = propertyStore-&gt;SetValue(PKEY_AppUserModel_ID, appIdPropVar);
+                            if (SUCCEEDED(hr))
+                            {
+                                hr = propertyStore-&gt;Commit();
+                                if (SUCCEEDED(hr))
+                                {
+                                    ComPtr&lt;IPersistFile&gt; persistFile;
+                                    hr = shellLink.As(&amp;persistFile);
+                                    if (SUCCEEDED(hr))
+                                    {
+                                        hr = persistFile-&gt;Save(shortcutPath, TRUE);
+                                    }
+                                }
+                            }
+                            PropVariantClear(&amp;appIdPropVar);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return hr;
+}
+</code></pre>
+<h2>Remarks</h2>
+<p>As an alternative to the approach shown in this topic, you can use a framework such as the Windows Installer XML (WiX) to generate the shortcut and deploy it as part of the Windows Installer. In that case, this code should be included in the MSI rather than in the app's code. For more information, see the sample WiX configuration file included with the <a href="https://github.com/microsoftarchive/msdn-code-gallery-microsoft/tree/master/Official%20Windows%20Platform%20Sample/Windows%208%20app%20samples/%5BC%2B%2B%5D-Windows%208%20app%20samples/C%2B%2B/Windows%208%20app%20samples/Toast%20notifications%20sample%20(Windows%208)">Sending toast notifications from desktop apps</a> sample.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="quickstart-sending-desktop-toast.html">Quickstart: Sending a toast notification from the desktop</a></p>
+<!-- raw HTML omitted -->
+<p><a href="https://github.com/microsoftarchive/msdn-code-gallery-microsoft/tree/master/Official%20Windows%20Platform%20Sample/Windows%208%20app%20samples/%5BC%2B%2B%5D-Windows%208%20app%20samples/C%2B%2B/Windows%208%20app%20samples/Toast%20notifications%20sample%20(Windows%208)">Sending toast notifications from desktop apps sample</a></p>
+<!-- raw HTML omitted -->
+<p><a href="appids.html">Application User Model IDs (AppUserModelIDs)</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/server-essentials/gg513936(v=msdn.10)">How to: Install the Windows Installer XML (WiX) Tools</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/uwp/schemas/tiles/toastschema/schema-root">Toast XML schema</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/apps/hh779727(v=win.10)">Toast notification overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/apps/hh465448(v=win.10)">Quickstart: Sending a toast notification</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/hh761487(v=win.10)">Quickstart: Sending a toast push notification</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/uwp/design/shell/tiles-and-notifications/">Guidelines and checklist for toast notifications</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/">How to add images to a toast template</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/">How to check toast notification settings</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/apps/hh465448(v=win.10)">How to choose and use a toast template</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/apps/hh761468(v=win.10)">How to handle activation from a toast notification</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/apps/hh781238(v=win.10)">How to opt in for toast notifications</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/apps/hh761494(v=win.10)">Choosing a toast template</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/apps/hh761492(v=win.10)">Toast audio options</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

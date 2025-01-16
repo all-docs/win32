@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IIS Host Plug-in Configuration</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: IIS Host Plug-in Configuration
+description: The Windows Remote Management (WinRM) Internet Information Services (IIS) host plug-in configuration provides a hosting mechanism that allows third-party WinRM plug-ins to expose management data within the WinRM infrastructure.
+ms.assetid: 234e6f7b-310f-499a-83e4-699ecf3816f0
+ms.tgt_platform: multiple
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>IIS Host Plug-in Configuration</h1>
+<p>The Windows Remote Management (WinRM) Internet Information Services (IIS) host plug-in configuration provides a hosting mechanism that allows third-party WinRM plug-ins to expose management data within the WinRM infrastructure.</p>
+<p>The following sections describe IIS host plug-in configuration:</p>
+<ul>
+<li><a href="#iis-hosting-details">IIS Hosting Details</a></li>
+<li><a href="#iis-host-configuration-model">IIS Host Configuration Model</a></li>
+<li><a href="/windows">IIS Host (WinRM) Configuration Setup and Details</a></li>
+<li><a href="#reading-iis-host-configuration">Reading IIS Host Configuration</a></li>
+<li><a href="#enumerating-plug-ins-on-the-winrm-service">Enumerating Plug-ins on the WinRM Service</a></li>
+</ul>
+<h2>IIS Hosting Details</h2>
+<p>An application that configures and initializes the WinRM SOAP processor in IIS will receive requests directly from a WinRM client on another computer using the WS-Management protocol. The application must also configure an HTTP endpoint that identifies the application to ensure that all requests get routed directly to the application-specific plug-ins. The application must also configure which plug-ins to load in to the IIS host and the authorization and authentication mechanisms that are needed. When using the WinRM service within IIS, the following factors should be considered:</p>
+<ul>
+<li>IIS does not support Kerberos authentication by default. However, an IIS module can be created to support Kerberos authentication.</li>
+<li>The IIS service will not accept encrypted WinRM service requests over HTTP.</li>
+<li>After you set up an IIS endpoint, the first request you send with implicit credentials will fail; however, all subsequent requests will succeed. This is a known issue with an IIS site configured with the default kernel mode authentication. If this is a blocking issue, it is recommended that you turn off kernel mode authentication.</li>
+</ul>
+<h2>IIS Host Configuration Model</h2>
+<p>All applications that host a WinRM Simple Object Access Protocol (SOAP) processor in IIS require configuration before they will function.</p>
+<p>Each application configuration is separate from that of other applications. The following sets of configurations are necessary, although possibly not all the configurations need to be changed, and they are done through the main WinRM service:</p>
+<ul>
+<li>General application configuration, including operation time-outs.</li>
+<li>An authorization plug-in for authorizing LiveID requests or mapping the Windows user account to a more generic service account.</li>
+<li>Operation plug-ins to be hosted and used by the WinRM SOAP processor to carry out the actual requests.</li>
+</ul>
+<p>The following configurations might need to be configured within IIS:</p>
+<ul>
+<li><a href="windows-remote-management-glossary.html"><em>Listener</em></a> endpoint information defining what ports and addresses are listening for requests along with any Secure Sockets Layer (SSL) certificates.</li>
+<li>Client certificate mapping to map client certificates to user accounts.</li>
+<li>Authorization configuration to limit who has access to the virtual site.</li>
+</ul>
+<p>The WinRM service registers port 5985 with the &quot;wsman&quot; prefix by default. If the compatibility HTTP listener is enabled, the WinRM Service registers port 80 with the &quot;wsman&quot; prefix by default. Because IIS also listens on port 80 by default, it is recommended that IIS host services create <a href="windows-remote-management-glossary.html"><em>listeners</em></a> on a different port.</p>
+<p>If both the IIS and the WinRM service share port 80, the following configuration is needed to share the port:</p>
+<ul>
+<li>The IIS host service needs to enable WinRM on an application under the site.</li>
+<li>The application name needs to be added to the URI. For example: <a href="https://servername/myapplication">https://servername/myapplication</a>.</li>
+</ul>
+<p>Each IIS host application is stored in the IIS configuration as a web.config file residing in the physical directory corresponding to the configured virtual directory. The following section describes how the IIS configuration system works and how it can be extended to support WinRM IIS host configuration.</p>
+<h3>How IIS Configuration Works</h3>
+<p>The IIS configuration infrastructure consists of a set of XML files used to store configuration data and a set of schema files used to validate data written to or read through IIS administration APIs. At the root level, there is an ApplicationHost.config file in the same directory as IIS (typically, %windir%\System32\InetSrv\Config). This is the main configuration file for IIS, where the list of sites, applications, virtual directories, general settings, logging, caching, and so on are stored. Configuration data is divided into and accessed as independent entities called <strong>sections</strong>.</p>
+<p>For example, there are separate <strong>sections</strong> for sites, logging, caching, and so on. Any configuration data contained in ApplicationHost.config is applied to all sites, applications, and virtual directories configured within IIS. At the virtual directory level, a web.config file defines application-specific configuration data, possibly by overriding other data already defined in ApplicationHost.config. Web.config files are stored at the root (physical directory) corresponding to the site, application, or virtual directory the configuration applies to.</p>
+<p>For more information about IIS configuration, see the following:</p>
+<ul>
+<li><a href="/previous-versions/iis/settings-schema/aa347559(v=vs.90)">IIS 7.0 Settings Schema</a></li>
+<li><a href="/archive/blogs/carlosag/">/archive/blogs/carlosag/</a></li>
+<li><a href="https://www.iis.net/learn/get-started/planning-your-iis-architecture/deep-dive-into-iis-configuration-with-iis-7-and-iis-8">https://www.iis.net/articles/view.aspx/IIS7/Use-IIS7-Administration-Tools/Using-XML-Configuration/Deep-Dive-into-IIS7</a></li>
+</ul>
+<p>The IIS configuration schema used to validate IIS configuration data is XML files stored in the IIS schema directory (typically, %windir%\System32\InetSrv\Config\Schema). The IIS configuration schema is not XSD. IIS configuration supports extensibility. New configuration sections can be directly integrated into the IIS configuration system, and the IIS configuration system's settings can be manipulated using the existing administration APIs.</p>
+<p>The following are the main steps involved:</p>
+<ul>
+<li>Define a new configuration section in an XML schema file.</li>
+<li>Place the file in the IIS 7 schema directory (%windir%\System32\InetSrv\Config\Schema).</li>
+<li>Register the new section in the IIS global configuration file (ApplicationHost.config).</li>
+</ul>
+<h2>IIS Host (WinRM) Configuration Setup and Details</h2>
+<p>This section describes the steps to be taken during setup to integrate and initialize IIS host configuration. Here, IIS host configuration refers to the configuration data required to run the WinRM service within IIS. The WinRM IIS extension module is an optional component that is installed using the <strong>Server Manager</strong>.</p>
+<p>The IIS configuration section that defines the required configuration is called <strong>system.management.wsmanagement.config</strong>. Typically, the IIS host configuration is defined during setup. This can be done by creating a web.config file and adding the appropriate XML. Any changes to the web.config file require restarting the site hosting the WinRM service.</p>
+<p>The following procedure describes setting up the WinRM IIS extension in detail.</p>
+<p><strong>To install the WinRM IIS extension</strong></p>
+<ol>
+<li>In the <strong>Features Summary</strong> section of the <strong>Server Manager</strong>, click <strong>Add Features</strong>.</li>
+<li>In the Add Features Wizard, select WinRM IIS extension.</li>
+<li>Follow the wizard instructions, including installing the required software if any is indicated. For more information about using the Add Features Wizard, refer to the <strong>Server Manager</strong> online help.</li>
+</ol>
+<h3>Initializing WinRM Configuration for the Hosted Application</h3>
+<p>This step involves defining the IIS host configuration XML in the web.config file. This file resides in the physical directory corresponding to the virtual directory where the hosted application is configured. The XML content for the <strong>system.management.wsmanagement.config</strong> section should conform to the scheme defined in wsmanconfig_schema.xml; otherwise, the IIS Administration APIs will be unable to process it. The following is an example of XML content that could be contained in the web.config file:</p>
+<pre lang="XML"><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;configuration&gt;
+ &lt;system.webServer&gt;
+  &lt;system.management.wsmanagement.config&gt;
+   &lt;OperationsConfiguration MaxEnvelopeSizeKB=&quot;150&quot; 
+                            MaxOperationTimeoutSeconds=&quot;60&quot;  
+                            MaxEnumerateIdleTimeoutSeconds=&quot;60&quot;  
+                            MaxSubscribeIdleTimeoutSeconds=&quot;60&quot;  
+                            MaxShellIdleTimeoutMinutes=&quot;15&quot;
+                            QuotaRefreshIntervalSeconds=&quot;900&quot;
+                            QuotaSystemWindowSeconds=&quot;2&quot;
+                            QuotaSystemWindowOperations-&quot;1000&quot;/&gt;
+    &lt;PluginModules&gt;
+     &lt;AuthorizationPlugin Name=&quot;Auth1&quot; Filename=&quot;Auth.dll&quot; SDKVersion=&quot;1&quot; SupportsQuota=&quot;true&quot;/&gt;
+     &lt;OperationsPlugins&gt;
+      &lt;Plugin Name=&quot;PL1&quot; Filename=&quot;PL1.dll&quot; SDKVersion=&quot;1&quot; XmlRenderingType=&quot;text&quot;&gt;
+       &lt;InitializationParameters&gt;
+        &lt;Param name=&quot;myParam1&quot; value=&quot;myValue1&quot;/&gt;
+       &lt;/InitializationParameters&gt;
+       &lt;Resources&gt;
+        &lt;Resource ResourceUri=&quot;myUri1&quot;&gt;
+        &lt;Capability Type=&quot;Shell&quot;/&gt;
+        &lt;/Resource&gt;
+       &lt;/Resources&gt;
+      &lt;/Plugin&gt;
+      &lt;Plugin Name=&quot;PL2&quot; Filename=&quot;PL2.dll&quot; SDKVersion=&quot;1&quot; XmlRenderingType=&quot;text&quot;&gt;
+       &lt;InitializationParameters/&gt;
+       &lt;Resources&gt;
+        &lt;Resource ResourceUri=&quot;myUri1&quot;&gt;
+         &lt;Capability Type=&quot;Get&quot;/&gt;
+         &lt;Capability Type=&quot;Put&quot;/&gt;
+         &lt;Capability Type=&quot;Delete&quot;/&gt;
+        &lt;/Resource&gt;
+       &lt;/Resources&gt;
+      &lt;/Plugin&gt;
+     &lt;/OperationsPlugins&gt;
+    &lt;/PluginModules&gt;
+   &lt;/OperationsConfiguration&gt;
+  &lt;/system.management.wsmanagement.config&gt;
+ &lt;/system.webServer&gt;
+&lt;/configuration&gt;
+</code></pre>
+<p>The following list describes the XML elements in more detail and is followed by an example of a wsmanconfig_schema.xml file.</p>
+<table>
+<thead>
+<tr>
+<th>Element</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OperationsConfiguration/MaxEnvelopeSizeKB</td>
+<td>The maximum size of the SOAP packets that the WinRM service will process. The default value is 150 KB.</td>
+</tr>
+<tr>
+<td>OperationsConfiguration/MaxOperationTimeoutSeconds</td>
+<td>The maximum time-out interval for all operations. This value overrides any value that is received in a SOAP packet. If a provider exceeds this value, a time-out is sent to the client and the operation will be canceled. (Some operations, like enumerations, can keep an enumeration open after a time-out.) The default is 60 seconds.</td>
+</tr>
+<tr>
+<td>OperationsConfiguration/MaxEnumerationIdleTimeoutSeconds</td>
+<td>The maximum time-out interval for enumerations. If the time between enumeration requests is greater than this value, the enumeration is canceled and the previously issued enumeration context is no longer valid. The default is 60 seconds.</td>
+</tr>
+<tr>
+<td>OperationsConfiguration/MaxSubscribeIdleTimeoutSeconds</td>
+<td>The maximum time-out interval for Subscribe operations. The default is 60 seconds.</td>
+</tr>
+<tr>
+<td>OperationsConfiguration/MaxShellIdleTimeoutMinutes</td>
+<td>The maximum time in minutes before an inactive remote shell is deleted. The default is 15 minutes.</td>
+</tr>
+<tr>
+<td>OperationsConfiguration/QuotaRefreshIntervalSeconds</td>
+<td>The interval before the quota information for a user is refreshed. Pending requests for the specified user continue to execute under the previous authorization and quota context until the refresh is completed. The default is 900 seconds.</td>
+</tr>
+<tr>
+<td>OperationsConfiguration/QuotaSystemWindowSeconds</td>
+<td>The duration of the system throttle sliding window. The default is 2 seconds.</td>
+</tr>
+<tr>
+<td>OperationsConfiguration/QuotaSystemWindowOperations</td>
+<td>The number of operations that are admitted through the system throttle during the sliding window. The default is 1000 operations.</td>
+</tr>
+<tr>
+<td>PlugInModules/AuthorizationPlugin</td>
+<td>This node is optional. An authorization plug-in allows a programmatic way of accepting or rejecting an inbound user based on different authentication schemes.</td>
+</tr>
+<tr>
+<td>PlugInModules/AuthorizationPlugin/Name</td>
+<td>Specifies the display name to use for the plug-in. If an error is returned from the plug-in, this name will be put into the error XML that is returned to the client application. The name is not locale specific.</td>
+</tr>
+<tr>
+<td>PlugInModules/AuthorizationPlugin/Filename</td>
+<td>Specifies the file name of the authorization plug-in. Any environment variables that are put in this entry will be expanded based on the identity that the IIS host is running under, such as Network Service. The default value for this entry is empty, which signifies that no authorization plug-in is used.</td>
+</tr>
+<tr>
+<td>PlugInModules/AuthorizationPlugin/SDKVersion</td>
+<td>Specifies the version of the software development kit (SDK) for which a particular plug-in was written. This element must be set to 1.</td>
+</tr>
+<tr>
+<td>PlugInModules/AuthorizationPlugin/SupportsQuota</td>
+<td>Specifies whether the authorization plug-in supports quotas.</td>
+</tr>
+<tr>
+<td>PlugInModules/OperationsPlugins/Name</td>
+<td>Specifies the display name to use for the plug-in. If an error is returned from the plug-in, this name will be put into the error XML that is returned to the client application. The name is not locale specific.</td>
+</tr>
+<tr>
+<td>PlugInModules/OperationsPlugins/FileName</td>
+<td>Specifies the file name of the operation plug-in. Any environment variables that are put in this entry will be expanded in the user's context when a request comes in. Each user could have a different version of the same environment variable, so each user could end up with a different plug-in. This entry cannot be blank and must point to a valid plug-in.</td>
+</tr>
+<tr>
+<td>PlugInModules/OperationsPlugins/SDKVersion</td>
+<td>Specifies the version of the SDK for which a particular plug-in was written. This element must be set to 1.</td>
+</tr>
+<tr>
+<td>PlugInModules/OperationsPlugins/XmlRenderingType</td>
+<td>Configures the format in which XML is passed to plug-ins through the <a href="/windows/desktop/api/Wsman/ns-wsman-wsman_data"><strong>WSMAN_DATA</strong></a> object. <strong>XmlRenderingType</strong> is set to text. Incoming XML data is contained in a WSMAN_DATA_TYPE_TEXT structure, which represents the XML as a <strong>PCWSTR</strong> memory buffer.</td>
+</tr>
+<tr>
+<td>PlugInModules/OperationsPlugins/InitializationParameters</td>
+<td>This node is optional and allows a plug-in to configure extra XML that will be passed in to the <a href="/windows/desktop/api/Wsman/nc-wsman-wsman_plugin_startup"><strong>WSManPluginStartup</strong></a> method. Most plug-ins will not need this extra information, but if a plug-in needs to be used under more than one scenario that requires different run-time semantics, this XML will give the plug-in the flexibility do this.</td>
+</tr>
+<tr>
+<td>PlugInModules/OperationsPlugins/Resources</td>
+<td>Specifies a list of <a href="windows-remote-management-glossary.html"><em>resource URIs</em></a> that this plug-in supports. At least one <strong>ResourceUri</strong> entry must be specified; otherwise, the XML will be rejected.</td>
+</tr>
+<tr>
+<td>PlugInModules/OperationsPlugins/Resources/Resource</td>
+<td>Represents a single <a href="windows-remote-management-glossary.html"><em>resource URI</em></a> configuration.</td>
+</tr>
+<tr>
+<td>PlugInModules/OperationsPlugins/Resources/Resource/ResourceUri</td>
+<td>Specifies a single <a href="windows-remote-management-glossary.html"><em>resource URI</em></a> either in full or as a partial match string based on the <strong>ExactMatch</strong> attribute. If <strong>ExactMatch</strong> is not present, it defaults to <strong>False</strong>, which means the WinRM SOAP processor will do a partial match to the start of the <em>resource URI</em> and, if there is a match, pass it to the plug-in. The <strong>SupportsOptions</strong> attribute can be specified if this <em>resource URI</em> is allowed to have any options passed in. By default, no options are supported, and if any are present in the client request, an error will be returned. If options are supported by the plug-in, it is important that the plug-in returns the correct error if an option is present that the plug-in does not understand when the <strong>mustUnderstand</strong> flag is set to <strong>TRUE</strong>.</td>
+</tr>
+<tr>
+<td>PlugInModules/OperationsPlugins/Resource/Capability</td>
+<td>Specifies a capability that is available on this <a href="windows-remote-management-glossary.html"><em>resource URI</em></a>. There will be one entry for each type of operation that it supports. The following options are available:<!-- raw HTML omitted --> <!-- raw HTML omitted --> <!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Get<!-- raw HTML omitted --> <!-- raw HTML omitted --> Get operations are supported on the <a href="windows-remote-management-glossary.html"><em>resource URI</em></a>. The <strong>SupportFragment</strong> attribute is used if the get operation supports the concept. The <strong>SupportFiltering</strong> attribute is not valid and should be set to <strong>False</strong>. This capability is not valid for a <em>resource URI</em> if shell operations are also supported.<!-- raw HTML omitted --> <!-- raw HTML omitted --> <!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Put<!-- raw HTML omitted --> <!-- raw HTML omitted --> Put operations are supported on the <a href="windows-remote-management-glossary.html"><em>resource URI</em></a>. The <strong>SupportFragment</strong> attribute is used if the put operation supports the concept. The <strong>SupportFiltering</strong> attribute is not valid and should be set to <strong>False</strong>. This capability is not valid for a <em>resource URI</em> if shell operations are also supported.<!-- raw HTML omitted --> <!-- raw HTML omitted --> <!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Create<!-- raw HTML omitted --> <!-- raw HTML omitted --> Create operations are supported on the <a href="windows-remote-management-glossary.html"><em>resource URI</em></a>. The <strong>SupportFragment</strong> attribute is used if the create operation supports the concept. The <strong>SupportFiltering</strong> attribute is not valid and should be set to <strong>False</strong>. This capability is not valid for a <em>resource URI</em> if shell operations are also supported.<!-- raw HTML omitted --> <!-- raw HTML omitted --> <!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Delete<!-- raw HTML omitted --> <!-- raw HTML omitted --> Delete operations are supported on the <a href="windows-remote-management-glossary.html"><em>resource URI</em></a>. The <strong>SupportFragment</strong> attribute is used if the delete operation supports the concept. The <strong>SupportFiltering</strong> attribute is not valid and should be set to <strong>False</strong>. This capability is not valid for a <em>resource URI</em> if shell operations are also supported.<!-- raw HTML omitted --> <!-- raw HTML omitted --> <!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Invoke<!-- raw HTML omitted --> <!-- raw HTML omitted --> Invoke operations are supported on the <a href="windows-remote-management-glossary.html"><em>resource URI</em></a>. The <strong>SupportFragment</strong> attribute is not supported for invoke operations and should be set to <strong>False</strong>. The <strong>SupportFiltering</strong> attribute is not valid and should be set to <strong>False</strong>. This capability is not valid for a <em>resource URI</em> if shell operations are also supported.<!-- raw HTML omitted --> <!-- raw HTML omitted --> <!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Enumerate<!-- raw HTML omitted --> <!-- raw HTML omitted --> Enumerate operations are supported on the <a href="windows-remote-management-glossary.html"><em>resource URI</em></a>. The <strong>SupportFragment</strong> attribute is not supported for enumerate operations and should be set to <strong>False</strong>. The <strong>SupportFiltering</strong> attribute is valid, and if the plug-in supports filtering, this attribute should be set to <strong>True</strong>. This capability is not valid for a <em>resource URI</em> if shell operations are also supported.<!-- raw HTML omitted --> <!-- raw HTML omitted --> <!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Subscribe<!-- raw HTML omitted --> <!-- raw HTML omitted --> Subscribe operations are supported on the <a href="windows-remote-management-glossary.html"><em>resource URI</em></a>. The <strong>SupportFragment</strong> attribute is not supported for subscribe operations and should be set to <strong>False</strong>. The <strong>SupportFiltering</strong> attribute is not valid and should be set to <strong>False</strong>. This capability is not valid for a <em>resource URI</em> if shell operations are also supported.<!-- raw HTML omitted --> <!-- raw HTML omitted --> <!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Shell<!-- raw HTML omitted --> <!-- raw HTML omitted --> Shell operations are supported on the <a href="windows-remote-management-glossary.html"><em>resource URI</em></a>. The <strong>SupportFragment</strong> attribute is not supported for shell operations and should be set to <strong>False</strong>. The <strong>SupportFiltering</strong> attribute is not valid and should be set to <strong>False</strong>. This capability is not valid for a <em>resource URI</em> if any other operation capability is also supported. If a shell operation capability is configured for a <em>resource URI</em>, then get, put, create, delete, invoke, and enumerate operations are processed internally within the WinRM service to manage shells. As a result, the plug-in cannot deal with the operations itself.<!-- raw HTML omitted --> <!-- raw HTML omitted --> <!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<h3>Example wsmanconfig_schema.xml File</h3>
+<p>During set up, an XML file called wsmanconfig_schema.xml containing the following content is dropped in the IIS schema directory:</p>
+<pre lang="XML"><code>&lt;configSchema&gt;
+ &lt;sectionSchema name=&quot;system.webServer/system.management.wsmanagement.config&quot;&gt;
+  &lt;element name=&quot;OperationsConfiguration&quot;&gt;
+   &lt;attribute name=&quot;MaxEnvelopeSizeKB&quot; 
+              type=&quot;uint&quot; 
+              defaultValue=&quot;150&quot; 
+              validationType=&quot;integerRange&quot; 
+              validationParameter=&quot;32,4294967295&quot;/&gt;
+   &lt;attribute name=&quot;MaxOperationTimeoutSeconds&quot; 
+              type=&quot;uint&quot; 
+              defaultValue=&quot;60&quot; 
+              validationType=&quot;integerRange&quot; 
+              validationParameter=&quot;1,4294967295&quot;/&gt;
+   &lt;attribute name=&quot;MaxEnumerateIdleTimeoutSeconds&quot; 
+              type=&quot;uint&quot; 
+              defaultValue=&quot;60&quot; 
+              validationType=&quot;integerRange&quot; 
+              validationParameter=&quot;1,4294967295&quot;/&gt;
+   &lt;attribute name=&quot;MaxSubscribeIdleTimeoutSeconds&quot; 
+              type=&quot;uint&quot; 
+              defaultValue=&quot;60&quot; 
+              validationType=&quot;integerRange&quot; 
+              validationParameter=&quot;1,4294967295&quot;/&gt;
+   &lt;attribute name=&quot;MaxShellIdleTimeoutMinutes&quot; 
+              type=&quot;uint&quot; 
+              defaultValue=&quot;15&quot; 
+              validationType=&quot;integerRange&quot; 
+              validationParameter=&quot;0,4294967295&quot;/&gt;
+   &lt;attribute name=&quot;QuotaRefreshIntervalSeconds&quot; 
+              type=&quot;uint&quot; 
+              defaultValue=&quot;900&quot; 
+              validationType=&quot;integerRange&quot; 
+              validationParameter=&quot;0,4294967295&quot;/&gt;
+   &lt;attribute name=&quot;QuotaSystemWindowSeconds&quot; 
+              type=&quot;uint&quot; 
+              defaultValue=&quot;2&quot; 
+              validationType=&quot;integerRange&quot; 
+              validationParameter=&quot;0,4294967295&quot;/&gt;
+   &lt;attribute name=&quot;QuotaSystemWindowOperations&quot; 
+              type=&quot;uint&quot; 
+              defaultValue=&quot;1000&quot; 
+              validationType=&quot;integerRange&quot; 
+              validationParameter=&quot;0,4294967295&quot;/&gt;
+  &lt;/element&gt;
+  &lt;element name=&quot;PluginModules&quot;&gt;
+   &lt;collection addElement=&quot;AuthorizationPlugin&quot;&gt;
+    &lt;attribute name=&quot;Name&quot; type=&quot;string&quot; isUniqueKey=&quot;true&quot; required=&quot;true&quot; validationType=&quot;nonEmptyString&quot;/&gt;
+    &lt;attribute name=&quot;Filename&quot; type=&quot;string&quot; required=&quot;true&quot; validationType=&quot;nonEmptyString&quot;/&gt;
+    &lt;attribute name=&quot;SDKVersion&quot; type=&quot;uint&quot; required=&quot;true&quot;/&gt;
+    &lt;attribute name=&quot;SupportsQuota&quot; type=&quot;bool&quot; defaultValue=&quot;false&quot;/&gt;
+   &lt;/collection&gt;
+   &lt;element name=&quot;OperationsPlugins&quot;&gt;
+    &lt;collection addElement=&quot;Plugin&quot;&gt;
+     &lt;attribute name=&quot;Name&quot; type=&quot;string&quot; isUniqueKey=&quot;true&quot; required=&quot;true&quot; validationType=&quot;nonEmptyString&quot;/&gt;
+     &lt;attribute name=&quot;Filename&quot; type=&quot;string&quot; required=&quot;true&quot; validationType=&quot;nonEmptyString&quot;/&gt;
+     &lt;attribute name=&quot;SDKVersion&quot; type=&quot;uint&quot; required=&quot;true&quot;/&gt;
+     &lt;attribute name=&quot;XmlRenderingType&quot; type=&quot;enum&quot; defaultValue=&quot;text&quot;&gt;
+      &lt;enum name=&quot;text&quot; value=&quot;1&quot;/&gt;
+      &lt;enum name=&quot;XmlReader&quot; value=&quot;2&quot;/&gt;
+     &lt;/attribute&gt;
+     &lt;attribute name=&quot;Enabled&quot; type=&quot;bool&quot; defaultValue=&quot;true&quot;/&gt;
+     &lt;element name=&quot;InitializationParameters&quot;&gt;
+      &lt;collection addElement=&quot;Param&quot;&gt;
+       &lt;attribute name=&quot;Name&quot; type=&quot;string&quot; isUniqueKey=&quot;true&quot; required=&quot;true&quot; validationType=&quot;nonEmptyString&quot;/&gt;
+       &lt;attribute name=&quot;Value&quot; type=&quot;string&quot; required=&quot;true&quot; validationType=&quot;nonEmptyString&quot;/&gt;
+      &lt;/collection&gt;
+     &lt;/element&gt;
+     &lt;element name=&quot;Resources&quot;&gt;
+      &lt;collection addElement=&quot;Resource&quot;&gt;
+       &lt;attribute name=&quot;ResourceUri&quot; type=&quot;string&quot; isUniqueKey=&quot;true&quot; required=&quot;true&quot; validationType=&quot;nonEmptyString&quot;/&gt;
+       &lt;attribute name=&quot;SupportsOptions&quot; type=&quot;bool&quot; defaultValue=&quot;false&quot;/&gt;
+       &lt;attribute name=&quot;ExactMatch&quot; type=&quot;bool&quot; defaultValue=&quot;false&quot;/&gt;
+       &lt;collection addElement=&quot;Capability&quot;&gt;
+        &lt;attribute name=&quot;Type&quot; type=&quot;enum&quot; isUniqueKey=&quot;true&quot; required=&quot;true&quot;&gt;
+         &lt;enum name=&quot;Get&quot; value=&quot;1&quot;/&gt;
+         &lt;enum name=&quot;Put&quot; value=&quot;2&quot;/&gt;
+         &lt;enum name=&quot;Create&quot; value=&quot;3&quot;/&gt;
+         &lt;enum name=&quot;Delete&quot; value=&quot;4&quot;/&gt;
+         &lt;enum name=&quot;Invoke&quot; value=&quot;5&quot;/&gt;
+         &lt;enum name=&quot;Enumerate&quot; value=&quot;6&quot;/&gt;
+         &lt;enum name=&quot;Subscribe&quot; value=&quot;7&quot;/&gt;
+         &lt;enum name=&quot;Shell&quot; value=&quot;8&quot;/&gt;
+        &lt;/attribute&gt;
+        &lt;attribute name=&quot;SupportsFragment&quot; type=&quot;bool&quot; default=&quot;false&quot;/&gt;
+        &lt;attribute name=&quot;SupportsFiltering&quot; type=&quot;bool&quot; default=&quot;false&quot;/&gt;
+       &lt;/collection&gt;
+      &lt;/collection&gt;
+     &lt;/element&gt;
+    &lt;/collection&gt;
+   &lt;/element&gt;
+  &lt;/element&gt;
+ &lt;/sectionSchema&gt;
+&lt;/configSchema&gt;
+</code></pre>
+<h2>Reading IIS Host Configuration</h2>
+<p>The IIS host configuration is read during the SOAP processor startup process in the hosted application. Because web.config files can be manually edited and, therefore, are prone to schema validation errors, there can be issues when a configuration is read. During a configuration read or validation failure, the hosted application will fail to start and will return an appropriate error message to the client. An event will be logged containing a detailed description of what caused the failure.</p>
+<p>Common failures include the following:</p>
+<ul>
+<li>Access Denied</li>
+<li>Invalid Configuration XML</li>
+<li>No plug-in configured (at least one is required)</li>
+</ul>
+<p>The standard plug-ins are not configured by default. They need to be explicitly configured in the web.config file before they will start receiving requests.</p>
+<h2>Enumerating Plug-ins on the WinRM Service</h2>
+<p>The following command demonstrates how to use the winrm utility to determine which plug-ins are available on the WinRM service: <strong>winrm enumerate winrm/config/plugin -format:pretty</strong>.</p>
+</body>

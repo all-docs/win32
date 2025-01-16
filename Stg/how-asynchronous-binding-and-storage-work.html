@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How Asynchronous Binding and Storage Work</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: How Asynchronous Binding and Storage Work
+description: Asynchronous storage enhances the COM structured storage specification to support downloading of storage objects on high-latency, slow-link networks such as the Internet.
+ms.assetid: 891152c3-5abd-45e4-a7bb-0aac23262b03
+keywords:</p>
+<ul>
+<li>How Asynchronous Binding and Storage Work
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>How Asynchronous Binding and Storage Work</h1>
+<p>Asynchronous storage enhances the COM structured storage specification to support downloading of storage objects on high-latency, slow-link networks such as the Internet. Asynchronous storage works together with asynchronous monikers to provide complete asynchronous binding behavior.</p>
+<h2>Document object embedded in a Web page</h2>
+<p>When a user clicks a link representing a document embedded in a Web page, the following events occur:</p>
+<ol>
+<li>
+<p>The browser calls the <a href="/windows/win32/api/objbase/nf-objbase-mkparsedisplayname"><strong>MkParseDisplayName</strong></a> function, passing the link URL.</p>
+</li>
+<li>
+<p><a href="/windows/win32/api/objbase/nf-objbase-mkparsedisplayname"><strong>MkParseDisplayName</strong></a> parses the URL, creates a corresponding asynchronous moniker, and returns a pointer to the moniker's <a href="/windows/win32/api/objidl/nn-objidl-imoniker"><strong>IMoniker</strong></a> interface.</p>
+</li>
+<li>
+<p>The browser calls <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/ms775110(v=vs.85)"><strong>IsAsyncMoniker</strong></a> to determine if the moniker is asynchronous, creates a bind context, registers the <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/ms775060(v=vs.85)"><strong>IBindStatusCallback</strong></a> interface with the bind context, only if the moniker is asynchronous, and calls <a href="/windows/win32/api/objidl/nf-objidl-imoniker-bindtoobject"><strong>IMoniker::BindToObject</strong></a>, passing the bind context.</p>
+</li>
+<li>
+<p>The moniker binds to the object and queries it for the <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/ms775042(v=vs.85)"><strong>IPersistMoniker</strong></a> interface, which indicates whether the object supports asynchronous binding and storage. If the object returns a pointer to <strong>IPersistMoniker</strong>:</p>
+<ol>
+<li>The URL moniker calls <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/ms775044(v=vs.85)"><strong>IPersistMoniker::Load</strong></a>, passing its own <a href="/windows/win32/api/objidl/nn-objidl-imoniker"><strong>IMoniker</strong></a> pointer to the object.</li>
+<li>The object modifies the bind context, chooses whether it wants a blocking or nonblocking storage, registers its own <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/ms775060(v=vs.85)"><strong>IBindStatusCallback</strong></a> and calls <a href="/windows/win32/api/objidl/nf-objidl-imoniker-bindtostorage"><strong>IMoniker::BindToStorage</strong></a> on the pointer it received through <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/ms775044(v=vs.85)"><strong>IPersistMoniker::Load</strong></a>.</li>
+<li>The moniker creates an asynchronous storage, keeps a reference to the wrapper object's <a href="/windows/desktop/api/Objidl/nn-objidl-ifilllockbytes"><strong>IFillLockBytes</strong></a> interface, registers the <a href="/windows/win32/api/objidl/nn-objidl-iprogressnotify"><strong>IProgressNotify</strong></a> interface on the root storage, and calls <a href="/windows/win32/api/objidl/nf-objidl-ipersiststorage-load"><strong>IPersistStorage::Load</strong></a>, passing the asynchronous storage's <a href="/windows/desktop/api/Objidl/nn-objidl-istorage"><strong>IStorage</strong></a> pointer. As data arrives (on a background thread) the moniker calls <strong>IFillLockBytes</strong> to fill the <a href="/windows/desktop/api/Objidl/nn-objidl-ilockbytes"><strong>ILockBytes</strong></a> on the temp file.</li>
+<li>The object reads data from the storage and returns from <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/ms775044(v=vs.85)"><strong>IPersistMoniker::Load</strong></a> when it has received sufficient data to consider itself initialized. If the object attempts to read data that has not yet been downloaded, the downloader receives a notification on <a href="/windows/win32/api/objidl/nn-objidl-iprogressnotify"><strong>IProgressNotify</strong></a>. Inside the <a href="/windows/win32/api/objidl/nf-objidl-iprogressnotify-onprogress"><strong>IProgressNotify::OnProgress</strong></a> method, the downloading thread either blocks in a modal message loop, or causes the asynchronous storage to return E_PENDING, depending on whether the object has requested a blocking or nonblocking storage.</li>
+</ol>
+</li>
+<li>
+<p>If the object does not implement <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/ms775042(v=vs.85)"><strong>IPersistMoniker</strong></a>, the moniker queries for <a href="/windows/win32/api/objidl/nn-objidl-ipersiststorage"><strong>IPersistStorage</strong></a>, which indicates that the object's persistent state is stored in a storage object. If the object returns a pointer to <strong>IPersistStorage</strong>:</p>
+<ol>
+<li>The Moniker calls <a href="/windows/win32/api/objidl/nf-objidl-imoniker-bindtostorage"><strong>IMoniker::BindToStorage</strong></a> on itself, requesting a blocking <a href="/windows/desktop/api/Objidl/nn-objidl-istorage"><strong>IStorage</strong></a> (because the object is not asynchronous-aware), creates an asynchronous storage, keeps a reference to the wrapper object's <a href="/windows/desktop/api/Objidl/nn-objidl-ifilllockbytes"><strong>IFillLockBytes</strong></a> interface, registers the <a href="/windows/win32/api/objidl/nn-objidl-iprogressnotify"><strong>IProgressNotify</strong></a> interface on the root storage, and calls <a href="/windows/win32/api/objidl/nf-objidl-ipersiststorage-load"><strong>IPersistStorage::Load</strong></a>, passing the asynchronous storage's <strong>IStorage</strong> pointer. As data arrives (on a background thread) the moniker calls <a href="/windows/desktop/api/Objidl/nn-objidl-ifilllockbytes"><strong>IFillLockBytes</strong></a> to fill the <a href="/windows/desktop/api/Objidl/nn-objidl-ilockbytes"><strong>ILockBytes</strong></a> on the temporary file.</li>
+<li>The object reads data from storage and returns from <a href="/windows/win32/api/objidl/nf-objidl-ipersiststorage-load"><strong>IPersistStorage::Load</strong></a> when it has received sufficient data to consider itself initialized. If the object attempts to read data that has not yet been downloaded, it receives a notification on <a href="/windows/win32/api/objidl/nn-objidl-iprogressnotify"><strong>IProgressNotify</strong></a>. Inside the <a href="/windows/win32/api/objidl/nf-objidl-iprogressnotify-onprogress"><strong>IProgressNotify::OnProgress</strong></a> method, the downloading thread always blocks in a modal message loop.</li>
+</ol>
+</li>
+<li>
+<p>Regardless of whether the download is synchronous or asynchronous, the moniker returns from <a href="/windows/win32/api/objidl/nf-objidl-imoniker-bindtoobject"><strong>IMoniker::BindToObject</strong></a>, and the browser receives the initialized object it requested.</p>
+</li>
+<li>
+<p>The browser queries for <a href="/windows/win32/api/oleidl/nn-oleidl-ioleobject"><strong>IOleObject</strong></a> and hosts the object as a Document Object. (At this point the object may not be initialized completely, but enough to display something useful, in which case downloading continues in the background.)</p>
+</li>
+</ol>
+<p>Â </p>
+<p>Â </p>
+</body>

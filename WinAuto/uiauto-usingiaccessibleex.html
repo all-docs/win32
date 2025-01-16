@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adding UI Automation Functionality to Active Accessibility Servers</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Adding UI Automation Functionality to Active Accessibility Servers
+description: Controls that do not have a Microsoft UI Automation provider but that implement IAccessible can easily be upgraded to provide some UI Automation functionality, by implementing the IAccessibleEx interface.
+ms.assetid: 7ceab704-3e02-4550-b236-748e4f0a092a
+keywords:</p>
+<ul>
+<li>UI Automation,Active Accessibility servers</li>
+<li>UI Automation,Microsoft Active Accessibility servers</li>
+<li>UI Automation,IAccessible</li>
+<li>UI Automation,IAccessibleEx</li>
+<li>UI Automation,exposing IAccessibleEx</li>
+<li>UI Automation,implementing IAccessibleEx</li>
+<li>IAccessible</li>
+<li>IAccessibleEx</li>
+<li>Microsoft Active Accessibility</li>
+<li>Active Accessibility</li>
+<li>exposing IAccessibleEx</li>
+<li>implementing IAccessibleEx
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Adding UI Automation Functionality to Active Accessibility Servers</h1>
+<p>Controls that do not have a Microsoft UI Automation provider but that implement <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> can easily be upgraded to provide some UI Automation functionality, by implementing the <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> interface. This interface enables the control to expose UI Automation properties and control patterns, without the need for a full implementation of UI Automation provider interfaces such as <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-irawelementproviderfragment"><strong>IRawElementProviderFragment</strong></a>. To implement <strong>IAccessibleEx</strong>, the baseline Microsoft Active Accessibility object hierarchy must contain no errors or inconsistencies (such as a child object whose parent object does not list it as a child), and must not conflict with UI Automation specifications. If the Microsoft Active Accessibility object hierarchy meets these requirements, it is a good candidate for adding functionality by using <strong>IAccessibleEx</strong>; otherwise, you must implement UI Automation alone or alongside the Microsoft Active Accessibility implementation.</p>
+<p>Take the case of a custom control that has a range value. The Microsoft Active Accessibility server for the control defines its role, and is able to return its current value, but lacks the means to return the minimum and maximum values of the control, because these properties are not defined in Microsoft Active Accessibility. A UI Automation client is able to retrieve the control's role, current value, and other Microsoft Active Accessibility properties, because the UI Automation core can obtain these through <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a>. However, without access to an <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-irangevalueprovider"><strong>IRangeValueProvider</strong></a> interface on the object, UI Automation is also unable to retrieve the maximum and minimum values.</p>
+<p>The control developer could supply a complete UI Automation provider for the control, but this would mean duplicating much of the existing functionality of the <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> implementation: for example, navigation and common properties. Instead, the developer can continue to rely on <strong>IAccessible</strong> to supply this functionality, while adding support for control-specific properties through <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-irangevalueprovider"><strong>IRangeValueProvider</strong></a>.</p>
+<p>Updating the custom control requires these main steps:</p>
+<ul>
+<li>Implement <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/cc678965(v=vs.85)">IServiceProvider</a> on the accessible object so that the <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> interface can be found on this or a separate object.</li>
+<li>Implement <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> on the accessible object.</li>
+<li>Create distinct accessible objects for any Microsoft Active Accessibility child items, which in Microsoft Active Accessibility might have been represented by the <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface on the parent object (for example, list items). Implement <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> on these objects.</li>
+<li>Implement <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-irawelementprovidersimple"><strong>IRawElementProviderSimple</strong></a> on all the accessible objects.</li>
+<li>Implement the appropriate control pattern interfaces on the accessible objects.</li>
+</ul>
+<p>This topic contains the following sections.</p>
+<ul>
+<li><a href="#exposing-iaccessibleex">Exposing IAccessibleEx</a></li>
+<li><a href="#implementing-iaccessibleex">Implementing IAccessibleEx</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Exposing IAccessibleEx</h2>
+<p>Because the implementation of <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> for a control may reside in a separate object, client applications cannot rely on <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> to obtain this interface. Instead, clients are expected to call <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/cc678966(v=vs.85)"><strong>IServiceProvider::QueryService</strong></a>. In the following example implementation of this method, it is assumed that <strong>IAccessibleEx</strong> is not implemented on a separate object; therefore the method simply calls through to <strong>QueryInterface</strong>.</p>
+<pre lang="C++"><code>HRESULT CListboxAccessibleObject::QueryService(REFGUID guidService, REFIID riid, LPVOID *ppvObject)
+{
+    if (!ppvObject)
+    {
+        return E_INVALIDARG;
+    }
+    *ppvObject = NULL;
+    if (guidService == __uuidof(IAccessibleEx))
+    {
+        return QueryInterface(riid, ppvObject);
+    }
+    else 
+    {
+        return E_INVALIDARG;
+    }
+};
+</code></pre>
+<h2>Implementing IAccessibleEx</h2>
+<p>The method of <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> that is of most interest is <a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-iaccessibleex-getobjectforchild"><strong>GetObjectForChild</strong></a>. This method gives the Microsoft Active Accessibility server an opportunity to create an accessible object (one that exposes, at a minimum, <strong>IAccessibleEx</strong>) for a child item. In Microsoft Active Accessibility, child items typically are not represented as accessible objects but as children of an accessible object. However, because UI Automation requires that each element be represented by a separate accessible object, <strong>GetObjectForChild</strong> must create a separate object for each child on demand.</p>
+<p>The following example implementation returns an accessible object for an item in a custom list view.</p>
+<pre lang="C++"><code>HRESULT CListboxAccessibleObject::GetObjectForChild(long idChild, IAccessibleEx **pRetVal)
+{ 
+    *pRetVal = NULL;
+    VARIANT vChild;
+    vChild.vt = VT_I4;
+    vChild.lVal = idChild;
+
+    // ValidateChildId is an application-defined function that checks whether
+    // the child ID is valid. This is similar to code that validates the varChild
+    // parameter in IAccessible methods.
+    //
+    // Additionally, if this idChild corresponds to a child that has its own
+    // IAccessible, we should also return E_INVALIDARG here. (The caller
+    // should instead be using the IAccessibleEx from that child's own
+    // IAccessible in that case.)
+    if (idChild == CHILDID_SELF || FAILED(ValidateChildId(vChild)))
+    {
+        return E_INVALIDARG;
+    }
+
+    // Return a suitable provider for this specific child.
+    // This implementation returns a new instance each time; an implementation
+    // can cache these if desired.
+
+    // _pListboxControl is a member variable pointer to the owning control.
+    IAccessibleEx* pAccEx  = new CListItemAccessibleObject(idChild, _pListboxControl);
+    if (pAccEx == NULL)
+    {
+        return E_OUTOFMEMORY;
+    }
+    *pRetVal = pAccEx;
+    return S_OK; 
+}
+</code></pre>
+<p>For a complete sample implementation, see <a href="/previous-versions/msdn10/cc307850(v=msdn.10)">Making Custom Controls Accessible, Part 5: Using IAccessibleEx to Add UI Automation Support to a Custom Control</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="uiauto-providerportal.html">UI Automation Provider Programmer's Guide</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>One-Time Initialization</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Components are often designed to perform initialization tasks when they are first called, rather than when they are loaded.
+ms.assetid: 404c083c-7bee-44c2-b8e7-da1901b6ab2f
+title: One-Time Initialization
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>One-Time Initialization</h1>
+<p>Components are often designed to perform initialization tasks when they are first called, rather than when they are loaded. The one-time initialization functions ensure that this initialization occurs only once, even when multiple threads may attempt the initialization.</p>
+<p><strong>Windows ServerÂ 2003 and WindowsÂ XP:</strong> Applications must provide their own synchronization for one-time initialization by using the <a href="interlocked-variable-access.html">interlocked functions</a> or other synchronization mechanism. The one-time initialization functions are available starting with WindowsÂ Vista and Windows ServerÂ 2008.</p>
+<p>The one-time initialization functions provide significant advantages to ensure that only one thread performs the initialization:</p>
+<ul>
+<li>They are optimized for speed.</li>
+<li>They create the appropriate barriers on processor architectures that require them.</li>
+<li>They support both locked and parallel initialization.</li>
+<li>They avoid internal locking so the code can operate asynchronously or synchronously.</li>
+</ul>
+<p>The system manages the initialization process through an opaque <strong>INIT_ONCE</strong> structure that contains data and state information. The caller allocates this structure and initializes it by either calling <a href="/windows/win32/api/synchapi/nf-synchapi-initonceinitialize"><strong>InitOnceInitialize</strong></a> (to initialize the structure dynamically) or assigning the constant <strong>INIT_ONCE_STATIC_INIT</strong> to the structure variable (to initialize the structure statically). Initially, the data stored in the one-time initialization structure is NULL and its state is uninitialized.</p>
+<p>One-time initialization structures cannot be shared across processes.</p>
+<p>The thread that performs the initialization can optionally set a context that is available to the caller after initialization is complete. The context can be a synchronization object or it can be a value or data structure. If the context is a value, its low-order <strong>INIT_ONCE_CTX_RESERVED_BITS</strong> must be zero. If the context is a data structure, the data structure must be <strong>DWORD</strong>-aligned. The context is returned to the caller in the <em>lpContext</em> output parameter of the <a href="/windows/win32/api/synchapi/nf-synchapi-initoncebegininitialize"><strong>InitOnceBeginInitialize</strong></a> or <a href="/windows/win32/api/synchapi/nf-synchapi-initonceexecuteonce"><strong>InitOnceExecuteOnce</strong></a> function.</p>
+<p>One-time initialization can be performed synchronously or asynchronously. An optional callback function can be used for synchronous one-time initialization.</p>
+<h2>Synchronous One-time Initialization</h2>
+<p>The following steps describe synchronous one-time initialization that does not use a callback function.</p>
+<ol>
+<li>The first thread to call the <a href="/windows/win32/api/synchapi/nf-synchapi-initoncebegininitialize"><strong>InitOnceBeginInitialize</strong></a> function successfully causes one-time initialization to begin. For synchronous one-time initialization, <strong>InitOnceBeginInitialize</strong> must be called without the <strong>INIT_ONCE_ASYNC</strong> flag.</li>
+<li>Subsequent threads that attempt initialization are blocked until the first thread either completes initialization or fails. If the first thread fails, the next thread is allowed to attempt the initialization, and so on.</li>
+<li>When initialization is finished, the thread calls the <a href="/windows/win32/api/synchapi/nf-synchapi-initoncecomplete"><strong>InitOnceComplete</strong></a> function. The thread can optionally create a synchronization object (or other context data) and specify it in the <em>lpContext</em> parameter of the <strong>InitOnceComplete</strong> function.</li>
+<li>If the initialization succeeds, the state of the one-time initialization structure is changed to initialized and the <em>lpContext</em> handle (if any) is stored in the initialization structure. Subsequent initialization attempts return this context data. If the initialization fails, the data is <strong>NULL</strong>.</li>
+</ol>
+<p>The following steps describe synchronous one-time initialization that uses a callback function.</p>
+<ol>
+<li>The first thread to successfully call the <a href="/windows/win32/api/synchapi/nf-synchapi-initonceexecuteonce"><strong>InitOnceExecuteOnce</strong></a> function passes a pointer to an application-defined <a href="/windows/win32/api/synchapi/nc-synchapi-pinit_once_fn"><em>InitOnceCallback</em></a> callback function and any data required by the callback function. If the call succeeds, the <em>InitOnceCallback</em> callback function executes.</li>
+<li>Subsequent threads that attempt initialization are blocked until the first thread either completes initialization or fails. If the first thread fails, the next thread is allowed to attempt the initialization, and so on.</li>
+<li>When initialization is finished, the callback function returns. The callback function can optionally create a synchronization object (or other context data) and specify it in its <em>Context</em> output parameter.</li>
+<li>If the initialization succeeds, the state of the one-time initialization structure is changed to initialized and the <em>Context</em> handle (if any) is stored in the initialization structure. Subsequent initialization attempts return this context data. If the initialization fails, the data is <strong>NULL</strong>.</li>
+</ol>
+<h2>Asynchronous One-time Initialization</h2>
+<p>The following steps describe asynchronous one-time initialization.</p>
+<ol>
+<li>If multiple threads simultaneously attempt to begin initialization by calling <a href="/windows/win32/api/synchapi/nf-synchapi-initoncebegininitialize"><strong>InitOnceBeginInitialize</strong></a> with <strong>INIT_ONCE_ASYNC</strong>, the function succeeds for all of the threads with the <em>fPending</em> parameter set to <strong>TRUE</strong>. Only one thread will actually succeed at initialization; other concurrent attempts do not change the initialization state.</li>
+<li>When <a href="/windows/win32/api/synchapi/nf-synchapi-initoncebegininitialize"><strong>InitOnceBeginInitialize</strong></a> returns, the <em>fPending</em> parameter indicates the initialization status:
+<ul>
+<li>If <em>fPending</em> is <strong>FALSE</strong>, one thread has succeeded at initialization. Other threads should clean up any context data they have created and use the context data in the <em>lpContext</em> output parameter of <a href="/windows/win32/api/synchapi/nf-synchapi-initoncebegininitialize"><strong>InitOnceBeginInitialize</strong></a>.</li>
+<li>If <em>fPending</em> is <strong>TRUE</strong>, initialization has not yet completed and other threads should continue.</li>
+</ul>
+</li>
+<li>Each thread calls the <a href="/windows/win32/api/synchapi/nf-synchapi-initoncecomplete"><strong>InitOnceComplete</strong></a> function. The thread can optionally create a synchronization object (or other context data) and specify it in the <em>lpContext</em> parameter of <strong>InitOnceComplete</strong>.</li>
+<li>When <a href="/windows/win32/api/synchapi/nf-synchapi-initoncecomplete"><strong>InitOnceComplete</strong></a> returns, its return value indicates whether the calling thread succeeded at initialization.
+<ul>
+<li>If <a href="/windows/win32/api/synchapi/nf-synchapi-initoncecomplete"><strong>InitOnceComplete</strong></a> succeeds, the calling thread has succeeded at initialization. The state of the one-time initialization structure is changed to initialized and the <em>lpContext</em> handle (if any) is stored in the initialization structure.</li>
+<li>If <a href="/windows/win32/api/synchapi/nf-synchapi-initoncecomplete"><strong>InitOnceComplete</strong></a> fails, another thread has succeeded at initialization. The calling thread should clean up any context data it has created and call <a href="/windows/win32/api/synchapi/nf-synchapi-initoncebegininitialize"><strong>InitOnceBeginInitialize</strong></a> with <strong>INIT_ONCE_CHECK_ONLY</strong> to retrieve any context data stored in the one-time initialization structure.</li>
+</ul>
+</li>
+</ol>
+<h2>Calling One-Time Initialization from multiple sites</h2>
+<p>One-time initialization guarded by a single <strong>INIT_ONCE</strong> structure may be performed from multiple sites; different callback may be passed from each site, and synchronization with and without callback may be mixed. Initialization is still guaranteed to perform successfully just once.</p>
+<p>However, asynchronous and synchronous initialization cannot be mixed: once asynchronous initialization is attempted, attempts to start synchronous initialization would fail.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-one-time-initialization.html">Using One-Time Initialization</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direct3D 12 render passes</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Direct3D 12 render passes
+description: The render passes feature helps your renderer improve GPU efficiency by reducing memory traffic to/from off-chip memory; it does this by enabling your application to better identify resource rendering ordering requirements and data dependencies.
+ms.topic: article
+ms.date: 11/15/2018</h2>
+<h1>Direct3D 12 render passes</h1>
+<p>The render passes feature is new for Windows 10, version 1809 (10.0; Build 17763), and it introduces the concept of a Direct3D 12 render pass. A render pass consists of a subset of the commands that you record into a command list.</p>
+<p>To declare where each render pass begins and ends, you nest the commands belonging to that pass inside calls to <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist4-beginrenderpass"><strong>ID3D12GraphicsCommandList4::BeginRenderPass</strong></a> and <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist4-endrenderpass"><strong>EndRenderPass</strong></a>. Consequently, any command list contains zero, one, or more render passes.</p>
+<h2>Scenarios</h2>
+<p>Render passes can improve the performance of your renderer if it's based on Tile-Based Deferred Rendering (TBDR), among other techniques. More specifically, the technique helps your renderer to improve GPU efficiency by reducing memory traffic to/from off-chip memory by enabling your application to better identify resource rendering ordering requirements and data dependencies.</p>
+<p>A display driver written expressly to leverage the render passes feature gives the best results. But render passes APIs can run even on pre-existing drivers (although, not necessarily with performance improvements).</p>
+<p>These are the scenarios in which render passes is designed to provide value.</p>
+<h3>Allow your application to avoid unnecessary loads/stores of resources from/to main memory on a Tile-Based Deferred Rendering (TBDR) architecture</h3>
+<p>One of the value propositions of render passes is that it provides you with a central location to indicate your application's data dependencies for a set of rendering operations. These data dependencies allow the display driver to inspect this data at bind/barrier time, and to issue instructions that minimize resource loads/stores from/to main memory.</p>
+<h3>Allow your TBDR architecture to opportunistically persistent resources in on-chip cache across render passes (even in separate Command Lists)</h3>
+<blockquote>
+<p>[!NOTE]
+Specifically, this scenario is limited to the cases where you're writing to the same render target(s) across multiple command lists.</p>
+</blockquote>
+<p>A common rendering pattern is for your application to render to the same render target(s) across multiple command lists serially, even though the rendering commands are generated in parallel. Your use of render passes in this scenario allows these passes to be combined in such a way (since the application knows that it will resume rendering on the immediate succeeding command list) that the display driver can avoid a flush to main memory on command list boundaries.</p>
+<h2>Your application's responsibilities</h2>
+<p>Even with the render passes feature, neither the Direct3D 12 runtime nor the display driver take on the responsibility of deducing opportunities to re-order/avoid loads and stores. To correctly leverage the render passes feature, your application has these responsibilities.</p>
+<ul>
+<li>Properly identify data/ordering dependencies for its operations.</li>
+<li>Order its submissions in a way that minimizes flushes (so, minimize your use of <strong>_PRESERVE</strong> flags).</li>
+<li>Correctly make use of resource barriers, and track resource state.</li>
+<li>Avoid unneeded copies/clears. To help identify these, you can make use of the automated performance warnings from the <a href="https://devblogs.microsoft.com/pix/">PIX on Windows tool</a>.</li>
+</ul>
+<h2>Using the render pass feature</h2>
+<h3>What is a <em>render pass</em>?</h3>
+<p>A render pass is defined by these elements.</p>
+<ul>
+<li>A set of output bindings that are fixed for the duration of the render pass. These bindings are to one or more render target views (RTVs), and/or to a depth stencil view (DSV).</li>
+<li>A list of GPU operations that target that set of output bindings.</li>
+<li>Metadata that describes the load/store dependencies for all output bindings targeted by the render pass.</li>
+</ul>
+<h3>Declare your output bindings</h3>
+<p>At the start of a render pass, you declare bindings to your render target(s) and/or to your depth/stencil buffer. It's optional to bind to render target(s), and it's optional to bind to a depth/stencil buffer. But you must bind to at least one of the two, and in the code example below we bind to both.</p>
+<p>You declare these bindings in a call to <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist4-beginrenderpass"><strong>ID3D12GraphicsCommandList4::BeginRenderPass</strong></a>.</p>
+<pre lang="cppwinrt"><code>void render_passes(::ID3D12GraphicsCommandList4 * pIGCL4,
+    D3D12_CPU_DESCRIPTOR_HANDLE const&amp; rtvCPUDescriptorHandle,
+    D3D12_CPU_DESCRIPTOR_HANDLE const&amp; dsvCPUDescriptorHandle)
+{
+    const float clearColor4[]{ 0.f, 0.f, 0.f, 0.f };
+    CD3DX12_CLEAR_VALUE clearValue{ DXGI_FORMAT_R32G32B32_FLOAT, clearColor4 };
+
+    D3D12_RENDER_PASS_BEGINNING_ACCESS renderPassBeginningAccessClear{ D3D12_RENDER_PASS_BEGINNING_ACCESS_TYPE_CLEAR, { clearValue } };
+    D3D12_RENDER_PASS_ENDING_ACCESS renderPassEndingAccessPreserve{ D3D12_RENDER_PASS_ENDING_ACCESS_TYPE_PRESERVE, {} };
+    D3D12_RENDER_PASS_RENDER_TARGET_DESC renderPassRenderTargetDesc{ rtvCPUDescriptorHandle, renderPassBeginningAccessClear, renderPassEndingAccessPreserve };
+
+    D3D12_RENDER_PASS_BEGINNING_ACCESS renderPassBeginningAccessNoAccess{ D3D12_RENDER_PASS_BEGINNING_ACCESS_TYPE_NO_ACCESS, {} };
+    D3D12_RENDER_PASS_ENDING_ACCESS renderPassEndingAccessNoAccess{ D3D12_RENDER_PASS_ENDING_ACCESS_TYPE_NO_ACCESS, {} };
+    D3D12_RENDER_PASS_DEPTH_STENCIL_DESC renderPassDepthStencilDesc{ dsvCPUDescriptorHandle, renderPassBeginningAccessNoAccess, renderPassBeginningAccessNoAccess, renderPassEndingAccessNoAccess, renderPassEndingAccessNoAccess };
+
+    pIGCL4-&gt;BeginRenderPass(1, &amp;renderPassRenderTargetDesc, &amp;renderPassDepthStencilDesc, D3D12_RENDER_PASS_FLAG_NONE);
+    // Record command list.
+    pIGCL4-&gt;EndRenderPass();
+    // Begin/End further render passes and then execute the command list(s).
+}
+</code></pre>
+<p>You set the first field of the <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_render_pass_render_target_desc"><strong>D3D12_RENDER_PASS_RENDER_TARGET_DESC</strong></a> structure to the CPU descriptor handle corresponding to one or more render target views (RTVs). Similarly, <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_render_pass_depth_stencil_desc"><strong>D3D12_RENDER_PASS_DEPTH_STENCIL_DESC</strong></a> contains the CPU descriptor handle corresponding to a depth stencil view (DSV). Those CPU descriptor handles are the same ones that you would otherwise pass to <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-omsetrendertargets"><strong>ID3D12GraphicsCommandList::OMSetRenderTargets</strong></a>. And, just as with <strong>OMSetRenderTargets</strong>, the CPU descriptors are <em>snapped</em> from their respective (CPU descriptor) heaps at the time of the call to <strong>BeginRenderPass</strong>.</p>
+<p>The RTVs and DSV are not inherited in to the render pass. Rather, they must be set. Nor are the RTVs and DSV declared in <strong>BeginRenderPass</strong> propagated out to the command list. Rather, they are in an undefined state following the render pass.</p>
+<h3>Render passes and workloads</h3>
+<p>You can't nest render passes, and you can't have a render pass straddle more than one command list (they must begin and end while recording into a single command list). Optimizations designed to enable efficient multi-threaded generation of render passes are discussed in the section <a href="#render-pass-flags"> render pass Flags</a>, below.</p>
+<p>A write that you do from within a render pass isn't <em>valid</em> for you to read from until a subsequent render pass. That precludes some types of barriers from within the render pass—for example, barriering from <strong>RENDER_TARGET</strong> to <strong>SHADER_RESOURCE</strong> on the currently-bound render target. For more info, see the section <a href="#render-passes-and-resource-barriers">Render passes and resource barriers</a>, below.</p>
+<p>The one exception to the write-read constraint just mentioned involves the implicit reads that occur as part of depth-testing and render target blending.
+So, these APIs are disallowed within a render pass (the core runtime removes the command list if any of them are called during recording).</p>
+<ul>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist1-atomiccopybufferuint"><strong>ID3D12GraphicsCommandList1::AtomicCopyBufferUINT</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist1-atomiccopybufferuint64"><strong>ID3D12GraphicsCommandList1::AtomicCopyBufferUINT64</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist4-beginrenderpass"><strong>ID3D12GraphicsCommandList4::BeginRenderPass</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-cleardepthstencilview"><strong>ID3D12GraphicsCommandList::ClearDepthStencilView</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-clearrendertargetview"><strong>ID3D12GraphicsCommandList::ClearRenderTargetView</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-clearstate"><strong>ID3D12GraphicsCommandList::ClearState</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-clearunorderedaccessviewfloat"><strong>ID3D12GraphicsCommandList::ClearUnorderedAccessViewFloat</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-clearunorderedaccessviewuint"><strong>ID3D12GraphicsCommandList::ClearUnorderedAccessViewUint</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copybufferregion"><strong>ID3D12GraphicsCommandList::CopyBufferRegion</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copyresource"><strong>ID3D12GraphicsCommandList::CopyResource</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copytextureregion"><strong>ID3D12GraphicsCommandList::CopyTextureRegion</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copytiles"><strong>ID3D12GraphicsCommandList::CopyTiles</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-discardresource"><strong>ID3D12GraphicsCommandList::DiscardResource</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-dispatch"><strong>ID3D12GraphicsCommandList::Dispatch</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-omsetrendertargets"><strong>ID3D12GraphicsCommandList::OMSetRenderTargets</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resolvequerydata"><strong>ID3D12GraphicsCommandList::ResolveQueryData</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resolvesubresource"><strong>ID3D12GraphicsCommandList::ResolveSubresource</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist1-resolvesubresourceregion"><strong>ID3D12GraphicsCommandList1::ResolveSubresourceRegion</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist3-setprotectedresourcesession"><strong>ID3D12GraphicsCommandList3::SetProtectedResourceSession</strong></a></li>
+</ul>
+<h3>Render passes and resource barriers</h3>
+<p>You may not read from, or consume, a write that occurred within the same render pass. Certain barriers don't conform to this constraint, for example from <strong>D3D12_RESOURCE_STATE_RENDER_TARGET</strong> to <strong>*_SHADER_RESOURCE</strong> on the currently-bound render target (and the debug layer will error to that effect). But, that same barrier on a render target that was written <em>outside</em> the current render pass is conformant, because the writes will complete ahead of the current render pass starting.
+You might benefit from knowing about certain optimizations that a display driver can make in this regard. Given a conformant workload, a display driver might move any barriers encountered in your render pass to the beginning of the render pass. There, they can be coalesced (and not interfere with any tiling/binning operations). This is a valid optimization provided that all of your writes have finished before the current render pass starts.</p>
+<p>Here's a more complete driver-optimization example, which assumes that you have a rendering engine that has a pre-Direct3D 12-style resource-binding design—doing barriers <em>on demand</em> based on how resources are bound. When writing into an unordered access view (UAV) toward the end of a frame (to be consumed in the following frame), the engine might happen to leave the resource in the <strong>D3D12_RESOURCE_STATE_UNORDERED_ACCESS</strong> state at the conclusion of the frame. In the frame that follows, when the engine goes to bind the resource as a shader resource view (SRV), it will find that the resource is not in the correct state, and it will issue a barrier from <strong>D3D12_RESOURCE_STATE_UNORDERED_ACCESS</strong> to <strong>D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE</strong>. If that barrier occurs within the render pass, then the display driver is justified in assuming that all writes have already occurred <em>outside</em> of this current render pass, and consequently (and here's where the optimization comes in) the display driver might <em>move</em> the barrier up to the start of the render pass. Again, this is valid, as long as your code is conforming to the write-read constraint described in this section and the last.</p>
+<p>These are examples of conformant barriers.</p>
+<ul>
+<li><strong>D3D12_RESOURCE_STATE_UNORDERED_ACCESS</strong> to <strong>D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT</strong>.</li>
+<li><strong>D3D12_RESOURCE_STATE_COPY_DEST</strong> to <strong>*_SHADER_RESOURCE</strong>.</li>
+</ul>
+<p>And these are examples of non-conformant barriers.</p>
+<ul>
+<li><strong>D3D12_RESOURCE_STATE_RENDER_TARGET</strong> to any read state on currently-bound RTVs/DSVs.</li>
+<li><strong>D3D12_RESOURCE_STATE_DEPTH_WRITE</strong> to any read state on currently-bound RTVs/DSVs.</li>
+<li>Any aliasing barrier.</li>
+<li>Unordered access view (UAV) barriers.Â </li>
+</ul>
+<h3>Resource access declaration</h3>
+<p>At <strong>BeginRenderPass</strong> time, as well as declaring all resources that are serving as RTVs and/or DSV within that pass, you must also specify their beginning and ending <em>access</em> characteristics. As you can see in the code example in the <a href="#declare-your-output-bindings">Declare your output bindings</a> section above, you do this with the <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_render_pass_render_target_desc"><strong>D3D12_RENDER_PASS_RENDER_TARGET_DESC</strong></a> and <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_render_pass_depth_stencil_desc"><strong>D3D12_RENDER_PASS_DEPTH_STENCIL_DESC</strong></a> structures.</p>
+<p>For more details, see the <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_render_pass_beginning_access"><strong>D3D12_RENDER_PASS_BEGINNING_ACCESS</strong></a> and <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_render_pass_ending_access"><strong>D3D12_RENDER_PASS_ENDING_ACCESS</strong></a> structures, and the <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_render_pass_beginning_access_type"><strong>D3D12_RENDER_PASS_BEGINNING_ACCESS_TYPE</strong></a> and <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_render_pass_ending_access_type"><strong>D3D12_RENDER_PASS_ENDING_ACCESS_TYPE</strong></a> enumerations.</p>
+<h3>Render pass flags</h3>
+<p>The last parameter passed to <strong>BeginRenderPass</strong> is a render pass flag (a value from the <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_render_pass_flags"><strong>D3D12_RENDER_PASS_FLAGS</strong></a> enumeration).</p>
+<pre lang="cppwinrt"><code>enum D3D12_RENDER_PASS_FLAGS
+{
+    D3D12_RENDER_PASS_FLAG_NONE = 0,
+    D3D12_RENDER_PASS_FLAG_ALLOW_UAV_WRITES = 0x1,
+    D3D12_RENDER_PASS_FLAG_SUSPENDING_PASS = 0x2,
+    D3D12_RENDER_PASS_FLAG_RESUMING_PASS = 0x4
+};
+</code></pre>
+<h4>UAV writes within a render pass</h4>
+<p>Unordered access view (UAV) writes are permitted within a render pass, but you must specifically indicate that you'll be issuing UAV writes within the render pass by specifying <strong>D3D12_RENDER_PASS_FLAG_ALLOW_UAV_WRITES</strong>, so that the display driver can opt out of tiling if necessary.</p>
+<p>UAV accesses must follow the write-read constraint described above (writes in a render pass are not valid to read until a subsequent render pass). UAV barriers are not permitted within a render pass.</p>
+<p>UAV bindings (via root tables or root descriptors) are inherited into render passes, and are propagated out of render passes.</p>
+<h4>Suspending-passes, and resuming-passes</h4>
+<p>You can indicate an entire render pass as being a suspending-pass and/or a resuming-pass. A suspending-followed-by-a-resuming pair must have identical views/access flags between the passes, and may not have any intervening GPU operations (for example, draws, dispatches, discards, clears, copies, update-tile-mappings, write-buffer-immediates, queries, query resolves) between the suspending render pass and the resuming render pass.</p>
+<p>The intended use case is multi-threaded rendering, where say four command lists (each with their own render passes) can target the same render targets. When render passes are suspended/resumed across command lists, the command lists must be executed in the same call to <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-executecommandlists"><strong>ID3D12CommandQueue::ExecuteCommandLists</strong></a>.</p>
+<p>A render pass can be both resuming and suspending. In the multi-threaded example just given, command lists 2 and 3 would be resuming from 1 and 2, respectively. And at the same time 2 and 3 would be suspending to 3 and 4, respectively.</p>
+<h2>Query for render passes feature support</h2>
+<p>You can call <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-checkfeaturesupport"><strong>ID3D12Device::CheckFeatureSupport</strong></a> to query the extent to which a device driver and/or the hardware efficiently supports render passes.</p>
+<pre lang="cppwinrt"><code>D3D12_RENDER_PASS_TIER get_render_passes_tier(::ID3D12Device * pIDevice)
+{
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 featureSupport{};
+    winrt::check_hresult(
+        pIDevice-&gt;CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &amp;featureSupport, sizeof(featureSupport))
+    );
+    return featureSupport.RenderPassesTier;
+}
+...
+    D3D12_RENDER_PASS_TIER renderPassesTier{ get_render_passes_tier(pIDevice) };
+</code></pre>
+<p>Because of the runtime's mapping logic, render passes always function. But, depending on feature support, they won't always provide a benefit. You can use code similar to the code example above to determine whether/when it is worth your while to issue commands as render passes, and when it is definitely not a benefit (that is, when the runtime is just mapping to the existing API surface). Performing this check is particularly important if you're using <a href="/windows/desktop/direct3d12/direct3d-11-on-12">D3D11On12</a>).</p>
+<p>For a description of the three tiers of support, see the <a href="/windows/win32/api/d3d12/ne-d3d12-d3d12_render_pass_tier"><strong>D3D12_RENDER_PASS_TIER</strong></a> enumeration.</p>
+</body>

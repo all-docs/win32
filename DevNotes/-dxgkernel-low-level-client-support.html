@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Graphics Low-Level Client Support</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic lists functions that represent kernel-mode entry points, and the user-mode helper routines in Gdi32.dll that wrap these entry points.
+ms.assetid: 96d11d10-dd21-4e2b-a30d-fe29d24eeba6
+title: Graphics Low-Level Client Support
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Graphics Low-Level Client Support</h1>
+<p>[These functions are subject to change with each operating system revision. Instead, use the Microsoft DirectDraw and Microsoft Direct3DAPIs; these APIs insulate applications from such operating system changes, and hide many other difficulties involved in interacting directly with display drivers. For more information, see <a href="/windows-hardware/drivers/display/introduction-to-display--windows-2000-model-">Introduction to Display</a>.]</p>
+<p>DirectDraw and Direct3D use some kernel-mode routines to communicate with the operating system and the display driver.</p>
+<p>The operating system kernel appears to be a DirectDraw/Direct3D display driver from the point of view of user-mode components. Some differences between kernel and display drivers do exist however. The kernel mode components keep a copy of structures representing DirectDraw/Direct3D objects, such as devices and surfaces. The user mode component of DirectDraw/Direct3D request the creation of those structures, which are referred to with handles returned by kernel mode. Consequently, the differences are mostly in the arguments passed to the routines: kernel accepts handles whereas drivers typically accept pointers.</p>
+<ul>
+<li><a href="#evolution-of-kernel-mode-entry-points">Evolution of Kernel Mode Entry Points</a></li>
+<li><a href="#calling-the-kernel">Calling the Kernel</a></li>
+<li><a href="#writing-portable-applications">Writing Portable Applications</a></li>
+<li><a href="#device-creation">Device Creation</a></li>
+<li><a href="#kernel-objects">Kernel Objects</a></li>
+<li><a href="#functions">Functions</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Evolution of Kernel Mode Entry Points</h2>
+<p>DirectDraw makes all of its connections to kernel mode through the Gdi32.dll using several entry points. These entry points typically just marshal parameters. As part of device creation, the Gdi32.dll returns pointers to routines within itself that are then used by DirectDraw and Direct3D 7.0.</p>
+<p>Direct3D 8.<em>x</em> makes a clean break from Gdi32.dll, and calls into the kernel-mode entry points directly.</p>
+<h2>Calling the Kernel</h2>
+<p>These entry points are similar and, in many cases, identical to entry points in the display driver itself, so an understanding of the Driver Development Kit (DDK) materials for DirectDraw and Direct3D is an essential prerequisite to using these functions.</p>
+<p>Calling these functions differs between operating systems. On WindowsÂ 2000, the W2KUMODE.LIB library contains routines that enable the calling thread to make the transition to kernel-mode. These routines do no parameter marshalling, and are the ideal calling mechanism on WindowsÂ 2000. The mechanism that makes the transition to kernel mode relies on the ordering of a table. This ordering will change across operating system revisions. Therefore, it is not advisable to build an application that relies on W2KUMODE.LIB for WindowsÂ 2000 and expect it to run un-modified on WindowsÂ XP. A mechanism for creating operating system portability is described in the following section.</p>
+<p>On WindowsÂ XP, D3D8THK.DLL exports all of the kernel mode functions, but with a slightly decorated name. The following example shows how applications can alias the low-level client functions using the preprocessor. Before doing this, dynamically link to D3D8THK.DLL.</p>
+<pre><code>
+#define NtGdiDdUnlock OsThunkDdUnlock
+#include &quot;ntgdi.h&quot;      // Brings in the definition of &quot;NtGdiDdUnlock&quot;, 
+.                       //   which is now seen as OsThunkDdUnlock.
+.
+.
+OsThunkDdUnlock(hSurface, puUnlockData);
+</code></pre>
+<h2>Writing Portable Applications</h2>
+<p>Several techniques are available to make an application portable across operating systems. The most robust is to install the Microsoft DirectXÂ 8.x redistributable package on WindowsÂ 2000 as part of your own application's install process. This guarantees that D3D8THK.DLL will be available on WindowsÂ 2000 systems and allows a single code-path in the application, because you can use the same technique as described for WindowsÂ XP above.</p>
+<p>Applications can also build their own insulating DLL and implement two versions of that DLL, one for WindowsÂ 2000 using the technique shown above and one for WindowsÂ XP that uses D3D8THK.DLL.</p>
+<h2>Device Creation</h2>
+<p>DirectDraw and Direct3D first must create an instance of the kernel's abstraction of the driver object. In Gdi32.dll and Ddraw.dll, this is achieved by calling <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddcreatedirectdrawobject"><strong>DdCreateDirectDrawObject</strong></a>, <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddquerydirectdrawobject"><strong>DdQueryDirectDrawObject</strong></a> and <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddreenabledirectdrawobject"><strong>DdReenableDirectDrawObject</strong></a>. In Direct3D 8.<em>x</em>, this is achieved by calling <a href="-dxgkernel-ntgdiddcreatedirectdrawobject.html"><strong>NtGdiDdCreateDirectDrawObject</strong></a>, <a href="-dxgkernel-ntgdiddquerydirectdrawobject.html"><strong>NtGdiDdQueryDirectDrawObject</strong></a> and <a href="-dxgkernel-ntgdiddreenabledirectdrawobject.html"><strong>NtGdiDdReenableDirectDrawObject</strong></a>. Note that the GdiEntry* entry points are merely marshallers for the kernel-mode entry points.</p>
+<p>After calling these functions, a handle is returned that represents the kernel object's abstraction of a DirectDraw device. This kernel object represents a driver instance owned by the display driver. This handle can be used in subsequent calls such as <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddcreatesurfaceobject"><strong>DdCreateSurfaceObject</strong></a> (or <a href="-dxgkernel-ntgdiddcreatesurfaceobject.html"><strong>NtGdiDdCreateSurfaceObject</strong></a> in Direct3D 8.<em>x</em>) to build further objects.</p>
+<h2>Kernel Objects</h2>
+<p>A few entry points are used to manage the kernel mode representations of certain objects. <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddcreatesurfaceobject"><strong>DdCreateSurfaceObject</strong></a> (or <a href="-dxgkernel-ntgdiddcreatesurfaceobject.html"><strong>NtGdiDdCreateSurfaceObject</strong></a> in Direct3D 8.<em>x</em>) is a good example. This entry point creates a kernel mode object representing a piece of system memory. The entry point returns a handle, and this handle can be used in subsequent drawing calls. The kernel derives a pointer to its own structure from these handles, and passes that pointer to the display driver, which then carries out the operation.</p>
+<h2>Functions</h2>
+<p>This table lists functions that represent kernel-mode entry points, and the user-mode helper routines in Gdi32.dll that wrap these entry points.</p>
+<table>
+<thead>
+<tr>
+<th>Topic</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddattachsurface"><strong>DdAttachSurface</strong></a></td>
+<td>The <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddattachsurface"><strong>DdAttachSurface</strong></a> function attaches two kernel-mode surface representations. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddcreatedibsection"><strong>DdCreateDIBSection</strong></a></td>
+<td>Creates a <a href="/previous-versions//ms532277(v=vs.85)">DIBSECTION</a> structure that shares its color table with the device. <!-- raw HTML omitted --> GdiEntry9 is #defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddcreatedirectdrawobject"><strong>DdCreateDirectDrawObject</strong></a></td>
+<td>Wrapper for the <a href="-dxgkernel-ntgdiddcreatedirectdrawobject.html"><strong>NtGdiDdCreateDirectDrawObject</strong></a> function and creates a kernel-side representation of the DirectDraw object. A handle to this representation will be stored in <em>pDirectDrawGlobal</em>-&gt;hDD. <!-- raw HTML omitted --> <strong>GdiEntry1</strong> is defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddcreatesurfaceobject"><strong>DdCreateSurfaceObject</strong></a></td>
+<td>Wrapper for the <a href="-dxgkernel-ntgdiddcreatesurfaceobject.html"><strong>NtGdiDdCreateSurfaceObject</strong></a> function and creates a kernel-mode surface object. <!-- raw HTML omitted --> <strong>GdiEntry4</strong> is defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-dddeletedirectdrawobject"><strong>DdDeleteDirectDrawObject</strong></a></td>
+<td>Wrapper for the <a href="-dxgkernel-ntgdidddeletedirectdrawobject.html"><strong>NtGdiDdDeleteDirectDrawObject</strong></a> function and deletes a kernel-mode DirectDraw object that was previously created using <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddcreatedirectdrawobject"><strong>DdCreateDirectDrawObject</strong></a>. <!-- raw HTML omitted --> <strong>GdiEntry3</strong> is defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-dddeletesurfaceobject"><strong>DdDeleteSurfaceObject</strong></a></td>
+<td>Wrapper for the <a href="-dxgkernel-ntgdidddeletesurfaceobject.html"><strong>NtGdiDdDeleteSurfaceObject</strong></a> function and deletes a kernel-mode surface object previously created by <a href="-dxgkernel-ntgdiddcreatesurfaceobject.html"><strong>NtGdiDdCreateSurfaceObject</strong></a>. <!-- raw HTML omitted --> <strong>GdiEntry5</strong> is defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddgetdc"><strong>DdGetDC</strong></a></td>
+<td>Wrapper for the <a href="-dxgkernel-ntgdiddgetdc.html"><strong>NtGdiDdGetDC</strong></a> function and returns a Windows Graphics Device Interface (GDI)Â device context (DC) that represents the DirectDraw surface indicated. <!-- raw HTML omitted --> <strong>GdiEntry7</strong> is defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddgetdxhandle"><strong>DdGetDxHandle</strong></a></td>
+<td>The <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddgetdxhandle"><strong>DdGetDxHandle</strong></a> returns the kernel-mode Microsoft DirectXÂ API handle to use in subsequent calls to the kernel-mode entry points that control the DirectXÂ API mechanism. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddquerydirectdrawobject"><strong>DdQueryDirectDrawObject</strong></a></td>
+<td>Wrapper for the <a href="-dxgkernel-ntgdiddquerydirectdrawobject.html"><strong>NtGdiDdQueryDirectDrawObject</strong></a> function and queries a previously created kernel-mode representation for capabilities. <!-- raw HTML omitted --> <strong>GdiEntry2</strong> is defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/DDrawGDI/nf-ddrawgdi-ddquerydisplaysettingsuniqueness"><strong>DdQueryDisplaySettingsUniqueness</strong></a></td>
+<td>Returns the current value of an integer that is incremented whenever a mode switch occurs, such as when there is a desktop switch, a Fast User Switch, or a full-screen Microsoft MS-DOS box. The application can call this function repeatedly and compare the old and new values of the return value to determine whether display settings have changed. <!-- raw HTML omitted --> <strong>GdiEntry13</strong> is defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddreenabledirectdrawobject"><strong>DdReenableDirectDrawObject</strong></a></td>
+<td>Wrapper for the <a href="-dxgkernel-ntgdiddreenabledirectdrawobject.html"><strong>NtGdiDdReenableDirectDrawObject</strong></a> function. It re-enables a DirectDraw driver instance after a mode switch-style event such as a true mode switch, appearance of a full-screen MS-DOS box, or change of display driver. <!-- raw HTML omitted --> <strong>GdiEntry10</strong> is defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddreleasedc"><strong>DdReleaseDC</strong></a></td>
+<td>Wrapper for the <a href="-dxgkernel-ntgdiddreleasedc.html"><strong>NtGdiDdReleaseDC</strong></a> function and releases a DC previously obtained through <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddgetdc"><strong>DdGetDC</strong></a> or <strong>GdiEntry7</strong>. <!-- raw HTML omitted --> <strong>GdiEntry8</strong> is defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddresetvisrgn"><strong>DdResetVisrgn</strong></a></td>
+<td>Wrapper for the <a href="-dxgkernel-ntgdiddresetvisrgn.html"><strong>NtGdiDdResetVisrgn</strong></a> function and enables timely user-mode information on the clipping region for windows on the desktop. <!-- raw HTML omitted --> <strong>GdiEntry6</strong> is defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddsetgammaramp"><strong>DdSetGammaRamp</strong></a></td>
+<td>The <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddsetgammaramp"><strong>DdSetGammaRamp</strong></a> function sets the gamma ramp for the device. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddswaptexturehandles"><strong>DdSwapTextureHandles</strong></a></td>
+<td>Developed for device driver interfaces (DDIs) prior to Microsoft DirectDrawÂ 7.0 and does nothing on Microsoft WindowsÂ NT systems. All parameters are ignored. <!-- raw HTML omitted --> <strong>GdiEntry16</strong> is defined as an alias for this function. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddunattachsurface"><strong>DdUnattachSurface</strong></a></td>
+<td>The <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddunattachsurface"><strong>DdUnattachSurface</strong></a> function removes an attachment, created with <a href="/windows/desktop/api/Ddrawgdi/nf-ddrawgdi-ddattachsurface"><strong>DdAttachSurface</strong></a>, between two kernel-mode surface objects. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdid3dcontextcreate.html"><strong>NtGdiD3DContextCreate</strong></a></td>
+<td>Creates a context.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdid3dcontextdestroy.html"><strong>NtGdiD3DContextDestroy</strong></a></td>
+<td>Deletes the specified context. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdid3dcontextdestroyall.html"><strong>NtGdiD3DContextDestroyAll</strong></a></td>
+<td>Queries the amount of free memory in the driver-managed memory heap. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdid3ddrawprimitives2.html"><strong>NtGdiD3DDrawPrimitives2</strong></a></td>
+<td>Renders primitives and returns the updated render state. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdid3dgetdriverstate.html"><strong>NtGdiD3DGetDriverState</strong></a></td>
+<td>Used by both the DirectDraw and Direct3D runtimes to obtain information from the driver about its current state. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdid3dvalidatetexturestagestate.html"><strong>NtGdiD3DValidateTextureStageState</strong></a></td>
+<td>Returns the number of passes where the hardware can perform the blending operations specified in the current state. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddalphablt.html"><strong>NtGdiDdAddAlphaBlt</strong></a></td>
+<td>Not implemented.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddaddattachedsurface.html"><strong>NtGdiDdAddAttachedSurface</strong></a></td>
+<td>Attaches a surface to another surface. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddattachsurface.html"><strong>NtGdiDdAttachSurface</strong></a></td>
+<td>Attaches two kernel-mode surface representations. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddbeginmocompframe.html"><strong>NtGdiDdBeginMoCompFrame</strong></a></td>
+<td>Starts decoding a new frame. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddblt.html"><strong>NtGdiDdBlt</strong></a></td>
+<td>Performs a bit-block transfer. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddcancreated3dbuffer.html"><strong>NtGdiDdCanCreateD3DBuffer</strong></a></td>
+<td>Determines whether the driver can create a driver-level command or vertex buffer of the specified description. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddcancreatesurface.html"><strong>NtGdiDdCanCreateSurface</strong></a></td>
+<td>Indicates whether the driver can create a surface of the specified surface description. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddcolorcontrol.html"><strong>NtGdiDdColorControl</strong></a></td>
+<td>Controls the luminance and brightness controls of an overlay surface. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddcreated3dbuffer.html"><strong>NtGdiDdCreateD3DBuffer</strong></a></td>
+<td>Used to create a driver-level command or vertex buffer of the specified description. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddcreatedirectdrawobject.html"><strong>NtGdiDdCreateDirectDrawObject</strong></a></td>
+<td>Creates a kernel-side representation of the DirectDraw object. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddcreatemocomp.html"><strong>NtGdiDdCreateMoComp</strong></a></td>
+<td>Notifies the driver that a software decoder will start using motion compensation with the specified GUID. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddcreatesurface.html"><strong>NtGdiDdCreateSurface</strong></a></td>
+<td>Attaches a surface to another surface. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddcreatesurfaceex.html"><strong>NtGdiDdCreateSurfaceEx</strong></a></td>
+<td>Creates a Direct3D surface from a DirectDraw surface and associates a requested handle value to it. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddcreatesurfaceobject.html"><strong>NtGdiDdCreateSurfaceObject</strong></a></td>
+<td>Creates a kernel-mode surface object that represents the user-mode surface object referenced by <em>puSurfaceLocal</em>. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdidddeletedirectdrawobject.html"><strong>NtGdiDdDeleteDirectDrawObject</strong></a></td>
+<td>Destroys a previously created kernel-mode DirectDraw device object. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdidddeletesurfaceobject.html"><strong>NtGdiDdDeleteSurfaceObject</strong></a></td>
+<td><a href="-dxgkernel-ntgdidddeletesurfaceobject.html"><strong>NtGdiDdDeleteSurfaceObject</strong></a> deletes a previously created kernel-mode surface object. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdidddestroyd3dbuffer.html"><strong>NtGdiDdDestroyD3DBuffer</strong></a></td>
+<td>Destroys a previously allocated kernel-mode DirectDraw surface object that was created with the <strong>dwCaps</strong> member of the <a href="https://msdn.microsoft.com/library/ms794242.aspx">DDSCAPS</a> structure set to DDSCAPS_EXECUTEBUFFER. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdidddestroymocomp.html"><strong>NtGdiDdDestroyMoComp</strong></a></td>
+<td>Notifies the driver that this motion compensation object will no longer be used. The driver now needs to perform any necessary cleanup. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdidddestroysurface.html"><strong>NtGdiDdDestroySurface</strong></a></td>
+<td>Destroys a previously allocated kernel-mode DirectDraw surface object. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddendmocompframe.html"><strong>NtGdiDdEndMoCompFrame</strong></a></td>
+<td>Completes a decoded frame. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddflip.html"><strong>NtGdiDdFlip</strong></a></td>
+<td>Causes the surface memory associated with the target and current surfaces to be interchanged. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddfliptogdisurface.html"><strong>NtGdiDdFlipToGDISurface</strong></a></td>
+<td>Notifies the driver when DirectDraw is flipping to or from a GDI surface. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddgetavaildrivermemory.html"><strong>NtGdiDdGetAvailDriverMemory</strong></a></td>
+<td>Queries the amount of free memory in all video memory heaps. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddgetbltstatus.html"><strong>NtGdiDdGetBltStatus</strong></a></td>
+<td>Queries the blit status of the specified surface. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddgetdc.html"><strong>NtGdiDdGetDC</strong></a></td>
+<td>Creates a DC for the specified surface. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddgetdriverinfo.html"><strong>NtGdiDdGetDriverInfo</strong></a></td>
+<td>Queries the driver for additional DirectDraw and Direct3D functionality that the driver supports. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddgetdxhandle.html"><strong>NtGdiDdGetDxHandle</strong></a></td>
+<td>Returns the kernel-mode DirectXÂ API handle to use in subsequent calls to the kernel-mode entry points that control the DirectXÂ API mechanism. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddgetflipstatus.html"><strong>NtGdiDdGetFlipStatus</strong></a></td>
+<td>Determines whether the most recently requested flip on a surface has occurred. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddgetinternalmocompinfo.html"><strong>NtGdiDdGetInternalMoCompInfo</strong></a></td>
+<td>Allows the driver to report that it internally allocates display memory to perform motion compensation. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddgetmocompbuffinfo.html"><strong>NtGdiDdGetMoCompBuffInfo</strong></a></td>
+<td>Allows the driver to specify how many interim surfaces are required to support the specified GUID, and the size, location, and format of each of these surfaces. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddgetmocompformats.html"><strong>NtGdiDdGetMoCompFormats</strong></a></td>
+<td>Indicates the uncompressed formats to which the hardware can decode the data. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddgetmocompguids.html"><strong>NtGdiDdGetMoCompGuids</strong></a></td>
+<td>Retrieves the number of GUIDs the driver supports. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddgetscanline.html"><strong>NtGdiDdGetScanLine</strong></a></td>
+<td>Returns the number of the current physical scan line. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddlock.html"><strong>NtGdiDdLock</strong></a></td>
+<td>Locks a specified area of surface memory and provides a valid pointer to a block of memory associated with a surface. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddlockd3d.html"><strong>NtGdiDdLockD3D</strong></a></td>
+<td>Used to lock a specified area of buffer memory and to provide a valid pointer to a block of memory associated with the buffer. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddquerydirectdrawobject.html"><strong>NtGdiDdQueryDirectDrawObject</strong></a></td>
+<td>Queries a previously created kernel-mode representation of a DirectDraw object for its capabilities. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddquerymocompstatus.html"><strong>NtGdiDdQueryMoCompStatus</strong></a></td>
+<td>Queries the status of the most recent rendering operation to the specified surface. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddreenabledirectdrawobject.html"><strong>NtGdiDdReenableDirectDrawObject</strong></a></td>
+<td>Re-enables a DirectDraw kernel-mode device object after a mode switch. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddreleasedc.html"><strong>NtGdiDdReleaseDC</strong></a></td>
+<td>Releases the previously created DC for the indicated kernel-mode DirectDraw surface object. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddrendermocomp.html"><strong>NtGdiDdRenderMoComp</strong></a></td>
+<td>Tells the driver what macroblocks to render by specifying the surfaces containing the macroblocks, the offsets in each surface where the macroblocks exist, and the size of the macroblock data to be rendered. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddresetvisrgn.html"><strong>NtGdiDdResetVisrgn</strong></a></td>
+<td>Used to enable the user mode to gain a valid understanding of the clipping region for windows on the desktop. This clipping can change asynchronously from the point of view of user-mode threads. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddsetcolorkey.html"><strong>NtGdiDdSetColorKey</strong></a></td>
+<td>Sets the color key value for the specified surface. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddsetexclusivemode.html"><strong>NtGdiDdSetExclusiveMode</strong></a></td>
+<td>Notifies the driver when a DirectDraw application is switching to or from exclusive mode. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddsetgammaramp.html"><strong>NtGdiDdSetGammaRamp</strong></a></td>
+<td>Sets the gamma ramp for the device. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddsetoverlayposition.html"><strong>NtGdiDdSetOverlayPosition</strong></a></td>
+<td>Sets the position for an overlay. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddunattachsurface.html"><strong>NtGdiDdUnattachSurface</strong></a></td>
+<td>Removes an attachment, created with <a href="-dxgkernel-ntgdiddattachsurface.html"><strong>NtGdiDdAttachSurface</strong></a>, between two kernel-mode surface objects. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddunlock.html"><strong>NtGdiDdUnlock</strong></a></td>
+<td>Releases the lock held on the specified surface. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddunlockd3d.html"><strong>NtGdiDdUnlockD3D</strong></a></td>
+<td>Used to release a lock held on a specified area of buffer memory. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddupdateoverlay.html"><strong>NtGdiDdUpdateOverlay</strong></a></td>
+<td>Repositions or modifies the visual attributes of an overlay surface. <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="-dxgkernel-ntgdiddwaitforverticalblank.html"><strong>NtGdiDdWaitForVerticalBlank</strong></a></td>
+<td>Returns the vertical blank status of the device. <!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows-hardware/drivers/display/command-and-vertex-buffer-allocation">Command and Vertex Buffer Allocation</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows-hardware/drivers/display/introduction-to-display--windows-2000-model-">Introduction to Display</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

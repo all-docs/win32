@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Handling Events from the Device</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Handling Events from the Device
+ms.assetid: 529a8b7a-08b4-47de-8ed3-28e8fff0ede2
+title: Handling Events from the Device
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Handling Events from the Device</h1>
+<p>Another operation accomplished by a WPD application is the handling of events that are fired by the device.</p>
+<p>Event handling operations are accomplished using the interfaces described in the following table.</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-iportabledevice"><strong>IPortableDevice Interface</strong></a></td>
+<td>Lets the application register to receive asynchronous callbacks.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-iportabledeviceeventcallback"><strong>IPortableDeviceEventCallback Interface</strong></a></td>
+<td>Contains the application's event handler.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The CPortableDeviceEventsCallback class in the sample application's DeviceEvents.cpp module demonstrates how an application can implement <a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-iportabledeviceeventcallback"><strong>IPortableDeviceEventCallback</strong></a>. The implementation of the <a href="/windows/desktop/api/PortableDeviceApi/nf-portabledeviceapi-iportabledeviceeventcallback-onevent"><strong>OnEvent</strong></a> method in this class writes the parameters for any event to the application's console window. In addition to the OnEvent method, this class implements AddRef and Release, which are used to maintain the object's reference count.</p>
+<pre lang="C++"><code>class CPortableDeviceEventsCallback : public IPortableDeviceEventCallback
+{
+public:
+    CPortableDeviceEventsCallback() : m_cRef(1)
+    {
+    }
+
+    ~CPortableDeviceEventsCallback()
+    {
+    }
+
+    HRESULT __stdcall QueryInterface(
+        REFIID  riid,
+        LPVOID* ppvObj)
+    {
+        HRESULT hr = S_OK;
+        if (ppvObj == NULL)
+        {
+            hr = E_INVALIDARG;
+            return hr;
+        }
+
+        if ((riid == IID_IUnknown) ||
+            (riid == IID_IPortableDeviceEventCallback))
+        {
+            AddRef();
+            *ppvObj = this;
+        }
+        else
+        {
+            hr = E_NOINTERFACE;
+        }
+        return hr;
+    }
+
+    ULONG __stdcall AddRef()
+    {
+        InterlockedIncrement((long*) &amp;m_cRef);
+        return m_cRef;
+    }
+
+    ULONG __stdcall Release()
+    {
+        ULONG ulRefCount = m_cRef - 1;
+
+        if (InterlockedDecrement((long*) &amp;m_cRef) == 0)
+        {
+            delete this;
+            return 0;
+        }
+        return ulRefCount;
+    }
+
+    HRESULT __stdcall OnEvent(
+        IPortableDeviceValues* pEventParameters)
+    {
+        HRESULT hr = S_OK;
+
+        if (pEventParameters != NULL)
+        {
+            printf(&quot;***************************\n** Device event received **\n***************************\n&quot;);
+            DisplayStringProperty(pEventParameters, WPD_EVENT_PARAMETER_PNP_DEVICE_ID, L&quot;WPD_EVENT_PARAMETER_PNP_DEVICE_ID&quot;);
+            DisplayGuidProperty(pEventParameters, WPD_EVENT_PARAMETER_EVENT_ID, L&quot;WPD_EVENT_PARAMETER_EVENT_ID&quot;);
+        }
+
+        return hr;
+    }
+
+    ULONG m_cRef;
+};
+</code></pre>
+<p>The sample application instantiates the CPortableDeviceEventsCallback class in its RegisterForEventNotifications helper function. This function creates an instance of the callback object using the new operator. It then calls the <a href="/windows/desktop/api/PortableDeviceApi/nf-portabledeviceapi-iportabledevice-advise"><strong>IPortableDevice::Advise</strong></a> method to register the callback and begin receiving events.</p>
+<pre lang="C++"><code>void RegisterForEventNotifications(IPortableDevice* pDevice)
+{
+    HRESULT                        hr = S_OK;
+    LPWSTR                         wszEventCookie = NULL;
+    CPortableDeviceEventsCallback* pCallback = NULL;
+
+    if (pDevice == NULL)
+    {
+        return;
+    }
+
+    // Check to see if we already have an event registration cookie.  If so,
+    // then avoid registering again.
+    // NOTE: An application can register for events as many times as they want.
+    //       This sample only keeps a single registration cookie around for
+    //       simplicity.
+    if (g_strEventRegistrationCookie.GetLength() &gt; 0)
+    {
+        printf(&quot;This application has already registered to receive device events.\n&quot;);
+        return;
+    }
+
+    // Create an instance of the callback object.  This will be called when events
+    // are received.
+    if (hr == S_OK)
+    {
+        pCallback = new CPortableDeviceEventsCallback();
+        if (pCallback == NULL)
+        {
+            hr = E_OUTOFMEMORY;
+            printf(&quot;Failed to allocate memory for IPortableDeviceEventsCallback object, hr = 0x%lx\n&quot;,hr);
+        }
+    }
+
+    // Call Advise to register the callback and receive events.
+    if (hr == S_OK)
+    {
+        hr = pDevice-&gt;Advise(0, pCallback, NULL, &amp;wszEventCookie);
+        if (FAILED(hr))
+        {
+            printf(&quot;! Failed to register for device events, hr = 0x%lx\n&quot;,hr);
+        }
+    }
+
+    // Save the event registration cookie if event registration was successful.
+    if (hr == S_OK)
+    {
+        g_strEventRegistrationCookie = wszEventCookie;
+    }
+
+    // Free the event registration cookie, if one was returned.
+    if (wszEventCookie != NULL)
+    {
+        CoTaskMemFree(wszEventCookie);
+        wszEventCookie = NULL;
+    }
+
+    if (hr == S_OK)
+    {
+        printf(&quot;This application has registered for device event notifications and was returned the registration cookie '%ws'&quot;, g_strEventRegistrationCookie.GetString());
+    }
+
+    // If a failure occurs, remember to delete the allocated callback object, if one exists.
+    if (pCallback != NULL)
+    {
+        pCallback-&gt;Release();
+    }
+</code></pre>
+<p>Once the sample application is through receiving events, it calls the UnregisterForEventNotifications helper function. This function, in turn, calls the <a href="/windows/desktop/api/PortableDeviceApi/nf-portabledeviceapi-iportabledevice-unadvise"><strong>IPortableDevice::Unadvise</strong></a> method to unregister the callback from receiving events.</p>
+<pre lang="C++"><code>void UnregisterForEventNotifications(IPortableDevice* pDevice)
+{
+    HRESULT hr = S_OK;
+
+    if (pDevice == NULL)
+    {
+        return;
+    }
+
+    hr = pDevice-&gt;Unadvise(g_strEventRegistrationCookie);
+    if (FAILED(hr))
+    {
+        printf(&quot;! Failed to unregister for device events using registration cookie '%ws', hr = 0x%lx\n&quot;,g_strEventRegistrationCookie.GetString(), hr);
+    }
+
+    if (hr == S_OK)
+    {
+        printf(&quot;This application used the registration cookie '%ws' to unregister from receiving device event notifications&quot;, g_strEventRegistrationCookie.GetString());
+    }
+
+    g_strEventRegistrationCookie = L&quot;&quot;;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-iportabledevice"><strong>IPortableDevice Interface</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-iportabledeviceeventcallback"><strong>IPortableDeviceEventCallback Interface</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="programming-guide.html"><strong>Programming Guide</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

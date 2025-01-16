@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tutorial: Encoding an MP4 File</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This tutorial shows how to use the Transcode API to encode an MP4 file, using H.264 for the video stream and AAC for the audio stream.
+ms.assetid: 60873aa6-46ec-4a73-94b9-0d8ac602f850
+title: 'Tutorial: Encoding an MP4 File'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Tutorial: Encoding an MP4 File</h1>
+<p>This tutorial shows how to use the <a href="transcode-api.html">Transcode API</a> to encode an MP4 file, using H.264 for the video stream and AAC for the audio stream.</p>
+<ul>
+<li><a href="#headers-and-library-files">Headers and Library Files</a></li>
+<li><a href="#define-the-encoding-profiles">Define the Encoding Profiles</a></li>
+<li><a href="#write-the-wmain-function">Write the wmain Function</a></li>
+<li><a href="#encode-the-file">Encode the File</a>
+<ul>
+<li><a href="#create-the-media-source">Create the Media Source</a></li>
+<li><a href="#get-the-source-duration">Get the Source Duration</a></li>
+<li><a href="#create-the-transcode-profile">Create the Transcode Profile</a></li>
+<li><a href="#run-the-encoding-session">Run the Encoding Session</a></li>
+</ul>
+</li>
+<li><a href="#media-session-helper">Media Session Helper</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Headers and Library Files</h2>
+<p>Include the following header files.</p>
+<pre lang="C++"><code>#include &lt;new&gt;
+#include &lt;iostream&gt;
+#include &lt;windows.h&gt;
+#include &lt;mfapi.h&gt;
+#include &lt;Mfidl.h&gt;
+#include &lt;shlwapi.h&gt;
+</code></pre>
+<p>Link the following library files.</p>
+<pre lang="C++"><code>#pragma comment(lib, &quot;mfplat&quot;)
+#pragma comment(lib, &quot;mf&quot;)
+#pragma comment(lib, &quot;mfuuid&quot;)
+#pragma comment(lib, &quot;shlwapi&quot;)
+</code></pre>
+<h2>Define the Encoding Profiles</h2>
+<p>One approach to encoding is to define a list of target encoding profiles that are known in advance. For this tutorial, we take a relatively simple approach, and store a list of encoding formats for H.264 video and AAC audio.</p>
+<p>For H.264, the most important format attributes are the H.264 profile, the frame rate, the frame size, and the encoded bit rate. The following array contains a list of H.264 encoding formats.</p>
+<pre lang="C++"><code>struct H264ProfileInfo
+{
+    UINT32  profile;
+    MFRatio fps;
+    MFRatio frame_size;
+    UINT32  bitrate;
+};
+
+H264ProfileInfo h264_profiles[] = 
+{
+    { eAVEncH264VProfile_Base, { 15, 1 },       { 176, 144 },   128000 },
+    { eAVEncH264VProfile_Base, { 15, 1 },       { 352, 288 },   384000 },
+    { eAVEncH264VProfile_Base, { 30, 1 },       { 352, 288 },   384000 },
+    { eAVEncH264VProfile_Base, { 29970, 1000 }, { 320, 240 },   528560 },
+    { eAVEncH264VProfile_Base, { 15, 1 },       { 720, 576 },  4000000 },
+    { eAVEncH264VProfile_Main, { 25, 1 },       { 720, 576 }, 10000000 },
+    { eAVEncH264VProfile_Main, { 30, 1 },       { 352, 288 }, 10000000 },
+};
+</code></pre>
+<p>H.264 profiles are specified using the <a href="/windows/desktop/api/codecapi/ne-codecapi-eavench264vprofile"><strong>eAVEncH264VProfile</strong></a> enumeration. You could also specify the H.264 level, but the Microsoft Media FoundationÂ <a href="h-264-video-encoder.html"><strong>H.264 Video Encoder</strong></a> can derive the proper level for a given video stream, so it is recommended not to override the encoder's selected level. For interlaced content, you would also specify the interlace mode (see <a href="video-interlacing.html">Video Interlacing</a>).</p>
+<p>For AAC audio, the most important format attributes are the audio sample rate, the number of channels, the number of bits per sample, and the encoded bit rate. Optionally, you can set the AAC audio profile level indication. For more information, see <a href="aac-encoder.html"><strong>AAC Encoder</strong></a>. The following array contains a list of AAC encoding formats.</p>
+<pre lang="C++"><code>struct AACProfileInfo
+{
+    UINT32  samplesPerSec;
+    UINT32  numChannels;
+    UINT32  bitsPerSample;
+    UINT32  bytesPerSec;
+    UINT32  aacProfile;
+};
+
+AACProfileInfo aac_profiles[] = 
+{
+    { 96000, 2, 16, 24000, 0x29}, 
+    { 48000, 2, 16, 24000, 0x29}, 
+    { 44100, 2, 16, 16000, 0x29}, 
+    { 44100, 2, 16, 12000, 0x29}, 
+};
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+The <code>H264ProfileInfo</code> and <code>AACProfileInfo</code> structures defined here are not part of the Media Foundation API.</p>
+</blockquote>
+<p>Â </p>
+<h2>Write the wmain Function</h2>
+<p>The following code shows the entry point for the console application.</p>
+<pre lang="C++"><code>int video_profile = 0;
+int audio_profile = 0;
+
+int wmain(int argc, wchar_t* argv[])
+{
+    HeapSetInformation(NULL, HeapEnableTerminationOnCorruption, NULL, 0);
+
+    if (argc &lt; 3 || argc &gt; 5)
+    {
+        std::cout &lt;&lt; &quot;Usage:&quot; &lt;&lt; std::endl;
+        std::cout &lt;&lt; &quot;input output [ audio_profile video_profile ]&quot; &lt;&lt; std::endl;
+        return 1;
+    }
+
+    if (argc &gt; 3)
+    {
+        audio_profile = _wtoi(argv[3]);
+    }
+    if (argc &gt; 4)
+    {
+        video_profile = _wtoi(argv[4]);
+    }
+
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    if (SUCCEEDED(hr))
+    {
+        hr = MFStartup(MF_VERSION);
+        if (SUCCEEDED(hr))
+        {
+            hr = EncodeFile(argv[1], argv[2]);
+            MFShutdown();
+        }
+        CoUninitialize();
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        std::cout &lt;&lt; &quot;Done.&quot; &lt;&lt; std::endl;
+    }
+    else
+    {
+        std::cout &lt;&lt; &quot;Error: &quot; &lt;&lt; std::hex &lt;&lt; hr &lt;&lt; std::endl;
+    }
+
+    return 0;
+}
+</code></pre>
+<p>The <code>wmain</code> function does the following:</p>
+<ol>
+<li>Calls the <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializeex"><strong>CoInitializeEx</strong></a> function to initialize the COM library.</li>
+<li>Calls the <a href="/windows/desktop/api/mfapi/nf-mfapi-mfstartup"><strong>MFStartup</strong></a> function to initialize Media Foundation.</li>
+<li>Calls the application-defined <code>EncodeFile</code> function. This function transcodes the input file to the output file, and is shown in the next section.</li>
+<li>Calls the <a href="/windows/desktop/api/mfapi/nf-mfapi-mfshutdown"><strong>MFShutdown</strong></a> function to shut down Media Foundation.</li>
+<li>Call the <a href="/windows/win32/api/combaseapi/nf-combaseapi-couninitialize"><strong>CoUninitialize</strong></a> function to uninitialize the COM library.</li>
+</ol>
+<h2>Encode the File</h2>
+<p>The following code shows <code>EncodeFile</code> function, which performs the transcoding. This function consists mostly of calls to other application-defined functions, which are shown later in this topic.</p>
+<pre lang="C++"><code>HRESULT EncodeFile(PCWSTR pszInput, PCWSTR pszOutput)
+{
+    IMFTranscodeProfile *pProfile = NULL;
+    IMFMediaSource *pSource = NULL;
+    IMFTopology *pTopology = NULL;
+    CSession *pSession = NULL;
+
+    MFTIME duration = 0;
+
+    HRESULT hr = CreateMediaSource(pszInput, &amp;pSource);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = GetSourceDuration(pSource, &amp;duration);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = CreateTranscodeProfile(&amp;pProfile);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = MFCreateTranscodeTopology(pSource, pszOutput, pProfile, &amp;pTopology);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = CSession::Create(&amp;pSession);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pSession-&gt;StartEncodingSession(pTopology);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = RunEncodingSession(pSession, duration);
+
+done:            
+    if (pSource)
+    {
+        pSource-&gt;Shutdown();
+    }
+
+    SafeRelease(&amp;pSession);
+    SafeRelease(&amp;pProfile);
+    SafeRelease(&amp;pSource);
+    SafeRelease(&amp;pTopology);
+    return hr;
+}
+</code></pre>
+<p>The <code>EncodeFile</code> function performs the following steps.</p>
+<ol>
+<li>Creates a media source for the input file, using the URL or file path of the input file. (See <a href="#create-the-media-source">Create the Media Source</a>.)</li>
+<li>Gets the duration of the input file. (See <a href="#get-the-source-duration">Get the Source Duration</a>.)</li>
+<li>Create the transcode profile. (See <a href="#create-the-transcode-profile">Create the Transcode Profile</a>.)</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatetranscodetopology"><strong>MFCreateTranscodeTopology</strong></a> to create the partial transcode topology.</li>
+<li>Create a helper object that manages the Media Session. (See Media Session Helper).</li>
+<li>Run the encoding session and wait for it to complete. (See <a href="#run-the-encoding-session">Run the Encoding Session</a>.)</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-shutdown"><strong>IMFMediaSource::Shutdown</strong></a> to shut down the media source.</li>
+<li>Release interface pointers. This code uses the <a href="saferelease.html">SafeRelease</a> function to release interface pointers. Another option is to use a COM smart pointer class, such as <strong>CComPtr</strong>.</li>
+</ol>
+<h3>Create the Media Source</h3>
+<p>The media source is the object that reads and parses the input file. To create the media source, pass the URL of the input file to the <a href="source-resolver.html">Source Resolver</a>. The following code shows how to do this.</p>
+<pre lang="C++"><code>HRESULT CreateMediaSource(PCWSTR pszURL, IMFMediaSource **ppSource)
+{
+    MF_OBJECT_TYPE ObjectType = MF_OBJECT_INVALID;
+
+    IMFSourceResolver* pResolver = NULL;
+    IUnknown* pSource = NULL;
+
+    // Create the source resolver.
+    HRESULT hr = MFCreateSourceResolver(&amp;pResolver);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Use the source resolver to create the media source
+    hr = pResolver-&gt;CreateObjectFromURL(pszURL, MF_RESOLUTION_MEDIASOURCE, 
+        NULL, &amp;ObjectType, &amp;pSource);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Get the IMFMediaSource interface from the media source.
+    hr = pSource-&gt;QueryInterface(IID_PPV_ARGS(ppSource));
+
+done:
+    SafeRelease(&amp;pResolver);
+    SafeRelease(&amp;pSource);
+    return hr;
+}
+</code></pre>
+<p>For more information, see <a href="using-the-source-resolver.html">Using the Source Resolver</a>.</p>
+<h3>Get the Source Duration</h3>
+<p>Although not required, it is useful to query the media source for the duration of the input file. This value can be used to track the encoding progress. The duration is stored in the <a href="mf-pd-duration-attribute.html"><strong>MF_PD_DURATION</strong></a> attribute of the presentation descriptor. Get the presentation descriptor by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-createpresentationdescriptor"><strong>IMFMediaSource::CreatePresentationDescriptor</strong></a>.</p>
+<pre lang="C++"><code>HRESULT GetSourceDuration(IMFMediaSource *pSource, MFTIME *pDuration)
+{
+    *pDuration = 0;
+
+    IMFPresentationDescriptor *pPD = NULL;
+
+    HRESULT hr = pSource-&gt;CreatePresentationDescriptor(&amp;pPD);
+    if (SUCCEEDED(hr))
+    {
+        hr = pPD-&gt;GetUINT64(MF_PD_DURATION, (UINT64*)pDuration);
+        pPD-&gt;Release();
+    }
+    return hr;
+}
+</code></pre>
+<h3>Create the Transcode Profile</h3>
+<p>The transcode profile describes the encoding parameters. For more information about creating a transcode profile, see <a href="fast-transcode-objects.html">Using the Transcode API</a>. To create the profile, perform the following steps.</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatetranscodeprofile"><strong>MFCreateTranscodeProfile</strong></a> to create the empty profile.</li>
+<li>Create a media type for the AAC audio stream. Add it to the profile by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imftranscodeprofile-setaudioattributes"><strong>IMFTranscodeProfile::SetAudioAttributes</strong></a>.</li>
+<li>Create a media type for the H.264 video stream. Add it to the profile by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imftranscodeprofile-setvideoattributes"><strong>IMFTranscodeProfile::SetVideoAttributes</strong></a>.</li>
+<li>Call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreateattributes"><strong>MFCreateAttributes</strong></a> to create an attribute store for the container-level attributes.</li>
+<li>Set the <a href="mf-transcode-containertype.html">MF_TRANSCODE_CONTAINERTYPE</a> attribute. This is the only required container-level attribute. For MP4 file output, set this attribute to <strong>MFTranscodeContainerType_MPEG4</strong>.</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imftranscodeprofile-setcontainerattributes"><strong>IMFTranscodeProfile::SetContainerAttributes</strong></a> to set the container-level attributes.</li>
+</ol>
+<p>The following code shows these steps.</p>
+<pre lang="C++"><code>HRESULT CreateTranscodeProfile(IMFTranscodeProfile **ppProfile)
+{
+    IMFTranscodeProfile *pProfile = NULL;
+    IMFAttributes *pAudio = NULL;
+    IMFAttributes *pVideo = NULL;
+    IMFAttributes *pContainer = NULL;
+
+    HRESULT hr = MFCreateTranscodeProfile(&amp;pProfile);
+    if (FAILED(hr)) 
+    {
+        goto done;
+    }
+
+    // Audio attributes.
+    hr = CreateAACProfile(audio_profile, &amp;pAudio);
+    if (FAILED(hr)) 
+    {
+        goto done;
+    }
+
+    hr = pProfile-&gt;SetAudioAttributes(pAudio);
+    if (FAILED(hr)) 
+    {
+        goto done;
+    }
+
+    // Video attributes.
+    hr = CreateH264Profile(video_profile, &amp;pVideo);
+    if (FAILED(hr)) 
+    {
+        goto done;
+    }
+
+    hr = pProfile-&gt;SetVideoAttributes(pVideo);
+    if (FAILED(hr)) 
+    {
+        goto done;
+    }
+
+    // Container attributes.
+    hr = MFCreateAttributes(&amp;pContainer, 1);
+    if (FAILED(hr)) 
+    {
+        goto done;
+    }
+
+    hr = pContainer-&gt;SetGUID(MF_TRANSCODE_CONTAINERTYPE, MFTranscodeContainerType_MPEG4);
+    if (FAILED(hr)) 
+    {
+        goto done;
+    }
+
+    hr = pProfile-&gt;SetContainerAttributes(pContainer);
+    if (FAILED(hr)) 
+    {
+        goto done;
+    }
+
+    *ppProfile = pProfile;
+    (*ppProfile)-&gt;AddRef();
+
+done:
+    SafeRelease(&amp;pProfile);
+    SafeRelease(&amp;pAudio);
+    SafeRelease(&amp;pVideo);
+    SafeRelease(&amp;pContainer);
+    return hr;
+}
+</code></pre>
+<p>To specify the attributes for the H.264 video stream, create an attribute store and set the following attributes:</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Desription</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="mf-mt-subtype-attribute.html"><strong>MF_MT_SUBTYPE</strong></a></td>
+<td>Set to <strong>MFVideoFormat_H264</strong>.</td>
+</tr>
+<tr>
+<td><a href="mf-mt-mpeg2-profile-attribute.html"><strong>MF_MT_MPEG2_PROFILE</strong></a></td>
+<td>H.264 profile.</td>
+</tr>
+<tr>
+<td><a href="mf-mt-frame-size-attribute.html"><strong>MF_MT_FRAME_SIZE</strong></a></td>
+<td>Frame size.</td>
+</tr>
+<tr>
+<td><a href="mf-mt-frame-rate-attribute.html"><strong>MF_MT_FRAME_RATE</strong></a></td>
+<td>Frame rate.</td>
+</tr>
+<tr>
+<td><a href="mf-mt-avg-bitrate-attribute.html"><strong>MF_MT_AVG_BITRATE</strong></a></td>
+<td>Encoded bit rate.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>To specify the attributes for the AAC audio stream, create an attribute store and set the following attributes:</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Desription</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="mf-mt-subtype-attribute.html"><strong>MF_MT_SUBTYPE</strong></a></td>
+<td>Set to <strong>MFAudioFormat_AAC</strong></td>
+</tr>
+<tr>
+<td><a href="mf-mt-audio-samples-per-second-attribute.html"><strong>MF_MT_AUDIO_SAMPLES_PER_SECOND</strong></a></td>
+<td>Audio sample rate.</td>
+</tr>
+<tr>
+<td><a href="mf-mt-audio-bits-per-sample-attribute.html"><strong>MF_MT_AUDIO_BITS_PER_SAMPLE</strong></a></td>
+<td>Bits per audio sample.</td>
+</tr>
+<tr>
+<td><a href="mf-mt-audio-num-channels-attribute.html"><strong>MF_MT_AUDIO_NUM_CHANNELS</strong></a></td>
+<td>Number of audio channels.</td>
+</tr>
+<tr>
+<td><a href="mf-mt-audio-avg-bytes-per-second-attribute.html"><strong>MF_MT_AUDIO_AVG_BYTES_PER_SECOND</strong></a></td>
+<td>Encoded bit rate.</td>
+</tr>
+<tr>
+<td><a href="mf-mt-audio-block-alignment-attribute.html"><strong>MF_MT_AUDIO_BLOCK_ALIGNMENT</strong></a></td>
+<td>Set to 1.</td>
+</tr>
+<tr>
+<td><a href="mf-mt-aac-audio-profile-level-indication.html">MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION</a></td>
+<td>AAC profile level indication (optional).</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The following code creates the video stream attributes.</p>
+<pre lang="C++"><code>HRESULT CreateH264Profile(DWORD index, IMFAttributes **ppAttributes)
+{
+    if (index &gt;= ARRAYSIZE(h264_profiles))
+    {
+        return E_INVALIDARG;
+    }
+
+    IMFAttributes *pAttributes = NULL;
+
+    const H264ProfileInfo&amp; profile = h264_profiles[index];
+
+    HRESULT hr = MFCreateAttributes(&amp;pAttributes, 5);
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetUINT32(MF_MT_MPEG2_PROFILE, profile.profile);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = MFSetAttributeSize(
+            pAttributes, MF_MT_FRAME_SIZE, 
+            profile.frame_size.Numerator, profile.frame_size.Numerator);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = MFSetAttributeRatio(
+            pAttributes, MF_MT_FRAME_RATE, 
+            profile.fps.Numerator, profile.fps.Denominator);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetUINT32(MF_MT_AVG_BITRATE, profile.bitrate);
+    }
+    if (SUCCEEDED(hr))
+    {
+        *ppAttributes = pAttributes;
+        (*ppAttributes)-&gt;AddRef();
+    }
+    SafeRelease(&amp;pAttributes);
+    return hr;
+}
+</code></pre>
+<p>The following code creates the audio stream attributes.</p>
+<pre lang="C++"><code>HRESULT CreateAACProfile(DWORD index, IMFAttributes **ppAttributes)
+{
+    if (index &gt;= ARRAYSIZE(aac_profiles))
+    {
+        return E_INVALIDARG;
+    }
+
+    const AACProfileInfo&amp; profile = aac_profiles[index];
+
+    IMFAttributes *pAttributes = NULL;
+
+    HRESULT hr = MFCreateAttributes(&amp;pAttributes, 7);
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetGUID(MF_MT_SUBTYPE, MFAudioFormat_AAC);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetUINT32(
+            MF_MT_AUDIO_BITS_PER_SAMPLE, profile.bitsPerSample);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetUINT32(
+            MF_MT_AUDIO_SAMPLES_PER_SECOND, profile.samplesPerSec);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetUINT32(
+            MF_MT_AUDIO_NUM_CHANNELS, profile.numChannels);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetUINT32(
+            MF_MT_AUDIO_AVG_BYTES_PER_SECOND, profile.bytesPerSec);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 1);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetUINT32(
+            MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, profile.aacProfile);
+    }
+    if (SUCCEEDED(hr))
+    {
+        *ppAttributes = pAttributes;
+        (*ppAttributes)-&gt;AddRef();
+    }
+    SafeRelease(&amp;pAttributes);
+    return hr;
+}
+</code></pre>
+<p>Note that the transcode API does not require a true media type, although it uses media-type attributes. In particular, the <a href="mf-mt-major-type-attribute.html"><strong>MF_MT_MAJOR_TYPE</strong></a> attribute it not required, because the <a href="/windows/desktop/api/mfidl/nf-mfidl-imftranscodeprofile-setvideoattributes"><strong>SetVideoAttributes</strong></a> and <a href="/windows/desktop/api/mfidl/nf-mfidl-imftranscodeprofile-setaudioattributes"><strong>SetAudioAttributes</strong></a> methods imply the major type. However, it also valid to pass an actual media type to these methods. (The <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediatype"><strong>IMFMediaType</strong></a> interface inherits <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfattributes"><strong>IMFAttributes</strong></a>.)</p>
+<h3>Run the Encoding Session</h3>
+<p>The following code runs the encoding session. It uses the Media Session helper class, which is shown in the next section.</p>
+<pre lang="C++"><code>HRESULT RunEncodingSession(CSession *pSession, MFTIME duration)
+{
+    const DWORD WAIT_PERIOD = 500;
+    const int   UPDATE_INCR = 5;
+
+    HRESULT hr = S_OK;
+    MFTIME pos;
+    LONGLONG prev = 0;
+    while (1)
+    {
+        hr = pSession-&gt;Wait(WAIT_PERIOD);
+        if (hr == E_PENDING)
+        {
+            hr = pSession-&gt;GetEncodingPosition(&amp;pos);
+
+            LONGLONG percent = (100 * pos) / duration ;
+            if (percent &gt;= prev + UPDATE_INCR)
+            {
+                std::cout &lt;&lt; percent &lt;&lt; &quot;% .. &quot;;  
+                prev = percent;
+            }
+        }
+        else
+        {
+            std::cout &lt;&lt; std::endl;
+            break;
+        }
+    }
+    return hr;
+}
+</code></pre>
+<h2>Media Session Helper</h2>
+<p>The <a href="media-session.html">Media Session</a> is described more fully in the <a href="media-foundation-architecture.html">Media Foundation Architecture</a> section of this documentation. The Media Session uses an asynchronous event model. In a GUI application, you should respond to session events without blocking the UI thread to wait for the next event. The tutorial <a href="how-to-play-unprotected-media-files.html">How to Play Unprotected Media Files</a> shows how to do this in a playback application. For encoding, the principle is the same, but fewer events are relevant:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Desription</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="mesessionended.html">MESessionEnded</a></td>
+<td>Raised when the encoding is complete.</td>
+</tr>
+<tr>
+<td><a href="mesessionclosed.html">MESessionClosed</a></td>
+<td>Raised when the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-close"><strong>IMFMediaSession::Close</strong></a> method completes. After this event is raised, it is safe to shut down the Media Session.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>For a console application, it is reasonable to block and wait for events. Depending on the source file and the encoding settings, it might take awhile to complete the encoding. You can get progress updates as follows:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-getclock"><strong>IMFMediaSession::GetClock</strong></a> to get the presentation clock.</li>
+<li>Query the clock for the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfpresentationclock"><strong>IMFPresentationClock</strong></a> interface.</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfpresentationclock-gettime"><strong>IMFPresentationClock::GetTime</strong></a> to get the current position.</li>
+<li>The position is given in units of time. To get the percentage completed, use the value <code>(100 * position) / duration</code>.</li>
+</ol>
+<p>Here is the declaration of the <code>CSession</code> class.</p>
+<pre lang="C++"><code>class CSession  : public IMFAsyncCallback 
+{
+public:
+    static HRESULT Create(CSession **ppSession);
+
+    // IUnknown methods
+    STDMETHODIMP QueryInterface(REFIID riid, void** ppv);
+    STDMETHODIMP_(ULONG) AddRef();
+    STDMETHODIMP_(ULONG) Release();
+
+    // IMFAsyncCallback methods
+    STDMETHODIMP GetParameters(DWORD* pdwFlags, DWORD* pdwQueue)
+    {
+        // Implementation of this method is optional.
+        return E_NOTIMPL;
+    }
+    STDMETHODIMP Invoke(IMFAsyncResult *pResult);
+
+    // Other methods
+    HRESULT StartEncodingSession(IMFTopology *pTopology);
+    HRESULT GetEncodingPosition(MFTIME *pTime);
+    HRESULT Wait(DWORD dwMsec);
+
+private:
+    CSession() : m_cRef(1), m_pSession(NULL), m_pClock(NULL), m_hrStatus(S_OK), m_hWaitEvent(NULL)
+    {
+    }
+    virtual ~CSession()
+    {
+        if (m_pSession)
+        {
+            m_pSession-&gt;Shutdown();
+        }
+
+        SafeRelease(&amp;m_pClock);
+        SafeRelease(&amp;m_pSession);
+        CloseHandle(m_hWaitEvent);
+    }
+
+    HRESULT Initialize();
+
+private:
+    IMFMediaSession      *m_pSession;
+    IMFPresentationClock *m_pClock;
+    HRESULT m_hrStatus;
+    HANDLE  m_hWaitEvent;
+    long    m_cRef;
+};
+</code></pre>
+<p>The following code shows the complete implementation of the <code>CSession</code> class.</p>
+<pre lang="C++"><code>HRESULT CSession::Create(CSession **ppSession)
+{
+    *ppSession = NULL;
+
+    CSession *pSession = new (std::nothrow) CSession();
+    if (pSession == NULL)
+    {
+        return E_OUTOFMEMORY;
+    }
+
+    HRESULT hr = pSession-&gt;Initialize();
+    if (FAILED(hr))
+    {
+        pSession-&gt;Release();
+        return hr;
+    }
+    *ppSession = pSession;
+    return S_OK;
+}
+
+STDMETHODIMP CSession::QueryInterface(REFIID riid, void** ppv)
+{
+    static const QITAB qit[] = 
+    {
+        QITABENT(CSession, IMFAsyncCallback),
+        { 0 }
+    };
+    return QISearch(this, qit, riid, ppv);
+}
+
+STDMETHODIMP_(ULONG) CSession::AddRef()
+{
+    return InterlockedIncrement(&amp;m_cRef);
+}
+
+STDMETHODIMP_(ULONG) CSession::Release()
+{
+    long cRef = InterlockedDecrement(&amp;m_cRef);
+    if (cRef == 0)
+    {
+        delete this;
+    }
+    return cRef;
+}
+
+HRESULT CSession::Initialize()
+{
+    IMFClock *pClock = NULL;
+
+    HRESULT hr = MFCreateMediaSession(NULL, &amp;m_pSession);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = m_pSession-&gt;GetClock(&amp;pClock);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pClock-&gt;QueryInterface(IID_PPV_ARGS(&amp;m_pClock));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = m_pSession-&gt;BeginGetEvent(this, NULL);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    m_hWaitEvent = CreateEvent(NULL, FALSE, FALSE, NULL);  
+    if (m_hWaitEvent == NULL)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+    }
+done:
+    SafeRelease(&amp;pClock);
+    return hr;
+}
+
+// Implements IMFAsyncCallback::Invoke
+STDMETHODIMP CSession::Invoke(IMFAsyncResult *pResult)
+{
+    IMFMediaEvent* pEvent = NULL;
+    MediaEventType meType = MEUnknown;
+    HRESULT hrStatus = S_OK;
+
+    HRESULT hr = m_pSession-&gt;EndGetEvent(pResult, &amp;pEvent);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pEvent-&gt;GetType(&amp;meType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pEvent-&gt;GetStatus(&amp;hrStatus);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    if (FAILED(hrStatus))
+    {
+        hr = hrStatus;
+        goto done;
+    }
+
+    switch (meType)
+    {
+    case MESessionEnded:
+        hr = m_pSession-&gt;Close();
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+        break;
+
+    case MESessionClosed:
+        SetEvent(m_hWaitEvent);
+        break;
+    }
+
+    if (meType != MESessionClosed)
+    {
+        hr = m_pSession-&gt;BeginGetEvent(this, NULL);
+    }
+
+done:
+    if (FAILED(hr))
+    {
+        m_hrStatus = hr;
+        m_pSession-&gt;Close();
+    }
+
+    SafeRelease(&amp;pEvent);
+    return hr;
+}
+
+HRESULT CSession::StartEncodingSession(IMFTopology *pTopology)
+{
+    HRESULT hr = m_pSession-&gt;SetTopology(0, pTopology);
+    if (SUCCEEDED(hr))
+    {
+        PROPVARIANT varStart;
+        PropVariantClear(&amp;varStart);
+        hr = m_pSession-&gt;Start(&amp;GUID_NULL, &amp;varStart);
+    }
+    return hr;
+}
+
+HRESULT CSession::GetEncodingPosition(MFTIME *pTime)
+{
+    return m_pClock-&gt;GetTime(pTime);
+}
+
+HRESULT CSession::Wait(DWORD dwMsec)
+{
+    HRESULT hr = S_OK;
+
+    DWORD dwTimeoutStatus = WaitForSingleObject(m_hWaitEvent, dwMsec);
+    if (dwTimeoutStatus != WAIT_OBJECT_0)
+    {
+        hr = E_PENDING;
+    }
+    else
+    {
+        hr = m_hrStatus;
+    }
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="aac-encoder.html"><strong>AAC Encoder</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="h-264-video-encoder.html"><strong>H.264 Video Encoder</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="media-session.html">Media Session</a></p>
+<!-- raw HTML omitted -->
+<p><a href="media-types.html">Media Types</a></p>
+<!-- raw HTML omitted -->
+<p><a href="transcode-api.html">Transcode API</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

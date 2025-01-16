@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Print an XPS OM</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Describes how to send an XPS OM to a printer as an XPS document.
+ms.assetid: eb1068c4-6a6a-4ef2-8ed6-033a6a2c273b
+title: Print an XPS OM
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Print an XPS OM</h1>
+<p>Describes how to send an XPS OM to a printer as an XPS document.</p>
+<p>For instructions on how to print an XPS OM that contains a complete XPS document, see <a href="#print-a-complete-xps-om">Print a complete XPS OM</a>. To contain an XPS document, an XPS OM must include the items listed in <a href="create-a-blank-xps-om.html">Create a Blank XPS OM</a>.</p>
+<p>For instructions on how to print an XPS OM that is being created or processed one page at a time, see <a href="#incrementally-print-an-xps-om">Incrementally print an XPS OM</a>.</p>
+<p>Before using these code examples in your program, read the disclaimer in <a href="common-xps-document-tasks.html">Common XPS Document Programming Tasks</a>.</p>
+<p>In this topic, you will learn how to perform the following tasks:</p>
+<ul>
+<li><a href="#print-a-complete-xps-om">Print a complete XPS OM</a></li>
+<li><a href="#incrementally-print-an-xps-om">Incrementally print an XPS OM</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Print a complete XPS OM</h2>
+<p>When an XPS OM contains a complete XPS document, the <a href="/windows/desktop/api/xpsobjectmodel/nf-xpsobjectmodel-ixpsompackage-writetostream"><strong>WriteToStream</strong></a> method of the <a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsompackage"><strong>IXpsOMPackage</strong></a> interface can send the contents of the XPS OM to a printer or a print queue.</p>
+<p>To detect when the print job has completed, create an event handle as shown in the following example.</p>
+<pre lang="C++"><code>    HANDLE completionEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (NULL == completionEvent)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        // The method can continue, but print spooling completion
+        //  cannot be checked without a valid event handle.
+    }
+</code></pre>
+<p>To print a complete XPS OM:</p>
+<ol>
+<li>Create a new print job stream by calling <a href="/windows/win32/api/xpsprint/nf-xpsprint-startxpsprintjob"><strong>StartXpsPrintJob</strong></a>.</li>
+<li>Send the contents of the XPS OM to the stream by calling the package's <a href="/windows/desktop/api/xpsobjectmodel/nf-xpsobjectmodel-ixpsompackage-writetostream"><strong>WriteToStream</strong></a> method.</li>
+<li>Close the print job stream by calling the stream's <strong>Close</strong> method.</li>
+<li>Wait for the print job to signal that it has completed.</li>
+<li>Check the completion status.</li>
+<li>Close and release resources.</li>
+</ol>
+<pre lang="C++"><code>    IXpsPrintJob *job = NULL;
+    IXpsPrintJobStream *jobStream = NULL;
+    hr = StartXpsPrintJob(
+                printerName,
+                NULL,
+                NULL,
+                NULL,
+                completionEvent,
+                NULL,
+                0,
+                &amp;job,
+                &amp;jobStream,
+                NULL);
+
+    // Write package to print job stream
+    hr = package-&gt;WriteToStream (jobStream, FALSE);
+
+    // Close the stream to tell the print job
+    // that the entire document has been sent.
+    hr = jobStream-&gt;Close();
+
+    // Wait for the print job to finish spooling...
+    if (NULL != completionEvent) {
+        if (WaitForSingleObject(completionEvent, INFINITE) == WAIT_OBJECT_0)
+        {
+            // Get the print job status to see why the wait completed.
+            //  Note that without waiting for a completion event, 
+            //  the print job may not be complete when the status is queried.
+            XPS_JOB_STATUS jobStatus;
+            hr = job-&gt;GetJobStatus(&amp;jobStatus);
+
+            // Evaluate the job status returned.
+            switch (jobStatus.completion)
+            {
+                case XPS_JOB_COMPLETED:
+                    // The job completed as expected.
+                    hr = S_OK;
+                    break;
+                case XPS_JOB_CANCELLED:
+                    // The job was canceled.
+                    hr = E_FAIL;
+                    break;
+                case XPS_JOB_FAILED:
+                    // The job failed, 
+                    // jobStatus.jobStatus has the reason.
+                    hr = E_FAIL;
+                    break;
+                default:
+                    // An unexpected value was returned.
+                    hr = E_UNEXPECTED;
+                    break;
+            }
+                
+            // Release completion event handle
+            CloseHandle(completionEvent);
+        }
+        else
+        {    // there was a problem, set hr to error status
+            hr  = HRESULT_FROM_WIN32(GetLastError());
+        }
+    }
+
+    // hr contains the result of the print operation
+
+    CoUninitialize(); // if COM is no longer needed in this thread
+</code></pre>
+<h2>Incrementally print an XPS OM</h2>
+<p>You can send the document components of an XPS OM to a printer job incrementally, by creating an XPS print job stream and then passing the individual document components to the print job stream, one at a time. The sequence in which the document components are sent determines how they will appear in the finished document. Thus, before a program can call the code in this example, it must correctly organize the document components.</p>
+<p>Before using XPS OM interfaces, initialize COM in the thread as shown in the following example code.</p>
+<pre lang="C++"><code>    HRESULT hr;
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+</code></pre>
+<p>To monitor the print job completion, create an event handle as shown in the following example code.</p>
+<pre lang="C++"><code>    HANDLE completionEvent = NULL;
+    completionEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (NULL == completionEvent)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        // The method can continue, but print spooling completion
+        //  cannot be checked without a valid event handle.
+    }
+</code></pre>
+<p>Create a new print job stream and a new package writer. Pass each of the document components to the corresponding package writer methods in the same sequence as they will appear in the finished document.</p>
+<p>Start each document new, then add pages to it. After passing all document components to the print job stream, close the stream, wait for the print job to complete, and then close and release open resources.</p>
+<ol>
+<li>Create a new print job stream by calling <a href="/windows/win32/api/xpsprint/nf-xpsprint-startxpsprintjob"><strong>StartXpsPrintJob</strong></a>.</li>
+<li>Create a part URI for the FixedDocumentSequence part.</li>
+<li>Create a new package writer on the print job stream.</li>
+<li>For each document to be written:
+<ol>
+<li>Create a new part URI for the FixedDocument part.</li>
+<li>Start a new document in the package writer.</li>
+<li>For each page in the current document, create a part URI for the FixedPage part and add the page to the package writer.</li>
+</ol>
+</li>
+<li>After all pages have been added to the package writer, close it.</li>
+<li>Close the print job stream.</li>
+<li>Wait for the print job to complete.</li>
+<li>Check the completion status.</li>
+<li>Close and release open resources.</li>
+</ol>
+<pre lang="C++"><code>    IXpsPrintJob* job = NULL;
+    IXpsPrintJobStream* jobStream = NULL;
+    hr = StartXpsPrintJob(
+                argv[1],
+                NULL,
+                NULL,
+                NULL,
+                completionEvent,
+                NULL,
+                0,
+                &amp;job,
+                &amp;jobStream,
+                NULL);
+
+    // Note the implicit requirement that CoInitializeEx 
+    //  has previously been called from this thread.
+    IXpsOMObjectFactory *xpsFactory = NULL;
+    hr = CoCreateInstance(
+                __uuidof(XpsOMObjectFactory),
+                NULL,
+                CLSCTX_INPROC_SERVER,
+                __uuidof(IXpsOMObjectFactory),
+                reinterpret_cast&lt;void**&gt;(&amp;xpsFactory)
+                );
+    // Create part URI for FixedDocumentSequence part
+    //  This can use a static string because there is only one
+    //  FixedDocumentSequence part in the print job.
+    IOpcPartUri *partUri = NULL;
+    hr = xpsFactory-&gt;CreatePartUri(L&quot;/FixedDocumentSequence.fdseq&quot;, &amp;partUri);
+
+    // Create the package writer on the print job stream
+    //  Note that the interleaving parameter set to 
+    //  XPS_INTERLEAVING_ON, the package writer will create
+    //  empty print ticket parts when a NULL pointer is
+    //  passed in the print ticket argument of this method,
+    //  the StartNewDocument method, and the AddPage method.
+    //  For more information, see the help for these methods.
+    IXpsOMPackageWriter *packageWriter = NULL;
+    hr = xpsFactory-&gt;CreatePackageWriterOnStream(
+            jobStream,
+            TRUE,
+            XPS_INTERLEAVING_ON, // to create blank print ticket objects
+            partUri,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            &amp;packageWriter);
+    // release partUri after it's been used to create new doc. seq.
+    if (partUri)
+    {
+        partUri-&gt;Release();
+        partUri = NULL;
+    }
+
+    // Add document content to the print job stream.
+    int docNumber = 1;
+    int docsInPackage = 1; // Change this value as required.
+    while (docNumber &lt;= docsInPackage) {
+
+        // Create a unique part URI for the current document.
+        WCHAR DocPartUri[MAX_PATH];
+        hr = MakeDocumentPartUri (docNumber, MAX_PATH, DocPartUri);
+        hr = xpsFactory-&gt;CreatePartUri(DocPartUri, &amp;partUri);
+        
+        // Initialize the new document in the package writer.
+        hr = packageWriter-&gt;StartNewDocument(partUri, NULL, NULL, NULL, NULL);
+
+        // release part URI after it's been used to create new doc.
+        if (partUri)
+        {
+            partUri-&gt;Release();
+            partUri = NULL;
+        }
+
+        // Add the pages
+        int pageNumber = 1;
+        int pagesInDocument = 1; // Change this value as required.
+        while (pageNumber &lt;= pagesInDocument) {
+
+            // Create a unique part URI for the current page
+            WCHAR PagePartUri[MAX_PATH];
+            hr = MakePagePartUri (
+                docNumber, 
+                pageNumber, 
+                MAX_PATH, 
+                PagePartUri);
+            hr = xpsFactory-&gt;CreatePartUri(PagePartUri, &amp;partUri);
+
+            // create page in OM
+            XPS_SIZE pageSize = {816, 1056};
+            IXpsOMPage *xpsPage = NULL;
+            hr = xpsFactory-&gt;CreatePage(
+                &amp;pageSize, 
+                L&quot;en-US&quot;, 
+                partUri, 
+                &amp;xpsPage);
+
+            // release pagePartUri after it's been used to create the page
+            if (partUri)
+            {
+                partUri-&gt;Release();
+                partUri = NULL;
+            }
+
+            // add content to the page or retrieve 
+            //  the page from the XPS OM.
+            //  (not shown in this example)
+
+            // add page to document
+            hr = packageWriter-&gt;AddPage(
+                        xpsPage,
+                        &amp;pageSize,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL);
+
+             if (xpsPage)
+              {
+                 xpsPage-&gt;Release();
+                 xpsPage = NULL;
+             }
+
+            // go to the next page
+            pageNumber++;
+        }
+        // the fixed document does not need to be closed.
+        // it will be closed when a new fixed doc is opened
+        // or the package is closed.
+
+        // go to the next document
+        docNumber++;
+    }
+
+    // Close the package writer when finished
+    hr = packageWriter-&gt;Close();
+
+    if (SUCCEEDED(hr))
+    {
+        // Close the print stream to tell the print
+        //  job that the all document contents have
+        //  been sent
+        hr = jobStream-&gt;Close();
+        // Wait for the print job to finish spooling...
+        if (NULL != completionEvent) {
+            if (WaitForSingleObject(completionEvent, INFINITE) == WAIT_OBJECT_0)
+            {
+                // Get the print job status to see why the wait completed.
+                //  Note that without waiting for a completion event, 
+                //  the print job may not be complete when the status is queried.
+                XPS_JOB_STATUS jobStatus;
+                hr = job-&gt;GetJobStatus(&amp;jobStatus);
+
+                // Evaluate the job status returned.
+                switch (jobStatus.completion)
+                {
+                    case XPS_JOB_COMPLETED:
+                        // The job completed as expected.
+                        hr = S_OK;
+                        break;
+                    case XPS_JOB_CANCELLED:
+                        // The job was canceled.
+                        hr = E_FAIL;
+                        break;
+                    case XPS_JOB_FAILED:
+                        // The job failed, 
+                        // jobStatus.jobStatus has the reason.
+                        hr = E_FAIL;
+                        break;
+                    default:
+                        // An unexpected value was returned.
+                        hr = E_UNEXPECTED;
+                        break;
+                }
+                    
+                // Release completion event handle
+                CloseHandle(completionEvent);
+            }
+            else
+            {    // there was a problem, set hr to error status
+                hr  = HRESULT_FROM_WIN32(GetLastError());
+            }
+        }
+    } 
+    else
+    {
+        // cancel the job, if one exists, because
+        //  the close call returned an error
+        if (job) job-&gt;Cancel();
+    }
+    // hr contains the result of the print operation
+
+    // free/release pointers and handles used.
+
+    if (packageWriter)
+    {
+        packageWriter-&gt;Release();
+        packageWriter = NULL;
+    }
+
+    if (partUri)
+    {
+        partUri-&gt;Release();
+        partUri = NULL;
+    }
+
+    if (xpsFactory)
+    {
+        xpsFactory-&gt;Release();
+        xpsFactory = NULL;
+    }
+
+    if (jobStream)
+    {
+        jobStream-&gt;Release();
+        jobStream = NULL;
+    }
+
+    if (job)
+    {
+        job-&gt;Release();
+        job = NULL;
+    }
+
+    if (completionEvent)
+    {
+        CloseHandle(completionEvent);
+        completionEvent = NULL;
+    }
+
+    CoUninitialize(); // If done with COM in this thread.
+</code></pre>
+<p>When the program is writing the document components incrementally, as shown in this example, it must generate the part names for each document part that it sends to the print job stream. In the preceding example, the FixedDocumentSequence part URI is created from a static string because there is one and only one such part in the XPS document. The URI of each FixedPage and FixedDocument part must be unique within the XPS document. Building the part URI by using the index of these components can help ensure that the resulting URI string is unique within the XPS document.</p>
+<pre lang="C++"><code>HRESULT MakeDocumentPartUri (
+                              __in int docNumber,
+                              __in DWORD partUriStringLength,
+                              __inout LPWSTR partUriStringBuffer
+                              )
+{
+    // create a Part URI string using the document number
+    //  that was passed as an argument
+    // for example, &quot;/Documents/1/FixedDocument.fdoc&quot;
+    //  where &quot;1&quot; specifies the document number, which would
+    //  change with each document printed
+    return S_OK;
+}
+ 
+HRESULT MakePagePartUri (
+                              __in int docNumber,
+                              __in int pageNumber,
+                              __in DWORD partUriStringLength,
+                              __inout LPWSTR partUriStringBuffer
+                              )
+{
+    // create a Part URI string using the document number
+    //   and page number that were passed as an argument
+    // for example: &quot;/Documents/1/Pages/1.fpage&quot;
+    //  where the first &quot;1&quot; between Documents and Pages 
+    //  specifies the document number, which would change with
+    //  each document. The second &quot;1&quot; specifies the page number,
+    //  which would change with each page in the document.
+    return S_OK;
+}
+</code></pre>
+<p>For more information on the structure of an XPS document, see the <a href="https://en.wikipedia.org/wiki/Open_XML_Paper_Specification">XML Paper Specification</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Next Steps</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="write-an-xps-om-to-an-xps-document.html">Write an XPS OM to an XPS Document</a></p>
+<!-- raw HTML omitted -->
+<p><strong>Used in This Section</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/combaseapi/nf-combaseapi-coinitializeex"><strong>CoInitializeEx</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/synchapi/nf-synchapi-createeventa"><strong>CreateEvent</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/desktop/api/msopc/nn-msopc-iopcparturi"><strong>IOpcPartUri</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsompackage"><strong>IXpsOMPackage</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsompackagewriter"><strong>IXpsOMPackageWriter</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/win32/api/xpsprint/nn-xpsprint-ixpsprintjob"><strong>IXpsPrintJob</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/win32/api/xpsprint/nn-xpsprint-ixpsprintjobstream"><strong>IXpsPrintJobStream</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/win32/api/xpsprint/nf-xpsprint-startxpsprintjob"><strong>StartXpsPrintJob</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/synchapi/nf-synchapi-waitforsingleobject"><strong>WaitForSingleObject</strong></a></p>
+<!-- raw HTML omitted -->
+<p><strong>For More Information</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="xps-object-model-initialization.html">Initialize an XPS OM</a></p>
+<!-- raw HTML omitted -->
+<p><a href="xps-programming-reference.html">XPS Document API Reference</a></p>
+<!-- raw HTML omitted -->
+<p><a href="https://en.wikipedia.org/wiki/Open_XML_Paper_Specification">XML Paper Specification</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

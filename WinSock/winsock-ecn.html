@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Winsock explicit congestion notification (ECN)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Winsock explicit congestion notification (ECN)
+description: Some applications and/or protocols that are based on the User Datagram Protocol (UDP) (for example, QUIC) seek to leverage the use of explicit congestion notification (ECN) codepoints in order to improve latency and jitter in congested networks.
+ms.topic: article
+ms.date: 11/13/2020</h2>
+<h1>Winsock explicit congestion notification (ECN)</h1>
+<h2>Introduction</h2>
+<p>Some applications and/or protocols that are based on the User Datagram Protocol (UDP) (for example, QUIC) seek to leverage the use of explicit congestion notification (ECN) codepoints in order to improve latency and jitter in congested networks.</p>
+<p>The Winsock ECN APIs extend the <strong>getsockopt</strong>/<strong>setsockopt</strong> interface—as well as the <a href="/windows/win32/api/winsock2/nf-winsock2-wsasendmsg"><strong>WSASendMsg</strong></a>/<a href="/windows/win32/api/mswsock/nc-mswsock-lpfn_wsarecvmsg"><strong>LPFN_WSARECVMSG (WSARecvMsg)</strong></a> control message interface—with support for modifying and receiving ECN codepoints in IP headers. The functionality provided allows you to get and set ECN codepoints on a per-packet basis.</p>
+<p>For more information regarding ECN, see <a href="https://tools.ietf.org/html/rfc3168">The Addition of Explicit Congestion Notification (ECN) to IP</a>.</p>
+<p>Your application isn't allowed to specify the Congestion Encountered (CE) code point when sending datagrams. The send will return with error <strong>WSAEINVAL</strong>.</p>
+<h2>Query ECN with WSAGetRecvIPEcn</h2>
+<p><a href="/windows/win32/api/ws2tcpip/nf-ws2tcpip-wsagetrecvipecn"><strong>WSAGetRecvIPEcn</strong></a> is an inline function, defined in <code>ws2tcpip.h</code>.</p>
+<p>Call <strong>WSAGetRecvIPEcn</strong> to query the current enablement of receiving the <strong>IP_ECN</strong> (or <strong>IPV6_ECN</strong>) control message via <a href="/windows/win32/api/mswsock/nc-mswsock-lpfn_wsarecvmsg"><strong>LPFN_WSARECVMSG (WSARecvMsg)</strong></a>.</p>
+<p>Also see the <a href="/windows/win32/api/ws2def/ns-ws2def-wsamsg"><strong>WSAMSG</strong></a> structure.</p>
+<ul>
+<li>
+<p><strong>Protocol</strong>: IPv4</p>
+</li>
+<li>
+<p><strong>Cmsg_level</strong>: IPPROTO_IP</p>
+</li>
+<li>
+<p><strong>Cmsg_type</strong>: IP_ECN (50 decimal)</p>
+</li>
+<li>
+<p><strong>Description</strong>: Specifies/receives ECN codepoint in the Type of Service (TOS) IPv4 header field.</p>
+</li>
+<li>
+<p><strong>Protocol</strong>: IPv6</p>
+</li>
+<li>
+<p><strong>Cmsg_level</strong>: IPPROTO_IPV6</p>
+</li>
+<li>
+<p><strong>Cmsg_type</strong>: IPV6_ECN (50 decimal)</p>
+</li>
+<li>
+<p><strong>Description</strong>: Specifies/receives ECN codepoint in the Traffic Class IPv6 header field.</p>
+</li>
+</ul>
+<h2>Specify ECN with WSASetRecvIPEcn</h2>
+<p><a href="/windows/win32/api/ws2tcpip/nf-ws2tcpip-wsasetrecvipecn"><strong>WSASetRecvIPEcn</strong></a> is an inline function, defined in <code>ws2tcpip.h</code>.</p>
+<p>Call <strong>WSASetRecvIPEcn</strong> to specify whether the IP stack should populate the control buffer with a message containing the ECN codepoint of the Type of Service IPv4 header field (or Traffic Class IPv6 header field) on a received datagram. When set to <code>TRUE</code>, the <a href="/windows/win32/api/mswsock/nc-mswsock-lpfn_wsarecvmsg"><strong>LPFN_WSARECVMSG (WSARecvMsg)</strong></a> function returns optional control data containing the ECN codepoint of the received datagram. The returned control message type will be <strong>IP_ECN</strong> (or <strong>IPV6_ECN</strong>) with level <strong>IPPROTO_IP</strong> (or <strong>IPPROTO_IPV6</strong>). The control message data is returned as an <strong>INT</strong>. This option is valid only on datagram sockets (the socket type must be <strong>SOCK_DGRAM</strong>).</p>
+<h2>Code example 1—application advertising ECN support</h2>
+<pre lang="cpp"><code>#define ECN_ECT_0 2
+
+void sendEcn(SOCKET sock, PSOCKADDR_STORAGE addr, LPFN_WSASENDMSG sendmsg, PCHAR data, INT datalen)
+{
+    DWORD numBytes;
+    INT error;
+
+    CHAR control[WSA_CMSG_SPACE(sizeof(INT))] = { 0 };
+    WSABUF dataBuf;
+    WSABUF controlBuf;
+    WSAMSG wsaMsg;
+    PCMSGHDR cmsg;
+
+    dataBuf.buf = data;
+    dataBuf.len = datalen;
+    controlBuf.buf = control;
+    controlBuf.len = sizeof(control);
+    wsaMsg.name = (PSOCKADDR)addr;
+    wsaMsg.namelen = (INT)INET_SOCKADDR_LENGTH(addr-&gt;ss_family);
+    wsaMsg.lpBuffers = &amp;dataBuf;
+    wsaMsg.dwBufferCount = 1;
+    wsaMsg.Control = controlBuf;
+    wsaMsg.dwFlags = 0;
+
+    cmsg = WSA_CMSG_FIRSTHDR(&amp;wsaMsg);
+    cmsg-&gt;cmsg_len = WSA_CMSG_LEN(sizeof(INT));
+    cmsg-&gt;cmsg_level = (addr-&gt;ss_family == AF_INET) ? IPPROTO_IP : IPPROTO_IPV6;
+    cmsg-&gt;cmsg_type = (addr-&gt;ss_family == AF_INET) ? IP_ECN : IPV6_ECN;
+    *(PINT)WSA_CMSG_DATA(cmsg) = ECN_ECT_0;
+
+    error =
+        sendmsg(
+            sock,
+            &amp;wsaMsg,
+            0,
+            &amp;numBytes,
+            NULL,
+            NULL);
+    if (error == SOCKET_ERROR) {
+        printf(&quot;sendmsg failed %d\n&quot;, WSAGetLastError());
+    }
+}
+</code></pre>
+<h2>Code example 2—application detecting congestion</h2>
+<pre lang="cpp"><code>#define ECN_ECT_CE 3
+
+int recvEcn(SOCKET sock, PSOCKADDR_STORAGE addr, LPFN_WSARECVMSG recvmsg, PCHAR data, INT datalen, PBOOLEAN congestionEncountered)
+{
+    DWORD numBytes;
+    INT error;
+    INT ecnVal;
+    SOCKADDR_STORAGE remoteAddr = { 0 };
+
+    CHAR control[WSA_CMSG_SPACE(sizeof(INT))] = { 0 };
+    WSABUF dataBuf;
+    WSABUF controlBuf;
+    WSAMSG wsaMsg;
+    PCMSGHDR cmsg;
+
+    dataBuf.buf = data;
+    dataBuf.len = datalen;
+    controlBuf.buf = control;
+    controlBuf.len = sizeof(control);
+    wsaMsg.name = (PSOCKADDR)&amp;remoteAddr;
+    wsaMsg.namelen = sizeof(remoteAddr);
+    wsaMsg.lpBuffers = &amp;dataBuf;
+    wsaMsg.dwBufferCount = 1;
+    wsaMsg.Control = controlBuf;
+    wsaMsg.dwFlags = 0;
+
+    *congestionEncountered = FALSE;
+
+    error =
+        recvmsg(
+            sock,
+            &amp;wsaMsg,
+            &amp;numBytes,
+            NULL,
+            NULL);
+    if (error == SOCKET_ERROR) {
+        printf(&quot;recvmsg failed %d\n&quot;, WSAGetLastError());
+        return -1;
+    }
+
+    cmsg = WSA_CMSG_FIRSTHDR(&amp;wsaMsg);
+    while (cmsg != NULL) {
+        if ((cmsg-&gt;cmsg_level == IPPROTO_IP &amp;&amp; cmsg-&gt;cmsg_type == IP_ECN) ||
+            (cmsg-&gt;cmsg_level == IPPROTO_IPV6 &amp;&amp; cmsg-&gt;cmsg_type == IPV6_ECN)) {
+            ecnVal = *(PINT)WSA_CMSG_DATA(cmsg);
+            if (ecnVal == ECN_ECT_CE) {
+                *congestionEncountered = TRUE;
+            }
+            break;
+        }
+        cmsg = WSA_CMSG_NXTHDR(&amp;wsaMsg, cmsg);
+    }
+
+    return numBytes;
+}
+
+void receiver(SOCKET sock, PSOCKADDR_STORAGE addr, LPFN_WSARECVMSG recvmsg)
+{
+    DWORD numBytes;
+    INT error;
+    DWORD enabled;
+    CHAR data[512];
+    BOOLEAN congestionEncountered;
+
+    error = bind(sock, (PSOCKADDR)addr, sizeof(*addr));
+    if (error == SOCKET_ERROR) {
+        printf(&quot;bind failed %d\n&quot;, WSAGetLastError());
+        return;
+    }
+
+    enabled = TRUE;
+    error = WSASetRecvIPEcn(sock, enabled);
+    if (error == SOCKET_ERROR) {
+        printf(&quot; WSASetRecvIPEcn failed %d\n&quot;, WSAGetLastError());
+        return;
+    }
+
+    do {
+        numBytes = recvEcn(sock, addr, recvmsg, data, sizeof(data), &amp;congestionEncountered);
+        if (congestionEncountered) {
+            // Tell sender to slow down
+        }
+    } while (numBytes &gt; 0);
+}
+</code></pre>
+<h2>See also</h2>
+<ul>
+<li><a href="/windows/win32/api/ws2tcpip/nf-ws2tcpip-wsagetrecvipecn">WSAGetRecvIPEcn</a></li>
+<li><a href="/windows/win32/api/ws2tcpip/nf-ws2tcpip-wsasetrecvipecn">WSASetRecvIPEcn</a></li>
+</ul>
+</body>

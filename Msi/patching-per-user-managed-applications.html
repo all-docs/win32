@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Patching Per-User Managed Applications</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Beginning with Windows Installer 3.0, it is possible to apply patches to an application that has been installed in a per-user-managed context after the patch has been registered as having elevated privileges.
+ms.assetid: ebe5f447-9b74-48dc-8192-f2ac90dca490
+title: Patching Per-User Managed Applications
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Patching Per-User Managed Applications</h1>
+<p>Beginning with Windows Installer 3.0, it is possible to apply patches to an application that has been installed in a per-user-managed context after the patch has been registered as having elevated privileges.</p>
+<p><strong>Windows Installer 2.0:</strong> Not supported. You cannot apply patches to applications that are installed in a per-user managed context using versions of Windows Installer earlier than Windows Installer 3.0.</p>
+<p>An application is installed in the per-user-managed state in the following cases.</p>
+<ul>
+<li>The per-user installation of the application was performed using deployment and <a href="/previous-versions/windows/desktop/Policy/group-policy-start-page">Group Policy</a>.</li>
+<li>The application was advertised to a specified user and installed by the method described in <a href="advertising-a-per-user-application-to-be-installed-with-elevated-privileges.html">Advertising a Per-User Application To Be Installed with Elevated Privileges</a>.</li>
+</ul>
+<p>Privileges are required to install an application in the per-user-managed context; therefore, future Windows Installer reinstallations or repairs of the application are also performed by the installer using elevated privileges. This means that only patches from trusted sources can be applied to the application.</p>
+<p>Beginning with Windows Installer 3.0, you can apply a patch to a per-user managed application after the patch has been registered as having elevated privileges. To register a patch as having elevated privileges, use the <a href="/windows/desktop/api/Msi/nf-msi-msisourcelistaddsourceexa"><strong>MsiSourceListAddSourceEx</strong></a> function or the <a href="patch-sourcelistaddsource.html"><strong>SourceListAddSource</strong></a> method of the <a href="patch-object.html"><strong>Patch</strong></a> object, with elevated privileges. After registering the patch, you can apply the patch using the <a href="/windows/desktop/api/Msi/nf-msi-msiapplypatcha"><strong>MsiApplyPatch</strong></a> or <a href="/windows/desktop/api/Msi/nf-msi-msiapplymultiplepatchesa"><strong>MsiApplyMultiplePatches</strong></a> functions, <a href="installer-applypatch.html"><strong>ApplyPatch</strong></a> or <a href="installer-applymultiplepatches.html"><strong>ApplyMultiplePatches</strong></a> methods of the <a href="installer-object.html"><strong>Installer Object</strong></a>, or the /p <a href="command-line-options.html">command-line option</a>.</p>
+<blockquote>
+<p>[!Note]
+A patch can be registered as having elevated privileges before the application is installed. When a patch has been registered, it remains registered until the last registered application for this patch is removed.</p>
+<p>Patches that have been applied to a per-user managed application cannot be removed without removing the entire application. The patch registrations for a per-user managed application are removed on the removal of the application.</p>
+</blockquote>
+<p>You can also use this method to enable a non-administrator to patch a per-machine application, or you can use least-privilege patching described in <a href="user-account-control--uac--patching.html">User Account Control (UAC) Patching</a>.</p>
+<h2>Example 1</h2>
+<p>The following scripting sample uses the <a href="patch-sourcelistaddsource.html"><strong>SourceListAddSource</strong></a> method to register a patch package located at \\server\share\products\patches\example.msp as having elevated privileges. That patch is then ready to be applied to a per-user managed product.</p>
+<pre lang="syntax"><code>const msiInstallContextUserManaged = 1
+const msiInstallSourceTypeNetwork = 1
+
+const PatchCode = &quot;{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}&quot;
+const UserSid = &quot;S-X-X-XX-XXXXXXXXX-XXXXXXXXX-XXXXXXXXX-XXXXXXX&quot;
+const PatchPath = &quot;\\server\share\products\patches\&quot;
+const PatchPackageName = &quot;example.msp&quot;
+
+Dim installer
+Set installer = CreateObject(&quot;WindowsInstaller.Installer&quot;)
+
+Set patch = installer.Patch(PatchCode, &quot;&quot;, UserSid, msiInstallContextUserManaged)
+
+patch.SourceListAddSource msiInstallSourceTypeNetwork, PatchPath, 0
+
+patch.SourceListInfo(&quot;PackageName&quot;) = PatchPackageName
+</code></pre>
+<h2>Example 2</h2>
+<p>The following code sample uses the <a href="/windows/desktop/api/Msi/nf-msi-msisourcelistaddsourceexa"><strong>MsiSourceListAddSourceEx</strong></a> function to register a patch package located at \\server\share\products\patches\example.msp as having elevated privileges. That patch is then ready to be applied to a per-user managed product.</p>
+<pre lang="C++"><code>#ifndef UNICODE
+#define UNICODE
+#endif    // UNICODE
+
+#ifndef _WIN32_MSI
+#define _WIN32_MSI
+#endif    // _WIN32_MSI
+
+#include &lt;windows.h&gt;
+#include &lt;msi.h&gt;
+
+
+/////////////////////////////////////////////////////////////////
+// RegisterElevatedPatch
+//
+// Purpose: register a patch elevated from a network location
+//
+// Arguments:
+//    wszPatchCode &lt;entity type=&quot;ndash&quot;/&gt; GUID of patch to be registered
+//    wszUserSid   - String SID that specifies the user account
+//    wszPatchPath &lt;entity type=&quot;ndash&quot;/&gt; Network location of patch
+//    wszPatchPackageName &lt;entity type=&quot;ndash&quot;/&gt; Package name of patch
+//
+/////////////////////////////////////////////////////////////////
+UINT RegisterElevatedPatch(LPCWSTR wszPatchCode, 
+LPCWSTR wszUserSid, 
+LPCWSTR wszPatchPath, 
+LPCWSTR wszPatchPackageName)
+{
+// wszUserSid can be NULL
+// when wszUserSid is NULL, register patch for current user
+// current user must be administrator
+if (!wszPatchCode || !wszPatchPath || !wszPatchPackageName)
+    return ERROR_INVALID_PARAMETER;
+
+UINT uiReturn = ERROR_SUCCESS;
+
+uiReturn = MsiSourceListAddSourceEx(
+/*szPatchCode*/ wszPatchCode,
+/*szUserSid*/ wszUserSid,
+/*dwContext*/ MSIINSTALLCONTEXT_USERMANAGED,
+/*dwOptions*/ MSISOURCETYPE_NETWORK+MSICODE_PATCH,
+/*szSource*/ wszPatchPath,
+/*dwIndex*/ 0);
+if (ERROR_SUCCESS == uiReturn)
+{
+uiReturn = MsiSourceListSetInfo(
+/*szPatchCode*/ wszPatchCode,
+/*szUserSid*/ wszUserSid,
+/*dwContext*/ MSIINSTALLCONTEXT_USERMANAGED,
+/*dwOptions*/ MSISOURCETYPE_NETWORK+MSICODE_PATCH,
+/*szProperty*/ L&quot;PackageName&quot;,
+/*szValue*/ wszPatchPackageName);
+if (ERROR_SUCCESS != uiReturn)
+{
+// Function call failed, return error code
+    return uiReturn;
+}
+}
+else
+{
+// Function call failed, return error code
+    return uiReturn;
+}
+
+return ERROR_SUCCESS;
+}
+
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

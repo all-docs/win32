@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recovery Processing</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: After any type of failure that disrupts normal transaction processing, KTM and each resource manager must perform recovery operations. Recovery is the process by which transaction participants arrive at a consistent view of each transactions state.
+ms.assetid: 5bc9a155-6ba4-41f8-8e12-e87f48d83940
+title: Recovery Processing
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Recovery Processing</h1>
+<p>After any type of failure that disrupts normal transaction processing, KTM and each resource manager must perform <em>recovery</em> operations. Recovery is the process by which transaction participants arrive at a consistent view of each transaction's state.</p>
+<p>Resource managers may be <em>in-doubt</em> about a transaction's outcome, meaning that at the time of failure, they had received a TRANSACTION_NOTIFY_PREPARE notification, had prepared to durable storage, but had not received (or received but not logged) a final outcome for the transaction. Similarly, KTM can be in-doubt about a transaction if it had been prepared but had not received (or received but not logged) an outcome. At recovery time, all outcomes that have been sent but not acknowledged must be re-sent. For example, if a resource manager received a TRANSACTION_NOTIFY_COMMIT notification and called the <a href="/windows/desktop/api/Ktmw32/nf-ktmw32-commitcomplete"><strong>CommitComplete</strong></a> function, the RM may still receive a duplicate TRANSACTION_NOTIFY_COMMIT notification at recovery time.</p>
+<p>For a transaction to properly recover after a resource manager or system failure, each resource manager must do the following each time it is started:</p>
+<ol>
+<li>
+<p>Call the <a href="/windows/desktop/api/Ktmw32/nf-ktmw32-openresourcemanager"><strong>OpenResourceManager</strong></a> function to re-open its resource manager handle using its unique, persistent name. This informs KTM that the resource manager is running again and is available to perform recovery. If no enlistments exist to be recovered, the call to <strong>OpenResourceManager</strong> can fail. Call <a href="/windows/desktop/api/Ktmw32/nf-ktmw32-createresourcemanager"><strong>CreateResourceManager</strong></a> to re-create the RM object.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/Ktmw32/nf-ktmw32-recoverresourcemanager"><strong>RecoverResourceManager</strong></a>. The resource manager will receive a <a href="notification-mask.html"><strong>TRANSACTION_NOTIFY_RECOVER</strong></a> notification event for each enlistment for which it needs to perform recovery operations, followed by a TRANSACTION_NOTIFY_LAST_RECOVER. The notification event includes a globally unique identifier for both the transaction and the enlistment.</p>
+</li>
+<li>
+<p>Call the <a href="/windows/desktop/api/Ktmw32/nf-ktmw32-openenlistment"><strong>OpenEnlistment</strong></a> function to re-open each enlistment handle for which the resource manager received a TRANSACTION_NOTIFY_RECOVER notification.</p>
+</li>
+<li>
+<p>For each enlistment opened by <a href="/windows/desktop/api/Ktmw32/nf-ktmw32-openenlistment"><strong>OpenEnlistment</strong></a>, call <a href="/windows/desktop/api/Ktmw32/nf-ktmw32-recoverenlistment"><strong>RecoverEnlistment</strong></a>. This causes the TRANSACTION_NOTIFY_COMMIT or TRANSACTION_NOTIFY_INDOUBT notification to be redelivered.</p>
+</li>
+<li>
+<p>If the RM received TRANSACTION_NOTIFY_COMMIT, the RM can complete the transaction by calling <a href="/windows/desktop/api/Ktmw32/nf-ktmw32-commitcomplete"><strong>CommitComplete</strong></a>.</p>
+<p>If the RM received TRANSACTION_NOTIFY_INDOUBT, the RM should wait for the outcome notification to arrive.</p>
+</li>
+<li>
+<p>For any transactions that the RM does not receive a TRANSACTION_NOTIFY_RECOVER notification, but previously received a TRANSACTION_NOTIFY_PREPARE notification for, the RM should process the transaction as if it were rolled back.</p>
+</li>
+</ol>
+<blockquote>
+<p>[!Note]</p>
+<p>Resource managers are allowed to enlist in or create new transactions while in the process of performing recovery.</p>
+</blockquote>
+<p>Â </p>
+<p>KTM uses a <em>presumed abort</em> transaction model. The following scenario illustrates this behavior. Assume that KTM and an resource manager exist on the same computer. Suppose KTM issues a prepare notification for a transaction, but the system crashes before KTM logs the prepare notification. Further suppose that the resource manager receives and logs the prepare notification just before the system crashes. After the system is restored, KTM has no knowledge of the transaction, because it never logged the prepare phase. The resource manager has knowledge of the transaction, because it received, processed, and logged the prepare notification. When KTM issues its recovery notifications, the resource manager does not include a recovery notification for the transaction in question. With the presumed abort model, the resource manager in this case will treat the prepared transaction as aborted when it does not receive notifications to perform recovery on that transaction.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

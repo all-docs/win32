@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Making an Asynchronous Call with C++</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: WMI applications written in C++ can make asynchronous calls by using many of the methods of the IWbemServices COM interface.
+ms.assetid: 5179969f-bc7d-4408-84ef-7b003950a59f
+ms.tgt_platform: multiple
+title: Making an Asynchronous Call with C++
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Making an Asynchronous Call with C++</h1>
+<p>WMI applications written in C++ can make asynchronous calls by using many of the methods of the <a href="/windows/desktop/api/WbemCli/nn-wbemcli-iwbemservices"><strong>IWbemServices</strong></a> COM interface. However, the recommended procedure for calling a <a href="gloss-w.html"><em>WMI method</em></a> or a <a href="gloss-p.html"><em>provider method</em></a> is by using semisynchronous calls because semisynchronous calls are more secure than asynchronous calls. For more information, see <a href="making-a-semisynchronous-call-with-c--.html">Making a Semisynchronous Call with C++</a> and <a href="setting-security-on-an-asynchronous-call.html">Setting Security on an Asynchronous Call</a>.</p>
+<p>The following procedure describes how to make an asynchronous call by using the sink in your process.</p>
+<p><strong>To make an asynchronous call using C++</strong></p>
+<ol>
+<li>
+<p>Implement the <a href="iwbemobjectsink.html"><strong>IWbemObjectSink</strong></a> interface.</p>
+<p>All applications that make asynchronous calls must implement <a href="iwbemobjectsink.html"><strong>IWbemObjectSink</strong></a>. Temporary event consumers also implement <strong>IWbemObjectSink</strong> to receive notification of events.</p>
+</li>
+<li>
+<p>Log on to the target WMI namespace.</p>
+<p>Applications always have to call the COM function <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a> during the initialization phase. If they do not do so before making an asynchronous call, WMI releases the application sink without completing the asynchronous call. For more information, see <a href="initializing-com-for-a-wmi-application.html">Initializing COM for a WMI Application</a>.</p>
+</li>
+<li>
+<p>Set the security for your sink.</p>
+<p>Asynchronous calls create a variety of security issues that you may have to deal with, for example, allowing WMI access to your application. For more information, see <a href="setting-security-on-an-asynchronous-call.html">Setting Security on an Asynchronous Call</a>.</p>
+</li>
+<li>
+<p>Make the asynchronous call.</p>
+<p>The method returns immediately with the <strong>WBEM_S_NO_ERROR</strong> success code. The application can proceed with other tasks while waiting for the operation to complete. WMI reports back to the application by calling methods in the <a href="iwbemobjectsink.html"><strong>IWbemObjectSink</strong></a> implementation of your application.</p>
+</li>
+<li>
+<p>If necessary, check your implementation periodically for updates.</p>
+<p>Applications can receive notification of intermediate status by setting the <em>lFlags</em> parameter in the asynchronous call to <strong>WBEM_FLAG_SEND_STATUS</strong>. WMI reports the status of your call by setting the <em>lFlags</em> parameter of <a href="iwbemobjectsink.html"><strong>IWbemObjectSink</strong></a> to <strong>WBEM_STATUS_PROGRESS</strong>.</p>
+</li>
+<li>
+<p>If necessary, you can cancel the call before WMI finishes processing by calling the <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-cancelasynccall"><strong>IWbemServices::CancelCallAsync</strong></a> method.</p>
+<p>The <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-cancelasynccall"><strong>CancelAsyncCall</strong></a> method cancels asynchronous processing by immediately releasing the pointer to the <a href="iwbemobjectsink.html"><strong>IWbemObjectSink</strong></a> interface and guarantees that the pointer is released before <strong>CancelAsyncCall</strong> returns.</p>
+<p>If you are using a wrapper object implementing the <strong>IUnsecured</strong> interface to host <a href="iwbemobjectsink.html"><strong>IWbemObjectSink</strong></a>, you may find some additional complications. Because the application must pass the same pointer to <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-cancelasynccall"><strong>CancelAsyncCall</strong></a> that was passed in the original asynchronous call, the application must hold on to the wrapper object until it becomes clear that cancellation is not required. For more information, see <a href="setting-security-on-an-asynchronous-call.html">Setting Security on an Asynchronous Call</a>.</p>
+</li>
+<li>
+<p>When finished, clean up pointers and shut down the application.</p>
+<p>WMI provides the final status call through the <a href="/windows/desktop/api/Wbemprov/nf-wbemprov-iwbemproviderinitsink-setstatus"><strong>SetStatus</strong></a> method.</p>
+<blockquote>
+<p>[!Note]<br />
+After sending the final status update, WMI releases the object sink by calling the <strong>Release</strong> method for the class that implements the <a href="iwbemobjectsink.html"><strong>IWbemObjectSink</strong></a> interface. In the previous example, this is the <strong>QuerySink::Release</strong> method. If you want to have control over the lifetime of the sink object, you can implement the sink with an initial reference count of one (1).</p>
+</blockquote>
+<p>Â </p>
+<p>If a client application passes the same sink interface in two different overlapping asynchronous calls, WMI does not guarantee the order of the callback. A client application making overlapping asynchronous calls should either pass different sink objects or serialize the calls.</p>
+</li>
+</ol>
+<p>The following example requires the following reference and #include statements.</p>
+<pre lang="C++"><code>#include &lt;iostream&gt;
+using namespace std;
+#pragma comment(lib, &quot;wbemuuid.lib&quot;)
+#include &lt;wbemidl.h&gt;
+</code></pre>
+<p>The following example describes how to make an asynchronous query using the <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-execqueryasync"><strong>ExecQueryAsync</strong></a> method, but does not create security settings or release the <a href="iwbemobjectsink.html"><strong>IWbemObjectSink</strong></a> object. For more information, see <a href="setting-security-on-an-asynchronous-call.html">Setting Security on an Asynchronous Call</a>.</p>
+<pre lang="C++"><code>// Set input parameters to ExecQueryAsync.
+BSTR QueryLang = SysAllocString(L&quot;WQL&quot;);
+BSTR Query = SysAllocString(L&quot;SELECT * FROM MyClass&quot;);
+
+// Create IWbemObjectSink object and set pointer.
+QuerySink *pSink = new QuerySink;
+
+IWbemServices* pSvc = 0;
+
+// Call ExecQueryAsync.
+HRESULT hRes = pSvc-&gt;ExecQueryAsync(QueryLang, 
+                                    Query, 
+                                    0, 
+                                    NULL, 
+                                    pSink);
+
+// Check for errors.
+if (hRes)
+{
+    printf(&quot;ExecQueryAsync failed with = 0x%X\n&quot;, hRes);
+    SysFreeString(QueryLang);
+    SysFreeString(Query);
+    delete pSink;    
+    return ERROR;
+}
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+The code above does not compile without error because the <strong>QuerySink</strong> class has not been defined. For more information about <strong>QuerySink</strong>, see <a href="iwbemobjectsink.html"><strong>IWbemObjectSink</strong></a>.</p>
+</blockquote>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="calling-a-method.html">Calling a Method</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating a Group Chat Application</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic provides relevant code samples for the major steps of developing a chat application with the Peer Grouping API, providing a context for each API call.
+ms.assetid: 47bb8606-0b7b-4e71-9d6f-c400d6a82e43
+title: Creating a Group Chat Application
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Creating a Group Chat Application</h1>
+<p>This topic provides relevant code samples for the major steps of developing a chat application with the Peer Grouping API, providing a context for each API call. UI behaviors and overall application structure are not included.</p>
+<blockquote>
+<p>[!Note]<br />
+The complete Peer Group Chat sample application is provided in the Peer SDK. This topic references functions provided within the sample.</p>
+</blockquote>
+<p>Â </p>
+<h2>Initializing a Group</h2>
+<p>The first step when constructing a chat application is to initialize the Peer Grouping Infrastructure by calling <a href="/windows/desktop/api/P2P/nf-p2p-peergroupstartup"><strong>PeerGroupStartup</strong></a> with the highest supported version. In this case, <strong>PEER_GROUP_VERSION</strong> will be defined in the application header file. The version actually supported by the infrastructure is returned in <strong>peerVersion</strong>.</p>
+<pre lang="C++"><code>    PEER_VERSION_DATA peerVersion;
+
+    hr = PeerGroupStartup(PEER_GROUP_VERSION, &amp;peerVersion);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+</code></pre>
+<h2>Creating a Group</h2>
+<p>A chat application must be able to create a peer group if no group is available to join, or if the application user wants to create a new one. To do this, you must create a <a href="/windows/desktop/api/P2P/ns-p2p-peer_group_properties"><strong>PEER_GROUP_PROPERTIES</strong></a> structure and populate it with the initial settings for the group, including the classifier for the peer group, the friendly name, the creator's peer name, and the presence lifetime. Once this structure has been populated, you pass it to <a href="/windows/desktop/api/P2P/nf-p2p-peergroupcreate"><strong>PeerGroupCreate</strong></a>.</p>
+<pre lang="C++"><code>//-----------------------------------------------------------------------------
+// Function: CreateGroup
+//
+// Purpose:  Creates a new group with the friendly name.
+//
+// Returns:  HRESULT
+//
+HRESULT CreateGroup(PCWSTR pwzName, PCWSTR pwzIdentity)
+{
+    HRESULT hr = S_OK;
+    PEER_GROUP_PROPERTIES props = {0};
+
+    if (SUCCEEDED(hr))
+    {
+        if ((NULL == pwzName) || (0 == *pwzName))
+        {
+            hr = E_INVALIDARG;
+            DisplayHrError(L&quot;Please enter a group name.&quot;, hr);
+        }
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        CleanupGroup( );
+
+        props.dwSize = sizeof(props);
+        props.pwzClassifier = L&quot;SampleChatGroup&quot;;
+        props.pwzFriendlyName = (PWSTR) pwzName;
+        props.pwzCreatorPeerName = (PWSTR) pwzIdentity;
+
+        hr = PeerGroupCreate(&amp;props, &amp;g_hGroup);
+        if (FAILED(hr))
+        {
+            DisplayHrError(L&quot;Failed to create a new group.&quot;, hr);
+        }
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = PrepareToChat( );
+    }
+
+    return hr;
+}
+</code></pre>
+<h2>Issuing Invitations</h2>
+<p>When issuing an invitation, the GMCs of the invitees must be obtained. These can obtained by calling <a href="/windows/desktop/api/P2P/nf-p2p-peeridentitygetxml"><strong>PeerIdentityGetXML</strong></a> on the invitee with their identity name. If successful, the identity information (the XML that contains the base-64 encoded certificate with the RSA public key) is written to an external location (a file, in this sample) where the inviter can obtain it and use it to create an invitation.</p>
+<p>At this point, a mechanism for the delivery of the invitation to the invitee must be established. This can be email or another secure method of file exchange. In the sample below, the invitation is written to a file which can then be transferred to the invitee's computer.</p>
+<pre lang="C++"><code>//-----------------------------------------------------------------------------
+// Function: SaveIdentityInfo
+//
+// Purpose:  Saves the information for an identity to a file.
+//           Displays a message if there was an error.
+//
+// Returns:  HRESULT
+//
+HRESULT SaveIdentityInfo(PCWSTR pwzIdentity, PCWSTR pwzFile)
+{
+    PWSTR pwzXML = NULL;
+    HRESULT hr = PeerIdentityGetXML(pwzIdentity, &amp;pwzXML);
+
+    if (FAILED(hr))
+    {
+        DisplayHrError(L&quot;Unable to retrieve the XML data for the identity.&quot;, hr);
+    }
+    else
+    {
+        FILE *fp = NULL;
+        errno_t err = 0;
+
+        err = _wfopen_s(&amp;fp, pwzFile, L&quot;wb&quot;);
+        if (err != 0)
+        {
+            hr = E_FAIL;
+            DisplayHrError(L&quot;Please choose a valid path&quot;, hr);
+        }
+        else
+        {
+            if (fputws(pwzXML, fp) == WEOF)
+            {
+                hr = E_FAIL;
+                DisplayHrError(L&quot;End of file error.&quot;, hr);
+            }
+            fclose(fp);
+        }
+
+        PeerFreeData(pwzXML);
+    }
+
+    return hr;
+}
+</code></pre>
+<p>Invitations, like identities, are also issued externally. In this example, the invitation is written to a file with <strong>fputws</strong> where the invitee can obtain it and use it when it calls <a href="/windows/desktop/api/P2P/nf-p2p-peergroupjoin"><strong>PeerGroupJoin</strong></a>.</p>
+<pre lang="C++"><code>//-----------------------------------------------------------------------------
+// Function: CreateInvitation
+//
+// Purpose:  Creates an invitation file for an identity.
+//           Displays a message if there was an error.
+//
+// Returns:  HRESULT
+//
+HRESULT CreateInvitation(PCWSTR wzIdentityInfoPath, PCWSTR wzInvitationPath)
+{
+    HRESULT hr = S_OK;
+    WCHAR wzIdentityInfo[MAX_INVITATION] = {0};
+    PWSTR pwzInvitation = NULL;
+    errno_t  err  = 0;
+    FILE *file = NULL;
+        
+    err = _wfopen_s(&amp;file, wzIdentityInfoPath, L&quot;rb&quot;);
+    if (err != 0)
+    {
+        hr = E_FAIL;
+        DisplayHrError(L&quot;Please choose a valid path to the identity information file.&quot;, hr);
+    }
+    else
+    {
+        fread(wzIdentityInfo, sizeof(WCHAR), MAX_INVITATION, file);
+        if (ferror(file))
+        {
+            hr = E_FAIL;
+            DisplayHrError(L&quot;File read error occurred.&quot;, hr);
+        }
+        fclose(file);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        ULONGLONG ulExpire; // adjust time using this structure
+        GetSystemTimeAsFileTime((FILETIME *)&amp;ulExpire);
+
+        // 15days in 100 nanoseconds resolution
+        ulExpire += ((ULONGLONG) (60 * 60 * 24 * 15)) * ((ULONGLONG)1000*1000*10);
+
+        hr = PeerGroupCreateInvitation(g_hGroup, wzIdentityInfo, (FILETIME*)&amp;ulExpire, 1, (PEER_ROLE_ID*) &amp;PEER_GROUP_ROLE_MEMBER, &amp;pwzInvitation);
+        if (FAILED(hr))
+        {
+            DisplayHrError(L&quot;Failed to create the invitation.&quot;, hr);
+        }
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        err = _wfopen_s(&amp;file, wzInvitationPath, L&quot;wb&quot;);
+        if (err != 0)
+        {
+            hr = E_FAIL;
+            DisplayHrError(L&quot;Please choose a valid path to the invitation file.&quot;, hr);
+        }
+        else
+        {
+            if (fputws(pwzInvitation, file) == WEOF)
+            {
+                hr = E_FAIL;
+                DisplayHrError(L&quot;End of file error.&quot;, hr);
+            }
+            fclose(file);
+        }
+    }
+
+    PeerFreeData(pwzInvitation);
+    return hr;
+}
+</code></pre>
+<h2>Joining a Peer Group</h2>
+<p>If the peer is attempting to join a peer group created by another peer, it will need an invitation from that peer. Invitations are delivered by an external process or application to the invitee and saved to a local file, specified in the sample below as <em>pwzFileName</em>. The invitation XML blob is read from the file into <strong>wzInvitation</strong> and passed to <a href="/windows/desktop/api/P2P/nf-p2p-peergroupjoin"><strong>PeerGroupJoin</strong></a>.</p>
+<pre lang="C++"><code>//-----------------------------------------------------------------------------
+// Function: JoinGroup
+//
+// Purpose:  Uses the invitation to join a group with a specific identity.
+//           Displays a message if there was an error.
+//
+// Returns:  HRESULT
+//
+HRESULT JoinGroup(PCWSTR pwzIdentity, PCWSTR pwzFileName)
+{
+    HRESULT hr = S_OK;
+    WCHAR wzInvitation[MAX_INVITATION] = {0};
+    FILE        *file = NULL;
+    errno_t     err;
+
+    err = _wfopen_s(&amp;file, pwzFileName, L&quot;rb&quot;);
+    if (err !=  0)
+    {
+        hr = E_FAIL;
+        DisplayHrError(L&quot;Error opening group invitation file&quot;, hr);
+        return hr;
+    }
+    else
+    {
+        fread(wzInvitation, sizeof(WCHAR), MAX_INVITATION, file);
+        if (ferror(file))
+        {
+            hr = E_FAIL;
+            DisplayHrError(L&quot;File read error occurred.&quot;, hr);
+        }
+        fclose(file);
+
+        hr = PeerGroupJoin(pwzIdentity, wzInvitation, NULL, &amp;g_hGroup);
+        if (FAILED(hr))
+        {
+            DisplayHrError(L&quot;Failed to join group.&quot;, hr);
+        }
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = PrepareToChat( );
+    }
+
+    return hr;
+}
+</code></pre>
+<h2>Register for Peer Events</h2>
+<p>Before connecting, you should register for every peer event pertinent to the application. In the example below, you register for the following events:</p>
+<ul>
+<li>PEER_GROUP_EVENT_RECORD_CHANGED. Since records will be used to contain public chat messages, the application must be notified every time a new one is added. When this peer event is received, the event data exposes the record with the chat message. Applications should only register for those record types they intend to handle directly.</li>
+<li>PEER_GROUP_EVENT_MEMBER_CHANGED. The application must be notified when members join or leave the peer group so the list of participants can be updated accordingly.</li>
+<li>PEER_GROUP_EVENT_STATUS_CHANGED. Changes to the peer group status must be conveyed to the application. A peer group member is only considered to be available within the peer group when its status indicates that it is connected to the group, synchronized with the peer group record database, and actively listening to record updates.</li>
+<li>PEER_GROUP_EVENT_DIRECT_CONNECTION. Private messages between two members and exchanges of data must be conducted over a direct connection, so the application must be able to handle direct connection requests.</li>
+<li>PEER_GROUP_EVENT_INCOMING_DATA. After a direct connection is initiated, this peer event alerts the application that a private message has been received.</li>
+</ul>
+<pre lang="C++"><code>//-----------------------------------------------------------------------------
+// Function: RegisterForEvents
+//
+// Purpose:  Registers the EventCallback function so it will be called for only
+//           those events that are specified.
+//
+// Returns:  HRESULT
+//
+HRESULT RegisterForEvents(void)
+{
+    HRESULT hr = S_OK;
+    PEER_GROUP_EVENT_REGISTRATION regs[] = {
+        { PEER_GROUP_EVENT_RECORD_CHANGED, &amp;RECORD_TYPE_CHAT_MESSAGE },
+        { PEER_GROUP_EVENT_MEMBER_CHANGED, 0 },
+        { PEER_GROUP_EVENT_STATUS_CHANGED, 0 },
+        { PEER_GROUP_EVENT_DIRECT_CONNECTION, &amp;DATA_TYPE_WHISPER_MESSAGE },
+        { PEER_GROUP_EVENT_INCOMING_DATA, 0 },
+    };
+
+    g_hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    if (g_hEvent == NULL)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+    }
+    else
+    {
+        hr = PeerGroupRegisterEvent(g_hGroup, g_hEvent, celems(regs), regs,  &amp;g_hPeerEvent);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        if (!RegisterWaitForSingleObject(&amp;g_hWait, g_hEvent, EventCallback, NULL, INFINITE, WT_EXECUTEDEFAULT))
+        {
+            hr = E_UNEXPECTED;
+        }
+    }
+
+    return hr;
+}
+</code></pre>
+<h2>Connecting to a Peer Group</h2>
+<p>Having either created or joined the group and registered for the appropriate events, it's time to go online and begin an active chat session. To do this, you call <a href="/windows/desktop/api/P2P/nf-p2p-peergroupconnect"><strong>PeerGroupConnect</strong></a> and pass in the group handle obtained from <a href="/windows/desktop/api/P2P/nf-p2p-peergroupcreate"><strong>PeerGroupCreate</strong></a> or <a href="/windows/desktop/api/P2P/nf-p2p-peergroupjoin"><strong>PeerGroupJoin</strong></a>. After calling this, chat messages will be received as PEER_GROUP_EVENT_RECORD_CHANGED events.</p>
+<h2>Obtaining a List of Peer Group Members</h2>
+<p>Obtaining a list of members connected to the peer group is simple: call <a href="/windows/desktop/api/P2P/nf-p2p-peergroupenummembers"><strong>PeerGroupEnumMembers</strong></a> to retrieve the list of group members, and then iteratively call <a href="/windows/desktop/api/P2P/nf-p2p-peergetnextitem"><strong>PeerGetNextItem</strong></a> until all members are retrieved. You should call <a href="/windows/desktop/api/P2P/nf-p2p-peerfreedata"><strong>PeerFreeData</strong></a> after you process each member structure, and you must close the enumeration by calling <a href="/windows/desktop/api/P2P/nf-p2p-peerendenumeration"><strong>PeerEndEnumeration</strong></a> when processing is complete.</p>
+<pre lang="C++"><code>//-----------------------------------------------------------------------------
+// Function: UpdateParticipantList
+//
+// Purpose:  Update the list of partipants.
+//
+// Returns:  nothing
+//
+void UpdateParticipantList(void)
+{
+    HRESULT          hr = S_OK;
+    HPEERENUM        hPeerEnum = NULL;
+    PEER_MEMBER   ** ppMember = NULL;
+
+    ClearParticipantList( );
+    if (NULL == g_hGroup)
+    {
+        return;
+    }
+
+    // Retrieve only the members currently present in the group.
+    hr = PeerGroupEnumMembers(g_hGroup, PEER_MEMBER_PRESENT, NULL, &amp;hPeerEnum);
+    if (SUCCEEDED(hr))
+    {
+        while (SUCCEEDED(hr))
+        {
+            ULONG cItem = 1;
+            hr = PeerGetNextItem(hPeerEnum, &amp;cItem, (PVOID **) &amp;ppMember);
+            if (SUCCEEDED(hr))
+            {
+                if (0 == cItem)
+                {
+                    PeerFreeData(ppMember);
+                    break;
+                }
+            }
+
+            if (SUCCEEDED(hr))
+            {
+                if (0 != ((*ppMember)-&gt;dwFlags &amp; PEER_MEMBER_PRESENT))
+                {
+                    AddParticipantName((*ppMember)-&gt;pwzIdentity, (*ppMember)-&gt;pCredentialInfo-&gt;pwzFriendlyName);
+                }
+                PeerFreeData(ppMember);
+            }
+        }
+
+        PeerEndEnumeration(hPeerEnum);
+    }
+}
+</code></pre>
+<h2>Sending a Chat Message</h2>
+<p>In this example, a chat message is sent by placing it in the <strong>data</strong> field of a <a href="/windows/desktop/api/P2P/ns-p2p-peer_record"><strong>PEER_RECORD</strong></a> structure. The record is added to the peer group records by calling <a href="/windows/desktop/api/P2P/nf-p2p-peergroupaddrecord"><strong>PeerGroupAddRecord</strong></a>, which will publish it and raise the PEER_GROUP_EVENT_RECORD_CHANGED event on all peers participating in the peer group.</p>
+<pre lang="C++"><code>//-----------------------------------------------------------------------------
+// Function: AddChatRecord
+//
+// Purpose:  This adds a new chat message record to the group.
+//
+// Returns:  HRESULT
+//
+HRESULT AddChatRecord(PCWSTR pwzMessage)
+{
+    HRESULT     hr = S_OK;
+    PEER_RECORD record = {0};
+    GUID        idRecord;
+    ULONGLONG   ulExpire;
+    ULONG cch = (ULONG) wcslen(pwzMessage);
+
+    GetSystemTimeAsFileTime((FILETIME *) &amp;ulExpire);
+
+    // Calculate a 2 minute expiration time in 100 nanosecond resolution
+    ulExpire += ((ULONGLONG) 60 * 2) * ((ULONGLONG)1000*1000*10);
+
+    // Set up the record
+    record.dwSize = sizeof(record);
+    record.data.cbData = (cch+1) * sizeof(WCHAR);
+    record.data.pbData = (PBYTE) pwzMessage;
+    memcpy(&amp;record.ftExpiration, &amp;ulExpire, sizeof(ulExpire));
+
+    PeerGroupUniversalTimeToPeerTime(g_hGroup, &amp;record.ftExpiration, &amp;record.ftExpiration);
+
+    // Set the record type GUID
+    record.type = RECORD_TYPE_CHAT_MESSAGE;
+
+    // Add the record to the database
+    hr = PeerGroupAddRecord(g_hGroup, &amp;record, &amp;idRecord);
+    if (FAILED(hr))
+    {
+        DisplayHrError(L&quot;Failed to add a chat record to the group.&quot;, hr);
+    }
+
+    return hr;
+}
+</code></pre>
+<h2>Receiving a Chat Message</h2>
+<p>To receive the chat message, create a callback function for the PEER_GROUP_EVENT_RECORD_CHANGED event that calls a function similar to one below. The record is obtained by calling <a href="/windows/desktop/api/P2P/nf-p2p-peergroupgetrecord"><strong>PeerGroupGetRecord</strong></a> on the event data received by a previous call to <a href="/windows/desktop/api/P2P/nf-p2p-peergroupgeteventdata"><strong>PeerGroupGetEventData</strong></a> in the callback function. The chat message is stored in the <strong>data</strong> field of this record.</p>
+<pre lang="C++"><code>//-----------------------------------------------------------------------------
+// Function: ProcessRecordChanged
+//
+// Purpose:  Processes the PEER_GROUP_EVENT_RECORD_CHANGED event.
+//
+// Returns:  nothing
+//
+void ProcessRecordChanged(PEER_EVENT_RECORD_CHANGE_DATA * pData)
+{
+    switch (pData-&gt;changeType)
+    {
+        case PEER_RECORD_ADDED:
+            if (IsEqualGUID(&amp;pData-&gt;recordType, &amp;RECORD_TYPE_CHAT_MESSAGE))
+            {
+                PEER_RECORD * pRecord = {0};
+                HRESULT hr = PeerGroupGetRecord(g_hGroup, &amp;pData-&gt;recordId, &amp;pRecord);
+                if (SUCCEEDED(hr))
+                {
+                    DisplayChatMessage(pRecord-&gt;pwzCreatorId, (PCWSTR) pRecord-&gt;data.pbData);
+                    PeerFreeData(pRecord);
+                }
+            }
+            break;
+
+        case PEER_RECORD_UPDATED:
+        case PEER_RECORD_DELETED:
+        case PEER_RECORD_EXPIRED:
+            break;
+
+        default:
+            break;
+    }
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

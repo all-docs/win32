@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DVD Playback Enhancements in Windows Vista</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: DVD Playback Enhancements in Windows Vista
+ms.assetid: b3cf043f-c974-4240-8291-5c717bd8afaa
+title: DVD Playback Enhancements in Windows Vista
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>DVD Playback Enhancements in Windows Vista</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This sections describes the improvements to DVD playback and navigation in Windows Vista.</p>
+<p><strong>Specifying a Decoder</strong></p>
+<p>In earlier versions of DirectShow, it was difficult to specify a particular MPEG-2 decoder when building a DVD playback graph. Starting in Windows Vista, an application can specify the decoder as follows:</p>
+<ol>
+<li>Add the decoder to the graph before calling <a href="/windows/desktop/api/Strmif/nf-strmif-idvdgraphbuilder-renderdvdvideovolume"><strong>IDvdGraphBuilder::RenderDvdVideoVolume</strong></a>.</li>
+<li>Call <strong>RenderDvdVideoVolume</strong> and set the AM_DVD_DO_NOT_CLEAR flag. The DVD Navigator will give preference to the decoder that you added.</li>
+</ol>
+<p><strong>Support for the Enhanced Video Renderer</strong></p>
+<p>It is recommended that applications written for Windows Vista or later use the <a href="enhanced-video-renderer-filter.html"><strong>Enhanced Video Renderer</strong></a> (EVR) for video playback. To use the EVR in a DVD playback application, set the AM_DVD_EVR_ONLY flag when you call <strong>RenderDvdVideoVolume</strong>.</p>
+<p>To configure the EVR before you build the graph, call <a href="/windows/desktop/api/Strmif/nf-strmif-idvdgraphbuilder-getdvdinterface"><strong>IDvdGraphBuilder::GetDvdInterface</strong></a> and query for the <strong>IEVRFilterConfig</strong> or <strong>IMFVideoRenderer</strong> interface. (These interfaces are documented in the Media Foundation SDK documentation.) For more information about configuring the video renderer in a DVD playback graph, see <a href="building-the-dvd-filter-graph.html">Building the DVD Filter Graph</a>.</p>
+<p>The DVD Navigator will not use the EVR unless the decoder's <a href="/windows/desktop/api/Strmif/nf-strmif-iamdecodercaps-getdecodercaps"><strong>IAMDecoderCaps::GetDecoderCaps</strong></a> method returns the AM_GETDECODERCAP_QUERY_EVR_SUPPORT flag. This flag is defined to ensure that applications are compatible with existing decoders. If <strong>RenderDvdVideoVolume</strong> fails using the AM_DVD_EVR_ONLY flag, fall back to another video renderer by calling the method again without the flag.</p>
+<p><strong>Smooth Reverse Playback</strong></p>
+<p>The DVD Navigator can now perform smooth reverse playback. In smooth reverse playback, the DVD Navigator sends entire video object units (VOBUs) to the decoder, and the decoder emits the frames in reverse order. This feature requires that the decoders support smooth reverse playback.</p>
+<p>When the application sets the playback speed to a negative value, the DVD Navigator queries the decoders for the <a href="am-rate-reversemaxfulldatarate-property.html"><strong>AM_RATE_ReverseMaxFullDataRate</strong></a> property. The value of this property is the absolute value of the maximum reverse speed x 10000. For example, if the maximum reverse speed is -2.0, the value is 20000.</p>
+<p>If the video decoder supports the property, the DVD Navigator uses smooth reverse playback. The audio stream is played in reverse if the audio decoder supports the property; otherwise, the audio stream is muted. If the video decoder does not support the property, or the playback rate exceeds the video decoder's maximum reverse rate, the DVD Navigator switches to <em>scan mode</em>. In scan mode, the DVD Navigator sends only I frames to the decoder and drops all B and P frames.</p>
+<p>During smooth reverse playback, the DVD Navigator sends complete VOBUs to the decoder. The DVD Navigator sends the VOBUs in reverse order but sends the frames within each VOBU in their normal forward order. At the start of each VOBU, the DVD Navigator sets the AM_ReverseBlockStart flag on the sample. At the end of the VOBU, the DVD Navigator sends an empty sample with the AM_ReverseBlockEnd flag. To retrieve these flags, call <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample2-getproperties"><strong>IMediaSample2::GetProperties</strong></a> on the sample. The flags are set in the <strong>dwTypeSpecificFlags</strong> member of the <a href="/windows/win32/api/strmif/ns-strmif-am_sample2_properties"><strong>AM_SAMPLE2_PROPERTIES</strong></a> structure.</p>
+<p>The decoder caches the video data until it receives the sample with the AM_ReverseBlockEnd flag. At that point, the decoder delivers decoded frames in reverse order. For example, if VOBU 1 contains frames 1â€“4 and VOBU 2 contains frames 5â€“8, the DVD Navigator will send the frames in this order:</p>
+<p>(Block start) F5 F6 F7 F8 (block end) (block start) F1 F2 F3 F4 (block end)</p>
+<p>The decoder should process the frames as follows:</p>
+<ol>
+<li>Decode VOBU 2.</li>
+<li>Output frames: F8 F7 F6 F5</li>
+<li>Decode VOBU 1.</li>
+<li>Output frames: F4 F3 F2 F1</li>
+</ol>
+<p>The DVD Navigator sets the time stamp on the first sample in the VOBU (F1 and F5 in this example), but the time stamp contains the presentation time of the start of the block, so the decoder should apply this time to the last sample in the block (F4 and F8). Presentation times increase during reverse playback.</p>
+<p>Typically a VOBU contains up to 42 frames and might contain more than one group of pictures (GOP). To enable the entire VOBU to be decoded, the decoder should cache the decoded I and P frames. VOBUs on DVDs are not closed GOPs, so a B frame within a GOP may require decoding all of the reference frames in the previous GOP. If the decoder does not have enough surfaces to hold all of the decoded frames, it might need to re-decode selected frames.</p>
+<p><strong>Rate Changes</strong></p>
+<p>By default, the DVD Navigator flushes the graph between rate changes. If the decoder supports the <a href="am-rate-resetontimedisc-property.html"><strong>AM_RATE_ResetOnTimeDisc</strong></a> property, however, the DVD Navigator will not flush the graph, resulting in a smoother transition between playback rates.</p>
+<p>The DVD Navigator always time stamps samples for playback at 1x speed, regardless of the actual playback speed. The decoder must scale the time stamps on the decoded samples to match the actual playback speed. (For details, see <a href="am-rate-simpleratechange-property.html"><strong>AM_RATE_SimpleRateChange Property</strong></a>.) As a result, when playing at speeds other than 1x, the time stamps on the decoded frames diverge from those on the encoded frames. Whenever the DVD Navigator sets the AM_SAMPLE_TIMEDISCONTINUITY flag on a sample, the decoder should resynchronize its time stamps. In other words, the decoded frame should have the same time stamp as the input frame. To retrieve the AM_SAMPLE_TIMEDISCONTINUITY flag, call <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample2-getproperties"><strong>IMediaSample2::GetProperties</strong></a> on the sample. The flag is set in the <strong>dwSampleFlags</strong> member of the <a href="/windows/win32/api/strmif/ns-strmif-am_sample2_properties"><strong>AM_SAMPLE2_PROPERTIES</strong></a> structure.</p>
+<p><strong>Power Management</strong></p>
+<p>In Windows Vista, the DVD Navigator enables the following improvements to power management:</p>
+<ul>
+<li>Higher timer resolution</li>
+<li>Larger data cache</li>
+</ul>
+<p><strong>Timer resolution</strong>: Applications can request a minimum timer resolution by calling the <strong>timeBeginPeriod</strong> function. A higher resolution (shorter period) increases the system's responsiveness to periodic events, such as timeouts, but can also increase the frequency of thread context switches.</p>
+<p>By default, the reference clock in DirectShow sets the timer resolution to 1 millisecond. At that resolution, the CPU will not enter any power-saving modes. Starting in Windows Vista, the DVD Navigator overrides the reference clock's default behavior by calling <a href="/windows/desktop/api/Strmif/nf-strmif-ireferenceclocktimercontrol-setdefaulttimerresolution"><strong>IReferenceClockTimerControl::SetDefaultTimerResolution</strong></a> on the reference clock. This removes the clock's request for a 1-millisecond timer resolution. This might allow the CPU to enter a power-saving mode.</p>
+<p>Timer resolution is a global setting; Windows picks the lowest requested value. The Video Mixing Renderer (VMR) filters (VMR-7 and VMR-9) set the timer resolution to 1 millisecond. The EVR typically sets the resolution to a value between 4 and 8 milliseconds, depending on whether the desktop composition is enabled and whether the EVR is in full-screen mode. Other applications might also set the resolution.</p>
+<p><strong>Cache size</strong>: Applications can specify how much data the DVD Navigator caches by setting the DVD_CacheSizeInMB option in the <a href="/windows/desktop/api/Strmif/nf-strmif-idvdcontrol2-setoption"><strong>IDvdControl2::SetOption</strong></a> method. If the application sets this flag to a large value (&gt; 50 MB), the DVD drive may spin down after the initial pre-fetch, depending on the hardware, which can reduce power consumption.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="dvd-applications.html">DVD Applications</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

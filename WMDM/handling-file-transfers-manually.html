@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Handling File Transfers Manually</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Handling File Transfers Manually
+description: Handling File Transfers Manually
+ms.assetid: ff94191b-a0f2-4118-996c-d040f214fb9b
+keywords:</p>
+<ul>
+<li>Windows Media Device Manager,manual file transfers</li>
+<li>Device Manager,manual file transfers</li>
+<li>programming guide,manual file transfers</li>
+<li>desktop applications,manual file transfers</li>
+<li>creating Windows Media Device Manager applications,manual file transfers</li>
+<li>manual file transfers
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Handling File Transfers Manually</h1>
+<p>Your application can implement the <a href="/windows/desktop/api/mswmdm/nn-mswmdm-iwmdmoperation"><strong>IWMDMOperation</strong></a> interface to manage part of the reading or writing process. On a read from device, the implementation enables the application to receive blocks of raw data from a device file. On a write to device, it enables the application to send blocks of raw data to a file on the device.</p>
+<p>In both read and write operations, the <a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-transferobjectdata"><strong>IWMDMOperation::TransferObjectData</strong></a> method passes the data between the computer and the device. To know the direction of the data transfer, your application must set a flag when Windows Media Device Manager calls <a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-beginread"><strong>BeginRead</strong></a> or <a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-beginwrite"><strong>BeginWrite</strong></a>. When the <a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-end"><strong>End</strong></a> method is called, the application should reset this flag.</p>
+<blockquote>
+<p>[!Note]<br />
+If the service provider and device properly implement <a href="/windows/desktop/api/mswmdm/nn-mswmdm-imdspobject2"><strong>IMDSPObject2</strong></a>, it will first call the application's <a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation3-transferobjectdataonclearchannel">IWMDMOperation3::TransferObjectDataOnClearChannel</a> method, if implemented. This method is a more efficient way of transferring data. <strong>TransferObjectDataOnClearChannel</strong> is handled the same way as <strong>TransferObjectData</strong>, except that the data is never encrypted and has no MAC values to verify.</p>
+</blockquote>
+<p>Â </p>
+<p>The following sections describe both the reading and the writing process, when your application implements <strong>IWMDMOperation</strong>.</p>
+<p><strong>Reading from a device</strong></p>
+<p>When reading a file from a device, Windows Media Device Manager calls the following <strong>IWMDMOperation</strong> methods in order:</p>
+<ul>
+<li><a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-beginread"><strong>BeginRead</strong></a> Called to notify the application that a read from device is beginning.</li>
+<li><a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-transferobjectdata"><strong>TransferObjectData</strong></a> Called one or more times. The processing of data is described in the following steps:
+<ol>
+<li><strong>TransferObjectData</strong> receives a buffer, <em>pData</em>, of size <em>pdwSize</em> bytes, filled with data, and a MAC to verify the incoming data.</li>
+<li>The application verifies the incoming parameters with the incoming data MAC.</li>
+<li>The application decrypts and reads as much of the data in <em>pData</em> as it can, and modifies the returned value of <em>pdwSize</em> to indicate how many bytes were actually read.</li>
+<li>The application decrypts the data, using <a href="/previous-versions/bb231586(v=vs.85)"><strong>CSecureChannelClient::DecryptParam</strong></a>, and stores it or uses it, as needed.</li>
+<li><strong>TransferObjectData</strong> returns S_OK.</li>
+<li>Windows Media Device Manager continues to call <strong>TransferObjectData</strong> until the application has read all the data from the file, or the application returns WMDM_E_USER_CANCELLED to cancel the operation (in which case the read is canceled, and Windows Media Device Manager calls <strong>End</strong>).</li>
+</ol>
+</li>
+<li><a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-end"><strong>End</strong></a> Called to notify the application that a read from device is ending.</li>
+</ul>
+<p><strong>Writing to a device</strong></p>
+<p>When writing a file to the device, Windows Media Device Manager calls the following <strong>IWMDMOperation</strong> methods in order:</p>
+<ul>
+<li><a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-getobjectname"><strong>GetObjectName</strong></a> Called to allow the application to specify a name for the new storage. This method is only called if the application did not specify a name in the <strong>Insert</strong> method.</li>
+<li><a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-getobjectattributes"><strong>GetObjectAttributes</strong></a> Called to allow the application to specify attributes for the new storage on the device.</li>
+<li><a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-beginwrite"><strong>BeginWrite</strong></a> Called to notify that a write to device is beginning.</li>
+<li><a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-getobjecttotalsize"><strong>GetObjectTotalSize</strong></a> Called to retrieve the total size of the object being written to the device, to enable optimization of the transfer, and also to give Windows Media Device Manager an opportunity to cancel the transfer if the file is too large for the device.</li>
+<li><a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-transferobjectdata"><strong>TransferObjectData</strong></a> Called one or more times. The processing of data is described in the following steps:
+<ol>
+<li><strong>TransferObjectData</strong> receives a pointer to a buffer of size <em>pdwSize</em> bytes.</li>
+<li>The application gets a block of data to send to the device, usually by reading data from a file, and fills the received buffer with up to <em>pdwSize</em> bytes. It should modify <em>pdwSize</em> (if necessary) to reflect how many bytes were added to the buffer.</li>
+<li>The application creates a MAC of all the method parameters.</li>
+<li>The application encrypts the data in the buffer, using <a href="/previous-versions/bb231587(v=vs.85)"><strong>CSecureChannelClient::EncryptParam</strong></a>.</li>
+<li><strong>TransferObjectData</strong> returns S_OK to indicate that there is more data, or S_FALSE to indicate that there is no more data. If the application returns WMDM_E_USER_CANCELLED, the write operation is canceled and Windows Media Device Manager will call <strong>End</strong>.</li>
+<li>Windows Media Device Manager continues to call <strong>TransferObjectData</strong> as long as the application returns S_OK.</li>
+</ol>
+</li>
+<li><a href="/windows/desktop/api/mswmdm/nf-mswmdm-iwmdmoperation-end"><strong>End</strong></a> Called to notify that a write to device is ending.</li>
+</ul>
+<p>For a code example, see <a href="encryption-and-decryption.html">Encryption and Decryption</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="creating-a-windows-media-device-manager-application.html"><strong>Creating a Windows Media Device Manager Application</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

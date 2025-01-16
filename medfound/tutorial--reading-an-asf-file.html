@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tutorial: Reading an ASF File by Using WMContainer Objects</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This tutorial shows how to get data packets from an Advanced Systems Format (ASF) file using the ASF Splitter.
+ms.assetid: e3a55275-e8f0-4ab7-98db-a2f2c54d5a51
+title: 'Tutorial: Reading an ASF File by Using WMContainer Objects'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Tutorial: Reading an ASF File by Using WMContainer Objects</h1>
+<p>This tutorial shows how to get data packets from an Advanced Systems Format (ASF) file using the <a href="asf-splitter.html">ASF Splitter</a>. In this tutorial, you will create a simple console application that reads an ASF file and generates compressed media samples for the first video stream in the file. The application displays information about the key frames in the video stream.</p>
+<p>This tutorial contains the following steps:</p>
+<ul>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#1-set-up-the-project">1. Set up the Project</a></li>
+<li><a href="#2-open-an-asf-file">2. Open an ASF File</a></li>
+<li><a href="#3-read-the-asf-header-object">3. Read the ASF Header Object</a></li>
+<li><a href="#4-create-the-asf-splitter">4. Create the ASF Splitter</a></li>
+<li><a href="#5-select-a-stream-for-parsing">5. Select a Stream for Parsing</a></li>
+<li><a href="#6-generate-compressed-media-samples">6. Generate Compressed Media Samples</a></li>
+<li><a href="#7-write-the-entry-point-function">7. Write the Entry-Point Function</a></li>
+<li><a href="#program-listing">Program Listing</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<p>The tutorial does not cover how to decode the compressed data that the application gets from the ASF splitter.</p>
+<h2>Prerequisites</h2>
+<p>This tutorial assumes the following:</p>
+<ul>
+<li>You are familiar with the structure of an ASF file and the components provided by Media Foundation to work with ASF Objects. These components include the ContentInfo object, splitter, multiplexer, and profile. For more information, see <a href="wmcontainer-asf-components.html">WMContainer ASF Components</a>.</li>
+<li>You are familiar with <a href="media-buffers.html">Media Buffers</a> and byte streams: Specifically, file operations using a byte stream, reading from a byte stream into a media buffer, and writing the contents of a media buffer to a byte stream.</li>
+</ul>
+<h2>1. Set up the Project</h2>
+<p>Include the following headers in your source file:</p>
+<pre lang="C++"><code>#include &lt;stdio.h&gt;       // Standard I/O
+#include &lt;windows.h&gt;     // Windows headers
+#include &lt;mfapi.h&gt;       // Media Foundation platform
+#include &lt;wmcontainer.h&gt; // ASF interfaces
+#include &lt;Mferror.h&gt;
+</code></pre>
+<p>Link to the following library files:</p>
+<ul>
+<li>mfplat.lib</li>
+<li>mf.lib</li>
+<li>mfuuid.lib</li>
+</ul>
+<p>Declare the <a href="saferelease.html">SafeRelease</a> function:</p>
+<pre lang="C++"><code>template &lt;class T&gt; void SafeRelease(T **ppT)
+{
+    if (*ppT)
+    {
+        (*ppT)-&gt;Release();
+        *ppT = NULL;
+    }
+}
+</code></pre>
+<h2>2. Open an ASF File</h2>
+<p>Next, open the specified file by calling the <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreatefile"><strong>MFCreateFile</strong></a> function. The method returns a pointer to the byte stream object that contains the contents of the file. The filename is specified by the user through command line arguments of the application.</p>
+<p>The following example code takes a file name and returns a pointer to a byte stream object that can be used to read the file.</p>
+<pre lang="C++"><code>        // Open the file.
+        hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, 
+            MF_FILEFLAGS_NONE, pszFileName, &amp;pStream);
+</code></pre>
+<h2>3. Read the ASF Header Object</h2>
+<p>Next, create the <a href="asf-contentinfo-object.html">ASF ContentInfo Object</a> and use it to parse the ASF Header Object of the specified file. The ContentInfo object stores information from the ASF header, including global file attributes and information about each stream. You will use the ContentInfo object later in the tutorial to initialize the ASF splitter and get the stream number of the video stream.</p>
+<p>To create the ASF ContentInfo object:</p>
+<ol>
+<li>Call the <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-mfcreateasfcontentinfo"><strong>MFCreateASFContentInfo</strong></a> function to create a ContentInfo object. The method returns a pointer to the <a href="/windows/desktop/api/wmcontainer/nn-wmcontainer-imfasfcontentinfo"><strong>IMFASFContentInfo</strong></a> interface.</li>
+<li>Read the first 30 bytes of data from the ASF file into a media buffer.</li>
+<li>Pass the media buffer to the <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfcontentinfo-getheadersize"><strong>IMFASFContentInfo::GetHeaderSize</strong></a> method. This method returns the total size of the Header Object in the ASF file.</li>
+<li>Pass the same media buffer to the <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfcontentinfo-parseheader"><strong>IMFASFContentInfo::ParseHeader</strong></a> method.</li>
+<li>Read the remainder of the Header Object into a new media buffer.</li>
+<li>Pass the second buffer to the <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfcontentinfo-parseheader"><strong>ParseHeader</strong></a> method. Specify the 30-byte offset in the <em>cbOffsetWithinHeader</em> parameter of <strong>ParseHeader</strong>. The <strong>ParseHeader</strong> method initializes the ContentInfo object with information gathered from the various ASF objects contained in the Header Object.</li>
+</ol>
+<pre lang="C++"><code>// Read the ASF Header Object from a byte stream and return a pointer to the 
+// populated ASF ContentInfo object.
+//
+// The current read position of the byte stream must be at the start of the
+// ASF Header Object.
+
+HRESULT CreateContentInfo(IMFByteStream *pStream, 
+    IMFASFContentInfo **ppContentInfo)
+{
+    const DWORD MIN_ASF_HEADER_SIZE = 30;
+    
+    QWORD cbHeader = 0;
+    DWORD cbBuffer = 0;
+
+    IMFASFContentInfo *pContentInfo = NULL;
+    IMFMediaBuffer *pBuffer = NULL;
+
+    // Create the ASF ContentInfo object.
+    HRESULT hr = MFCreateASFContentInfo(&amp;pContentInfo);
+    
+    // Read the first 30 bytes to find the total header size.
+
+    if (SUCCEEDED(hr))
+    {
+        hr = MFCreateMemoryBuffer(MIN_ASF_HEADER_SIZE, &amp;pBuffer);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = ReadFromByteStream(pStream, pBuffer,MIN_ASF_HEADER_SIZE);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pContentInfo-&gt;GetHeaderSize(pBuffer, &amp;cbHeader);
+    }
+
+    // Pass the first 30 bytes to the ContentInfo object.
+    if (SUCCEEDED(hr))
+    {
+        hr = pContentInfo-&gt;ParseHeader(pBuffer, 0);
+    }
+
+    SafeRelease(&amp;pBuffer);
+
+    if (SUCCEEDED(hr))
+    {
+        cbBuffer = (DWORD)(cbHeader - MIN_ASF_HEADER_SIZE);
+
+        hr = MFCreateMemoryBuffer(cbBuffer, &amp;pBuffer);
+    }
+
+    // Read the rest of the header and finish parsing the header.
+    if (SUCCEEDED(hr))
+    {
+        hr = ReadFromByteStream(pStream, pBuffer, cbBuffer);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pContentInfo-&gt;ParseHeader(pBuffer, MIN_ASF_HEADER_SIZE);
+    }
+    if (SUCCEEDED(hr))
+    {
+        // Return the pointer to the caller.
+        *ppContentInfo = pContentInfo;
+        (*ppContentInfo)-&gt;AddRef();
+    }
+    SafeRelease(&amp;pBuffer);
+    SafeRelease(&amp;pContentInfo);
+    return hr;
+} 
+</code></pre>
+<p>This function uses the <code>ReadFromByteStream</code> function to read from a byte stream into a media buffer:</p>
+<pre lang="C++"><code>// Read data from a byte stream into a media buffer.
+//
+// This function reads a maximum of cbMax bytes, or up to the size size of the 
+// buffer, whichever is smaller. If the end of the byte stream is reached, the 
+// actual amount of data read might be less than either of these values.
+//
+// To find out how much data was read, call IMFMediaBuffer::GetCurrentLength.
+
+HRESULT ReadFromByteStream(
+    IMFByteStream *pStream,     // Pointer to the byte stream.
+    IMFMediaBuffer *pBuffer,    // Pointer to the media buffer.
+    DWORD cbMax                 // Maximum amount to read.
+    )
+{
+    DWORD cbBufferMax = 0;
+    DWORD cbRead = 0;
+    BYTE *pData= NULL;
+
+    HRESULT hr = pBuffer-&gt;Lock(&amp;pData, &amp;cbBufferMax, NULL);
+
+    // Do not exceed the maximum size of the buffer.
+    if (SUCCEEDED(hr))
+    {
+        if (cbMax &gt; cbBufferMax)
+        {
+            cbMax = cbBufferMax;
+        }
+
+        // Read up to cbMax bytes.
+        hr = pStream-&gt;Read(pData, cbMax, &amp;cbRead);
+    }
+
+    // Update the size of the valid data in the buffer.
+    if (SUCCEEDED(hr))
+    {
+        hr = pBuffer-&gt;SetCurrentLength(cbRead);
+    }
+    if (pData)
+    {
+        pBuffer-&gt;Unlock();
+    }
+    return hr;
+}
+</code></pre>
+<h2>4. Create the ASF Splitter</h2>
+<p>Next, create the <a href="asf-splitter.html">ASF Splitter</a> object. You will use the ASF splitter to parse the ASF Data Object, which contains packetized media data for the ASF file.</p>
+<p>To create a splitter object for the ASF File:</p>
+<ol>
+<li>Call the <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-mfcreateasfsplitter"><strong>MFCreateASFSplitter</strong></a> function to create the ASF splitter. The function returns a pointer to the <a href="/windows/desktop/api/wmcontainer/nn-wmcontainer-imfasfsplitter"><strong>IMFASFSplitter</strong></a> interface.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfsplitter-initialize"><strong>IMFASFSplitter::Initialize</strong></a> to initialize the ASF splitter. This method takes a pointer to the ContentInfo object, which was created in procedure 3.</li>
+</ol>
+<pre lang="C++"><code>// Create and initialize the ASF splitter.
+
+HRESULT CreateASFSplitter (IMFASFContentInfo* pContentInfo, 
+    IMFASFSplitter** ppSplitter)
+{
+    IMFASFSplitter *pSplitter = NULL;
+
+    // Create the splitter object.
+    HRESULT hr = MFCreateASFSplitter(&amp;pSplitter);
+
+    // Initialize the splitter to work with specific ASF data.
+    if (SUCCEEDED(hr))
+    {
+        hr = pSplitter-&gt;Initialize(pContentInfo);
+    }
+    if (SUCCEEDED(hr))
+    {
+        // Return the object to the caller.
+        *ppSplitter = pSplitter;
+        (*ppSplitter)-&gt;AddRef();
+    }
+    SafeRelease(&amp;pSplitter);
+    return hr;
+}
+</code></pre>
+<h2>5. Select a Stream for Parsing</h2>
+<p>Next, enumerate the streams in the ASF file and select the first video stream for parsing. To enumerate the streams, you will use an ASF profile object and search for streams that have a video media type.</p>
+<p>To select the video stream:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfcontentinfo-getprofile"><strong>IMFASFContentInfo::GetProfile</strong></a> on the ContentInfo object to create an ASF profile. Among other information, the profile describes the streams in the ASF file.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfprofile-getstreamcount"><strong>IMFASFProfile::GetStreamCount</strong></a> to get the number of streams in the ASF file.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfprofile-getstream"><strong>IMFASFProfile::GetStream</strong></a> in a loop to enumerate the streams. The method returns a pointer to the <a href="/windows/desktop/api/wmcontainer/nn-wmcontainer-imfasfstreamconfig"><strong>IMFASFStreamConfig</strong></a> interface. It also returns the stream identifier.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfstreamconfig-getstreamtype"><strong>IMFASFStreamConfig::GetStreamType</strong></a> to get the major type GUID for the stream. If the major type GUID is MFMediaType_Video, the stream contains video.</li>
+<li>If you found a video stream in step 4, call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfsplitter-selectstreams"><strong>IMFASFSplitter::SelectStreams</strong></a> to select the stream. This method takes an array of stream identifiers. For this tutorial, the array size is 1 because the application will parse a single stream.</li>
+</ol>
+<p>The following example code enumerates the streams in the ASF file and selects the first video stream on the ASF splitter:</p>
+<pre lang="C++"><code>// Select the first video stream for parsing with the ASF splitter.
+
+HRESULT SelectVideoStream(IMFASFContentInfo *pContentInfo, 
+    IMFASFSplitter *pSplitter, BOOL *pbHasVideo)
+{
+    DWORD   cStreams = 0;
+    WORD    wStreamID = 0;
+
+    IMFASFProfile *pProfile = NULL;
+    IMFASFStreamConfig *pStream = NULL;
+
+    // Get the ASF profile from the ContentInfo object.
+    HRESULT hr = pContentInfo-&gt;GetProfile(&amp;pProfile);
+
+    // Loop through all of the streams in the profile.
+    if (SUCCEEDED(hr))
+    {
+        hr = pProfile-&gt;GetStreamCount(&amp;cStreams);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        for (DWORD i = 0; i &lt; cStreams; i++)
+        {
+            GUID    streamType = GUID_NULL;
+
+            // Get the stream type and stream identifier.
+            hr = pProfile-&gt;GetStream(i, &amp;wStreamID, &amp;pStream);
+            if (FAILED(hr)) 
+            {
+                break;
+            }
+
+            hr = pStream-&gt;GetStreamType(&amp;streamType);
+            if (FAILED(hr)) 
+            {
+                break;
+            }
+
+            if (streamType == MFMediaType_Video)
+            {
+                *pbHasVideo = TRUE;
+                break;
+            }
+            SafeRelease(&amp;pStream);
+        }
+    }
+
+    // Select the video stream, if found.
+    if (SUCCEEDED(hr))
+    {
+        if (*pbHasVideo)
+        {
+            // SelectStreams takes an array of stream identifiers.
+            hr = pSplitter-&gt;SelectStreams(&amp;wStreamID, 1);
+        }
+    }
+    SafeRelease(&amp;pStream);
+    SafeRelease(&amp;pProfile);
+    return hr;
+}
+</code></pre>
+<h2>6. Generate Compressed Media Samples</h2>
+<p>Next, use the ASF splitter to parse the ASF Data Object and get the data packets for the selected video stream. The application reads data from the ASF file in fixed-size blocks and passes the data to the ASF splitter. The splitter parses the data and generates <a href="media-samples.html">Media Samples</a> that contain the compressed video data. The application checks whether each sample represents a key frame. If so, the application displays some basic information about the sample:</p>
+<ul>
+<li>Number of media buffers</li>
+<li>Total size of the data</li>
+<li>Time stamp</li>
+</ul>
+<p>To generate compressed media samples:</p>
+<ol>
+<li>Allocate a new media buffer.</li>
+<li>Read data from the byte stream into the media buffer.</li>
+<li>Pass the media buffer to the <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfsplitter-parsedata"><strong>IMFASFSplitter::ParseData</strong></a> method. The method parses the ASF data in the buffer.</li>
+<li>In a loop, get media samples from the splitter by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfsplitter-getnextsample"><strong>IMFASFSplitter::GetNextSample</strong></a>. If the <em>ppISample</em> parameter receives a valid <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfsample"><strong>IMFSample</strong></a> pointer, it means the ASF splitter has parsed one or more data packets. If <em>ppISample</em> receives the value <strong>NULL</strong>, break from the loop and go back to step 1.</li>
+<li>Display information about the sample.</li>
+<li>Break from the loop in the following conditions:
+<ul>
+<li>The <em>ppISample</em> parameter receives the value <strong>NULL</strong>.</li>
+<li>The <em>pdwStatusFlags</em> parameter does not receive the <strong>ASF_STATUSFLAGS_INCOMPLETE</strong> flag.</li>
+</ul>
+</li>
+</ol>
+<p>Repeat these steps until you reach the end of the file. The following code shows these steps:</p>
+<pre lang="C++"><code>// Parse the video stream and display information about the video samples.
+//
+// The current read position of the byte stream must be at the start of the ASF
+// Data Object.
+
+HRESULT DisplayKeyFrames(IMFByteStream *pStream, IMFASFSplitter *pSplitter)
+{
+    const DWORD cbReadSize = 2048;  // Read size (arbitrary value)
+
+    IMFMediaBuffer *pBuffer = NULL;
+    IMFSample *pSample = NULL;
+
+    HRESULT hr = S_OK;
+    while (SUCCEEDED(hr))
+    {
+        // The parser must get a newly allocated buffer each time.
+        hr = MFCreateMemoryBuffer(cbReadSize, &amp;pBuffer);
+        if (FAILED(hr))
+        {
+            break;
+        }
+
+        // Read data into the buffer.
+        hr = ReadFromByteStream(pStream, pBuffer, cbReadSize);
+        if (FAILED(hr)) 
+        {
+            break; 
+        }
+
+        // Get the amound of data that was read.
+        DWORD cbData;
+        hr = pBuffer-&gt;GetCurrentLength(&amp;cbData);
+        if (FAILED(hr)) 
+        { 
+            break; 
+        }
+
+        if (cbData == 0)
+        {
+            break; // End of file.
+        }
+
+        // Send the data to the ASF splitter.
+        hr = pSplitter-&gt;ParseData(pBuffer, 0, 0);
+        SafeRelease(&amp;pBuffer);
+        if (FAILED(hr)) 
+        { 
+            break; 
+        }
+
+        // Pull samples from the splitter.
+        DWORD parsingStatus = 0;
+        do
+        {
+            WORD streamID;
+            hr = pSplitter-&gt;GetNextSample(&amp;parsingStatus, &amp;streamID, &amp;pSample);
+            if (FAILED(hr)) 
+            { 
+                break; 
+            }
+            if (pSample == NULL)
+            {
+                // No samples yet. Parse more data.
+                break;
+            }
+            if (IsRandomAccessPoint(pSample))
+            {
+                DisplayKeyFrame(pSample);
+            }
+            SafeRelease(&amp;pSample);
+            
+        } while (parsingStatus &amp; ASF_STATUSFLAGS_INCOMPLETE);
+    }
+    SafeRelease(&amp;pSample);
+    SafeRelease(&amp;pBuffer);
+    return hr;
+}
+</code></pre>
+<p>The IsKeyFrame function tests whether a sample is a key frame, by getting the value of the <a href="mfsampleextension-cleanpoint-attribute.html"><strong>MFSampleExtension_CleanPoint</strong></a> attribute.</p>
+<pre lang="C++"><code>inline BOOL IsRandomAccessPoint(IMFSample *pSample)
+{
+    // Check for the &quot;clean point&quot; attribute. Default to FALSE.
+    return MFGetAttributeUINT32(pSample, MFSampleExtension_CleanPoint, FALSE);
+}
+</code></pre>
+<p>For illustration purposes, this tutorial displays some information for each video key frame, by calling the following function:</p>
+<pre lang="C++"><code>void DisplayKeyFrame(IMFSample *pSample)
+{
+    DWORD   cBuffers = 0;           // Buffer count
+    DWORD   cbTotalLength = 0;      // Buffer length
+    MFTIME  hnsTime = 0;            // Time stamp
+
+    // Print various information about the key frame.
+    if (SUCCEEDED(pSample-&gt;GetBufferCount(&amp;cBuffers)))
+    {
+        wprintf_s(L&quot;Buffer count: %d\n&quot;, cBuffers);
+    }
+    if (SUCCEEDED(pSample-&gt;GetTotalLength(&amp;cbTotalLength)))
+    {
+        wprintf_s(L&quot;Length: %d bytes\n&quot;, cbTotalLength);
+    }
+    if (SUCCEEDED(pSample-&gt;GetSampleTime(&amp;hnsTime)))
+    {
+        // Convert the time stamp to seconds.
+        double sec = static_cast&lt;double&gt;(hnsTime / 10000) / 1000;
+        wprintf_s(L&quot;Time stamp: %f sec.\n&quot;, sec);
+    }
+    wprintf_s(L&quot;\n&quot;);
+}
+</code></pre>
+<p>A typical application would use the data packets for decoding, remuxing, sending over the network, or some other task.</p>
+<h2>7. Write the Entry-Point Function</h2>
+<p>Now you can put the previous steps together into a complete application. Before using any of the Media Foundation objects, initialize the Media Foundation platform by calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfstartup"><strong>MFStartup</strong></a>. When you are done, call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfshutdown"><strong>MFShutdown</strong></a>. For more information, <a href="initializing-media-foundation.html">Initializing Media Foundation</a>.</p>
+<pre lang="C++"><code>int wmain(int argc, WCHAR* argv[])
+{
+    if (argc != 2)
+    {
+        _s(L&quot;Usage: %s input.wmv&quot;);
+        return 0;
+    }
+
+    // Start the Media Foundation platform.
+    HRESULT hr = MFStartup(MF_VERSION);
+    if (SUCCEEDED(hr))
+    {
+        PCWSTR pszFileName = argv[1]; 
+        BOOL   bHasVideo = FALSE;
+
+        IMFByteStream       *pStream = NULL;
+        IMFASFContentInfo   *pContentInfo = NULL;
+        IMFASFSplitter      *pSplitter = NULL;
+
+        // Open the file.
+        hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, 
+            MF_FILEFLAGS_NONE, pszFileName, &amp;pStream);
+
+        // Read the ASF header.
+        if (SUCCEEDED(hr))
+        {
+            hr = CreateContentInfo(pStream, &amp;pContentInfo);
+        }
+
+        // Create the ASF splitter.
+        if (SUCCEEDED(hr))
+        {
+            hr = CreateASFSplitter(pContentInfo, &amp;pSplitter);
+        }
+
+        // Select the first video stream.
+        if (SUCCEEDED(hr))
+        {
+            hr = SelectVideoStream(pContentInfo, pSplitter, &amp;bHasVideo);
+        }
+
+        // Parse the ASF file.
+        if (SUCCEEDED(hr))
+        {
+            if (bHasVideo)
+            {
+                hr = DisplayKeyFrames(pStream, pSplitter);
+            }
+            else
+            {
+                wprintf_s(L&quot;No video stream.\n&quot;);
+            }
+        }
+        SafeRelease(&amp;pSplitter);
+        SafeRelease(&amp;pContentInfo);
+        SafeRelease(&amp;pStream);
+    
+        // Shut down the Media Foundation platform.
+        MFShutdown();
+    }
+    if (FAILED(hr))
+    {
+        wprintf_s(L&quot;Error: 0x%X\n&quot;, hr);
+    }
+    return 0;
+}
+</code></pre>
+<h2>Program Listing</h2>
+<p>The following code shows the complete listing for the tutorial.</p>
+<pre lang="C++"><code>#include &lt;stdio.h&gt;       // Standard I/O
+#include &lt;windows.h&gt;     // Windows headers
+#include &lt;mfapi.h&gt;       // Media Foundation platform
+#include &lt;wmcontainer.h&gt; // ASF interfaces
+#include &lt;Mferror.h&gt;
+
+#pragma comment(lib, &quot;mfplat&quot;)
+#pragma comment(lib, &quot;mf&quot;)
+#pragma comment(lib, &quot;mfuuid&quot;)
+
+template &lt;class T&gt; void SafeRelease(T **ppT)
+{
+    if (*ppT)
+    {
+        (*ppT)-&gt;Release();
+        *ppT = NULL;
+    }
+}
+
+// Read data from a byte stream into a media buffer.
+//
+// This function reads a maximum of cbMax bytes, or up to the size size of the 
+// buffer, whichever is smaller. If the end of the byte stream is reached, the 
+// actual amount of data read might be less than either of these values.
+//
+// To find out how much data was read, call IMFMediaBuffer::GetCurrentLength.
+
+HRESULT ReadFromByteStream(
+    IMFByteStream *pStream,     // Pointer to the byte stream.
+    IMFMediaBuffer *pBuffer,    // Pointer to the media buffer.
+    DWORD cbMax                 // Maximum amount to read.
+    )
+{
+    DWORD cbBufferMax = 0;
+    DWORD cbRead = 0;
+    BYTE *pData= NULL;
+
+    HRESULT hr = pBuffer-&gt;Lock(&amp;pData, &amp;cbBufferMax, NULL);
+
+    // Do not exceed the maximum size of the buffer.
+    if (SUCCEEDED(hr))
+    {
+        if (cbMax &gt; cbBufferMax)
+        {
+            cbMax = cbBufferMax;
+        }
+
+        // Read up to cbMax bytes.
+        hr = pStream-&gt;Read(pData, cbMax, &amp;cbRead);
+    }
+
+    // Update the size of the valid data in the buffer.
+    if (SUCCEEDED(hr))
+    {
+        hr = pBuffer-&gt;SetCurrentLength(cbRead);
+    }
+    if (pData)
+    {
+        pBuffer-&gt;Unlock();
+    }
+    return hr;
+}
+
+
+// Read the ASF Header Object from a byte stream and return a pointer to the 
+// populated ASF ContentInfo object.
+//
+// The current read position of the byte stream must be at the start of the
+// ASF Header Object.
+
+HRESULT CreateContentInfo(IMFByteStream *pStream, 
+    IMFASFContentInfo **ppContentInfo)
+{
+    const DWORD MIN_ASF_HEADER_SIZE = 30;
+    
+    QWORD cbHeader = 0;
+    DWORD cbBuffer = 0;
+
+    IMFASFContentInfo *pContentInfo = NULL;
+    IMFMediaBuffer *pBuffer = NULL;
+
+    // Create the ASF ContentInfo object.
+    HRESULT hr = MFCreateASFContentInfo(&amp;pContentInfo);
+    
+    // Read the first 30 bytes to find the total header size.
+
+    if (SUCCEEDED(hr))
+    {
+        hr = MFCreateMemoryBuffer(MIN_ASF_HEADER_SIZE, &amp;pBuffer);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = ReadFromByteStream(pStream, pBuffer,MIN_ASF_HEADER_SIZE);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pContentInfo-&gt;GetHeaderSize(pBuffer, &amp;cbHeader);
+    }
+
+    // Pass the first 30 bytes to the ContentInfo object.
+    if (SUCCEEDED(hr))
+    {
+        hr = pContentInfo-&gt;ParseHeader(pBuffer, 0);
+    }
+
+    SafeRelease(&amp;pBuffer);
+
+    if (SUCCEEDED(hr))
+    {
+        cbBuffer = (DWORD)(cbHeader - MIN_ASF_HEADER_SIZE);
+
+        hr = MFCreateMemoryBuffer(cbBuffer, &amp;pBuffer);
+    }
+
+    // Read the rest of the header and finish parsing the header.
+    if (SUCCEEDED(hr))
+    {
+        hr = ReadFromByteStream(pStream, pBuffer, cbBuffer);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pContentInfo-&gt;ParseHeader(pBuffer, MIN_ASF_HEADER_SIZE);
+    }
+    if (SUCCEEDED(hr))
+    {
+        // Return the pointer to the caller.
+        *ppContentInfo = pContentInfo;
+        (*ppContentInfo)-&gt;AddRef();
+    }
+    SafeRelease(&amp;pBuffer);
+    SafeRelease(&amp;pContentInfo);
+    return hr;
+} 
+
+// Create and initialize the ASF splitter.
+
+HRESULT CreateASFSplitter (IMFASFContentInfo* pContentInfo, 
+    IMFASFSplitter** ppSplitter)
+{
+    IMFASFSplitter *pSplitter = NULL;
+
+    // Create the splitter object.
+    HRESULT hr = MFCreateASFSplitter(&amp;pSplitter);
+
+    // Initialize the splitter to work with specific ASF data.
+    if (SUCCEEDED(hr))
+    {
+        hr = pSplitter-&gt;Initialize(pContentInfo);
+    }
+    if (SUCCEEDED(hr))
+    {
+        // Return the object to the caller.
+        *ppSplitter = pSplitter;
+        (*ppSplitter)-&gt;AddRef();
+    }
+    SafeRelease(&amp;pSplitter);
+    return hr;
+}
+
+
+// Select the first video stream for parsing with the ASF splitter.
+
+HRESULT SelectVideoStream(IMFASFContentInfo *pContentInfo, 
+    IMFASFSplitter *pSplitter, BOOL *pbHasVideo)
+{
+    DWORD   cStreams = 0;
+    WORD    wStreamID = 0;
+
+    IMFASFProfile *pProfile = NULL;
+    IMFASFStreamConfig *pStream = NULL;
+
+    // Get the ASF profile from the ContentInfo object.
+    HRESULT hr = pContentInfo-&gt;GetProfile(&amp;pProfile);
+
+    // Loop through all of the streams in the profile.
+    if (SUCCEEDED(hr))
+    {
+        hr = pProfile-&gt;GetStreamCount(&amp;cStreams);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        for (DWORD i = 0; i &lt; cStreams; i++)
+        {
+            GUID    streamType = GUID_NULL;
+
+            // Get the stream type and stream identifier.
+            hr = pProfile-&gt;GetStream(i, &amp;wStreamID, &amp;pStream);
+            if (FAILED(hr)) 
+            {
+                break;
+            }
+
+            hr = pStream-&gt;GetStreamType(&amp;streamType);
+            if (FAILED(hr)) 
+            {
+                break;
+            }
+
+            if (streamType == MFMediaType_Video)
+            {
+                *pbHasVideo = TRUE;
+                break;
+            }
+            SafeRelease(&amp;pStream);
+        }
+    }
+
+    // Select the video stream, if found.
+    if (SUCCEEDED(hr))
+    {
+        if (*pbHasVideo)
+        {
+            // SelectStreams takes an array of stream identifiers.
+            hr = pSplitter-&gt;SelectStreams(&amp;wStreamID, 1);
+        }
+    }
+    SafeRelease(&amp;pStream);
+    SafeRelease(&amp;pProfile);
+    return hr;
+}
+
+inline BOOL IsRandomAccessPoint(IMFSample *pSample)
+{
+    // Check for the &quot;clean point&quot; attribute. Default to FALSE.
+    return MFGetAttributeUINT32(pSample, MFSampleExtension_CleanPoint, FALSE);
+}
+
+void DisplayKeyFrame(IMFSample *pSample)
+{
+    DWORD   cBuffers = 0;           // Buffer count
+    DWORD   cbTotalLength = 0;      // Buffer length
+    MFTIME  hnsTime = 0;            // Time stamp
+
+    // Print various information about the key frame.
+    if (SUCCEEDED(pSample-&gt;GetBufferCount(&amp;cBuffers)))
+    {
+        wprintf_s(L&quot;Buffer count: %d\n&quot;, cBuffers);
+    }
+    if (SUCCEEDED(pSample-&gt;GetTotalLength(&amp;cbTotalLength)))
+    {
+        wprintf_s(L&quot;Length: %d bytes\n&quot;, cbTotalLength);
+    }
+    if (SUCCEEDED(pSample-&gt;GetSampleTime(&amp;hnsTime)))
+    {
+        // Convert the time stamp to seconds.
+        double sec = static_cast&lt;double&gt;(hnsTime / 10000) / 1000;
+        wprintf_s(L&quot;Time stamp: %f sec.\n&quot;, sec);
+    }
+    wprintf_s(L&quot;\n&quot;);
+}
+
+
+// Parse the video stream and display information about the video samples.
+//
+// The current read position of the byte stream must be at the start of the ASF
+// Data Object.
+
+HRESULT DisplayKeyFrames(IMFByteStream *pStream, IMFASFSplitter *pSplitter)
+{
+    const DWORD cbReadSize = 2048;  // Read size (arbitrary value)
+
+    IMFMediaBuffer *pBuffer = NULL;
+    IMFSample *pSample = NULL;
+
+    HRESULT hr = S_OK;
+    while (SUCCEEDED(hr))
+    {
+        // The parser must get a newly allocated buffer each time.
+        hr = MFCreateMemoryBuffer(cbReadSize, &amp;pBuffer);
+        if (FAILED(hr))
+        {
+            break;
+        }
+
+        // Read data into the buffer.
+        hr = ReadFromByteStream(pStream, pBuffer, cbReadSize);
+        if (FAILED(hr)) 
+        {
+            break; 
+        }
+
+        // Get the amound of data that was read.
+        DWORD cbData;
+        hr = pBuffer-&gt;GetCurrentLength(&amp;cbData);
+        if (FAILED(hr)) 
+        { 
+            break; 
+        }
+
+        if (cbData == 0)
+        {
+            break; // End of file.
+        }
+
+        // Send the data to the ASF splitter.
+        hr = pSplitter-&gt;ParseData(pBuffer, 0, 0);
+        SafeRelease(&amp;pBuffer);
+        if (FAILED(hr)) 
+        { 
+            break; 
+        }
+
+        // Pull samples from the splitter.
+        DWORD parsingStatus = 0;
+        do
+        {
+            WORD streamID;
+            hr = pSplitter-&gt;GetNextSample(&amp;parsingStatus, &amp;streamID, &amp;pSample);
+            if (FAILED(hr)) 
+            { 
+                break; 
+            }
+            if (pSample == NULL)
+            {
+                // No samples yet. Parse more data.
+                break;
+            }
+            if (IsRandomAccessPoint(pSample))
+            {
+                DisplayKeyFrame(pSample);
+            }
+            SafeRelease(&amp;pSample);
+            
+        } while (parsingStatus &amp; ASF_STATUSFLAGS_INCOMPLETE);
+    }
+    SafeRelease(&amp;pSample);
+    SafeRelease(&amp;pBuffer);
+    return hr;
+}
+
+int wmain(int argc, WCHAR* argv[])
+{
+    if (argc != 2)
+    {
+        _s(L&quot;Usage: %s input.wmv&quot;);
+        return 0;
+    }
+
+    // Start the Media Foundation platform.
+    HRESULT hr = MFStartup(MF_VERSION);
+    if (SUCCEEDED(hr))
+    {
+        PCWSTR pszFileName = argv[1]; 
+        BOOL   bHasVideo = FALSE;
+
+        IMFByteStream       *pStream = NULL;
+        IMFASFContentInfo   *pContentInfo = NULL;
+        IMFASFSplitter      *pSplitter = NULL;
+
+        // Open the file.
+        hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, 
+            MF_FILEFLAGS_NONE, pszFileName, &amp;pStream);
+
+        // Read the ASF header.
+        if (SUCCEEDED(hr))
+        {
+            hr = CreateContentInfo(pStream, &amp;pContentInfo);
+        }
+
+        // Create the ASF splitter.
+        if (SUCCEEDED(hr))
+        {
+            hr = CreateASFSplitter(pContentInfo, &amp;pSplitter);
+        }
+
+        // Select the first video stream.
+        if (SUCCEEDED(hr))
+        {
+            hr = SelectVideoStream(pContentInfo, pSplitter, &amp;bHasVideo);
+        }
+
+        // Parse the ASF file.
+        if (SUCCEEDED(hr))
+        {
+            if (bHasVideo)
+            {
+                hr = DisplayKeyFrames(pStream, pSplitter);
+            }
+            else
+            {
+                wprintf_s(L&quot;No video stream.\n&quot;);
+            }
+        }
+        SafeRelease(&amp;pSplitter);
+        SafeRelease(&amp;pContentInfo);
+        SafeRelease(&amp;pStream);
+    
+        // Shut down the Media Foundation platform.
+        MFShutdown();
+    }
+    if (FAILED(hr))
+    {
+        wprintf_s(L&quot;Error: 0x%X\n&quot;, hr);
+    }
+    return 0;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="wmcontainer-asf-components.html">WMContainer ASF Components</a></p>
+<!-- raw HTML omitted -->
+<p><a href="asf-support-in-media-foundation.html">ASF Support in Media Foundation</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

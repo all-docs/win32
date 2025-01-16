@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>User Accounts with Fast User Switching and Remote Desktop</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: WindowsÂ XP user accounts enable multiple users to be logged on simultaneously, each with his or her own settings and each running his or her own applications.
+ms.assetid: bc404afc-f73e-404d-854d-faab5cf205a5
+title: User Accounts with Fast User Switching and Remote Desktop
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>User Accounts with Fast User Switching and Remote Desktop</h1>
+<p>WindowsÂ XP user accounts enable multiple users to be logged on simultaneously, each with his or her own settings and each running his or her own applications. Because one user does not have to log off to allow access to another user, each user's desktop is easily accessed using the fast user switching feature. User accounts also include the Personal Terminal Server feature, or Remote Desktop, which enables users to access their desktop account from remote systems.</p>
+<p>The following topics are discussed.</p>
+<ul>
+<li><a href="#infrastructure-usage-requirements">Infrastructure Usage Requirements</a></li>
+<li><a href="#compatibility-with-existing-applications">Compatibility with Existing Applications</a></li>
+<li><a href="#registering-for-session-switching-notification">Registering for Session Switching Notification</a></li>
+<li><a href="#ensuring-only-one-instance-of-your-application-is-running">Ensuring Only One Instance of Your Application Is Running</a></li>
+<li><a href="#shutting-down-your-application-across-all-sessions">Shutting Down Your Application Across All Sessions</a></li>
+<li><a href="#interaction-with-system-services">Interaction with System Services</a></li>
+<li><a href="#remote-desktop-and-bandwidth">Remote Desktop and Bandwidth</a></li>
+</ul>
+<h2>Infrastructure Usage Requirements</h2>
+<p>Underlying infrastructure inherited from WindowsÂ 2000 supports state separation of user data, user settings, and computer settings. Taking advantage of this infrastructure, the following are required to successfully run your application under WindowsÂ XP.</p>
+<ul>
+<li>Default to the <strong>My Documents</strong> folder for storage of user-created data.</li>
+<li>Classify and store application data correctly.</li>
+<li>Degrade gracefully on &quot;Access Denied&quot; messages.</li>
+</ul>
+<p>Temporary files, memory-mapped files, and documents should all be stored in the appropriate subdirectory of the user's profile directory. Use <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shgetfolderlocation"><strong>SHGetFolderLocation</strong></a> or <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shgetfolderpatha"><strong>SHGetFolderPath</strong></a> to determine the appropriate storage location for these files. Passing the <a href="csidl.html"><strong>CSIDL_APPDATA</strong></a> flag to these functions returns the path of a file system directory that serves as a common repository for application-specific data. Use the flag <a href="csidl.html"><strong>CSIDL_LOCAL_APPDATA</strong></a> in place of <strong>CSIDL_APPDATA</strong> for data that should change when the user changes, such as temporary files.</p>
+<p>The requirements listed above are a subset of those in the Microsoft Certification program. For more information, see the <a href="../win_cert/certification-requirements-for-windows-desktop-apps.html">Certification requirements for Windows Desktop Apps</a> page.</p>
+<h2>Compatibility with Existing Applications</h2>
+<p>Both fast user switching and Personal Terminal Server use Terminal Services technology and therefore are compatible with most earlier Microsoft Win32 applications. If an application is WindowsÂ 2000 Logo compliant, implementing basic profile separation and power management features, that application should run properly under individual WindowsÂ XP user accounts.</p>
+<h2>Registering for Session Switching Notification</h2>
+<p>Typically, an application does not need to be notified when a desktop switch occurs. However, applications that must be notified when the account under which they are running is the current desktop, such as applications that access the serial port or other shared resources, can register for desktop switch notification. To register for a notification, use the <a href="/windows/win32/api/wtsapi32/nf-wtsapi32-wtsregistersessionnotification"><strong>WTSRegisterSessionNotification</strong></a> function.</p>
+<p>Once that function has been called, the window with handle <em>hWnd</em> is registered to receive a <a href="../termserv/wm-wtssession-change.html"><strong>WM_WTSSESSION_CHANGE</strong></a> message through its <strong>WndProc</strong> function. The session ID is sent in the <strong>lParam</strong> parameter, and a code that indicates the event that generated the message is sent in <strong>wParam</strong> as one of the following flags.</p>
+<ul>
+<li>WTS_CONSOLE_CONNECT</li>
+<li>WTS_CONSOLE_DISCONNECT</li>
+<li>WTS_REMOTE_CONNECT</li>
+<li>WTS_REMOTE_DISCONNECT</li>
+<li>WTS_SESSION_LOGOFF</li>
+<li>WTS_SESSION_LOGON</li>
+</ul>
+<p>Applications can use this message to track their state, as well as to release and acquire console-specific resources. User desktops can be dynamically switched between remote and console control. Applications should use the <a href="../termserv/wm-wtssession-change.html"><strong>WM_WTSSESSION_CHANGE</strong></a> message to synchronize with the remote or local connection state.</p>
+<p>When your process no longer requires these notifications or is terminating, it should call <a href="/windows/win32/api/wtsapi32/nf-wtsapi32-wtsunregistersessionnotification"><strong>WTSUnRegisterSessionNotification</strong></a> to unregister its notification.</p>
+<blockquote>
+<p>[!IMPORTANT]
+The <strong>hWnd</strong> values passed to <a href="/windows/win32/api/wtsapi32/nf-wtsapi32-wtsregistersessionnotification"><strong>WTSRegisterSessionNotification</strong></a> are reference counted, so you must make an equal number of calls to <a href="/windows/win32/api/wtsapi32/nf-wtsapi32-wtsunregistersessionnotification"><strong>WTSUnRegisterSessionNotification</strong></a> to ensure the release of all allocated resources.</p>
+</blockquote>
+<p>Â </p>
+<h2>Ensuring Only One Instance of Your Application Is Running</h2>
+<p>Many applications must ensure that they have only one instance running. There are several ways to do this in WindowsÂ XP. Among them are the following:</p>
+<ul>
+<li>Use <a href="/windows/win32/api/winuser/nf-winuser-findwindowa"><strong>FindWindow</strong></a> or <a href="/windows/win32/api/winuser/nf-winuser-findwindowexa"><strong>FindWindowEx</strong></a> to search for a known window that your application opens. If that window is already open, you can use that as an indication that the application is already running.</li>
+<li>Create a mutex or semaphore object when your application is opened, and close that object when the application terminates. The global object namespace is separated for each desktop, allowing a unique list of mutex and semaphore objects for each.</li>
+</ul>
+<h2>Shutting Down Your Application Across All Sessions</h2>
+<p>An application might need to shut itself down across all sessions. For example, an application running in two or more sessions simultaneously might download a new file from the web. Then it might need to close itself and restart with the updated bits. This, of course, would need to be done in all running sessions. Your application should be written so that it exits cleanly when a notification is received.</p>
+<h2>Interaction with System Services</h2>
+<p>From a programmatic standpoint, the following cases need to be addressed.</p>
+<ul>
+<li>
+<p>The server process receives a direct request from a client process.</p>
+<p>In this case, the message is probably transmitted using a local procedure call (LPC) or a remote procedure call (RPC). There are APIs for either LPC or RPC that enable retrieval of the client token. Once the client token is obtained, the server can use it in a call to <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessasusera"><strong>CreateProcessAsUser</strong></a>. This brings up the process on the correct window station, assuming that the client user token has a session tag, which it should.</p>
+<blockquote>
+<p>[!Note]<br />
+<a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessasusera"><strong>CreateProcessAsUser</strong></a> does not support handle inheritance across sessions at this time.</p>
+</blockquote>
+<p>Â </p>
+</li>
+<li>
+<p>The server process receives a notification and needs to display the UI, but the display does not have to be in the current user's context.</p>
+<p>In this case, the server process can duplicate its primary process token and change the session identifier in question to match the current session identifier. The current session identifier can be obtained by using the <a href="/windows/win32/api/winbase/nf-winbase-wtsgetactiveconsolesessionid"><strong>WTSGetActiveConsoleSessionId</strong></a> function.</p>
+<blockquote>
+<p>[!Note]<br />
+To set the token session ID, you need the <strong>SE_TCB_PRIVILEGE</strong>. You will have this only as a service running in NT AUTHORITY\SYSTEM.</p>
+</blockquote>
+<p>Â </p>
+</li>
+</ul>
+<h2>Remote Desktop and Bandwidth</h2>
+<p>With the addition of the Remote Desktop feature to WindowsÂ XP, applications should make an effort not to use more bandwidth than needed, avoiding extensive screen drawings and animation effects if the desktop is connected remotely. To determine whether the current session is remote, you can call <a href="/windows/win32/api/winuser/nf-winuser-getsystemmetrics"><strong>GetSystemMetrics</strong></a> with <strong>SM_REMOTESESSION</strong>. Be aware, however, that this call does not distinguish between remote and disconnected.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

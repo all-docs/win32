@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How To: Design a Hull Shader</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: How To Design a Hull Shader
+description: This topics shows how to design a hull shader.
+ms.assetid: c11c5652-dd7d-433d-bfa2-9853618ba334
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How To: Design a Hull Shader</h1>
+<p>A hull shader is the first of three stages that work together to implement <a href="direct3d-11-advanced-stages-tessellation.html">tessellation</a> (the other two stages are the tessellator and a domain shader). This topics shows how to design a hull shader.</p>
+<p>A hull shader requires two functions, the main hull shader and a patch constant function. The hull shader implements calculations on each control point; the hull shader also calls the patch constant function which implements calculations on each patch.</p>
+<p>After you have designed a hull shader, see <a href="direct3d-11-advanced-stages-hull-shader-create.html">How To: Create a Hull Shader</a> to learn how to create a hull shader.</p>
+<p><strong>To design a hull shader</strong></p>
+<ol>
+<li>
+<p>Define hull shader input control and output control points.</p>
+<pre><code>// Input control point
+struct VS_CONTROL_POINT_OUTPUT
+{
+    float3 vPosition : WORLDPOS;
+    float2 vUV       : TEXCOORD0;
+    float3 vTangent  : TANGENT;
+};
+
+// Output control point
+struct BEZIER_CONTROL_POINT
+{
+    float3 vPosition    : BEZIERPOS;
+};
+</code></pre>
+</li>
+<li>
+<p>Define output patch constant data.</p>
+<pre><code>// Output patch constant data.
+struct HS_CONSTANT_DATA_OUTPUT
+{
+    float Edges[4]        : SV_TessFactor;
+    float Inside[2]       : SV_InsideTessFactor;
+    
+    float3 vTangent[4]    : TANGENT;
+    float2 vUV[4]         : TEXCOORD;
+    float3 vTanUCorner[4] : TANUCORNER;
+    float3 vTanVCorner[4] : TANVCORNER;
+    float4 vCWts          : TANWEIGHTS;
+};
+</code></pre>
+<p>For a quad domain, <a href="/windows/desktop/direct3dhlsl/sv-tessfactor">SV_TessFactor</a> defines 4 edge tessellation factors (to tessellate the edges), since the fixed function tessellator needs to know how much to tessellate. The required outputs are different for the triangle and isoline domains.</p>
+<p>The fixed function tessellator doesn't look at any other hull shader outputs, such as other patch constant data or any of the control points. The domain shader -- which is invoked for each point the fixed function tessellator generates -- will see as its input all the hull shader's output control points and all the output patch constant data; the shader evaluates the patch at its location.</p>
+</li>
+<li>
+<p>Define a patch constant function. A patch constant function executes once for each patch to calculate any data that is constant for the entire patch (as opposed to per-control point data, which is computed in the hull shader).</p>
+<pre><code>
+#define MAX_POINTS 32
+
+// Patch Constant Function
+HS_CONSTANT_DATA_OUTPUT SubDToBezierConstantsHS( 
+    InputPatch&lt;VS_CONTROL_POINT_OUTPUT, MAX_POINTS&gt; ip,
+    uint PatchID : SV_PrimitiveID )
+{   
+    HS_CONSTANT_DATA_OUTPUT Output;
+
+    // Insert code to compute Output here
+    
+    return Output;
+}
+</code></pre>
+<p>Properties of the patch constant function include:</p>
+<ul>
+<li>One input specifies a variable containing a patch id, and is identified by the <strong>SV_PrimitiveID</strong> system value (see <a href="../direct3dhlsl/dx-graphics-hlsl-semantics.html">semantics</a> in shader model 4).</li>
+<li>One input parameter is the input control points, declared in <strong>VS_CONTROL_POINT_OUTPUT</strong> in this example. A patch function can see all the input control points for each patch, there are 32 control points per patch in this example.</li>
+<li>As a minimum, the function must calculate per-patch tessellation factors for the tessellator stage which are identified with <a href="/windows/desktop/direct3dhlsl/sv-tessfactor">SV_TessFactor</a>. A quad domain requires four tessellation factors for the edges and two additional factors (identified by <a href="/windows/desktop/direct3dhlsl/sv-insidetessfactor">SV_InsideTessFactor</a>) for tessellating the inside of the patch. The fixed function tessellator doesn't look at any other hull shader outputs (such as the patch constant data or any of the control points).</li>
+<li>The outputs are usually defined by a structure and is identified by <strong>HS_CONSTANT_DATA_OUTPUT</strong> in this example; the structure depends on the domain type and would be different for triangle or isoline domains.</li>
+</ul>
+<p>A domain shader on the other hand is invoked for each point the fixed function tessellator generates and needs to see the output control points and the output patch constant data (both from the hull shader) to evaluate a patch at its location.</p>
+</li>
+<li>
+<p>Define a hull shader. A hull shader identifies the properties of a patch including a patch constant function. A hull shader is invoked once for each output control point.</p>
+<pre><code>[domain(&quot;quad&quot;)]
+[partitioning(&quot;integer&quot;)]
+[outputtopology(&quot;triangle_cw&quot;)]
+[outputcontrolpoints(16)]
+[patchconstantfunc(&quot;SubDToBezierConstantsHS&quot;)]
+BEZIER_CONTROL_POINT SubDToBezierHS( 
+    InputPatch&lt;VS_CONTROL_POINT_OUTPUT, MAX_POINTS&gt; ip, 
+    uint i : SV_OutputControlPointID,
+    uint PatchID : SV_PrimitiveID )
+{
+    VS_CONTROL_POINT_OUTPUT Output;
+
+    // Insert code to compute Output here.
+    
+    return Output;
+}
+</code></pre>
+<p>A hull shader uses the following attributes:</p>
+<ul>
+<li>A <a href="/windows/desktop/direct3dhlsl/sm5-attributes-domain">domain</a> attribute.</li>
+<li>A <a href="/windows/desktop/direct3dhlsl/sm5-attributes-partitioning">partitioning</a> attribute.</li>
+<li>An <a href="/windows/desktop/direct3dhlsl/sm5-attributes-outputtopology">outputtopology</a> attribute.</li>
+<li>An <a href="/windows/desktop/direct3dhlsl/sm5-attributes-outputcontrolpoints">outputcontrolpoints</a> attribute.</li>
+<li>A <a href="/windows/desktop/direct3dhlsl/sm5-attributes-patchconstantfunc">patchconstantfunc</a> attribute. A hull shader calculates output control points, there are 16 output Bezier control points in this example.</li>
+</ul>
+</li>
+</ol>
+<p>All the input control points (identified by <strong>VS_CONTROL_POINT_OUTPUT</strong>) are visible to each hull shader invocation. In this example, there are 32 input control points.</p>
+<p>A hull shader is invoked once per output control point (identified with <a href="/windows/desktop/direct3dhlsl/sv-outputcontrolpointid">SV_OutputControlPointID</a>) for each patch (identified with SV_PrimitiveID). The purpose of this particular shader is to calculate output <em>i</em>, which was defined to be a BEZIER control point (this example has 16 output control points defined by outputcontrolpoints).</p>
+<p>A hull shader runs a routine once per patch (the patch constant function) to compute patch-constant data (tessellation factors as a minimum). Separately, a hull shader runs a patch constant function (called SubDToBezierConstantsHS) on each patch to compute patch-constant data such as tessellation factors for the tessellator stage.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="how-to-use-direct3d-11.html">How to Use Direct3D 11</a></p>
+<!-- raw HTML omitted -->
+<p><a href="direct3d-11-advanced-stages-tessellation.html">Tessellation Overview</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

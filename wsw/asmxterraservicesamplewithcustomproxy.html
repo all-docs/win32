@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AsmxTerraServiceSampleWithCustomProxy</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: AsmxTerraServiceSampleWithCustomProxy
+description: This examples shows service proxy talking to a ASMX TerraService service using WS_HTTP_PROXY_SETTING_MODE_CUSTOM channel property.
+ms.assetid: 200dfcbc-ad16-4ac8-ab16-76291344a980
+keywords:</p>
+<ul>
+<li>AsmxTerraServiceSampleWithCustomProxy Native-Web-Services</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>AsmxTerraServiceSampleWithCustomProxy</h1>
+<p>This examples shows service proxy talking to a ASMX TerraService service using <a href="/windows/desktop/api/WebServices/ne-webservices-ws_http_proxy_setting_mode"><strong>WS_HTTP_PROXY_SETTING_MODE_CUSTOM</strong></a> channel property.</p>
+<ul>
+<li><a href="#asmxcustomproxyclientcpp">AsmxCustomProxyClient.cpp</a></li>
+<li><a href="#terraserviceusacomwsdl">terraserviceusa.com.wsdl</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>AsmxCustomProxyClient.cpp</h2>
+<pre lang="C++"><code>//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#include &quot;windows.h&quot;
+#include &quot;winhttp.h&quot;
+#ifndef UNICODE
+#define UNICODE
+#endif
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;stdio.h&quot;
+#include &quot;string.h&quot;
+#include &quot;terraserviceusa.com.wsdl.h&quot;
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_ERROR* error = NULL;
+    WS_SERVICE_PROXY* serviceProxy = NULL;
+    WS_HEAP* heap = NULL;
+    WS_ENDPOINT_ADDRESS address = {};
+    WS_STRING serviceUrl = WS_STRING_VALUE(L&quot;https://terraservice.net/TerraService2.asmx&quot;);
+    WS_CHANNEL_PROPERTY channelPropertyArray[4];
+    WS_ADDRESSING_VERSION addressingVersion = WS_ADDRESSING_VERSION_TRANSPORT;
+    WS_ENVELOPE_VERSION envelopeVersion = WS_ENVELOPE_VERSION_SOAP_1_1;
+    WS_STRING place = WS_STRING_VALUE(L&quot;&quot;);
+    WS_HTTP_PROXY_SETTING_MODE proxySettingMode = WS_HTTP_PROXY_SETTING_MODE_CUSTOM;
+    WS_CUSTOM_HTTP_PROXY customProxy = {};
+    address.url = serviceUrl;
+    WINHTTP_AUTOPROXY_OPTIONS autoProxyOptions = {};
+    WINHTTP_PROXY_INFO proxyInfo = {};
+    HINTERNET session = NULL;
+    
+    channelPropertyArray[0].id = WS_CHANNEL_PROPERTY_ADDRESSING_VERSION;
+    channelPropertyArray[0].value = &amp;addressingVersion;
+    channelPropertyArray[0].valueSize = sizeof(addressingVersion);
+    
+    channelPropertyArray[1].id = WS_CHANNEL_PROPERTY_ENVELOPE_VERSION;
+    channelPropertyArray[1].value = &amp;envelopeVersion;
+    channelPropertyArray[1].valueSize = sizeof(envelopeVersion);
+    
+    channelPropertyArray[2].id = WS_CHANNEL_PROPERTY_HTTP_PROXY_SETTING_MODE;
+    channelPropertyArray[2].value = &amp;proxySettingMode;
+    channelPropertyArray[2].valueSize = sizeof(proxySettingMode);
+    
+    channelPropertyArray[3].id = WS_CHANNEL_PROPERTY_CUSTOM_HTTP_PROXY;
+    channelPropertyArray[3].value = &amp;customProxy;
+    channelPropertyArray[3].valueSize = sizeof(customProxy);
+    
+    
+    // This part illustrates how to setup a HTTP header authentication security binding
+    // against the HTTP proxy server in case it requires authentication.
+    // declare and initialize a default windows credential
+    WS_STRING_WINDOWS_INTEGRATED_AUTH_CREDENTIAL windowsCredential = {}; // zero out the struct
+    windowsCredential.credential.credentialType = WS_STRING_WINDOWS_INTEGRATED_AUTH_CREDENTIAL_TYPE; // set the credential type
+    // for illustration only; usernames and passwords should never be included in source files
+    windowsCredential.username.chars = L&quot;domain\\user&quot;;
+    windowsCredential.username.length = (ULONG)wcslen(windowsCredential.username.chars);
+    windowsCredential.password.chars = L&quot;password&quot;;
+    windowsCredential.password.length = (ULONG)wcslen(windowsCredential.password.chars);
+    
+    // declare and initialize properties to set the authentication scheme to Basic
+    ULONG scheme = WS_HTTP_HEADER_AUTH_SCHEME_NEGOTIATE;
+    ULONG target = WS_HTTP_HEADER_AUTH_TARGET_PROXY;
+    WS_SECURITY_BINDING_PROPERTY httpProxyAuthBindingProperties[2] =
+    {
+        { WS_SECURITY_BINDING_PROPERTY_HTTP_HEADER_AUTH_SCHEME, &amp;scheme, sizeof(scheme) },
+        { WS_SECURITY_BINDING_PROPERTY_HTTP_HEADER_AUTH_TARGET, &amp;target, sizeof(target) }
+    };
+    
+    // declare and initialize an HTTP header authentication security binding for the HTTP proxy server
+    WS_HTTP_HEADER_AUTH_SECURITY_BINDING httpProxyAuthBinding = {}; // zero out the struct
+    httpProxyAuthBinding.binding.bindingType = WS_HTTP_HEADER_AUTH_SECURITY_BINDING_TYPE; // set the binding type
+    httpProxyAuthBinding.binding.properties = httpProxyAuthBindingProperties;
+    httpProxyAuthBinding.binding.propertyCount = WsCountOf(httpProxyAuthBindingProperties);
+    httpProxyAuthBinding.clientCredential = &amp;windowsCredential.credential;
+    
+    // declare and initialize the array of all security bindings
+    WS_SECURITY_BINDING* securityBindings[1] = { &amp;httpProxyAuthBinding.binding };
+    
+    // declare and initialize the security description
+    WS_SECURITY_DESCRIPTION securityDescription = {}; // zero out the struct
+    securityDescription.securityBindings = securityBindings;
+    securityDescription.securityBindingCount = WsCountOf(securityBindings);
+    
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // Create a heap to store deserialized data
+    hr = WsCreateHeap(
+        /*maxSize*/ 2048, 
+        /*trimSize*/ 512, 
+        NULL, 
+        0, 
+        &amp;heap, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    
+    session = WinHttpOpen(L&quot;NWS Example&quot;,
+        WINHTTP_ACCESS_TYPE_NO_PROXY, 
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS,
+        WINHTTP_FLAG_ASYNC);
+    if (!session)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto Exit;
+    }
+    autoProxyOptions.dwFlags = WINHTTP_AUTOPROXY_RUN_INPROCESS | WINHTTP_AUTOPROXY_AUTO_DETECT;
+    autoProxyOptions.dwAutoDetectFlags = WINHTTP_AUTO_DETECT_TYPE_DHCP | WINHTTP_AUTO_DETECT_TYPE_DNS_A;
+    autoProxyOptions.fAutoLogonIfChallenged = FALSE;
+    
+    WinHttpGetProxyForUrl(
+        session,
+        serviceUrl.chars,
+        &amp;autoProxyOptions,
+        &amp;proxyInfo);
+    
+    if (proxyInfo.dwAccessType == WINHTTP_ACCESS_TYPE_NAMED_PROXY)
+    {
+        if (proxyInfo.lpszProxy)
+        {
+            customProxy.servers.chars = proxyInfo.lpszProxy;
+            customProxy.servers.length = (ULONG)wcslen(proxyInfo.lpszProxy);
+        }
+        if (proxyInfo.lpszProxyBypass)
+        {
+            customProxy.bypass.chars = proxyInfo.lpszProxyBypass;
+            customProxy.bypass.length = (ULONG)wcslen(proxyInfo.lpszProxyBypass);
+        }
+    }
+    
+    hr = WsCreateServiceProxy(
+            WS_CHANNEL_TYPE_REQUEST, 
+            WS_HTTP_CHANNEL_BINDING, 
+            &amp;securityDescription, 
+            NULL, 
+            0,
+            channelPropertyArray,
+            WsCountOf(channelPropertyArray),
+            &amp;serviceProxy, 
+            error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    
+    // Open channel to address
+    hr = WsOpenServiceProxy(
+            serviceProxy, 
+            &amp;address, 
+            NULL, 
+            error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    for (int i = 0; i &lt; 100; i++)
+    {
+        LonLatPt point = {10.0, 10.0};
+        hr = TerraServiceSoap_ConvertLonLatPtToNearestPlace(
+            serviceProxy,
+            &amp;point,
+            &amp;place,
+            heap,
+            NULL,
+            0,
+            NULL,
+            error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        wprintf(L&quot;Place @ Lattitude=%f, Longitutde=%f is %s\n&quot;, 
+            point.Lon,
+            point.Lat,
+            place);
+        fflush(stdout);
+        hr = WsResetHeap(
+            heap,
+            error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    if (proxyInfo.lpszProxy)
+    {
+        ::GlobalFree(proxyInfo.lpszProxy);
+    }
+    if (proxyInfo.lpszProxyBypass)
+    {
+        ::GlobalFree(proxyInfo.lpszProxyBypass);
+    }
+    if (serviceProxy != NULL)
+    {
+        WsCloseServiceProxy(serviceProxy, NULL, NULL);
+        WsFreeServiceProxy(serviceProxy);
+    }
+    if (!session)
+    {
+        WinHttpCloseHandle(session);
+    }
+    if (heap != NULL)
+    {
+        WsFreeHeap(heap);
+    }
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+</code></pre>
+<h2>terraserviceusa.com.wsdl</h2>
+<pre lang="syntax"><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;wsdl:definitions xmlns:soap=&quot;https://schemas.xmlsoap.org/wsdl/soap/&quot; xmlns:tm=&quot;https://microsoft.com/wsdl/mime/textMatching/&quot; xmlns:soapenc=&quot;https://schemas.xmlsoap.org/soap/encoding/&quot; xmlns:mime=&quot;https://schemas.xmlsoap.org/wsdl/mime/&quot; xmlns:tns=&quot;https://terraservice-usa.com/&quot; xmlns:s=&quot;https://www.w3.org/2001/XMLSchema&quot; xmlns:http=&quot;https://schemas.xmlsoap.org/wsdl/http/&quot; targetNamespace=&quot;https://terraservice-usa.com/&quot; xmlns:wsdl=&quot;https://schemas.xmlsoap.org/wsdl/&quot;&gt;
+  &lt;wsdl:types&gt;
+    &lt;s:schema elementFormDefault=&quot;qualified&quot; targetNamespace=&quot;https://terraservice-usa.com/&quot;&gt;
+      &lt;s:element name=&quot;ConvertLonLatPtToNearestPlace&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;point&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:complexType name=&quot;LonLatPt&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Lon&quot; type=&quot;s:double&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Lat&quot; type=&quot;s:double&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:element name=&quot;ConvertLonLatPtToNearestPlaceResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;ConvertLonLatPtToNearestPlaceResult&quot; type=&quot;s:string&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;ConvertLonLatPtToUtmPt&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;point&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;ConvertLonLatPtToUtmPtResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;ConvertLonLatPtToUtmPtResult&quot; type=&quot;tns:UtmPt&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:complexType name=&quot;UtmPt&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Zone&quot; type=&quot;s:int&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;X&quot; type=&quot;s:double&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Y&quot; type=&quot;s:double&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:element name=&quot;ConvertUtmPtToLonLatPt&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;utm&quot; type=&quot;tns:UtmPt&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;ConvertUtmPtToLonLatPtResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;ConvertUtmPtToLonLatPtResult&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;ConvertPlaceToLonLatPt&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;place&quot; type=&quot;tns:Place&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:complexType name=&quot;Place&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;City&quot; type=&quot;s:string&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;State&quot; type=&quot;s:string&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;Country&quot; type=&quot;s:string&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:element name=&quot;ConvertPlaceToLonLatPtResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;ConvertPlaceToLonLatPtResult&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;CountPlacesInRect&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;upperleft&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;lowerright&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;ptype&quot; type=&quot;tns:PlaceType&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:simpleType name=&quot;PlaceType&quot;&gt;
+        &lt;s:restriction base=&quot;s:string&quot;&gt;
+          &lt;s:enumeration value=&quot;UnknownPlaceType&quot; /&gt;
+          &lt;s:enumeration value=&quot;AirRailStation&quot; /&gt;
+          &lt;s:enumeration value=&quot;BayGulf&quot; /&gt;
+          &lt;s:enumeration value=&quot;CapePeninsula&quot; /&gt;
+          &lt;s:enumeration value=&quot;CityTown&quot; /&gt;
+          &lt;s:enumeration value=&quot;HillMountain&quot; /&gt;
+          &lt;s:enumeration value=&quot;Island&quot; /&gt;
+          &lt;s:enumeration value=&quot;Lake&quot; /&gt;
+          &lt;s:enumeration value=&quot;OtherLandFeature&quot; /&gt;
+          &lt;s:enumeration value=&quot;OtherWaterFeature&quot; /&gt;
+          &lt;s:enumeration value=&quot;ParkBeach&quot; /&gt;
+          &lt;s:enumeration value=&quot;PointOfInterest&quot; /&gt;
+          &lt;s:enumeration value=&quot;River&quot; /&gt;
+        &lt;/s:restriction&gt;
+      &lt;/s:simpleType&gt;
+      &lt;s:element name=&quot;CountPlacesInRectResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;CountPlacesInRectResult&quot; type=&quot;s:int&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetAreaFromPt&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;center&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;theme&quot; type=&quot;s:int&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;scale&quot; type=&quot;tns:Scale&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;displayPixWidth&quot; type=&quot;s:int&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;displayPixHeight&quot; type=&quot;s:int&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:simpleType name=&quot;Scale&quot;&gt;
+        &lt;s:restriction base=&quot;s:string&quot;&gt;
+          &lt;s:enumeration value=&quot;Scale1mm&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale2mm&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale4mm&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale8mm&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale16mm&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale32mm&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale63mm&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale125mm&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale250mm&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale500mm&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale1m&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale2m&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale4m&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale8m&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale16m&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale32m&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale64m&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale128m&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale256m&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale512m&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale1km&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale2km&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale4km&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale8km&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale16km&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale32km&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale64km&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale128km&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale256km&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale512km&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale1024km&quot; /&gt;
+          &lt;s:enumeration value=&quot;Scale2048km&quot; /&gt;
+        &lt;/s:restriction&gt;
+      &lt;/s:simpleType&gt;
+      &lt;s:element name=&quot;GetAreaFromPtResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;GetAreaFromPtResult&quot; type=&quot;tns:AreaBoundingBox&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:complexType name=&quot;AreaBoundingBox&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;NorthWest&quot; type=&quot;tns:AreaCoordinate&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;NorthEast&quot; type=&quot;tns:AreaCoordinate&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;SouthWest&quot; type=&quot;tns:AreaCoordinate&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;SouthEast&quot; type=&quot;tns:AreaCoordinate&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Center&quot; type=&quot;tns:AreaCoordinate&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;NearestPlace&quot; type=&quot;s:string&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;OverlappingThemeInfos&quot; type=&quot;tns:ArrayOfOverlappingThemeInfo&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:complexType name=&quot;AreaCoordinate&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;TileMeta&quot; type=&quot;tns:TileMeta&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Offset&quot; type=&quot;tns:LonLatPtOffset&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:complexType name=&quot;TileMeta&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Id&quot; type=&quot;tns:TileId&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;TileExists&quot; type=&quot;s:boolean&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;NorthWest&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;NorthEast&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;SouthWest&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;SouthEast&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Center&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Capture&quot; type=&quot;s:dateTime&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:complexType name=&quot;TileId&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Theme&quot; type=&quot;s:int&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Scale&quot; type=&quot;tns:Scale&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Scene&quot; type=&quot;s:int&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;X&quot; type=&quot;s:int&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Y&quot; type=&quot;s:int&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:complexType name=&quot;LonLatPtOffset&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Point&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;XOffset&quot; type=&quot;s:int&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;YOffset&quot; type=&quot;s:int&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:complexType name=&quot;ArrayOfOverlappingThemeInfo&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;unbounded&quot; name=&quot;OverlappingThemeInfo&quot; type=&quot;tns:OverlappingThemeInfo&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:complexType name=&quot;OverlappingThemeInfo&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;LocalTheme&quot; type=&quot;s:boolean&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Theme&quot; type=&quot;s:int&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Point&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;ThemeName&quot; type=&quot;s:string&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Capture&quot; type=&quot;s:dateTime&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;ProjectionId&quot; type=&quot;tns:ProjectionType&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;LoScale&quot; type=&quot;tns:Scale&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;HiScale&quot; type=&quot;tns:Scale&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;Url&quot; type=&quot;s:string&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:simpleType name=&quot;ProjectionType&quot;&gt;
+        &lt;s:restriction base=&quot;s:string&quot;&gt;
+          &lt;s:enumeration value=&quot;Geographic&quot; /&gt;
+          &lt;s:enumeration value=&quot;UtmNad27&quot; /&gt;
+          &lt;s:enumeration value=&quot;UtmNad83&quot; /&gt;
+        &lt;/s:restriction&gt;
+      &lt;/s:simpleType&gt;
+      &lt;s:element name=&quot;GetAreaFromRect&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;upperLeft&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;lowerRight&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;theme&quot; type=&quot;s:int&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;scale&quot; type=&quot;tns:Scale&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetAreaFromRectResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;GetAreaFromRectResult&quot; type=&quot;tns:AreaBoundingBox&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetAreaFromTileId&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;id&quot; type=&quot;tns:TileId&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;displayPixWidth&quot; type=&quot;s:int&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;displayPixHeight&quot; type=&quot;s:int&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetAreaFromTileIdResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;GetAreaFromTileIdResult&quot; type=&quot;tns:AreaBoundingBox&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetLatLonMetrics&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;point&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetLatLonMetricsResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;GetLatLonMetricsResult&quot; type=&quot;tns:ArrayOfThemeBoundingBox&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:complexType name=&quot;ArrayOfThemeBoundingBox&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;unbounded&quot; name=&quot;ThemeBoundingBox&quot; type=&quot;tns:ThemeBoundingBox&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:complexType name=&quot;ThemeBoundingBox&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Theme&quot; type=&quot;s:int&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;ThemeName&quot; type=&quot;s:string&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Sparseness&quot; type=&quot;s:int&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;LoScale&quot; type=&quot;tns:Scale&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;HiScale&quot; type=&quot;tns:Scale&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;ProjectionId&quot; type=&quot;tns:ProjectionType&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;ProjectionName&quot; type=&quot;s:string&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;WestLongitude&quot; type=&quot;s:double&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;NorthLatitude&quot; type=&quot;s:double&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;EastLongitude&quot; type=&quot;s:double&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;SouthLatitude&quot; type=&quot;s:double&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:element name=&quot;GetPlaceFacts&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;place&quot; type=&quot;tns:Place&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetPlaceFactsResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;GetPlaceFactsResult&quot; type=&quot;tns:PlaceFacts&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:complexType name=&quot;PlaceFacts&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Place&quot; type=&quot;tns:Place&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Center&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;AvailableThemeMask&quot; type=&quot;s:int&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;PlaceTypeId&quot; type=&quot;tns:PlaceType&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Population&quot; type=&quot;s:int&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:element name=&quot;GetPlaceList&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;placeName&quot; type=&quot;s:string&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;MaxItems&quot; type=&quot;s:int&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;imagePresence&quot; type=&quot;s:boolean&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetPlaceListResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;GetPlaceListResult&quot; type=&quot;tns:ArrayOfPlaceFacts&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:complexType name=&quot;ArrayOfPlaceFacts&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;unbounded&quot; name=&quot;PlaceFacts&quot; type=&quot;tns:PlaceFacts&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:element name=&quot;GetPlaceListInRect&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;upperleft&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;lowerright&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;ptype&quot; type=&quot;tns:PlaceType&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;MaxItems&quot; type=&quot;s:int&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetPlaceListInRectResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;GetPlaceListInRectResult&quot; type=&quot;tns:ArrayOfPlaceFacts&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetTheme&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;theme&quot; type=&quot;s:int&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetThemeResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;GetThemeResult&quot; type=&quot;tns:ThemeInfo&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:complexType name=&quot;ThemeInfo&quot;&gt;
+        &lt;s:sequence&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;Theme&quot; type=&quot;s:int&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;Name&quot; type=&quot;s:string&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;Description&quot; type=&quot;s:string&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;Supplier&quot; type=&quot;s:string&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;LoScale&quot; type=&quot;tns:Scale&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;HiScale&quot; type=&quot;tns:Scale&quot; /&gt;
+          &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;ProjectionId&quot; type=&quot;tns:ProjectionType&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;ProjectionName&quot; type=&quot;s:string&quot; /&gt;
+          &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;CopyrightNotice&quot; type=&quot;s:string&quot; /&gt;
+        &lt;/s:sequence&gt;
+      &lt;/s:complexType&gt;
+      &lt;s:element name=&quot;GetTileMetaFromLonLatPt&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;point&quot; type=&quot;tns:LonLatPt&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;theme&quot; type=&quot;s:int&quot; /&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;scale&quot; type=&quot;tns:Scale&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetTileMetaFromLonLatPtResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;GetTileMetaFromLonLatPtResult&quot; type=&quot;tns:TileMeta&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetTileMetaFromTileId&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;id&quot; type=&quot;tns:TileId&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetTileMetaFromTileIdResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;GetTileMetaFromTileIdResult&quot; type=&quot;tns:TileMeta&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetTile&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;1&quot; maxOccurs=&quot;1&quot; name=&quot;id&quot; type=&quot;tns:TileId&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+      &lt;s:element name=&quot;GetTileResponse&quot;&gt;
+        &lt;s:complexType&gt;
+          &lt;s:sequence&gt;
+            &lt;s:element minOccurs=&quot;0&quot; maxOccurs=&quot;1&quot; name=&quot;GetTileResult&quot; type=&quot;s:base64Binary&quot; /&gt;
+          &lt;/s:sequence&gt;
+        &lt;/s:complexType&gt;
+      &lt;/s:element&gt;
+    &lt;/s:schema&gt;
+  &lt;/wsdl:types&gt;
+  &lt;wsdl:message name=&quot;ConvertLonLatPtToNearestPlaceSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:ConvertLonLatPtToNearestPlace&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;ConvertLonLatPtToNearestPlaceSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:ConvertLonLatPtToNearestPlaceResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;ConvertLonLatPtToUtmPtSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:ConvertLonLatPtToUtmPt&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;ConvertLonLatPtToUtmPtSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:ConvertLonLatPtToUtmPtResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;ConvertUtmPtToLonLatPtSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:ConvertUtmPtToLonLatPt&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;ConvertUtmPtToLonLatPtSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:ConvertUtmPtToLonLatPtResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;ConvertPlaceToLonLatPtSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:ConvertPlaceToLonLatPt&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;ConvertPlaceToLonLatPtSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:ConvertPlaceToLonLatPtResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;CountPlacesInRectSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:CountPlacesInRect&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;CountPlacesInRectSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:CountPlacesInRectResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetAreaFromPtSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetAreaFromPt&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetAreaFromPtSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetAreaFromPtResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetAreaFromRectSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetAreaFromRect&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetAreaFromRectSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetAreaFromRectResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetAreaFromTileIdSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetAreaFromTileId&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetAreaFromTileIdSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetAreaFromTileIdResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetLatLonMetricsSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetLatLonMetrics&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetLatLonMetricsSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetLatLonMetricsResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetPlaceFactsSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetPlaceFacts&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetPlaceFactsSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetPlaceFactsResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetPlaceListSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetPlaceList&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetPlaceListSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetPlaceListResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetPlaceListInRectSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetPlaceListInRect&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetPlaceListInRectSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetPlaceListInRectResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetThemeSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetTheme&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetThemeSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetThemeResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetTileMetaFromLonLatPtSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetTileMetaFromLonLatPt&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetTileMetaFromLonLatPtSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetTileMetaFromLonLatPtResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetTileMetaFromTileIdSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetTileMetaFromTileId&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetTileMetaFromTileIdSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetTileMetaFromTileIdResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetTileSoapIn&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetTile&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:message name=&quot;GetTileSoapOut&quot;&gt;
+    &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetTileResponse&quot; /&gt;
+  &lt;/wsdl:message&gt;
+  &lt;wsdl:portType name=&quot;TerraServiceSoap&quot;&gt;
+    &lt;wsdl:operation name=&quot;ConvertLonLatPtToNearestPlace&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:ConvertLonLatPtToNearestPlaceSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:ConvertLonLatPtToNearestPlaceSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;ConvertLonLatPtToUtmPt&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:ConvertLonLatPtToUtmPtSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:ConvertLonLatPtToUtmPtSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;ConvertUtmPtToLonLatPt&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:ConvertUtmPtToLonLatPtSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:ConvertUtmPtToLonLatPtSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;ConvertPlaceToLonLatPt&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:ConvertPlaceToLonLatPtSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:ConvertPlaceToLonLatPtSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;CountPlacesInRect&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:CountPlacesInRectSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:CountPlacesInRectSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetAreaFromPt&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:GetAreaFromPtSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:GetAreaFromPtSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetAreaFromRect&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:GetAreaFromRectSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:GetAreaFromRectSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetAreaFromTileId&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:GetAreaFromTileIdSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:GetAreaFromTileIdSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetLatLonMetrics&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:GetLatLonMetricsSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:GetLatLonMetricsSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetPlaceFacts&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:GetPlaceFactsSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:GetPlaceFactsSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetPlaceList&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:GetPlaceListSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:GetPlaceListSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetPlaceListInRect&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:GetPlaceListInRectSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:GetPlaceListInRectSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetTheme&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:GetThemeSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:GetThemeSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetTileMetaFromLonLatPt&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:GetTileMetaFromLonLatPtSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:GetTileMetaFromLonLatPtSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetTileMetaFromTileId&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:GetTileMetaFromTileIdSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:GetTileMetaFromTileIdSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetTile&quot;&gt;
+      &lt;wsdl:input message=&quot;tns:GetTileSoapIn&quot; /&gt;
+      &lt;wsdl:output message=&quot;tns:GetTileSoapOut&quot; /&gt;
+    &lt;/wsdl:operation&gt;
+  &lt;/wsdl:portType&gt;
+  &lt;wsdl:binding name=&quot;TerraServiceSoap&quot; type=&quot;tns:TerraServiceSoap&quot;&gt;
+    &lt;soap:binding transport=&quot;https://schemas.xmlsoap.org/soap/http&quot; /&gt;
+    &lt;wsdl:operation name=&quot;ConvertLonLatPtToNearestPlace&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/ConvertLonLatPtToNearestPlace&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;ConvertLonLatPtToUtmPt&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/ConvertLonLatPtToUtmPt&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;ConvertUtmPtToLonLatPt&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/ConvertUtmPtToLonLatPt&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;ConvertPlaceToLonLatPt&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/ConvertPlaceToLonLatPt&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;CountPlacesInRect&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/CountPlacesInRect&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetAreaFromPt&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/GetAreaFromPt&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetAreaFromRect&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/GetAreaFromRect&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetAreaFromTileId&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/GetAreaFromTileId&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetLatLonMetrics&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/GetLatLonMetrics&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetPlaceFacts&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/GetPlaceFacts&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetPlaceList&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/GetPlaceList&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetPlaceListInRect&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/GetPlaceListInRect&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetTheme&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/GetTheme&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetTileMetaFromLonLatPt&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/GetTileMetaFromLonLatPt&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetTileMetaFromTileId&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/GetTileMetaFromTileId&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+    &lt;wsdl:operation name=&quot;GetTile&quot;&gt;
+      &lt;soap:operation soapAction=&quot;https://terraservice-usa.com/GetTile&quot; style=&quot;document&quot; /&gt;
+      &lt;wsdl:input&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:input&gt;
+      &lt;wsdl:output&gt;
+        &lt;soap:body use=&quot;literal&quot; /&gt;
+      &lt;/wsdl:output&gt;
+    &lt;/wsdl:operation&gt;
+  &lt;/wsdl:binding&gt;
+  &lt;wsdl:service name=&quot;TerraService&quot;&gt;
+    &lt;documentation xmlns=&quot;https://schemas.xmlsoap.org/wsdl/&quot;&gt;TerraServer Web Service&lt;/documentation&gt;
+    &lt;wsdl:port name=&quot;TerraServiceSoap&quot; binding=&quot;tns:TerraServiceSoap&quot;&gt;
+      &lt;soap:address location=&quot;https://terraservice.net/TerraService2.asmx&quot; /&gt;
+    &lt;/wsdl:port&gt;
+  &lt;/wsdl:service&gt;
+&lt;/wsdl:definitions&gt;
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/WebServices/ne-webservices-ws_http_proxy_setting_mode"><strong>WS_HTTP_PROXY_SETTING_MODE_CUSTOM</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Cosigning and Decoding a Message</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: You can use the CryptSignMessage function to cosign a message.
+ms.assetid: b400436f-a71f-426a-ac8a-7fdcfa6d7575
+title: 'Example C Program: Cosigning and Decoding a Message'
+ms.topic: article
+ms.date: 10/24/2021</h2>
+<h1>Example C Program: Cosigning and Decoding a Message</h1>
+<p>You can use the <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptsignmessage"><strong>CryptSignMessage</strong></a> function to cosign a message. This is accomplished by calling <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptsignmessage"><strong>CryptSignMessage</strong></a> once to sign the original message, and then call <strong>CryptSignMessage</strong> again to cosign the signed message.</p>
+<p>When you verify the signature of a cosigned message, you use the <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptgetmessagesignercount"><strong>CryptGetMessageSignerCount</strong></a> function to get the number of signers of the message and then call the <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptverifymessagesignature"><strong>CryptVerifyMessageSignature</strong></a> for each signature. If all of the signatures are verified, then you know the cosigned message is valid.</p>
+<p>The following example shows how to sign a message by more than one person (cosign the message), verify all signatures, and decode the message.</p>
+<blockquote>
+<p>[!NOTE]
+This function may return a count of duplicate signers and therefore may not be sufficient to avert attacks. We recommend using the sid (SignerIdentifier) field from SignerInfo to identify duplicate signers in a message.</p>
+</blockquote>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+#pragma comment(lib, &quot;crypt32.lib&quot;)
+
+#include &lt;stdio.h&gt;
+#include &lt;conio.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;wincrypt.h&gt;
+
+// Link with the Crypt32.lib file.
+#pragma comment (lib, &quot;Crypt32&quot;)
+
+#define MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+
+//-------------------------------------------------------------------
+// Define the name of the store where the needed certificate can be 
+// found. 
+
+#define CERT_STORE_NAME  L&quot;MY&quot;
+
+//-------------------------------------------------------------------
+// Define the name of a certificate subject.
+// To use this program, the definitions of SIGNER_NAME and 
+// CO_SIGNER_NAME must be changed to the name of the subject of a 
+// certificate that has access to a private key. That certificate 
+// must have either the CERT_KEY_PROV_INFO_PROP_ID or  
+// CERT_KEY_CONTEXT_PROP_ID property set for the context to 
+// provide access to the private signature key.
+
+//-------------------------------------------------------------------
+// You can use commands similar to the following to create a 
+// certificates that can be used with this example:
+//
+// makecert -n &quot;cn=test_signer&quot; -sk Test -ss my
+// makecert -n &quot;cn=test_co_signer&quot; -sk Test -ss my
+
+//#define SIGNER_NAME L&quot;test_signer&quot;
+//#define CO_SIGNER_NAME L&quot;test_co_signer&quot;
+
+#define SIGNER_NAME L&quot;Insert_signer_name_here&quot;
+#define CO_SIGNER_NAME L&quot;Insert_co_signer_name_here&quot;
+
+#define MAX_NAME 256
+
+//-------------------------------------------------------------------
+// Local function prototypes.
+void MyHandleError(LPTSTR psz);
+bool SignMessage(CRYPT_DATA_BLOB *pEncodedMessageBlob);
+bool CosignMessage(CRYPT_DATA_BLOB *pSignedMessageBlob, 
+    CRYPT_DATA_BLOB *pCosignedMessageBlob);
+bool VerifyCosignedMessage(CRYPT_DATA_BLOB *pEncodedMessageBlob, 
+    CRYPT_DATA_BLOB *pDecodedMessageBlob);
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    CRYPT_DATA_BLOB EncodedMessage;
+
+    if(SignMessage(&amp;EncodedMessage))
+    {
+        CRYPT_DATA_BLOB DecodedMessage;
+
+        if(VerifyCosignedMessage(&amp;EncodedMessage, &amp;DecodedMessage))
+        {
+            free(DecodedMessage.pbData);
+        }
+
+        free(EncodedMessage.pbData);
+    }
+
+    _tprintf(TEXT(&quot;Press any key to exit.&quot;));
+    _getch();
+
+    return 0;
+}
+
+//-------------------------------------------------------------------
+// MyHandleError
+void MyHandleError(LPTSTR psz)
+{
+    _ftprintf(stderr, TEXT(&quot;An error occurred in the program. \n&quot;));
+    _ftprintf(stderr, TEXT(&quot;%s\n&quot;), psz);
+    _ftprintf(stderr, TEXT(&quot;Error number %x.\n&quot;), GetLastError());
+    _ftprintf(stderr, TEXT(&quot;Program terminating. \n&quot;));
+} // End of MyHandleError.
+
+//-------------------------------------------------------------------
+// SignMessage
+bool SignMessage(CRYPT_DATA_BLOB *pEncodedMessageBlob)
+{
+    bool fReturn = false;
+    BYTE* pbMessage;
+    DWORD cbMessage;
+    HCERTSTORE hCertStore = NULL;   
+    PCCERT_CONTEXT pSignerCert = NULL; 
+    CRYPT_SIGN_MESSAGE_PARA  SigParams;
+    DWORD cbSignedMessageBlob=0;
+    BYTE  *pbSignedMessageBlob = NULL;
+
+    // Initialize the output pointer.
+    pEncodedMessageBlob-&gt;cbData = 0;
+    pEncodedMessageBlob-&gt;pbData = NULL;
+
+    // The message to be signed.
+    // Usually, the message exists somewhere and a pointer is
+    // passed to the application.
+    pbMessage = 
+        (BYTE*)TEXT(&quot;CryptoAPI is a good way to handle security&quot;);
+
+    // Calculate the size of message. To include the
+    // terminating null character, the length is one more byte 
+    // than the length returned by the strlen function.
+    cbMessage = (lstrlen((TCHAR*) pbMessage) + 1) * sizeof(TCHAR);
+
+    // Create the MessageArray and the MessageSizeArray.
+    const BYTE* MessageArray[] = {pbMessage};
+    DWORD MessageSizeArray[1];
+    MessageSizeArray[0] = cbMessage;
+
+    //  Begin processing. 
+    _tprintf(TEXT(&quot;The message to be signed is \&quot;%s\&quot;.\n&quot;),
+        pbMessage);
+
+    // Open the certificate store.
+    if(!(hCertStore = CertOpenStore(
+       CERT_STORE_PROV_SYSTEM,
+       0,
+       NULL,
+       CERT_SYSTEM_STORE_CURRENT_USER,
+       CERT_STORE_NAME)))
+    {
+         MyHandleError(TEXT(&quot;The MY store could not be opened.&quot;));
+         goto exit_SignMessage;
+    }
+
+    // Get a pointer to the signer's certificate.
+    // This certificate must have access to the signer's private key.
+    if(pSignerCert = CertFindCertificateInStore(
+       hCertStore,
+       MY_ENCODING_TYPE,
+       0,
+       CERT_FIND_SUBJECT_STR,
+       SIGNER_NAME,
+       NULL))
+    {
+       _tprintf(TEXT(&quot;The signer's certificate was found.\n&quot;));
+    }
+    else
+    {
+        MyHandleError( TEXT(&quot;Signer certificate not found.&quot;));
+        goto exit_SignMessage;
+    }
+
+    // Initialize the signature structure.
+    SigParams.cbSize = sizeof(CRYPT_SIGN_MESSAGE_PARA);
+    SigParams.dwMsgEncodingType = MY_ENCODING_TYPE;
+    SigParams.pSigningCert = pSignerCert;
+    SigParams.HashAlgorithm.pszObjId = szOID_RSA_SHA1RSA;
+    SigParams.HashAlgorithm.Parameters.cbData = NULL;
+    SigParams.cMsgCert = 1;
+    SigParams.rgpMsgCert = &amp;pSignerCert;
+    SigParams.cAuthAttr = 0;
+    SigParams.dwInnerContentType = 0;
+    SigParams.cMsgCrl = 0;
+    SigParams.cUnauthAttr = 0;
+    SigParams.dwFlags = 0;
+    SigParams.pvHashAuxInfo = NULL;
+    SigParams.rgAuthAttr = NULL;
+
+    // First, get the size of the signed BLOB.
+    if(CryptSignMessage(
+        &amp;SigParams,
+        FALSE,
+        1,
+        MessageArray,
+        MessageSizeArray,
+        NULL,
+        &amp;cbSignedMessageBlob))
+    {
+        _tprintf(TEXT(&quot;%d bytes needed for the encoded BLOB.\n&quot;),
+            cbSignedMessageBlob);
+    }
+    else
+    {
+        MyHandleError(TEXT(&quot;Getting signed BLOB size failed&quot;));
+        goto exit_SignMessage;
+    }
+
+    // Allocate memory for the signed BLOB.
+    if(!(pbSignedMessageBlob = 
+       (BYTE*)malloc(cbSignedMessageBlob)))
+    {
+        MyHandleError(
+            TEXT(&quot;Memory allocation error while signing.&quot;));
+        goto exit_SignMessage;
+    }
+
+    // Get the signed message BLOB.
+    if(CryptSignMessage(
+          &amp;SigParams,
+          FALSE,
+          1,
+          MessageArray,
+          MessageSizeArray,
+          pbSignedMessageBlob,
+          &amp;cbSignedMessageBlob))
+    {
+        _tprintf(TEXT(&quot;The message was signed successfully. \n&quot;));
+
+        // pbSignedMessageBlob now contains the signed BLOB.
+        fReturn = true;
+    }
+    else
+    {
+        MyHandleError(TEXT(&quot;Error getting signed BLOB&quot;));
+        goto exit_SignMessage;
+    }
+
+exit_SignMessage:
+
+    // Clean up and free memory as needed.
+    if(pSignerCert)
+    {
+        CertFreeCertificateContext(pSignerCert);
+        pSignerCert = NULL;
+    }
+    
+    if(hCertStore)
+    {
+        CertCloseStore(hCertStore, CERT_CLOSE_STORE_CHECK_FLAG);
+        hCertStore = NULL;
+    }
+
+    if(pbSignedMessageBlob &amp;&amp; fReturn)
+    {
+        fReturn = false;
+        CRYPT_DATA_BLOB SignedMessageBlob;
+        CRYPT_DATA_BLOB CosignedMessageBlob;
+
+        SignedMessageBlob.cbData = cbSignedMessageBlob;
+        SignedMessageBlob.pbData = pbSignedMessageBlob;
+
+        if(CosignMessage(&amp;SignedMessageBlob, &amp;CosignedMessageBlob))
+        {
+            pEncodedMessageBlob-&gt;cbData = CosignedMessageBlob.cbData;
+            pEncodedMessageBlob-&gt;pbData = CosignedMessageBlob.pbData;
+
+            fReturn = true;
+        }
+    }
+    
+    if(pbSignedMessageBlob)
+    {
+        free(pbSignedMessageBlob);
+        pbSignedMessageBlob = NULL;
+    }
+
+    return fReturn;
+}
+
+//-------------------------------------------------------------------
+// CosignMessage
+bool CosignMessage(
+    CRYPT_DATA_BLOB *pSignedMessageBlob, 
+    CRYPT_DATA_BLOB *pCosignedMessageBlob)
+{
+    bool fReturn = false;
+    HCERTSTORE hCertStore = NULL;   
+    PCCERT_CONTEXT pCosignerCert = NULL; 
+    HCRYPTPROV hCryptProv = NULL;
+    HCRYPTMSG hMsg = NULL;
+    DWORD cbCosignedMessageBlob=0;
+    BYTE  *pbCosignedMessageBlob = NULL;
+
+    // Initialize the output pointer.
+    pCosignedMessageBlob-&gt;cbData = 0;
+    pCosignedMessageBlob-&gt;pbData = NULL;
+
+    // Open the certificate store.
+    if(!(hCertStore = CertOpenStore(
+       CERT_STORE_PROV_SYSTEM,
+       0,
+       NULL,
+       CERT_SYSTEM_STORE_CURRENT_USER,
+       CERT_STORE_NAME)))
+    {
+         MyHandleError(TEXT(&quot;The MY store could not be opened.&quot;));
+         goto exit_CosignMessage;
+    }
+
+    // Get a pointer to the cosigner's certificate.
+    // This certificate must have access to the cosigner's private 
+    // key.
+    if((pCosignerCert = CertFindCertificateInStore(
+       hCertStore,
+       MY_ENCODING_TYPE,
+       0,
+       CERT_FIND_SUBJECT_STR,
+       CO_SIGNER_NAME,
+       NULL)))
+    {
+       _tprintf(TEXT(&quot;The signer's certificate was found.\n&quot;));
+    }
+    else
+    {
+        MyHandleError( TEXT(&quot;Signer certificate not found.&quot;));
+        goto exit_CosignMessage;
+    }
+
+    DWORD dwKeySpec;
+    if(!(CryptAcquireCertificatePrivateKey(
+        pCosignerCert,
+        0,
+        NULL,
+        &amp;hCryptProv,
+        &amp;dwKeySpec,
+        NULL)))
+    {
+        MyHandleError(
+            TEXT(&quot;CryptAcquireCertificatePrivateKey failed.&quot;));
+        goto exit_CosignMessage;
+    }
+
+    // Open a message for decoding.
+    if(!(hMsg = CryptMsgOpenToDecode(
+        MY_ENCODING_TYPE,
+        0,
+        0,
+        NULL,
+        NULL,
+        NULL)))
+    {
+        MyHandleError(TEXT(&quot;CryptMsgOpenToDecode failed.&quot;));
+        goto exit_CosignMessage;
+    }
+
+    // Update the message with the encoded BLOB.
+    if(!(CryptMsgUpdate(
+        hMsg,
+        pSignedMessageBlob-&gt;pbData,
+        pSignedMessageBlob-&gt;cbData,
+        TRUE)))
+    {
+        MyHandleError(TEXT(&quot;CryptMsgUpdate failed.&quot;));
+        goto exit_CosignMessage;
+    }
+
+    // Initialize the CMSG_SIGNER_ENCODE_INFO structure for the 
+    // cosigner.
+    CMSG_SIGNER_ENCODE_INFO CosignerInfo;
+    memset(&amp;CosignerInfo, 0, sizeof(CMSG_SIGNER_ENCODE_INFO));
+    CosignerInfo.cbSize = sizeof(CMSG_SIGNER_ENCODE_INFO);
+    CosignerInfo.pCertInfo = pCosignerCert-&gt;pCertInfo;
+    CosignerInfo.hCryptProv = hCryptProv;
+    CosignerInfo.dwKeySpec = dwKeySpec;
+    CosignerInfo.HashAlgorithm.pszObjId = szOID_RSA_SHA1RSA;
+
+    // Add the cosigner to the message.
+    if(CryptMsgControl(
+        hMsg,
+        0,
+        CMSG_CTRL_ADD_SIGNER,
+        &amp;CosignerInfo))
+    {
+        _tprintf(TEXT(&quot;CMSG_CTRL_ADD_SIGNER succeeded. \n&quot;));
+    }
+    else
+    {
+        MyHandleError(TEXT(&quot;CMSG_CTRL_ADD_SIGNER failed.&quot;));
+        goto exit_CosignMessage;
+    }
+
+    // Add the cosigner's certificate to the message.
+    CERT_BLOB CosignCertBlob;
+    CosignCertBlob.cbData = pCosignerCert-&gt;cbCertEncoded;
+    CosignCertBlob.pbData = pCosignerCert-&gt;pbCertEncoded;
+
+    if(CryptMsgControl(
+        hMsg,
+        0,
+        CMSG_CTRL_ADD_CERT,
+        &amp;CosignCertBlob))
+    {
+        _tprintf(TEXT(&quot;CMSG_CTRL_ADD_CERT succeeded. \n&quot;));
+    }
+    else
+    {
+        MyHandleError(TEXT(&quot;CMSG_CTRL_ADD_CERT failed.&quot;));
+        goto exit_CosignMessage;
+    }
+
+    // Get the size of the cosigned BLOB.
+    if(CryptMsgGetParam(
+        hMsg,
+        CMSG_ENCODED_MESSAGE,
+        0,
+        NULL,
+        &amp;cbCosignedMessageBlob))
+    {
+        _tprintf(TEXT(&quot;The size for the encoded BLOB is %d.\n&quot;), 
+            cbCosignedMessageBlob);
+    }
+    else
+    {
+        MyHandleError(TEXT(&quot;Sizing of cbSignerInfo failed.&quot;));
+        goto exit_CosignMessage;
+    }
+
+    // Allocate memory for the cosigned BLOB.
+    if(!(pbCosignedMessageBlob = 
+       (BYTE*)malloc(cbCosignedMessageBlob)))
+    {
+        MyHandleError(
+            TEXT(&quot;Memory allocation error while cosigning.&quot;));
+        goto exit_CosignMessage;
+    }
+
+    // Get the cosigned message BLOB.
+    if(CryptMsgGetParam(
+        hMsg,
+        CMSG_ENCODED_MESSAGE,
+        0,
+        pbCosignedMessageBlob,
+        &amp;cbCosignedMessageBlob))
+    {
+        _tprintf(TEXT(&quot;The message was cosigned successfully. \n&quot;));
+
+        // pbSignedMessageBlob now contains the signed BLOB.
+        fReturn = true;
+    }
+    else
+    {
+        MyHandleError(TEXT(&quot;Sizing of cbSignerInfo failed.&quot;));
+        goto exit_CosignMessage;
+    }
+
+exit_CosignMessage:
+
+    // Clean up and free memory as needed.
+
+    if(hMsg)
+    {
+        CryptMsgClose(hMsg);
+    }
+
+    if(hCryptProv)
+    {
+        CryptReleaseContext(hCryptProv, 0);
+        hCryptProv = NULL;
+    }
+
+    if(pCosignerCert)
+    {
+        CertFreeCertificateContext(pCosignerCert);
+        pCosignerCert = NULL;
+    }
+    
+    if(hCertStore)
+    {
+        CertCloseStore(hCertStore, CERT_CLOSE_STORE_CHECK_FLAG);
+        hCertStore = NULL;
+    }
+
+    // Only free the cosigned message if a failure occurred.
+    if(!fReturn)
+    {
+        if(pbCosignedMessageBlob)
+        {
+            free(pbCosignedMessageBlob);
+            pbCosignedMessageBlob = NULL;
+        }
+    }
+
+    if(pbCosignedMessageBlob)
+    {
+        pCosignedMessageBlob-&gt;cbData = cbCosignedMessageBlob;
+        pCosignedMessageBlob-&gt;pbData = pbCosignedMessageBlob;
+    }
+    
+    return fReturn;
+}
+
+//-------------------------------------------------------------------
+// VerifyCosignedMessage
+bool VerifyCosignedMessage(
+    CRYPT_DATA_BLOB *pCosignedMessageBlob, 
+    CRYPT_DATA_BLOB *pDecodedMessageBlob)
+{
+    bool fReturn = false;
+    BYTE *pbDecodedMessage = NULL;
+    DWORD cbDecodedMessage=0;
+
+    // Get the number of signers of the message.
+    LONG lSigners = CryptGetMessageSignerCount(
+        MY_ENCODING_TYPE, 
+        pCosignedMessageBlob-&gt;pbData, 
+        pCosignedMessageBlob-&gt;cbData);
+    if(-1 == lSigners)
+    {
+        MyHandleError(TEXT(&quot;CryptGetMessageSignerCount failed.&quot;));
+        goto exit_VerifyCosignedMessage;
+    }
+
+    // Loop through all of the signers and verify the signature for 
+    // each one.
+    CRYPT_VERIFY_MESSAGE_PARA VerifyParams;
+    VerifyParams.cbSize = sizeof(CRYPT_VERIFY_MESSAGE_PARA);
+    VerifyParams.dwMsgAndCertEncodingType = MY_ENCODING_TYPE;
+    VerifyParams.hCryptProv = NULL;
+    VerifyParams.pfnGetSignerCertificate = NULL;
+    VerifyParams.pvGetArg = NULL;
+
+    for(LONG i = 0; i &lt; lSigners; i++)
+    {
+        if(!(CryptVerifyMessageSignature(
+            &amp;VerifyParams,
+            i,
+            pCosignedMessageBlob-&gt;pbData,
+            pCosignedMessageBlob-&gt;cbData,
+            NULL,
+            NULL,
+            NULL)))
+        {
+            MyHandleError(TEXT(&quot;One of the message signatures &quot;)
+                TEXT(&quot;could not be verified.&quot;));
+            goto exit_VerifyCosignedMessage;
+        }
+    }
+
+    // At this point, all of the signatures in the message have been 
+    // verified. Get the decoded data from the message.
+    _tprintf(
+        TEXT(&quot;All signatures in the message have been verified.\n&quot;));
+
+    // Get the size of the decoded message
+    if(!(CryptVerifyMessageSignature(
+        &amp;VerifyParams,
+        0,
+        pCosignedMessageBlob-&gt;pbData,
+        pCosignedMessageBlob-&gt;cbData,
+        NULL,
+        &amp;cbDecodedMessage,
+        NULL)))
+    {
+        MyHandleError(TEXT(&quot;CryptVerifyMessageSignature failed.&quot;));
+        goto exit_VerifyCosignedMessage;
+    }
+
+    // Allocate memory for the decoded message.
+    if(!(pbDecodedMessage = 
+       (BYTE*)malloc(cbDecodedMessage)))
+    {
+        MyHandleError(
+            TEXT(&quot;Memory allocation error while decoding.&quot;));
+        goto exit_VerifyCosignedMessage;
+    }
+
+    if((CryptVerifyMessageSignature(
+        &amp;VerifyParams,
+        0,
+        pCosignedMessageBlob-&gt;pbData,
+        pCosignedMessageBlob-&gt;cbData,
+        pbDecodedMessage,
+        &amp;cbDecodedMessage,
+        NULL)))
+    {
+        fReturn  = true;
+    }
+    else
+    {
+        MyHandleError(TEXT(&quot;CryptVerifyMessageSignature failed.&quot;));
+        goto exit_VerifyCosignedMessage;
+    }
+
+    _tprintf(TEXT(&quot;The verified message is \&quot;%s\&quot;.\n&quot;),
+        pbDecodedMessage);
+
+exit_VerifyCosignedMessage:
+
+    // If an error occurred and memory was allocated, free it.
+    if(!fReturn)
+    {
+        if(pbDecodedMessage)
+        {
+            free(pbDecodedMessage);
+            pbDecodedMessage = NULL;
+        }
+    }
+
+    if(pbDecodedMessage)
+    {
+        pDecodedMessageBlob-&gt;cbData = cbDecodedMessage;
+        pDecodedMessageBlob-&gt;pbData = pbDecodedMessage;
+    }
+
+    return fReturn;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Building Graphs with the Capture Graph Builder</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Building Graphs with the Capture Graph Builder
+ms.assetid: 0329c4f0-ee6f-423e-b38b-169204e3a31c
+title: Building Graphs with the Capture Graph Builder
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Building Graphs with the Capture Graph Builder</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>Despite its name, the Capture Graph Builder is useful for building many kinds of custom filter graphs, not only capture graphs. This article provides a brief overview of how to use this object.</p>
+<p>The Capture Graph Builder exposes the <a href="/windows/desktop/api/Strmif/nn-strmif-icapturegraphbuilder2"><strong>ICaptureGraphBuilder2</strong></a> interface. Start by calling <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> to create the Capture Graph Builder and the Filter Graph Manager. Then initialize the Capture Graph Builder by calling <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-setfiltergraph"><strong>ICaptureGraphBuilder2::SetFiltergraph</strong></a> with a pointer to the Filter Graph Manager, as follows:</p>
+<pre lang="C++"><code>IGraphBuilder *pGraph = NULL;
+ICaptureGraphBuilder2 *pBuilder = NULL;
+
+// Create the Filter Graph Manager.
+HRESULT hr =  CoCreateInstance(CLSID_FilterGraph, NULL,
+    CLSCTX_INPROC_SERVER, IID_IGraphBuilder, (void **)&amp;pGraph);
+
+if (SUCCEEDED(hr))
+{
+    // Create the Capture Graph Builder.
+    hr = CoCreateInstance(CLSID_CaptureGraphBuilder2, NULL,
+        CLSCTX_INPROC_SERVER, IID_ICaptureGraphBuilder2, 
+        (void **)&amp;pBuilder);
+    if (SUCCEEDED(hr))
+    {
+        pBuilder-&gt;SetFiltergraph(pGraph);
+    }
+};
+</code></pre>
+<h2>Connecting Filters</h2>
+<p>The <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>ICaptureGraphBuilder2::RenderStream</strong></a> method connects two or three filters together in a chain. Generally, the method works best when each filter has no more than one input pin or output pin of the same type. This discussion begins by ignoring the first two parameters of <strong>RenderStream</strong> and focusing on the last three parameters. The third parameter is an <a href="/windows/desktop/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> pointer, which can specify either a filter (as an <a href="/windows/desktop/api/Strmif/nn-strmif-ibasefilter"><strong>IBaseFilter</strong></a> interface pointer) or an output pin (as an <a href="/windows/desktop/api/Strmif/nn-strmif-ipin"><strong>IPin</strong></a> interface pointer). The fourth and fifth parameters specify <strong>IBaseFilter</strong> pointers. The <strong>RenderStream</strong> method connects all three filters in a chain. For example, suppose that <em>A</em>, <em>B</em>, and <em>C</em> are filters. Assume for now that each filter has exactly one input pin and one output pin. The following call connects A to B, and then B to C:</p>
+<!-- raw HTML omitted -->
+<p>All connections are &quot;intelligent,&quot; meaning that additional filters are added to the graph as needed. For details, see <a href="intelligent-connect.html">Intelligent Connect</a>. To connect just two filters, set the middle value to <strong>NULL</strong>. For example, this call connects A to C:</p>
+<!-- raw HTML omitted -->
+<p>You can create longer chains by calling the method twice:</p>
+<!-- raw HTML omitted -->
+<p>If the last parameter is <strong>NULL</strong>, the method automatically locates a default renderer. It uses the <a href="video-renderer-filter.html">Video Renderer</a> for video and the <a href="directsound-renderer-filter.html">DirectSound Renderer</a> for audio. Thus:</p>
+<!-- raw HTML omitted -->
+<p>is equivalent to</p>
+<!-- raw HTML omitted -->
+<p>where <em>R</em> is the appropriate renderer. To connect the Video Mixing Renderer filter instead of the Video Renderer, however, you must specify it explicitly.</p>
+<p>If you specify a filter in the third parameter, rather than a pin, you may need to indicate which output pin should be used for the connection. That is the purpose of the method's first two parameters. The first parameter applies only to capture filters. It specifies a GUID that indicates a pin category. For a complete list of categories, see <a href="pin-property-set.html">Pin Property Set</a>. Two of the categories are valid for all capture filters:</p>
+<ul>
+<li><strong>PIN_CATEGORY_CAPTURE</strong></li>
+<li><strong>PIN_CATEGORY_PREVIEW</strong></li>
+</ul>
+<p>If a capture filter does not supply separate pins for capture and preview, the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>RenderStream</strong></a> method inserts a <a href="smart-tee-filter.html">Smart Tee</a> filter, which splits the stream into a capture stream and a preview stream. From the application's standpoint, you can simply treat all capture filters as having separate pins and ignore the underlying topology of the graph.</p>
+<p>For file capture, connect the capture pin to a mux filter. For live preview, connect the preview pin to a renderer. If you switch the two categories, the graph might drop an excessive number of frames during the file capture; but if the graph is connected properly, it drops preview frames as needed in order to maintain throughput on the capture stream.</p>
+<p>The following example shows how to connect both streams:</p>
+<pre lang="C++"><code>// Capture to file:
+pBuilder-&gt;RenderStream(&amp;PIN_CATEGORY_CAPTURE, NULL, pCapFilter, NULL, pMux);
+// Preview:
+pBuilder-&gt;RenderStream(&amp;PIN_CATEGORY_PREVIEW, NULL, pCapFilter, NULL, NULL);
+</code></pre>
+<p>Some capture filters also support closed captions, indicated by <strong>PIN_CATEGORY_VBI</strong>. To capture the closed captions to a file, render this category to the mux filter. To view the closed captions in your preview window, connect to the renderer:</p>
+<pre lang="C++"><code>// Capture to file:
+pBuilder-&gt;RenderStream(&amp;PIN_CATEGORY_VBI, NULL, pCapFilter, NULL, pMux);
+// Preview on screen:
+pBuilder-&gt;RenderStream(&amp;PIN_CATEGORY_VBI, NULL, pCapFilter, NULL, NULL);
+</code></pre>
+<p>The second parameter to <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>RenderStream</strong></a> identifies the media type, and is typically one of the following:</p>
+<ul>
+<li>MEDIATYPE_Audio</li>
+<li>MEDIATYPE_Video</li>
+<li>MEDIATYPE_Interleaved (DV)</li>
+</ul>
+<p>You can use this parameter whenever the filter's output pins support the enumeration of preferred media types. For file sources, the Capture Graph Builder automatically adds a parser filter if needed, and then queries the media types on the parser. (For an example, see <a href="recompressing-an-avi-file.html">Recompressing an AVI File</a>.) Also, if the last filter in the chain has several input pins, the method attempts to enumerate their media types. However, not all filters support this functionality.</p>
+<h2>Finding Interfaces on Filters and Pins</h2>
+<p>After you build a graph, you will typically need to locate various interfaces exposed by filters and pins in the graph. For example, a capture filter might expose the <a href="/windows/desktop/api/Strmif/nn-strmif-iamdroppedframes"><strong>IAMDroppedFrames</strong></a> interface, while the filter's output pins might expose the <a href="/windows/desktop/api/Strmif/nn-strmif-iamstreamconfig"><strong>IAMStreamConfig</strong></a> interface.</p>
+<p>The simplest way to find an interface is to use the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findinterface"><strong>ICaptureGraphBuilder2::FindInterface</strong></a> method. This method walks the graph (filters and pins) until it locates the desired interface. You can specify the starting point for the search, and you can limit the search to filters upstream or downstream from the starting point.</p>
+<p>The following example searches for the <a href="/windows/desktop/api/Strmif/nn-strmif-iamstreamconfig"><strong>IAMStreamConfig</strong></a> interface on a video preview pin:</p>
+<pre lang="C++"><code>IAMStreamConfig *pConfig = NULL;
+HRESULT hr = pBuild-&gt;FindInterface(
+    &amp;PIN_CATEGORY_PREVIEW, 
+    &amp;MEDIATYPE_Video,
+    pVCap, 
+    IID_IAMStreamConfig, 
+    (void**)&amp;pConfig
+);
+if (SUCCESSFUL(hr))
+{
+    /* ... */
+    pConfig-&gt;Release();
+}
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+The topic <a href="find-an-interface-on-a-filter-or-pin.html">Find an Interface on a Filter or Pin</a> shows an alternative approach that uses the <a href="/windows/desktop/api/Strmif/nn-strmif-igraphbuilder"><strong>IGraphBuilder</strong></a> interface instead of <a href="/windows/desktop/api/Strmif/nn-strmif-icapturegraphbuilder2"><strong>ICaptureGraphBuilder2</strong></a>. Which approach to use depends on your application. If your application already uses <strong>ICaptureGraphBuilder2</strong> to build the graph, then <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findinterface"><strong>ICaptureGraphBuilder2::FindInterface</strong></a> is a good approach. Otherwise, consider using the <strong>IGraphBuilder</strong> methods.</p>
+</blockquote>
+<p>Â </p>
+<h2>Finding Pins</h2>
+<p>Less commonly, you may need to locate an individual pin on a filter, although in most cases the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>RenderStream</strong></a> and <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findinterface"><strong>FindInterface</strong></a> methods will save you the trouble. If you do need to find a particular pin on a filter, the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findpin"><strong>ICaptureGraphBuilder2::FindPin</strong></a> helper method is useful. Specify the category, the media type (video or audio), the direction, and whether the pin must be unconnected.</p>
+<p>For example, the following code searches for an unconnected video preview pin on a capture filter:</p>
+<pre lang="C++"><code>IPin *pPin = NULL;
+hr = pBuild-&gt;FindPin(
+    pCap,                   // Pointer to the filter to search.
+    PINDIR_OUTPUT,          // Search for an output pin.
+    &amp;PIN_CATEGORY_PREVIEW,  // Search for a preview pin.
+    &amp;MEDIATYPE_Video,       // Search for a video pin.
+    TRUE,                   // The pin must be unconnected. 
+    0,                      // Return the first matching pin (index 0).
+    &amp;pPin);                 // This variable receives the IPin pointer.
+if (SUCCESSFUL(hr))
+{
+    /* ... */
+    pPin-&gt;Release();
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="video-capture.html">Video Capture</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

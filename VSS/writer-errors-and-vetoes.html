@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Writer Errors and Vetoes</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: A writer can fail for numerous programmatic reasons.
+ms.assetid: 50eced73-3917-4d7e-96cc-2d793b448738
+title: Writer Errors and Vetoes
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Writer Errors and Vetoes</h1>
+<p>A writer can fail for numerous programmatic reasons. When this happens, it should veto the ongoing backup, restore, or shadow copy operation by calling the <a href="/windows/desktop/api/VsWriter/nf-vswriter-cvsswriter-setwriterfailure"><strong>CVssWriter::SetWriterFailure</strong></a> method in one of its handler methods (for example, <a href="/windows/desktop/api/VsWriter/nf-vswriter-cvsswriter-onfreeze"><strong>CVssWriter::OnFreeze</strong></a> or <a href="/windows/desktop/api/VsWriter/nf-vswriter-cvsswriter-onprerestore"><strong>CVssWriter::OnPreRestore</strong></a>) and returning <strong>TRUE</strong>. It can also optionally set an error message string in response to a failure condition in certain handler methods with the <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponentex-setprepareforbackupfailuremsg"><strong>IVssComponentEx::SetPrepareForBackupFailureMsg</strong></a>, <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponentex-setpostsnapshotfailuremsg"><strong>IVssComponentEx::SetPostSnapshotFailureMsg</strong></a>, <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-setprerestorefailuremsg"><strong>IVssComponent::SetPreRestoreFailureMsg</strong></a>, and <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-setpostrestorefailuremsg"><strong>IVssComponent::SetPostRestoreFailureMsg</strong></a> methods. The requester can accept the veto or continue with the backup, ignoring the veto.</p>
+<p>A requester should check the writer status (using <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-gatherwriterstatus"><strong>IVssBackupComponents::GatherWriterStatus</strong></a> and <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-getwriterstatus"><strong>IVssBackupComponents::GetWriterStatus</strong></a>) following each event it generates.</p>
+<p>In some cases, error messages can be retrieved from these failures (using the <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponentex-getprepareforbackupfailuremsg"><strong>IVssComponentEx::GetPrepareForBackupFailureMsg</strong></a>, <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-getprerestorefailuremsg"><strong>IVssComponent::GetPreRestoreFailureMsg</strong></a>, <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponentex-getpostsnapshotfailuremsg"><strong>IVssComponentEx::GetPostSnapshotFailureMsg</strong></a>, and <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-getpostrestorefailuremsg"><strong>IVssComponent::GetPostRestoreFailureMsg</strong></a> methods), or a writer may choose to set metadata (using <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-setrestoremetadata"><strong>IVssComponent::SetRestoreMetadata</strong></a> and <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-setbackupmetadata"><strong>IVssComponent::SetBackupMetadata</strong></a> with error state information). For example code that shows how to view such error messages, see <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponentex-getprepareforbackupfailuremsg"><strong>IVssComponentEx::GetPrepareForBackupFailureMsg</strong></a>.</p>
+<p>Depending on the error state, a requester or its operator could restart the backup and shadow copy with any necessary modification to the state of the backup job or system.</p>
+<p>For example, suppose <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-getwriterstatus"><strong>GetWriterStatus</strong></a> returned the following:</p>
+<ul>
+<li>
+<p><strong>VSS_E_WRITERERROR_INCONSISTENTSNAPSHOT</strong> suggests that a requester might add additional volumes to the shadow copy</p>
+</li>
+<li>
+<p><strong>VSS_E_WRITERERROR_RETRYABLE</strong> indicates that retrying without reconfiguration might work. If the writer continues to return the error after several retries, try restarting the service that hosts the writer. The following writers are hosted in the VSS service: registry writer, COM+ class registration database writer, shadow copy optimization writer, and Automated System Recovery (ASR) writer. If the writer belongs to an application that hosts the writer in its own process, try restarting the application.</p>
+<p><strong>Windows ServerÂ 2003 and WindowsÂ XP:</strong> The following writers are hosted in the VSS service: registry writer, COM+ class registration database writer, application event log writer, and Microsoft SQL Server 2000 Desktop Engine (MSDE) writer.</p>
+</li>
+<li>
+<p>VSS_E_WRITER_STATUS_NOT_AVAILABLE indicates that a writer may have reached the maximum number of available backup and restore sessions, and retrying might work when the system is less busy.</p>
+</li>
+<li>
+<p><strong>VSS_E_WRITERERROR_OUTOFRESOURCES</strong> or <strong>VSS_E_WRITERERROR_TIMEOUT</strong> might suggest that system load be reduced prior to retrying</p>
+</li>
+<li>
+<p><strong>VSS_E_WRITERERROR_NONRETRYABLE</strong> or <strong>VSS_E_WRITER_NOT_RESPONDING</strong> would likely indicate a writer error so severe as to preclude trying to back up its data with VSS.</p>
+</li>
+</ul>
+<p>Depending on which writer and which components generate them, it is not always necessary for a backup application to abort following a veto or error.</p>
+<p>For example, a requester may decide that the intent of the shadow copy is to back up application A and the veto has been received from the writer for backup application B. In this case, it is perfectly acceptable to continue to back up application A while ignoring the veto.</p>
+<p>The following are examples of a writer veto:</p>
+<ul>
+<li>The writer vetoes the shadow copy creation process when it could not suspend its activities during the time the shadow copy was being created. This indicates that there is a high probability that the shadow copy is not valid because a write operation has occurred during the Freeze state.</li>
+<li>A backup application has requested a shadow copy of only volume C: and a writer determines that a shadow copy of C: and D: is to back up its data. In this case, the writer will veto. The backup application may examine the metadata and determine whether the writer will be ignored or the shadow copy creation process will be aborted and later restarted.</li>
+</ul>
+<p>Â </p>
+<p>Â </p>
+</body>

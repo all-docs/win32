@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example Code for Creating a Container Object</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Example Code for Creating a Container Object
+description: The following code example creates two objects.
+ms.assetid: bd9a8d62-c8e8-4ee5-86d8-bda5ddeb6e2c
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Active Directory examples Active Directory , creating a container object
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Example Code for Creating a Container Object</h1>
+<p>The following code example creates two objects. First, a container object and, second, a sub-container object. A value for the sub-container object is added to the <a href="/windows/desktop/ADSchema/a-otherwellknownobjects"><strong>otherWellKnownObjects</strong></a> property of the container object. The code example binds to the sub-container object using the WKGUID binding and displays its ADsPath. It then renames the sub-container object and binds again using the same WKGUID binding.</p>
+<pre lang="C++"><code>#define _WIN32_WINNT 0x0501
+
+#include &quot;resource.h&quot;
+#include &lt;atlbase.h&gt;
+#include &lt;atlcom.h&gt;
+#pragma comment(lib, &quot;Activeds.lib&quot;)
+#pragma comment(lib, &quot;adsiid.Lib&quot;)
+#include &lt;atlenc.h&gt;
+#include &lt;activeds.h&gt;
+#include &lt;stdio.h&gt;
+
+void wmain( int argc, wchar_t *argv[ ])
+        HRESULT hr = S_OK;
+                CComPtr&lt;IADs&gt; pObject ;
+                CComPtr&lt;IADsContainer&gt; pDomain ;
+                IDispatch *pDisp = NULL;
+
+                CComPtr&lt;IADsContainer&gt; pNewContainer ;
+                CComPtr&lt;IADs&gt; pIADsObject, pNewObject,  pTestWKO1, pTestWKO2;
+
+                CComVariant vartest, var;
+                CComBSTR bstr, szNewContainerDN (MAX_PATH), 
+                               szPath(MAX_PATH), 
+                               szRelPath(MAX_PATH);
+                // Names of the container and child object.
+                CComBSTR szContainer ( L&quot;MyWKOTestContainer&quot;), 
+                         szNewObject ( L&quot;MyWKOTestObject&quot;), 
+                         szNewObjectRenameRDN ( L&quot;cn=ObjectwithNEWNAME&quot;);
+
+
+        // Get rootDSE and the domain container DN.
+        hr = ADsGetObject(L&quot;LDAP://rootDSE&quot;, IID_IADs, (void**)&amp;pObject);
+        if (FAILED(hr))
+        {
+                wprintf(L&quot;Not Found. Cannot bind to the domain.\n&quot;);
+                return hr;
+        }
+
+        hr = pObject-&gt;Get(CComBSTR(L&quot;defaultNamingContext&quot;),&amp;var);
+        if (SUCCEEDED(hr))
+        {
+    // Build the ADsPath to the domain.
+    szPath = L&quot;LDAP://&quot;;
+    szPath.AppendBSTR(var.bstrVal);
+    var.Clear();
+    // Bind to the current domain.
+    hr = ADsGetObject(szPath, IID_IADsContainer, (void**)&amp;pDomain);
+    if (SUCCEEDED(hr))
+    {
+      // Create the container.
+      szRelPath = L&quot;cn=&quot;;
+      szRelPath += szContainer;
+      hr = pDomain-&gt;Create(CComBSTR(L&quot;container&quot;), 
+                              // ldapDisplayName of the class
+                              // of the object to create.
+                           szRelPath, // Relative path in RDN=value format.
+                            &amp;pDisp); // Return an IDispatch pointer to new object.
+      if (SUCCEEDED(hr))
+      {
+        // Call the QueryInterface method for an IADs interface.
+        hr = pDisp-&gt;QueryInterface(&amp;pIADsObject);
+                pDisp-&gt;Release();
+        // Commit the new object to the directory.
+        hr = pIADsObject-&gt;SetInfo();
+        // Call the QueryInterface method for an IADsContainer interface.
+        hr = pDisp-&gt;QueryInterface(&amp;pNewContainer);
+        if (SUCCEEDED(hr))
+        {
+          // Create the new container object in the container.
+                  szRelPath = L&quot;cn=&quot;;
+          szRelPath += szNewObject;
+                  hr = pNewContainer-&gt;Create(CComBSTR(L&quot;container&quot;), 
+                                             szRelPath,
+                                             &amp;pDisp);
+          if (SUCCEEDED(hr))
+          {
+            // Get the DN of the new container object.
+            hr = pIADsObject-&gt;Get(CComBSTR(L&quot;distinguishedName&quot;), &amp;var);
+            if (SUCCEEDED(hr))
+            {
+              szNewContainerDN = var.bstrVal;
+              var.Clear();
+              wprintf(L&quot;Created new container with DN: %s\n&quot;,szNewContainerDN);
+              hr = pDisp-&gt;QueryInterface(&amp;pNewObject);
+                                pDisp-&gt;Release();
+              if (SUCCEEDED(hr))
+              {
+                // Commit the new object to the directory.
+                hr = pNewObject-&gt;SetInfo();
+                // Get the DN for the new object.
+                hr = pNewObject-&gt;Get(CComBSTR(L&quot;distinguishedName&quot;), &amp;var);
+                if (SUCCEEDED(hr))
+                {
+                  wprintf(L&quot;Created new child object with DN: %s\n&quot;,var.bstrVal);
+                  // Use LDAP API to set the otherWellKnownObjects property.
+                  wprintf(L&quot;Call AddValueToOtherWKOProperty with:\n&quot;);
+                  wprintf(L&quot;szContainer DN: %s\n&quot;,szNewContainerDN);
+
+
+                  wprintf(L&quot;pWKOGUID (bindable string format): %s\n&quot;,
+                            MyWKOTestObjectGUID);
+                  wprintf(L&quot;szWKOObjectDN: %s\n&quot;,var.bstrVal);
+                  hr = AddValueToOtherWKOProperty(
+                          pNewObject, 
+                          szNewContainerDN, // DN for container whose 
+                                            // otherWellKnownObjects 
+                                            // property to modify.
+                          MyWKOTestObjectGUID, // WKO GUID for the well-known object
+                          var.bstrVal // DN of the well-known object.
+                                   );
+                  wprintf(L&quot;AddValueToOtherWKOProperty returned: %x\n&quot;,hr);
+                  if (SUCCEEDED(hr))
+                  {
+                     // Bind using WKGUID binding.
+                     // Build the ADsPath to the well-known object.
+                     szPath = L&quot;LDAP://&lt;WKGUID=&quot;;
+                     szPath += MyWKOTestObjectGUID;
+                     szPath += L&quot;,&quot;;
+                     szPath += szNewContainerDN;
+                     szPath += L&quot;&gt;&quot;;
+                     wprintf(L&quot;Bind with the following WKGUID binding string: %s\n&quot;,
+                             szPath);
+                     hr = ADsGetObject(szPath,IID_IADs, (void**)&amp;pTestWKO1);
+                     if (SUCCEEDED(hr))
+                     {
+                         hr = pTestWKO1-&gt;Get(CComBSTR(L&quot;distinguishedName&quot;),
+                                                      &amp;vartest);
+                          if (SUCCEEDED(hr))
+                          {
+                              wprintf(L&quot;Successfully bound to object. DN: %s\n&quot;,
+                                      vartest.bstrVal);
+                              vartest.Clear();
+                          }
+                      }
+                      else
+                          wprintf(L&quot;Binding failed with hr: %x\n&quot;,hr);
+
+                      // Bind again using the DN to get a regular ADsPath.
+                      szPath = L&quot;LDAP://&quot;;
+                      szPath += var.bstrVal;
+                      hr = ADsGetObject(szPath, IID_IADs, (void**)&amp;pTestWKO1);
+                      hr = pTestWKO1-&gt;get_ADsPath(&amp;bstr);
+                      // Rename the WKO object.
+                      hr = pNewContainer-&gt;MoveHere(bstr, szNewObjectRenameRDN,NULL);
+                      pTestWKO1.Release();
+                      // Bind again using WKGUID binding.
+                      // Build the ADsPath to the well-known object.
+                      szPath = L&quot;LDAP://&lt;WKGUID=&quot;;
+                      szPath += MyWKOTestObjectGUID;
+                      szPath += L&quot;,&quot;;
+                      szPath += szNewContainerDN;
+                      szPath += L&quot;&gt;&quot;;
+                      wprintf( 
+                       L&quot;Bind AGAIN with the following WKGUID binding string: %s\n&quot;,
+                       szPath
+                      );
+                      hr = ADsGetObject(szPath, IID_IADs, (void**)&amp;pTestWKO2);
+                      if (SUCCEEDED(hr))
+                      {
+                          hr = pTestWKO2-&gt;Get(CComBSTR(L&quot;distinguishedName&quot;),
+                                              &amp;vartest);
+                          if (SUCCEEDED(hr))
+                          {
+                              wprintf(L&quot;Successfully bound to object. &quot;);
+                              wprintf(L&quot;Be aware that the DN reflects the rename.&quot;);
+                              wprintf(L&quot; DN: %s\n&quot;,vartest.bstrVal);
+                              vartest.Clear();
+                          }
+                      }
+                      else
+                          wprintf(L&quot;Binding failed with hr: %x\n&quot;,hr);
+                  }
+
+                }
+              }
+            }
+          }
+        }
+
+        // Offer user the option to delete test containers.
+        wprintf(L&quot;Delete the test container and object (Y/N):&quot;);
+                CComBSTR pszBuffer(MAX_PATH * 2);
+        _getws_s(pszBuffer, MAX_PATH * 2);
+        if (pszBuffer == L&quot;Y&quot; )
+        {
+            // Delete the object.
+            // Delete the container.
+            hr = pNewContainer-&gt;Delete(CComBSTR(L&quot;container&quot;), 
+                                       szNewObjectRenameRDN);
+            if (SUCCEEDED(hr))
+            {
+              wprintf(L&quot;Test object successfully deleted.\n&quot;);
+              szRelPath = L&quot;cn=&quot;;
+              szRelPath += szContainer;
+              // Delete the container.
+              hr = pDomain-&gt;Delete(CComBSTR(L&quot;container&quot;), szRelPath);
+              if (SUCCEEDED(hr))
+                wprintf(L&quot;Test container and its contents successfully deleted.\n&quot;);
+              else
+                wprintf(L&quot;Failed to delete test container. hr: %x\n&quot;,hr);
+            }
+            else
+              wprintf(L&quot;Failed to delete test container. hr: %x\n&quot;,hr);
+        }
+                hr = S_FALSE;
+
+      }
+    }
+}
+
+}
+
+
+// converts hexadecimal string to a octet encoded byte 
+array STDMETHODIMP ConvertHexGuidToArray(PCWSTR hexGuid, LPSAFEARRAY *sa) throw() {
+
+        if (hexGuid == NULL) return E_INVALIDARG;
+
+        int hexLen = (int)wcslen(hexGuid);
+        HRESULT hr = S_OK;
+        CTempBuffer&lt;CHAR&gt; sHex(hexLen);
+        int loopLen = hexLen;
+        // make ansi
+        while(loopLen-- != 0)
+                sHex[loopLen] = (CHAR) hexGuid[loopLen];
+        SAFEARRAY *temp= SafeArrayCreateVector(VT_UI1, 0, hexLen / 2);
+        if (temp == NULL)
+                hr = E_OUTOFMEMORY;
+        PBYTE dst ;
+        if (hr == S_OK) hr = SafeArrayAccessData(temp, (void**)&amp;dst);
+        int dstLen = hexLen /2;
+        if (hr == S_OK)
+        {
+                AtlHexDecode(sHex, hexLen, dst, &amp;dstLen );
+                hr = SafeArrayUnaccessData(temp);
+                *sa = temp;
+        }
+
+        return hr;
+
+}
+
+HRESULT AddValueToOtherWKOProperty(IADs *pads, 
+                                   LPOLESTR szContainerDN, 
+                                     // DN for container 
+                                     // whose otherWellKnownObjects 
+                                     // property to modify.
+                                   PCWSTR pWKOGUID, // WKO GUID for the WKO.
+                                   BSTR szWKOObjectDN // DN of the WKO.
+                                   )
+{
+        HRESULT hr = E_FAIL;
+
+        CComPtr&lt;IADsDNWithBinary&gt; pdnWithBin;
+        CComBSTR retGuid;
+        pdnWithBin.CoCreateInstance(CLSID_DNWithBinary);
+
+        CComVariant v;
+        v.vt = VT_UI1 | VT_ARRAY;
+        ConvertHexGuidToArray(pWKOGUID, &amp;v.parray);
+        hr = pdnWithBin-&gt;put_DNString(szWKOObjectDN);
+        hr = pdnWithBin-&gt;put_BinaryValue(v);
+        v.Clear();
+        v.vt = VT_DISPATCH;
+        pdnWithBin.QueryInterface(&amp;v.pdispVal);
+
+        SAFEARRAY *psa = SafeArrayCreateVector(VT_VARIANT, 0, 1);
+        VARIANT *varray = (VARIANT*)psa-&gt;pvData;
+        VariantCopy(&amp;varray[0] ,&amp;v);
+        CComVariant v2;
+        v2.vt = VT_VARIANT | VT_ARRAY;
+        v2.parray = psa;
+        hr = pads-&gt;PutEx(ADS_PROPERTY_APPEND, 
+                         CComBSTR(L&quot;otherWellKnownObjects&quot;), 
+                         v2);
+
+        return hr;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

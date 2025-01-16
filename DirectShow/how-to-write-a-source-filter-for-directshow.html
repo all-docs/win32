@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Write a Source Filter for DirectShow</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to write a custom source filter for DirectShow.
+ms.assetid: 032f7624-2237-41cd-844a-18ed4a2e420d
+title: How to Write a Source Filter for DirectShow
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>How to Write a Source Filter for DirectShow</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This topic describes how to write a custom source filter for DirectShow.</p>
+<blockquote>
+<p>[!Note]<br />
+This topic describes push sources only; it does not describe pull sources, such as the Async Reader Filter, or splitter filters that connect to pull sources. For the distinction between <em>push</em> and <em>pull</em> sources, see <a href="data-flow-for-filter-developers.html">Data Flow for Filter Developers</a>.</p>
+</blockquote>
+<h2>The DirectShow Streaming Model</h2>
+<p>When you write a source filter, it is important to understand that a push source is not the same thing as a live source. A live source gets data from some external source, such as a camera or a network stream. Generally, a live source cannot control the incoming rate of data. If the downstream filters do not consume the data fast enough, the source will need to drop samples.</p>
+<p>But a push source does not have to be a live source. For example, a push source can read data from a local file. In that case, the downstream renderer filters determine how fast they consume the data from the source, based on the reference clock and the sample time stamps. The source filter delivers samples as quickly as possible, but the actual data flow is gated limited by the renderers. The mechanisms for gating the data flow are described in <a href="data-flow-for-filter-developers.html">Data Flow for Filter Developers</a>.</p>
+<p>Each output pin on the source filter creates a thread called a <em>streaming thread</em>. The pin delivers samples on the streaming thread. Typically, all of the decoding, processing, and rendering happens on this thread, although some downstream filters might create additional threads to queue their output samples.</p>
+<p>The streaming thread runs a loop with the following structure:</p>
+<pre lang="syntax"><code>until (stopped)
+  1. Get a media sample from the allocator.
+  2. Fill the sample with data.
+  3. Time stamp the sample. 
+  4. Deliver the sample downstream.
+</code></pre>
+<p>If no samples are available, step 1 blocks until a sample becomes available. Step 4 can also block; for example, it can block while the graph is paused.</p>
+<p>The loop runs as quickly as possible, but is limited by how quickly the renderer filter renders each sample. Assuming the filter graph has a reference clock, the rate is determined by the presentation times on the samples. If there is no reference clock, the renderer consumes samples as quickly as possible.</p>
+<h2>Using CSource and CSourceStream</h2>
+<p>The DirectShow base classes include two classes that support push sources: <a href="csource.html"><strong>CSource</strong></a> and <a href="csourcestream.html"><strong>CSourceStream</strong></a>.</p>
+<ul>
+<li><a href="csource.html"><strong>CSource</strong></a> is the base class for the filter and implements the <a href="/windows/desktop/api/Strmif/nn-strmif-ibasefilter"><strong>IBaseFilter</strong></a> interface.</li>
+<li><a href="csourcestream.html"><strong>CSourceStream</strong></a> is the base class for the output pins, and implements the <a href="/windows/desktop/api/Strmif/nn-strmif-ipin"><strong>IPin</strong></a> interface.</li>
+</ul>
+<h3>Output Pins</h3>
+<p>A source filter can have more than one output pin. In your filter's constructor method, create one or more pins derived from <a href="csourcestream.html"><strong>CSourceStream</strong></a> (one pin per output stream). You don't need to store pointers to the pins; the pins automatically add themselves to the filter when they are created.</p>
+<h3>Output Formats</h3>
+<p>The output pin handles format negotiation with the following <a href="csourcestream.html"><strong>CSourceStream</strong></a> methods:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="csourcestream-getmediatype.html"><strong>GetMediaType</strong></a></td>
+<td>Gets a media type from the output pin. <!-- raw HTML omitted --> The pin must propose at least one media type, because the downstream filter might not propose any types. In most cases, the downstream filter will be a decoder or a renderer, depending on whether the source filter delivers compressed or uncompressed data. A renderer filter usually requires a complete media type, containing all of the format information needed to render the stream. For a decoder, the amount of information that is required in the media type depends very much on the encoding format.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="csourcestream-checkmediatype.html"><strong>CheckMediaType</strong></a></td>
+<td>Checks if the output pin accepts a given media type. Overriding this method is optional, depending on how you implement <a href="csourcestream-getmediatype.html"><strong>GetMediaType</strong></a>.</td>
+</tr>
+</tbody>
+</table>
+<p>The <a href="csourcestream-getmediatype.html"><strong>GetMediaType</strong></a> method is overloaded:</p>
+<ul>
+<li><a href="csourcestream-getmediatype.html"><strong>GetMediaType</strong></a> (1) takes a single parameter, a pointer to a <a href="cmediatype.html"><strong>CMediaType</strong></a> object.</li>
+<li><a href="csourcestream-getmediatype2.html"><strong>GetMediaType</strong></a> (2) takes an index variable and a pointer to a <a href="cmediatype.html"><strong>CMediaType</strong></a> object.</li>
+</ul>
+<p>If the source filter's output pin supports exactly one media format, you should override (1) to initialize the <a href="cmediatype.html"><strong>CMediaType</strong></a> object with that format. Leave the default implementation of (2) and also leave the default implementation of <a href="csourcestream-checkmediatype.html"><strong>CheckMediaType</strong></a>.</p>
+<p>If the pin supports more than one format, override (2). Initialize the <a href="cmediatype.html"><strong>CMediaType</strong></a> object according to the value of the index variable. The pin should return the formats as an ordered list. In this case, you must also override the <a href="csourcestream-checkmediatype.html"><strong>CheckMediaType</strong></a> to check the media type against your list of formats.</p>
+<p>For uncompressed video formats, remember that the downstream filter can propose formats with various stride values. Your filter should accept any valid stride value. For more information, see <a href="/windows/win32/api/wingdi/ns-wingdi-bitmapinfoheader"><strong>BITMAPINFOHEADER</strong></a>.</p>
+<p>You must also override the pure-virtual <a href="cbaseoutputpin-decidebuffersize.html"><strong>CBaseOutputPin::DecideBufferSize</strong></a> method. Use this method to set the size of the sample buffers.</p>
+<h3>Streaming</h3>
+<p>The <a href="csourcestream.html"><strong>CSourceStream</strong></a> class creates the streaming thread for the pin. The thread procedure is implemented in the <a href="csourcestream-dobufferprocessingloop.html"><strong>CSourceStream::DoBufferProcessingLoop</strong></a> method. This method calls the pure-virtual <a href="csourcestream-fillbuffer.html"><strong>CSourceStream::FillBuffer</strong></a> method, which the derived class must override. This method is where the pin fills the buffer with data. For example, if your filter delivers uncompressed video, this is where you would draw the video frames.</p>
+<p>The base class automatically starts and stops the thread loop at the right times, when the filter pauses or stops. When this happens, the <a href="csourcestream.html"><strong>CSourceStream</strong></a> class calls some methods to notify your derived class:</p>
+<ul>
+<li><a href="csourcestream-onthreadcreate.html"><strong>CSourceStream::OnThreadCreate</strong></a></li>
+<li><a href="csourcestream-onthreaddestroy.html"><strong>CSourceStream::OnThreadDestroy</strong></a></li>
+<li><a href="csourcestream-onthreadstartplay.html"><strong>CSourceStream::OnThreadStartPlay</strong></a></li>
+</ul>
+<p>You can override these methods if you need to add any special handling. Otherwise, the default implementations simply return <strong>S_OK</strong>.</p>
+<h2>Seeking</h2>
+<p>If you have a source filter with one output pin, you can use the <a href="csourceseeking.html"><strong>CSourceSeeking</strong></a> class as a starting point for implementing seeking. Inherit your pin class from both <a href="csourcestream.html"><strong>CSourceStream</strong></a> and <strong>CSourceSeeking</strong>.</p>
+<blockquote>
+<p>[!Note]<br />
+<a href="csourceseeking.html"><strong>CSourceSeeking</strong></a> is not recommended for a filter with more than one output pin. The main issue is that only one pin should respond to seeking requests. Typically this requires communication among the pins and the filter.</p>
+</blockquote>
+<p>The <a href="csourceseeking.html"><strong>CSourceSeeking</strong></a> class manages the playback rate, start time, stop time, and duration. Your derived class should set the initial stop time and duration. Whenever one of these values changes, the <a href="csourceseeking-changerate.html"><strong>CSourceSeeking::ChangeRate</strong></a>, <a href="csourceseeking-changestart.html"><strong>CSourceSeeking::ChangeStart</strong></a>, or <a href="csourceseeking-changestop.html"><strong>CSourceSeeking::ChangeStop</strong></a> method is called, as appropriate. The methods are all pure virtual methods. The derived pin class overrides these methods to do the following:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-beginflush"><strong>IPin::BeginFlush</strong></a> on the downstream pin. This causes downstream filters to release samples they are holding and reject new samples.</li>
+<li>Call <a href="csourcestream-stop.html"><strong>CSourceStream::Stop</strong></a> to stop the streaming thread. The source filter suspends producing new data.</li>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-endflush"><strong>IPin::EndFlush</strong></a> on the downstream pin. This signals the downstream filters to accept new data.</li>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-newsegment"><strong>IPin::NewSegment</strong></a> with the new start and stop times and rate.</li>
+<li>Set the discontinuity property on the next sample.</li>
+</ol>
+<p>For more information, see <a href="supporting-seeking-in-a-source-filter.html">Supporting Seeking in a Source Filter</a>.</p>
+<p>If your filter supports seeking, the stream position is now independent of the presentation time. After a seek, time stamps reset to zero. The general formula for time stamps is:</p>
+<ul>
+<li>sample start time = time elapsed / playback rate</li>
+<li>sample end time = sample start time + (time per frame / playback rate)</li>
+</ul>
+<p>where <em>time elapsed</em> is the time that has elapsed since the filter started running or since the last seek command.</p>
+<h3>Time Formats for Seeking</h3>
+<p>By default, seek commands are in units of 100-nanoseconds. Your source filter can support additional time formats, such as seeking by frame number. Each time format is identified by a GUID; see <a href="time-format-guids.html"><strong>Time Format GUIDs</strong></a>.</p>
+<p>To support additional time formats, you must implement the following methods on your output pin:</p>
+<ul>
+<li><a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-converttimeformat"><strong>IMediaSeeking::ConvertTimeFormat</strong></a></li>
+<li><a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-gettimeformat"><strong>IMediaSeeking::GetTimeFormat</strong></a></li>
+<li><a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-isformatsupported"><strong>IMediaSeeking::IsFormatSupported</strong></a></li>
+<li><a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-isusingtimeformat"><strong>IMediaSeeking::IsUsingTimeFormat</strong></a></li>
+<li><a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-querypreferredformat"><strong>IMediaSeeking::QueryPreferredFormat</strong></a></li>
+<li><a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-settimeformat"><strong>IMediaSeeking::SetTimeFormat</strong></a></li>
+</ul>
+<p>If the application sets a new time format, all of the position parameters in the <a href="/windows/desktop/api/Strmif/nn-strmif-imediaseeking"><strong>IMediaSeeking</strong></a> methods are interpreted in terms of the new time format. For example, if the time format is frames, the <a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-getduration"><strong>IMediaSeeking::GetDuration</strong></a> method must return the duration in frames.</p>
+<p>In practice, few DirectShow filters support additional time formats, and as a result, few DirectShow applications make use of this capability.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="writing-source-filters.html">Writing Source Filters</a></p>
+<!-- raw HTML omitted -->
+</body>

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Supporting DXVA 2.0 in Media Foundation</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Supporting DXVA 2.0 in Media Foundation
+ms.assetid: d7330370-adb3-4c6a-962a-7b46c344500c
+title: Supporting DXVA 2.0 in Media Foundation
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Supporting DXVA 2.0 in Media Foundation</h1>
+<p>This topic describes how to support DirectX Video Acceleration (DXVA) 2.0 in a Media Foundation transform (MFT) using Microsoft Direct3DÂ 9 Specifically, it describes the communication between the decoder and the video renderer, which is mediated by the topology loader. This topic does not describe how to implement DXVA decoding.</p>
+<p>In the remainder of this topic, the term <em>decoder</em> refers to the decoder MFT, which receives compressed video and outputs uncompressed video. The term <em>decoder device</em> refers to a hardware video accelerator implemented by the graphics driver.</p>
+<blockquote>
+<p>[!TIP]
+For info on Microsoft Direct3DÂ 11 video decoding see, <a href="supporting-direct3d-11-video-decoding-in-media-foundation.html">Supporting Direct3D 11 Video Decoding in Media Foundation</a>.</p>
+</blockquote>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+Windows Store apps must use Direct3DÂ 11.</p>
+</blockquote>
+<p>Â </p>
+<p>Here are the basic steps that a decoder must perform to support DXVA 2.0 in Media Foundation:</p>
+<ol>
+<li>Open a handle to the Direct3DÂ 9 device.</li>
+<li>Find a DXVA decoder configuration.</li>
+<li>Allocate uncompressed Buffers.</li>
+<li>Decode frames.</li>
+</ol>
+<p>These steps are described in more detail in the remainder of this topic.</p>
+<h2>Opening a Direct3D Device Handle</h2>
+<p>The MFT uses the Microsoft Direct3D device manager to get a handle to the Direct3DÂ 9 device. To open the device handle, perform the following steps:</p>
+<ol>
+<li>Expose the <a href="mf-sa-d3d-aware-attribute.html">MF_SA_D3D_AWARE</a> attribute with the value <strong>TRUE</strong>. The topology loader queries this attribute by calling <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getattributes"><strong>IMFTransform::GetAttributes</strong></a>. Setting the attribute to <strong>TRUE</strong> notifies the topology loader that the MFT supports DXVA.</li>
+<li>When format negotiation begins, the topology loader calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processmessage"><strong>IMFTransform::ProcessMessage</strong></a> with the <a href="mft-message-set-d3d-manager.html"><strong>MFT_MESSAGE_SET_D3D_MANAGER</strong></a> message. The <em>ulParam</em> parameter is an <strong>IUnknown</strong> pointer to the video renderer's Direct3D device manager. Query this pointer for the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirect3ddevicemanager9"><strong>IDirect3DDeviceManager9</strong></a> interface.</li>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-opendevicehandle"><strong>IDirect3DDeviceManager9::OpenDeviceHandle</strong></a> to get a handle to the renderer's Direct3D device.</li>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-getvideoservice"><strong>IDirect3DDeviceManager9::GetVideoService</strong></a> and pass in the device handle. This method returns a pointer to the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoderservice"><strong>IDirectXVideoDecoderService</strong></a> interface.</li>
+<li>Cache the pointers and the device handle.</li>
+</ol>
+<h2>Finding a Decoder Configuration</h2>
+<p>The MFT must find a compatible configuration for the DXVA decoder device. Perform the following steps inside the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setinputtype"><strong>IMFTransform::SetInputType</strong></a> method, after validating the input type:</p>
+<ol>
+<li>
+<p>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoderservice-getdecoderdeviceguids"><strong>IDirectXVideoDecoderService::GetDecoderDeviceGuids</strong></a>. This method returns an array of decoder device GUIDs.</p>
+</li>
+<li>
+<p>Loop through the array of decoder GUIDs to find the ones that the decoder supports. For example, for an MPEG-2 decoder, you would look for <strong>DXVA2_ModeMPEG2_MOCOMP</strong>, <strong>DXVA2_ModeMPEG2_IDCT</strong>, or <strong>DXVA2_ModeMPEG2_VLD</strong>.</p>
+</li>
+<li>
+<p>When you find a candidate decoder device GUID, pass the GUID to the <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoderservice-getdecoderrendertargets"><strong>IDirectXVideoDecoderService::GetDecoderRenderTargets</strong></a> method. This method returns an array of render target formats, specified as <strong>D3DFORMAT</strong> values.</p>
+</li>
+<li>
+<p>Loop through the render target formats and look for a format supported by the decoder.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoderservice-getdecoderconfigurations"><strong>IDirectXVideoDecoderService::GetDecoderConfigurations</strong></a>. Pass in the same decoder device GUID, along with a <a href="/windows/desktop/api/dxva2api/ns-dxva2api-dxva2_videodesc"><strong>DXVA2_VideoDesc</strong></a> structure that describes the proposed output format. The method returns an array of <a href="/windows/desktop/api/dxva2api/ns-dxva2api-dxva2_configpicturedecode"><strong>DXVA2_ConfigPictureDecode</strong></a> structures. Each structure describes one possible configuration for the decoder device. Look for a configuration that the decoder supports.</p>
+</li>
+<li>
+<p>Store the render target format and configuration.</p>
+</li>
+</ol>
+<p>In the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getoutputavailabletype"><strong>IMFTransform::GetOutputAvailableType</strong></a> method, return an uncompressed video format, based on the proposed render target format.</p>
+<p>In the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setoutputtype"><strong>IMFTransform::SetOutputType</strong></a> method, check the media type against the render target format.</p>
+<h3>Fallback to Software Decoding</h3>
+<p>If the MFT cannot find a DXVA configuration (for example, if the graphics driver does not have the right capabilities), it should return the error code <strong>MF_E_UNSUPPORTED_D3D_TYPE</strong> from the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setinputtype"><strong>SetInputType</strong></a> and <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setoutputtype"><strong>SetOutputType</strong></a> methods. The topology loader will respond by sending the <a href="mft-message-set-d3d-manager.html"><strong>MFT_MESSAGE_SET_D3D_MANAGER</strong></a> message with the value <strong>NULL</strong> for the <em>ulParam</em> parameter. The MFT should release its pointer to the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirect3ddevicemanager9"><strong>IDirect3DDeviceManager9</strong></a> interface. The topology loader will then renegotiate the media type, and the MFT can use software decoding.</p>
+<h2>Allocating Uncompressed Buffers</h2>
+<p>In DXVA 2.0, the decoder is responsible for allocating Direct3D surfaces to use as uncompressed video buffers. The decoder should allocate 3 surfaces for the EVR to use for deinterlacing. This number is fixed, because Media Foundation does not provide a way for the EVR to specify how many surfaces the graphics driver requires for deinterlacing. Three surfaces should be sufficient for any driver.</p>
+<p>In the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getoutputstreaminfo"><strong>IMFTransform::GetOutputStreamInfo</strong></a> method, set the <strong>MFT_OUTPUT_STREAM_PROVIDES_SAMPLES</strong> flag in the <a href="/windows/desktop/api/mftransform/ns-mftransform-mft_output_stream_info"><strong>MFT_OUTPUT_STREAM_INFO</strong></a> structure. This flag notifies the Media Session that the MFT allocates its own output samples.</p>
+<p>To create the surfaces, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideoaccelerationservice-createsurface"><strong>IDirectXVideoAccelerationService::CreateSurface</strong></a>. (The <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoderservice"><strong>IDirectXVideoDecoderService</strong></a> interface inherits this method from <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideoaccelerationservice"><strong>IDirectXVideoAccelerationService</strong></a>.) You can do this in <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setinputtype"><strong>SetInputType</strong></a>, after finding the render target format.</p>
+<p>For each surface, call <a href="/windows/desktop/api/evr/nc-evr-mfcreatevideosamplefromsurface"><strong>MFCreateVideoSampleFromSurface</strong></a> to create a media sample to hold the surface. The method returns a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfsample"><strong>IMFSample</strong></a> interface.</p>
+<h2>Decoding</h2>
+<p>To create the decoder device, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoderservice-createvideodecoder"><strong>IDirectXVideoDecoderService::CreateVideoDecoder</strong></a>. The method returns a pointer to the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoder"><strong>IDirectXVideoDecoder</strong></a> interface of the decoder device.</p>
+<p>Decoding should occur inside the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>IMFTransform::ProcessOutput</strong></a> method. On each frame, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-testdevice"><strong>IDirect3DDeviceManager9::TestDevice</strong></a> to test the device handle. If the device has changed, the method returns <strong>DXVA2_E_NEW_VIDEO_DEVICE</strong>. If this occurs, do the following:</p>
+<ol>
+<li>Close the device handle by calling <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-closedevicehandle"><strong>IDirect3DDeviceManager9::CloseDeviceHandle</strong></a>.</li>
+<li>Release the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoderservice"><strong>IDirectXVideoDecoderService</strong></a> and <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoder"><strong>IDirectXVideoDecoder</strong></a> pointers.</li>
+<li>Open a new device handle.</li>
+<li>Negotiate a new decoder configuration, as described in &quot;Finding a Decoder Configuration&quot; earlier on this page.</li>
+<li>Create a new decoder device.</li>
+</ol>
+<p>Assuming that the device handle is valid, the decoding process works as follows:</p>
+<ol>
+<li>Get an available surface that is not currently in use. (Initially all of the surfaces are available.)</li>
+<li>Query the media sample for the <a href="/windows/win32/api/mfidl/nn-mfidl-imftrackedsample"><strong>IMFTrackedSample</strong></a> interface.</li>
+<li>Call <a href="/windows/win32/api/mfidl/nf-mfidl-imftrackedsample-setallocator"><strong>IMFTrackedSample::SetAllocator</strong></a> and provide a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasynccallback"><strong>IMFAsyncCallback</strong></a> interface, implemented by the decoder. When the video renderer releases the sample, the decoder's callback will be invoked.</li>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-beginframe"><strong>IDirectXVideoDecoder::BeginFrame</strong></a>.</li>
+<li>Do the following one or more times:
+<ol>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-getbuffer"><strong>IDirectXVideoDecoder::GetBuffer</strong></a> to get a DXVA decoder buffer.</li>
+<li>Fill the buffer.</li>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-releasebuffer"><strong>IDirectXVideoDecoder::ReleaseBuffer</strong></a>.</li>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-execute"><strong>IDirectXVideoDecoder::Execute</strong></a> to perform the decoding operations on the frame.</li>
+</ol>
+</li>
+</ol>
+<p>DXVA 2.0 uses the same data structures as DXVA 1.0 for decoding operations. For the original set of DXVA profiles (for H.261, H.263, and MPEG-2), these data structures are described in the <a href="/windows-hardware/drivers/display/directx-video-acceleration">DXVA 1.0 specification</a>.</p>
+<p>Within each pair of <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-beginframe"><strong>BeginFrame</strong></a>/<a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-execute"><strong>Execute</strong></a> calls, you may call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-getbuffer"><strong>GetBuffer</strong></a> multiple times, but only once for each type of DXVA buffer. If you call it twice with the same buffer type, you will overwrite the data.</p>
+<p>Use the callback from the <a href="/windows/win32/api/mfidl/nf-mfidl-imftrackedsample-setallocator"><strong>SetAllocator</strong></a> method (step 3) to keep track of which samples are currently available and which are in use.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="directx-video-acceleration-2-0.html">DirectX Video Acceleration 2.0</a></p>
+<!-- raw HTML omitted -->
+<p><a href="media-foundation-transforms.html">Media Foundation Transforms</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

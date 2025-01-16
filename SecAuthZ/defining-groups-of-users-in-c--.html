@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Defining Groups of Users in C++</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: In Authorization Manager, an IAzApplicationGroup object represents a group of users. Roles can then be assigned to this group of users collectively.
+ms.assetid: 13950da1-b04f-4346-b216-9713cbdcd5b5
+title: Defining Groups of Users in C++
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Defining Groups of Users in C++</h1>
+<p>In Authorization Manager, an <a href="/windows/desktop/api/Azroles/nn-azroles-iazapplicationgroup"><strong>IAzApplicationGroup</strong></a> object represents a group of users. Roles can then be assigned to this group of users collectively. An <a href="/windows/desktop/api/Azroles/nn-azroles-iazapplicationgroup"><strong>IAzApplicationGroup</strong></a> object can also include other <strong>IAzApplicationGroup</strong> objects as members. For more information about application groups, see <a href="users-and-groups.html">Users and Groups</a>.</p>
+<p>A group can be defined either by explicit lists of members and nonmembers, or by a <a href="/windows/desktop/SecGloss/l-gly"><em>Lightweight Directory Access Protocol</em></a> (LDAP) query. The following examples show how to create each type of application group:</p>
+<ul>
+<li><a href="#creating-a-basic-group">Creating a Basic Group</a></li>
+<li><a href="#creating-an-ldap-query-group">Creating an LDAP Query Group</a></li>
+</ul>
+<h2>Creating a Basic Group</h2>
+<p>A basic application group is defined by the members included in the <a href="/windows/desktop/api/Azroles/nf-azroles-iazapplicationgroup-get_members"><strong>Members</strong></a> and <a href="/windows/desktop/api/Azroles/nf-azroles-iazapplicationgroup-get_nonmembers"><strong>NonMembers</strong></a> properties of the <a href="/windows/desktop/api/Azroles/nn-azroles-iazapplicationgroup"><strong>IAzApplicationGroup</strong></a> object that represents the group. Users and groups listed in the <strong>Members</strong> property are included in the application group, and users and groups listed in the <strong>NonMembers</strong> property are excluded from the application group. Being listed in the <strong>NonMembers</strong> property supersedes being listed in the <strong>Members</strong> property.</p>
+<p>The following example shows how to create a basic application group and add all local users as members of that group. The example assumes that there is an existing XML policy store named MyStore.xml in the root directory of drive C.</p>
+<pre lang="C++"><code>#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0502
+#endif
+#pragma comment(lib, &quot;duser.lib&quot;)
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;azroles.h&gt;
+#include &lt;objbase.h&gt;
+
+void main(void){
+    IAzAuthorizationStore* pStore = NULL;
+    IAzApplicationGroup* pAppGroup = NULL;
+    HRESULT hr;
+    void MyHandleError(char *s);
+    BSTR storeName = NULL;
+    BSTR groupName = NULL;
+    BSTR sidString = NULL;
+
+    //  Initialize COM.
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize COM.&quot;);
+
+    //  Create the AzAuthorizationStore object.
+    hr = CoCreateInstance(
+   /*&quot;b2bcff59-a757-4b0b-a1bc-ea69981da69e&quot;*/
+         __uuidof(AzAuthorizationStore),
+         NULL,
+         CLSCTX_ALL,
+   /*&quot;edbd9ca9-9b82-4f6a-9e8b-98301e450f14&quot;*/
+         __uuidof(IAzAuthorizationStore),
+         (void**)&amp;pStore);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not create AzAuthorizationStore object.&quot;);
+    
+    //  Create null VARIANT for parameters.
+    VARIANT myVar; 
+    VariantInit(&amp;myVar);
+
+    //  Allocate a string for the name of the store.
+    if(!(storeName = SysAllocString(L&quot;msxml://c:\\MyStore.xml&quot;)))
+        MyHandleError(&quot;Could not allocate string.&quot;);
+    
+    //  Initialize the store.
+    hr = pStore-&gt;Initialize(AZ_AZSTORE_FLAG_MANAGE_STORE_ONLY,
+   storeName, myVar);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize store.&quot;);
+
+    //  Create an application group object.
+    if (!(groupName = SysAllocString(L&quot;Trusted Users&quot;)))
+        MyHandleError(&quot;Could not allocate group name string&quot;);
+    hr = pStore-&gt;CreateApplicationGroup(groupName, myVar, &amp;pAppGroup);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not create application group.&quot;);
+
+    //  Add well-known SID for all local users to the group.
+    if (!(sidString = SysAllocString(L&quot;S-1-2-0&quot;)))
+        MyHandleError(&quot;Could not allocate SID string name&quot;);
+    hr = pAppGroup-&gt;AddMember(sidString, myVar);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not add member to group&quot;);
+
+    //  Save changes to the store.
+    pAppGroup-&gt;Submit(0, myVar);
+
+    //  Clean up resources.
+    pStore-&gt;Release();
+    pAppGroup-&gt;Release();
+    SysFreeString(storeName);
+    SysFreeString(groupName);
+    SysFreeString(sidString);
+    VariantClear(&amp;myVar);
+    CoUninitialize();
+}
+
+void MyHandleError(char *s)
+{
+    printf(&quot;An error occurred in running the program.\n&quot;);
+    printf(&quot;%s\n&quot;,s);
+    printf(&quot;Error number %x\n.&quot;,GetLastError());
+    printf(&quot;Program terminating.\n&quot;);
+    exit(1);
+}
+</code></pre>
+<h2>Creating an LDAP Query Group</h2>
+<p>An LDAP query group has a membership defined by the query contained in the value of its <a href="/windows/desktop/api/Azroles/nf-azroles-iazapplicationgroup-get_ldapquery"><strong>LdapQuery</strong></a> property.</p>
+<p>The following example shows how to create an LDAP query application group and add all users as members of that group. The example assumes that there is an existing XML policy store named MyStore.xml in the root directory of drive C.</p>
+<pre lang="C++"><code>#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0502
+#endif
+#pragma comment(lib, &quot;duser.lib&quot;)
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;azroles.h&gt;
+#include &lt;objbase.h&gt;
+
+void main(void){
+    IAzAuthorizationStore* pStore = NULL;
+    IAzApplicationGroup* pAppGroup = NULL;
+    HRESULT hr;
+    void MyHandleError(char *s);
+    BSTR storeName = NULL;
+    BSTR groupName = NULL;
+    BSTR ldapString = NULL;
+
+    //  Initialize COM.
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize COM.&quot;);
+
+    //  Create the AzAuthorizationStore object.
+    hr = CoCreateInstance(
+   /*&quot;b2bcff59-a757-4b0b-a1bc-ea69981da69e&quot;*/
+         __uuidof(AzAuthorizationStore),
+         NULL,
+         CLSCTX_ALL,
+   /*&quot;edbd9ca9-9b82-4f6a-9e8b-98301e450f14&quot;*/
+         __uuidof(IAzAuthorizationStore),
+         (void**)&amp;pStore);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not create AzAuthorizationStore object.&quot;);
+    
+    VARIANT myVar; 
+    myVar.vt = VT_NULL;
+
+    //  Allocate a string for the name of the store.
+    if(!(storeName = SysAllocString(L&quot;msxml://c:\\MyStore.xml&quot;)))
+        MyHandleError(&quot;Could not allocate string.&quot;);
+    
+    //  Initialize the store.
+    hr = pStore-&gt;Initialize(AZ_AZSTORE_FLAG_MANAGE_STORE_ONLY,
+   storeName, myVar);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize store.&quot;);
+
+    //  Create an application group object.
+    if (!(groupName = SysAllocString(L&quot;Trusted Users3&quot;)))
+        MyHandleError(&quot;Could not allocate group name string&quot;);
+    hr = pStore-&gt;CreateApplicationGroup(groupName, myVar, &amp;pAppGroup);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not create application group.&quot;);
+
+    //  Set the Type property to AZ_GROUPTYPE_LDAP_QUERY.
+    hr = pAppGroup-&gt;put_Type(AZ_GROUPTYPE_LDAP_QUERY);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Error changing type to LDAP query&quot;);
+
+    //  Add LDAP query for all users.
+    if (!(ldapString =
+   SysAllocString(L&quot;(&amp;(objectCategory=person)(objectClass=user))&quot;)))
+        MyHandleError(&quot;Could not allocate LDAP query string&quot;);
+    hr = pAppGroup-&gt;put_LdapQuery(ldapString);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not add query to group&quot;);
+
+    //  Save changes to the store.
+    hr = pAppGroup-&gt;Submit(0, myVar);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not save changes to store.&quot;);
+
+    //  Clean up resources.
+    pStore-&gt;Release();
+    pAppGroup-&gt;Release();
+    SysFreeString(storeName);
+    SysFreeString(groupName);
+    SysFreeString(ldapString);
+    CoUninitialize();
+}
+
+void MyHandleError(char *s)
+{
+    printf(&quot;An error occurred in running the program.\n&quot;);
+    printf(&quot;%s\n&quot;,s);
+    printf(&quot;Error number %x\n.&quot;,GetLastError());
+    printf(&quot;Program terminating.\n&quot;);
+    exit(1);
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

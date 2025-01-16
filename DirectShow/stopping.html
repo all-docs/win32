@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stopping</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Stopping
+ms.assetid: e2796b69-05e5-4ced-b238-257952d81211
+title: Stopping
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Stopping</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>The <strong>Stop</strong> method must unblock the <strong>Receive</strong> method and decommit the filter's allocators. Decommitting an allocator forces any pending <strong>GetBuffer</strong> calls to return, which unblocks upstream filters that are waiting for samples. The <strong>Stop</strong> method holds the filter lock and then calls the <a href="cbasefilter-stop.html"><strong>CBaseFilter::Stop</strong></a> method, which calls <a href="cbasepin-inactive.html"><strong>CBasePin::Inactive</strong></a> on all of the filter's pins:</p>
+<pre lang="C++"><code>HRESULT CMyFilter::Stop()
+{
+    CAutoLock lock_it(m_pLock);
+    // Inactivate all the pins, to protect the filter resources.
+    hr = CBaseFilter::Stop();
+
+    /* Safe to destroy filter resources used by the streaming thread. */
+
+    return hr;
+}
+</code></pre>
+<p>Override the input pin's <strong>Inactive</strong> method as follows:</p>
+<pre lang="C++"><code>HRESULT CMyInputPin::Inactive()
+{
+    // You do not need to hold the filter lock here. 
+    // It is already locked in Stop.
+
+    // Unblock Receive.
+    SetEvent(m_hSomeEventThatReceiveNeedsToWaitOn);
+
+    // Make sure Receive will fail. 
+    // This also decommits the allocator.
+    HRESULT hr = CBaseInputPin::Inactive();
+
+    // Make sure Receive has completed, and is not using resources.
+    {
+        CAutoLock c(&amp;m_csReceive);
+
+        /* It is now safe to destroy filter resources used by the
+           streaming thread. */
+    }
+    return hr;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>QueryAccept (Upstream)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: QueryAccept (Upstream)
+ms.assetid: 3153e3a4-2227-4fdd-b2b0-218763013d2d
+title: QueryAccept (Upstream)
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>QueryAccept (Upstream)</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This mechanism enables an input pin to propose a format change to its upstream peer. The downstream filter must attach a media type to the sample that the upstream filter will obtain in its next call to <a href="/windows/desktop/api/Strmif/nf-strmif-imemallocator-getbuffer"><strong>IMemAllocator::GetBuffer</strong></a>. In order to do this, however, the downstream filter must provide a custom allocator for the connection. This allocator must implement a private method that the downstream filter can use to set the media type on the next sample.</p>
+<p>The following steps occur:</p>
+<ol>
+<li>The downstream filter checks whether the pin connection uses the filter's custom allocator. If the upstream filter owns the allocator, the downstream filter cannot change the format.</li>
+<li>The downstream filter calls <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-queryaccept"><strong>IPin::QueryAccept</strong></a> on the upstream output pin (see illustration, step A).</li>
+<li>If <code>QueryAccept</code> returns S_OK, the downstream filter calls the private method on its allocator in order to set the media type. Within this private method, the allocator calls <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample-setmediatype"><strong>IMediaSample::SetMediaType</strong></a> on the next available sample (B).</li>
+<li>The upstream filter calls <strong>GetBuffer</strong> to get a new sample (C) and <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample-getmediatype"><strong>IMediaSample::GetMediaType</strong></a> to get the media type (D).</li>
+<li>When the upstream filter delivers the sample, it should leave the media type attached to that sample. That way, the downstream filter can confirm that the media type has changed (E).</li>
+</ol>
+<p>If the upstream filter accepts the format change, it must also be able to switch back to the original media type, as shown in the following diagram.</p>
+<p><img src="images/dynformat4.png" alt="queryaccept (upstream)" /></p>
+<p>The main examples of this kind of format change involve the DirectShow video renderers.</p>
+<ul>
+<li>The original <a href="video-renderer-filter.html">Video Renderer</a> filter can switch between RGB and YUV types during streaming. When the filter connects, it requires an RGB format that matches the current display settings. This guarantees that it can fall back on GDI if it needs to. After streaming begins, if DirectDraw is available, the Video Renderer requests a format change to a YUV type. Later, it might switch back to RGB if it loses the DirectDraw surface for any reason.</li>
+<li>The newer Video Mixing Renderer (VMR) filter will connect with any format that is supported by the graphics hardware, including YUV types. However, the graphics hardware might change the stride of the underlying DirectDraw surface in order to optimize performance. The VMR filter uses <code>QueryAccept</code> to report the new stride, which is specified in the <strong>biWidth</strong> member of the <strong>BITMAPINFOHEADER</strong> structure. The source and target rectangles in the <strong>VIDEOINFOHEADER</strong> or <strong>VIDEOINFOHEADER2</strong> structure identify the region where the video should be decoded.</li>
+</ul>
+<p><strong>Implementation Note</strong></p>
+<p>It is unlikely that you will write a filter that needs to request upstream format changes, since this is mainly a feature of video renderers. However, if you write a video transform filter or a video decoder, your filter must respond correctly to requests from the video renderer.</p>
+<p>A trans-in-place filter that sits between the video renderer and the decoder should pass all <code>QueryAccept</code> calls upstream. Store the new format information when it arrives.</p>
+<p>A copy-transform filter (that is, a non-trans-in-place filter) should implement one of the following behaviors:</p>
+<ul>
+<li>Pass format changes upstream and store the new format information when it arrives. Your filter must use a custom allocator so that it can attach the format to the upstream sample.</li>
+<li>Perform the format conversion inside the filter. This is probably easier than passing the format change upstream. However, it might be less efficient than letting the decoder filter decode into the correct format.</li>
+<li>As a last resort, simply reject the format change. (For more information, refer to the source code for the <a href="ctransinplaceoutputpin-checkmediatype.html"><strong>CTransInPlaceOutputPin::CheckMediaType</strong></a> method in the DirectShow base class library.) Rejecting a format change can reduce performance, however, because it prevents the video renderer from using the most efficient format.</li>
+</ul>
+<p>The following pseudo-code shows how you might implement a copy-transform filter (derived from <strong>CTransformFilter</strong>) that can switch between YUV and RGB output types. This example assumes that the filter does the conversion itself, rather than passing the format change upstream.</p>
+<pre lang="C++"><code>HRESULT CMyTransform::CheckInputType(const CMediaType *pmt)
+{
+    if (pmt is a YUV type that you support) {
+        return S_OK;
+    }
+    else {
+        return VFW_E_TYPE_NOT_ACCEPTED;
+    }
+}
+
+HRESULT CMyTransform::CheckTransform(
+    const CMediaType *mtIn, const CMediaType *mtOut)
+{
+    if (mtOut is a YUV or RGB type that you support)
+    {
+        if ((mtIn has the same video dimensions as mtOut) &amp;&amp;
+            (you support the mtIn-to-mtOut transform))
+        {
+            return S_OK;
+        }
+    }
+    // otherwise
+    return VFW_E_TYPE_NOT_ACCEPTED;
+}
+
+// GetMediaType: Return a preferred output type.
+HRESULT CMyTransform::GetMediaType(int iPosition, CMediaType *pMediaType)
+{
+    if (iPosition &lt; 0) {
+        return E_INVALIDARG;
+    }
+    switch (iPosition)
+    {
+    case 0:
+        Copy the input type (YUV) to pMediaType
+        return S_OK;
+    case 1:
+        Construct an RGB type that matches the input type.
+        return S_OK;
+    default:
+        return VFW_S_NO_MORE_ITEMS;
+    }
+}
+
+// SetMediaType: Override from CTransformFilter. 
+HRESULT CMyTransform::SetMediaType(
+    PIN_DIRECTION direction, const CMediaType *pmt)
+{
+    // Capture this information...
+    if (direction == PINDIR_OUTPUT)
+    {
+       m_bYuv = (pmt-&gt;subtype == MEDIASUBTYPE_UYVY);
+    }
+    return S_OK;
+}
+
+HRESULT CMyTransform::Transform(
+    IMediaSample *pSource, IMediaSample *pDest)
+{
+    // Look for format changes from downstream.
+    CMediaType *pMT = NULL;
+    HRESULT hr = pDest-&gt;GetMediaType((AM_MEDIA_TYPE**)&amp;pMT);
+    if (hr == S_OK)
+    {
+        hr = m_pOutput-&gt;CheckMediaType(pMT);
+        if(FAILED(hr))
+        {
+            DeleteMediaType(pMT);
+            return E_FAIL;
+        }
+        // Notify our own output pin about the new type.
+        m_pOutput-&gt;SetMediaType(pMT);
+        DeleteMediaType(pMT);
+    }
+    // Process the buffers
+    if (m_bYuv) {
+        return ProcessFrameYUV(pSource, pDest);
+    }
+    else {
+        return ProcessFrameRGB(pSource, pDest);
+    }
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SO_EXCLUSIVEADDRUSE socket option</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The SO_EXCLUSIVEADDRUSE socket option prevents other sockets from being forcibly bound to the same address and port.
+ms.assetid: ce0d8188-54be-46e8-8753-d0680f690b84
+title: SO_EXCLUSIVEADDRUSE socket option (Winsock2.h)
+ms.topic: reference
+ms.date: 05/31/2018</h2>
+<h1>SO_EXCLUSIVEADDRUSE socket option</h1>
+<p>The SO_EXCLUSIVEADDRUSE socket option prevents other sockets from being forcibly bound to the same address and port.</p>
+<h2>Syntax</h2>
+<p>The SO_EXCLUSIVEADDRUSE option prevents other sockets from being forcibly bound to the same address and port, a practice enabled by the SO_REUSEADDR socket option. Such reuse can be executed by malicious applications to disrupt the application. The SO_EXCLUSIVEADDRUSE option is very useful to system services requiring high availability.</p>
+<p>The following code example illustrates setting this option.</p>
+<pre lang="C++"><code>#ifndef UNICODE
+#define UNICODE
+#endif
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+#include &lt;windows.h&gt;
+#include &lt;winsock2.h&gt;
+#include &lt;ws2tcpip.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;             // Needed for _wtoi
+
+#pragma comment(lib, &quot;Ws2_32.lib&quot;)
+
+int __cdecl wmain(int argc, wchar_t ** argv)
+{
+    WSADATA wsaData;
+    int iResult = 0;
+    int iError = 0;
+
+    SOCKET s = INVALID_SOCKET;
+    SOCKADDR_IN saLocal;
+    int iOptval = 0;
+
+    int iFamily = AF_UNSPEC;
+    int iType = 0;
+    int iProtocol = 0;
+
+    int iPort = 0;
+
+    // Validate the parameters
+    if (argc != 5) {
+        wprintf(L&quot;usage: %ws &lt;addressfamily&gt; &lt;type&gt; &lt;protocol&gt; &lt;port&gt;\n&quot;, argv[0]);
+        wprintf(L&quot;    opens a socket for the specified family, type, &amp; protocol\n&quot;);
+        wprintf(L&quot;    sets the SO_EXCLUSIVEADDRUSE socket option on the socket\n&quot;);
+        wprintf(L&quot;    then tries to bind the port specified on the command-line\n&quot;);
+        wprintf(L&quot;%ws example usage\n&quot;, argv[0]);
+        wprintf(L&quot;   %ws 0 2 17 5150\n&quot;, argv[0]);
+        wprintf(L&quot;   where AF_UNSPEC=0 SOCK_DGRAM=2 IPPROTO_UDP=17  PORT=5150\n&quot;,
+                argv[0]);
+        wprintf(L&quot;   %ws 2 1 17 5150\n&quot;, argv[0]);
+        wprintf(L&quot;   where AF_INET=2 SOCK_STREAM=1 IPPROTO_TCP=6  PORT=5150\n&quot;, argv[0]);
+        wprintf(L&quot;   See the documentation for the socket function for other values\n&quot;);
+        return 1;
+    }
+
+    iFamily = _wtoi(argv[1]);
+    iType = _wtoi(argv[2]);
+    iProtocol = _wtoi(argv[3]);
+
+    iPort = _wtoi(argv[4]);
+
+    if (iFamily != AF_INET &amp;&amp; iFamily != AF_INET6) {
+        wprintf(L&quot;Address family must be either AF_INET (2) or AF_INET6 (23)\n&quot;);
+        return 1;
+    }
+
+    if (iPort &lt;= 0 || iPort &gt;= 65535) {
+        wprintf(L&quot;Port specified must be greater than 0 and less than 65535\n&quot;);
+        return 1;
+    }
+    // Initialize Winsock
+    iResult = WSAStartup(MAKEWORD(2, 2), &amp;wsaData);
+    if (iResult != 0) {
+        wprintf(L&quot;WSAStartup failed with error: %d\n&quot;, iResult);
+        return 1;
+    }
+    // Create the socket
+    s = socket(iFamily, iType, iProtocol);
+    if (s == INVALID_SOCKET) {
+        wprintf(L&quot;socket failed with error: %ld\n&quot;, WSAGetLastError());
+        WSACleanup();
+        return 1;
+    }
+    // Set the exclusive address option
+    iOptval = 1;
+    iResult = setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                         (char *) &amp;iOptval, sizeof (iOptval));
+    if (iResult == SOCKET_ERROR) {
+        wprintf(L&quot;setsockopt for SO_EXCLUSIVEADDRUSE failed with error: %ld\n&quot;,
+                WSAGetLastError());
+    }
+
+    saLocal.sin_family = (ADDRESS_FAMILY) iFamily;
+    saLocal.sin_port = htons( (u_short) iPort);
+    saLocal.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    // Bind the socket
+    iResult = bind(s, (SOCKADDR *) &amp; saLocal, sizeof (saLocal));
+    if (iResult == SOCKET_ERROR) {
+
+        // Most errors related to setting SO_EXCLUSIVEADDRUSE
+        //    will occur at bind.
+        iError = WSAGetLastError();
+        if (iError == WSAEACCES)
+            wprintf(L&quot;bind failed with WSAEACCES (access denied)\n&quot;);
+        else
+            wprintf(L&quot;bind failed with error: %ld\n&quot;, iError);
+
+    } else {
+        wprintf(L&quot;bind on socket with SO_EXCLUSIVEADDRUSE succeeded to port: %ld\n&quot;,
+                iPort);
+    }
+
+    // cleanup
+    closesocket(s);
+    WSACleanup();
+
+    return 0;
+}
+
+</code></pre>
+<p>To have any effect, the SO_EXCLUSIVADDRUSE option must be set before the <a href="/windows/desktop/api/winsock/nf-winsock-bind"><strong>bind</strong></a> function is called (this also applies to the SO_REUSEADDR option). Table 1 lists the effects of setting the SO_EXCLUSIVEADDRUSE option. Wildcard indicates binding to the wildcard address, such as 0.0.0.0 for IPv4 and :: for IPv6. Specific indicates binding to a specific interface, such as binding an IP address assigned to an adapter. Specific2 indicates binding to a specific address other than the address bound to in the Specific case.</p>
+<blockquote>
+<p>[!Note]<br />
+The Specific2 case is applicable only when the first bind is performed with a specific address; for the case in which the first socket is bound to the wildcard, the entry for Specific covers all specific address cases.</p>
+</blockquote>
+<p>Â </p>
+<p>For example, consider a computer with two IP interfaces: 10.0.0.1 and 10.99.99.99. If the first bind is to 10.0.0.1 and port 5150 with the SO_EXCLUSIVEADDRUSE option set, then the second bind to 10.99.99.99 and port 5150 with any or no options set succeeds. However, if the first socket is bound to the wildcard address (0.0.0.0) and port 5150 with SO_EXCLUSIVEADDRUSE set, any subsequent bind to the same portâ€”regardless of IP addressâ€”will fail with either WSAEADDRINUSE (10048) or WSAEACCESS (10013), depending on which options were set on the second bind socket.</p>
+<h3>Bind Behavior with Various Options Set</h3>
+<p>Second bind</p>
+<p>First bind</p>
+<p><em>SO_EXCLUSIVEADDRUSE</em></p>
+<p><em>No options</em> or <em>SO_REUSEADDR</em></p>
+<p><em>Wildcard</em></p>
+<p><em>Specific</em></p>
+<p><em>Wildcard</em></p>
+<p><em>Specific</em></p>
+<p>${ROWSPAN3}$<em>SO_EXCLUSIVEADDRUSE</em>${REMOVE}$</p>
+<p><em>Wildcard</em></p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p><em>Specific</em></p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p><em>Specific2</em></p>
+<p>n/a</p>
+<p>Success</p>
+<p>n/a</p>
+<p>Success</p>
+<p>${ROWSPAN3}$<em>No options</em>${REMOVE}$</p>
+<p><em>Wildcard</em></p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p><em>Specific</em></p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p>Fail (10048)</p>
+<p><em>Specific2</em></p>
+<p>n/a</p>
+<p>Success</p>
+<p>n/a</p>
+<p>Success</p>
+<p>${ROWSPAN3}$<em>SO_REUSEADDR</em>${REMOVE}$</p>
+<p><em>Wildcard</em></p>
+<p>Fail (10013)</p>
+<p>Fail (10013)</p>
+<p>Success*</p>
+<p>Success</p>
+<p><em>Specific</em></p>
+<p>Fail (10013)</p>
+<p>Fail (10013)</p>
+<p>Success</p>
+<p>Success*</p>
+<p><em>Specific2</em></p>
+<p>n/a</p>
+<p>Success</p>
+<p>n/a</p>
+<p>Success</p>
+<p>* The behavior is undefined as to which socket will receive packets.</p>
+<p>Â </p>
+<p>In the case where the first bind sets no options or SO_REUSEADDR, and the second bind performs a SO_REUSEADDR, the second socket has overtaken the port and behavior regarding which socket will receive packets is undetermined. SO_EXCLUSIVEADDRUSE was introduced to address this situation.</p>
+<p>A socket with SO_EXCLUSIVEADDRUSE set cannot always be reused immediately after socket closure. For example, if a listening socket with the exclusive flag set accepts a connection after which the listening socket is closed, another socket cannot bind to the same port as the first listening socket with the exclusive flag until the accepted connection is no longer active.</p>
+<p>This situation can be quite complicated; even though the socket has been closed, the underlying transport may not terminate its connection. Even after the socket is closed, the system must send all of the buffered data, transmit a graceful disconnect to the peer, and wait for a graceful disconnect from the peer. It is therefore possible that the underlying transport may never release the connection, such as when the peer advertises a zero-size window, or other such attacks. In the previous example, the listening socket was closed after a client connection was accepted. Now even if the client connection is closed, the port still may not be reused if the client connection remains in an active state because of unacknowledged data, and so forth.</p>
+<p>To avoid this situation, applications should ensure a graceful shutdown: call <a href="/windows/desktop/api/winsock/nf-winsock-shutdown"><strong>shutdown</strong></a> with the SD_SEND flag, then wait in a <a href="/windows/desktop/api/winsock/nf-winsock-recv"><strong>recv</strong></a> loop until zero bytes are returned. Doing so avoids the problem associated with port reuse, guarantees all data was received by the peer, and assures the peer that all its data was successfully received.</p>
+<p>The SO_LINGER option may be set on a socket to prevent the port going into one of the active wait states; however, doing so is discouraged because it can lead to undesired effects, because it can cause the connection to be reset. For example, if data has been received but not yet acknowledged by the peer, and the local computer closes the socket with SO_LINGER set, the connection is reset and the peer discards the unacknowledged data. Also, picking a suitable time to linger is difficult; a value too small results in many aborted connections, while a large timeout can leave the system vulnerable to denial of service attacks by establishing many connections, and thereby stalling numerous application threads.</p>
+<blockquote>
+<p>[!Note]<br />
+A socket that is using the SO_EXCLUSIVEADDRUSE option must be shut down properly prior to closing it. Failure to do so can cause a denial of service attack if the associated service needs to restart.</p>
+</blockquote>
+<p>Â </p>
+<h2>Requirements</h2>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Minimum supported client<!-- raw HTML omitted --></td>
+<td>WindowsÂ 2000 Professional [desktop apps only]<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Minimum supported server<!-- raw HTML omitted --></td>
+<td>WindowsÂ 2000 Server [desktop apps only]<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Header<!-- raw HTML omitted --></td>
+<td><!-- raw HTML omitted --> <!-- raw HTML omitted -->Winsock2.h<!-- raw HTML omitted --> <!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Â </p>
+</body>

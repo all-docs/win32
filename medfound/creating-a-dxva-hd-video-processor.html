@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating a DXVA-HD Video Processor</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Creating a DXVA-HD Video Processor
+ms.assetid: 43a97dc8-19b3-412c-a015-339099bf4f6c
+title: Creating a DXVA-HD Video Processor
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Creating a DXVA-HD Video Processor</h1>
+<p>Microsoft DirectX Video Acceleration High Definition (DXVA-HD) uses two primary interfaces:</p>
+<ul>
+<li><a href="/windows/desktop/api/dxvahd/nn-dxvahd-idxvahd_device"><strong>IDXVAHD_Device</strong></a>. Represents the DXVA-HD device. Use this interface to query the device capabilities and create the video processor.</li>
+<li><a href="/windows/desktop/api/dxvahd/nn-dxvahd-idxvahd_videoprocessor"><strong>IDXVAHD_VideoProcessor</strong></a>. Represents a set of video processing capabilities. Use this interface to perform the video processing blit.</li>
+</ul>
+<p>In the code that follows, the following global variables are assumed:</p>
+<pre lang="C++"><code>IDirect3D9Ex            *g_pD3D = NULL;     
+IDirect3DDevice9Ex      *g_pD3DDevice = NULL;   // Direct3D device.
+IDXVAHD_Device          *g_pDXVAHD = NULL;      // DXVA-HD device.
+IDXVAHD_VideoProcessor  *g_pDXVAVP = NULL;      // DXVA-HD video processor.
+IDirect3DSurface9       *g_pSurface = NULL;     // Video surface.
+        
+const D3DFORMAT     RENDER_TARGET_FORMAT = D3DFMT_X8R8G8B8;
+const D3DFORMAT     VIDEO_FORMAT         = D3DFMT_X8R8G8B8; 
+const UINT          VIDEO_FPS            = 60;
+const UINT          VIDEO_WIDTH          = 640;
+const UINT          VIDEO_HEIGHT         = 480;
+</code></pre>
+<p>To create a DXVA-HD video processor:</p>
+<ol>
+<li>
+<p>Fill in a <a href="/windows/desktop/api/dxvahd/ns-dxvahd-dxvahd_content_desc"><strong>DXVAHD_CONTENT_DESC</strong></a> structure with a description of the video content. The driver uses this information as a hint to optimize the capabilities of the video processor. The structure does not contain a complete format description.</p>
+<pre lang="C++"><code>    DXVAHD_RATIONAL fps = { VIDEO_FPS, 1 }; 
+
+    DXVAHD_CONTENT_DESC desc;
+
+    desc.InputFrameFormat = DXVAHD_FRAME_FORMAT_PROGRESSIVE;
+    desc.InputFrameRate = fps;
+    desc.InputWidth = VIDEO_WIDTH;
+    desc.InputHeight = VIDEO_HEIGHT;
+    desc.OutputFrameRate = fps;
+    desc.OutputWidth = VIDEO_WIDTH;
+    desc.OutputHeight = VIDEO_HEIGHT;
+</code></pre>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/dxvahd/nf-dxvahd-dxvahd_createdevice"><strong>DXVAHD_CreateDevice</strong></a> to create the DXVA-HD device. This function returns a pointer to the <a href="/windows/desktop/api/dxvahd/nn-dxvahd-idxvahd_device"><strong>IDXVAHD_Device</strong></a> interface.</p>
+<pre lang="C++"><code>    hr = DXVAHD_CreateDevice(g_pD3DDevice, &amp;desc, DXVAHD_DEVICE_USAGE_PLAYBACK_NORMAL,
+        NULL, &amp;pDXVAHD);
+</code></pre>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/dxvahd/nf-dxvahd-idxvahd_device-getvideoprocessordevicecaps"><strong>IDXVAHD_Device::GetVideoProcessorDeviceCaps</strong></a>. This method fills in a <a href="/windows/desktop/api/dxvahd/ns-dxvahd-dxvahd_vpdevcaps"><strong>DXVAHD_VPDEVCAPS</strong></a> structure with the device capabilities. If you require specific video processing features, such as luma keying or image filtering, check their availability by using this structure.</p>
+<pre lang="C++"><code>    DXVAHD_VPDEVCAPS caps;
+
+    hr = pDXVAHD-&gt;GetVideoProcessorDeviceCaps(&amp;caps);
+</code></pre>
+</li>
+<li>
+<p>Check whether the DXVA-HD device supports the input video formats that you require. The topic <a href="checking-supported-dxva-hd-formats.html">Checking Supported DXVA-HD Formats</a> describes this step in more detail.</p>
+</li>
+<li>
+<p>Check whether the DXVA-HD device supports the output format that you require. The section <a href="checking-supported-dxva-hd-formats.html">Checking Supported DXVA-HD Formats</a> describes this step in more detail.</p>
+</li>
+<li>
+<p>Allocate an array of <a href="/windows/desktop/api/dxvahd/ns-dxvahd-dxvahd_vpcaps"><strong>DXVAHD_VPCAPS</strong></a> structures. The number of array elements that must be allocated is given by the <strong>VideoProcessorCount</strong> member of the <a href="/windows/desktop/api/dxvahd/ns-dxvahd-dxvahd_vpdevcaps"><strong>DXVAHD_VPDEVCAPS</strong></a> structure, obtained in step 3.</p>
+<pre lang="C++"><code>    // Create the array of video processor caps. 
+    
+    DXVAHD_VPCAPS *pVPCaps = 
+        new (std::nothrow) DXVAHD_VPCAPS[ caps.VideoProcessorCount ];
+
+    if (pVPCaps == NULL)
+    {
+        return E_OUTOFMEMORY;
+    }
+</code></pre>
+</li>
+<li>
+<p>Each <a href="/windows/desktop/api/dxvahd/ns-dxvahd-dxvahd_vpcaps"><strong>DXVAHD_VPCAPS</strong></a> structure represents a distinct video processor. You can loop through this array to discover the capabilities of each video processor. The structure includes information about the deinterlacing, telecine, and frame-rate conversion capabilities of the video processor.</p>
+</li>
+<li>
+<p>Select a video processor to create. The <strong>VPGuid</strong> member of the <a href="/windows/desktop/api/dxvahd/ns-dxvahd-dxvahd_vpcaps"><strong>DXVAHD_VPCAPS</strong></a> structure contains a GUID that uniquely identifies the video processor. Pass this GUID to the <a href="/windows/desktop/api/dxvahd/nf-dxvahd-idxvahd_device-createvideoprocessor"><strong>IDXVAHD_Device::CreateVideoProcessor</strong></a> method. The method returns an <a href="/windows/desktop/api/dxvahd/nn-dxvahd-idxvahd_videoprocessor"><strong>IDXVAHD_VideoProcessor</strong></a> pointer.</p>
+<pre lang="C++"><code>    HRESULT hr = pDXVAHD-&gt;GetVideoProcessorCaps(
+        caps.VideoProcessorCount, pVPCaps);
+</code></pre>
+</li>
+<li>
+<p>Optionally, call <a href="/windows/desktop/api/dxvahd/nf-dxvahd-idxvahd_device-createvideosurface"><strong>IDXVAHD_Device::CreateVideoSurface</strong></a> to create an array of input video surfaces.</p>
+</li>
+</ol>
+<p>The following code example shows the complete sequence of steps:</p>
+<pre lang="C++"><code>// Initializes the DXVA-HD video processor.
+
+// NOTE: The following example makes some simplifying assumptions:
+//
+// 1. There is a single input stream.
+// 2. The input frame rate matches the output frame rate.
+// 3. No advanced DXVA-HD features are needed, such as luma keying or IVTC.
+// 4. The application uses a single input video surface.
+
+HRESULT InitializeDXVAHD()
+{
+    if (g_pD3DDevice == NULL)
+    {
+        return E_FAIL;
+    }
+
+    HRESULT hr = S_OK;
+
+    IDXVAHD_Device          *pDXVAHD = NULL;
+    IDXVAHD_VideoProcessor  *pDXVAVP = NULL;
+    IDirect3DSurface9       *pSurf = NULL;
+
+    DXVAHD_RATIONAL fps = { VIDEO_FPS, 1 }; 
+
+    DXVAHD_CONTENT_DESC desc;
+
+    desc.InputFrameFormat = DXVAHD_FRAME_FORMAT_PROGRESSIVE;
+    desc.InputFrameRate = fps;
+    desc.InputWidth = VIDEO_WIDTH;
+    desc.InputHeight = VIDEO_HEIGHT;
+    desc.OutputFrameRate = fps;
+    desc.OutputWidth = VIDEO_WIDTH;
+    desc.OutputHeight = VIDEO_HEIGHT;
+
+#ifdef USE_SOFTWARE_PLUGIN    
+    HMODULE hSWPlugin = LoadLibrary(L&quot;C:\\dxvahdsw.dll&quot;);
+
+    PDXVAHDSW_Plugin pSWPlugin = (PDXVAHDSW_Plugin)GetProcAddress(hSWPlugin, &quot;DXVAHDSW_Plugin&quot;);
+
+    hr = DXVAHD_CreateDevice(g_pD3DDevice, &amp;desc,DXVAHD_DEVICE_USAGE_PLAYBACK_NORMAL,
+        pSWPlugin, &amp;pDXVAHD);
+#else
+    hr = DXVAHD_CreateDevice(g_pD3DDevice, &amp;desc, DXVAHD_DEVICE_USAGE_PLAYBACK_NORMAL,
+        NULL, &amp;pDXVAHD);
+#endif
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    DXVAHD_VPDEVCAPS caps;
+
+    hr = pDXVAHD-&gt;GetVideoProcessorDeviceCaps(&amp;caps);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Check whether the device supports the input and output formats.
+
+    hr = CheckInputFormatSupport(pDXVAHD, caps, VIDEO_FORMAT);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = CheckOutputFormatSupport(pDXVAHD, caps, RENDER_TARGET_FORMAT);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Create the VP device.
+    hr = CreateVPDevice(pDXVAHD, caps, &amp;pDXVAVP);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Create the video surface for the primary video stream.
+    hr = pDXVAHD-&gt;CreateVideoSurface(
+        VIDEO_WIDTH,
+        VIDEO_HEIGHT,
+        VIDEO_FORMAT,
+        caps.InputPool,
+        0,  // Usage
+        DXVAHD_SURFACE_TYPE_VIDEO_INPUT,
+        1,      // Number of surfaces to create
+        &amp;pSurf, // Array of surface pointers
+        NULL
+        );
+
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+
+    g_pDXVAHD = pDXVAHD;
+    g_pDXVAHD-&gt;AddRef();
+
+    g_pDXVAVP = pDXVAVP;
+    g_pDXVAVP-&gt;AddRef();
+
+    g_pSurface = pSurf;
+    g_pSurface-&gt;AddRef();
+
+done:
+    SafeRelease(&amp;pDXVAHD);
+    SafeRelease(&amp;pDXVAVP);
+    SafeRelease(&amp;pSurf);
+    return hr;
+}
+</code></pre>
+<p>The CreateVPDevice function show in this example creates the video processor (steps 5â€“7):</p>
+<pre lang="C++"><code>// Creates a DXVA-HD video processor.
+
+HRESULT CreateVPDevice(
+    IDXVAHD_Device          *pDXVAHD,
+    const DXVAHD_VPDEVCAPS&amp; caps,
+    IDXVAHD_VideoProcessor  **ppDXVAVP
+    )
+{
+    // Create the array of video processor caps. 
+    
+    DXVAHD_VPCAPS *pVPCaps = 
+        new (std::nothrow) DXVAHD_VPCAPS[ caps.VideoProcessorCount ];
+
+    if (pVPCaps == NULL)
+    {
+        return E_OUTOFMEMORY;
+    }
+
+    HRESULT hr = pDXVAHD-&gt;GetVideoProcessorCaps(
+        caps.VideoProcessorCount, pVPCaps);
+
+    // At this point, an application could loop through the array and examine
+    // the capabilities. For purposes of this example, however, we simply
+    // create the first video processor in the list.
+
+    if (SUCCEEDED(hr))
+    {
+        // The VPGuid member contains the GUID that identifies the video 
+        // processor.
+
+        hr = pDXVAHD-&gt;CreateVideoProcessor(&amp;pVPCaps[0].VPGuid, ppDXVAVP);
+    }
+
+    delete [] pVPCaps;
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="dxva-hd.html">DXVA-HD</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

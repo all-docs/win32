@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Writer Role in VSS Incremental and Differential Backups</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: A writer's participation in incremental and differential backups typically takes place while handling Identify (CVssWriter::OnIdentify), PrepareForBackup (CVssWriter:OnPrepareBackup), and PostSnapshot (CVssWriter:OnPostSnapshot) events.
+ms.assetid: 85c4e003-b531-4283-83aa-dd5cc53f35b1
+title: Writer Role in VSS Incremental and Differential Backups
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Writer Role in VSS Incremental and Differential Backups</h1>
+<p>A writer's participation in incremental and differential backups typically takes place while handling <a href="vssgloss-i.html"><em>Identify</em></a> (<a href="/windows/desktop/api/VsWriter/nf-vswriter-cvsswriter-onidentify"><strong>CVssWriter::OnIdentify</strong></a>), <a href="vssgloss-p.html"><em>PrepareForBackup</em></a> (<a href="/windows/desktop/api/VsWriter/nf-vswriter-cvsswriter-onpreparebackup"><strong>CVssWriter:OnPrepareBackup</strong></a>), and <em>PostSnapshot</em> (<a href="/windows/desktop/api/VsWriter/nf-vswriter-cvsswriter-onpostsnapshot"><strong>CVssWriter:OnPostSnapshot</strong></a>) events. How a writer participates is shaped by whether it supports backup stamps and last modification times, and whether the requester running the backup supports <a href="vssgloss-p.html"><em>partial file operations</em></a>.</p>
+<h2>Handling Identify Events during Incremental and Differential Backups</h2>
+<p>While handling the Identify event, writers establish their basic architecture for incremental and differential backup operation through the backup schema (<a href="/windows/desktop/api/Vss/ne-vss-vss_backup_schema"><strong>VSS_BACKUP_SCHEMA</strong></a>) and file specification backup type (<a href="/windows/desktop/api/Vss/ne-vss-vss_file_spec_backup_type"><strong>VSS_FILE_SPEC_BACKUP_TYPE</strong></a>) masks.</p>
+<p>A writer indicates which operations it supports in its Writer Metadata Document by creating a bit mask of <a href="/windows/desktop/api/Vss/ne-vss-vss_backup_schema"><strong>VSS_BACKUP_SCHEMA</strong></a> values and passing it to the <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscreatewritermetadata-setbackupschema"><strong>IVssCreateWriterMetadata::SetBackupSchema</strong></a> method. With this, a writer can indicate whether it supports the following:</p>
+<ul>
+<li>Incremental backups (<strong>VSS_BS_INCREMENTAL</strong>)</li>
+<li>Differential backups (<strong>VSS_BS_DIFFERENTIAL</strong>)</li>
+<li>Incremental and differential backups cannot be mixed (<strong>VSS_BS_EXCLUSIVE_INCREMENTAL_DIFFERENTIAL</strong>)</li>
+<li>Incremental and differential backups using backup stamps (<strong>VSS_BS_TIMESTAMPED</strong>)</li>
+<li>Incremental and differential backups on the basis of information about a file's last modification (<strong>VSS_BS_LAST_MODIFY</strong>)</li>
+</ul>
+<p>Writers use the file specification backup type mask to provide file set level information to requesters on how to include files in an incremental or differential backup.</p>
+<p>A writer can set a file set's file specification backup type mask when it adds the file set to a component by creating a bit mask of <a href="/windows/desktop/api/Vss/ne-vss-vss_file_spec_backup_type"><strong>VSS_FILE_SPEC_BACKUP_TYPE</strong></a> values and passing it to <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscreatewritermetadata-adddatabasefiles"><strong>IVssCreateWriterMetadata::AddDatabaseFiles</strong></a>, <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscreatewritermetadata-adddatabaselogfiles"><strong>IVssCreateWriterMetadata::AddDatabaseLogFiles</strong></a>, or <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscreatewritermetadata-addfilestofilegroup"><strong>IVssCreateWriterMetadata::AddFilesToFileGroup</strong></a>.</p>
+<p>There are three &quot;backup required&quot; values of the <a href="/windows/desktop/api/Vss/ne-vss-vss_file_spec_backup_type"><strong>VSS_FILE_SPEC_BACKUP_TYPE</strong></a> enumeration that affect differential and incremental backups:</p>
+<ul>
+<li><strong>VSS_FSBT_ALL_BACKUP_REQUIRED</strong></li>
+<li><strong>VSS_FSBT_INCREMENTAL_BACKUP_REQUIRED</strong></li>
+<li><strong>VSS_FSBT_DIFFERENTIAL_BACKUP_REQUIRED</strong></li>
+</ul>
+<p>There are three &quot;shadow copy required&quot; values:</p>
+<ul>
+<li><strong>VSS_FSBT_ALL_SNAPSHOT_REQUIRED</strong></li>
+<li><strong>VSS_FSBT_INCREMENTAL_SNAPSHOT_REQUIRED</strong></li>
+<li><strong>VSS_FSBT_DIFFERENTIAL_SNAPSHOT_REQUIRED</strong></li>
+</ul>
+<p>File sets tagged with a file specification backup type of &quot;shadow copy required&quot; indicate whether a requester needs to copy data from a shadow copy when performing INCREMENTAL, DIFFERENTIAL, or ALL (which includes both incremental and differential operations) backup operations.</p>
+<p>The &quot;backup required&quot; flag, applied to INCREMENTAL, DIFFERENTIAL, or ALL backup operations, indicates that the writer expects a copy of the current version of the file set to be available following the restore of any backup operation. Typically, this means that if a file set is tagged with &quot;backup required,&quot; all its members will be copied to backup media during an incremental or differential backup, regardless of when their backup or modification last occurred.</p>
+<p>By default, file sets are added to components with a file specification backup type of <strong>VSS_FSBT_ALL_BACKUP_REQUIRED</strong> | <strong>VSS_FSBT_ALL_SNAPSHOT_REQUIRED</strong>. Therefore, unless a writer developer decides not to use the default (by choosing another file specification backup type, using partial file operations, or using differenced files), the files in most file sets will typically be copied in their entirety to backup media.</p>
+<p>At this point, the writer's Writer Metadata Document is fully populated with most of information a requester will need to start a differential or incremental backup. Addition specification of file set or file level information to support the backup will be handled during the <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-prepareforbackup"><strong>PrepareForBackup</strong></a> event.</p>
+<h2>Handling PrepareForBackup Events during Incremental and Differential Backups</h2>
+<p>Before the requester proceeds with the actual backup operation, writers can modify the specification of an <a href="vssgloss-i.html"><em>incremental</em></a> or <a href="vssgloss-d.html"><em>differential</em></a> backup by altering the requester's Backup Components Document through the <a href="/windows/desktop/api/VsWriter/nl-vswriter-ivsscomponent"><strong>IVssComponent</strong></a> interface.</p>
+<p>Because the writers use the <a href="/windows/desktop/api/VsWriter/nl-vswriter-ivsscomponent"><strong>IVssComponent</strong></a> interface, they typically perform these preparations while handling the <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-prepareforbackup"><strong>PrepareForBackup</strong></a> event.</p>
+<p>In <a href="/windows/desktop/api/VsWriter/nf-vswriter-cvsswriter-onpreparebackup"><strong>CVssWriter:OnPrepareBackup</strong></a>, writers can more precisely specify how some files are to be evaluated for backup, specify what mechanisms should be used in backing them up, and possibly set backup stamps.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Partial Files</p>
+<!-- raw HTML omitted -->
+<p>If a requester supports them, a writer can choose to have an incremental or differential backup implemented by using partial file operations. (Writers can determine if a requester supports partial file operations by calling <a href="/windows/desktop/api/VsWriter/nf-vswriter-cvsswriter-ispartialfilesupportenabled"><strong>CVssWriter::IsPartialFileSupportEnabled</strong></a>.)</p>
+<p>Writers use <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-addpartialfile"><strong>IVssComponent::AddPartialFile</strong></a> to indicate those portions of the selected files to be backed up during the incremental or differential operation. Requesters must respect this specification, and must always back up the specified sections of the files. (See <a href="working-with-partial-files.html">Working with Partial Files</a> for more information on partial file operations.)</p>
+<p>Using <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-addpartialfile"><strong>IVssComponent::AddPartialFile</strong></a>, a writer can add a file to the backup that was not previously added to one of its component sets (by <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscreatewritermetadata-adddatabasefiles"><strong>IVssCreateWriterMetadata::AddDatabaseFiles</strong></a>, <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscreatewritermetadata-adddatabaselogfiles"><strong>IVssCreateWriterMetadata::AddDatabaseLogFiles</strong></a>, or <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscreatewritermetadata-addfilestofilegroup"><strong>IVssCreateWriterMetadata::AddFilesToFileGroup</strong></a>) as a partial file. Any new files added to the backup in this manner must be on a volume that already is being shadow copied for this backup.</p>
+<p>If a file is involved with partial file operations, this supersedes any file specification backup type, which is ignored.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Differenced Files</p>
+<!-- raw HTML omitted -->
+<p>Writers that support a last modified backup schema (<strong>VSS_BS_SCHEMA</strong>) can add <a href="vssgloss-d.html"><em>differenced files</em></a> to an incremental or differential backup.</p>
+<p>In specifying a differenced file, a writer uses <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-adddifferencedfilesbylastmodifytime"><strong>IVssComponent::AddDifferencedFileByLastModifyTime</strong></a> and specifies a path, a file name, and a recursive flagâ€”however, these do not have to match a file set included in any component.</p>
+<p>In fact, a writer can add a file not previously added to one of its component sets (by <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscreatewritermetadata-adddatabasefiles"><strong>IVssCreateWriterMetadata::AddDatabaseFiles</strong></a>, <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscreatewritermetadata-adddatabaselogfiles"><strong>IVssCreateWriterMetadata::AddDatabaseLogFiles</strong></a>, or <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscreatewritermetadata-addfilestofilegroup"><strong>IVssCreateWriterMetadata::AddFilesToFileGroup</strong></a>) to the backup as a differenced file. Any new files added to the backup in this manner must be on a volume that already is being shadow copied for this backup.</p>
+<p>Typically, a writer will also specify a time of last modification when adding a differenced fileâ€”based on the writer's own history mechanism. This last modification time, if specified, must always be used by requesters in determining if a file needs to be included in an incremental or differential backup.</p>
+<p>A writer may choose not to specify a last modification time when adding a differenced file to an incremental or differential backup set. If this is the case, requesters are free to use their own mechanismsâ€”for instance, logs of previous backups or file system informationâ€”to determine whether the differenced file should be included in an incremental or differential backup.</p>
+<p>The file specification backup type of any differenced file is ignored.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Backup Stamps</p>
+<!-- raw HTML omitted -->
+<p>Writers that support backup stamps (<strong>VSS_BS_TIMESTAMP</strong>) have their own private format for storing information about when a backup last occurred. This information is generated by the writer during backup.</p>
+<p>The backup stamp is stored in the Backup Components Document as a string by the <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-setbackupstamp"><strong>IVssComponent::SetBackupStamp</strong></a> method. The backup stamp applies to all file sets in the component (or component set) corresponding to the instance of the <a href="/windows/desktop/api/VsWriter/nl-vswriter-ivsscomponent"><strong>IVssComponent</strong></a>.</p>
+<p>If a requester has access to the backup stamp of a previous backup, it will have made it available to the writer by calling <a href="/windows/desktop/api/VsBackup/nf-vsbackup-ivssbackupcomponents-setpreviousbackupstamp"><strong>IVssBackupComponents::SetPreviousBackupStamp</strong></a>.</p>
+<p>A writer then can examine this time stamp using <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-getpreviousbackupstamp"><strong>IVssComponent::GetPreviousBackupStamp</strong></a>.</p>
+<p>Note that the requester merely stores and returns the string containing the backup stamp. It does not know anything about the string's format or how to use it; only the writer has that information.</p>
+<p>A writer may choose to update the current backup stamp using <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-setbackupstamp"><strong>IVssComponent::SetBackupStamp</strong></a> after it has called <a href="/windows/desktop/api/VsWriter/nf-vswriter-ivsscomponent-getpreviousbackupstamp"><strong>IVssComponent::GetPreviousBackupStamp</strong></a>, thus recording in its own format the date of the current incremental or differential backup operation.</p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

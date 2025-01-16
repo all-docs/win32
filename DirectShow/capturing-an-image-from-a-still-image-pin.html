@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Capturing an Image From a Still Image Pin</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Capturing an Image From a Still Image Pin
+ms.assetid: cbcb4d6d-dc85-4ae2-b0a8-110f15092733
+title: Capturing an Image From a Still Image Pin
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Capturing an Image From a Still Image Pin</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>Some cameras can produce a still image separate from the capture stream, and often the still image is of higher quality than the images produced by the capture stream. The camera may have a button that acts as a hardware trigger, or it may support software triggering. A camera that supports still images will expose a still image pin, which is pin category PIN_CATEGORY_STILL.</p>
+<p>The recommended way to get still images from the device is to use the Windows Image Acquisition (WIA) APIs. For more information, see &quot;Windows Image Acquisition&quot; in the Platform SDK documentation. However, you can also use DirectShow to capture an image.</p>
+<p>To trigger the still pin, use the <a href="/windows/desktop/api/Strmif/nf-strmif-iamvideocontrol-setmode"><strong>IAMVideoControl::SetMode</strong></a> method when the graph is running, as follows:</p>
+<pre lang="C++"><code>IAMVideoControl *pAMVidControl = NULL;
+
+hr = pControl-&gt;Run(); // Run the graph.
+if (FAILED(hr))
+{
+    // Handle error.
+}
+
+hr = pCap-&gt;QueryInterface(IID_IAMVideoControl, (void**)&amp;pAMVidControl);
+
+if (SUCCEEDED(hr))
+{
+    // Find the still pin.
+    IPin *pPin = NULL;
+
+    // pBuild is an ICaptureGraphBuilder2 pointer.
+
+    hr = pBuild-&gt;FindPin(
+        pCap,                  // Filter.
+        PINDIR_OUTPUT,         // Look for an output pin.
+        &amp;PIN_CATEGORY_STILL,   // Pin category.
+        NULL,                  // Media type (don't care).
+        FALSE,                 // Pin must be unconnected.
+        0,                     // Get the 0'th pin.
+        &amp;pPin                  // Receives a pointer to thepin.
+        );
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pAMVidControl-&gt;SetMode(pPin, VideoControlFlag_Trigger);
+        pPin-&gt;Release();
+    }
+    pAMVidControl-&gt;Release();
+}
+</code></pre>
+<p>Query the capture filter for <a href="/windows/desktop/api/Strmif/nn-strmif-iamvideocontrol"><strong>IAMVideoControl</strong></a>. If the interface is supported, get a pointer to the still pin's <a href="/windows/desktop/api/Strmif/nn-strmif-ipin"><strong>IPin</strong></a> interface by calling the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findpin"><strong>ICaptureGraphBuilder2::FindPin</strong></a> method, as shown in the previous example. Then call <a href="/windows/desktop/api/Strmif/nf-strmif-iamvideocontrol-setmode"><strong>IAMVideoControl::SetMode</strong></a> with the <strong>IPin</strong> pointer and the VideoControlFlag_Trigger flag.</p>
+<blockquote>
+<p>[!Note]<br />
+Depending on the camera, you might need to render the capture pin (PIN_CATEGORY_CAPTURE) before the still pin will connect.</p>
+</blockquote>
+<p>Â </p>
+<h3>Example: Using the Sample Grabber Filter</h3>
+<p>One way to capture the image is with the <a href="sample-grabber-filter.html"><strong>Sample Grabber</strong></a> filter. The Sample Grabber uses an application-defined callback function to process the image. For more information about the Sample Grabber filter, see <a href="using-the-sample-grabber.html">Using the Sample Grabber</a>.</p>
+<p>The following example assumes that the still pin delivers an uncompressed RGB image. First, define a class that will implement the Sample Grabber's callback interface, <a href="isamplegrabbercb.html"><strong>ISampleGrabberCB</strong></a>:</p>
+<pre lang="C++"><code>// Class to hold the callback function for the Sample Grabber filter.
+class SampleGrabberCallback : public ISampleGrabberCB
+{
+    // Implementation is described later.
+}
+
+// Global instance of the class.
+SampleGrabberCallback g_StillCapCB;
+</code></pre>
+<p>The implementation of the class is described shortly.</p>
+<p>Next, connect the still pin to the Sample Grabber, and connect the Sample Grabber to the <a href="null-renderer-filter.html"><strong>Null Renderer</strong></a> filter. The Null Renderer simply discards media samples that it receives; the actual work will be done within the callback. (The only reason for the Null Renderer is to connect the Sample Grabber's output pin to something.) Call <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> to create the Sample Grabber and Null Renderer filters, and call <a href="/windows/desktop/api/Strmif/nf-strmif-ifiltergraph-addfilter"><strong>IFilterGraph::AddFilter</strong></a> to add both filters to the graph:</p>
+<pre lang="C++"><code>// Add the Sample Grabber filter to the graph.
+IBaseFilter *pSG_Filter;
+hr = CoCreateInstance(
+    CLSID_SampleGrabber, 
+    NULL, 
+    CLSCTX_INPROC_SERVER,
+    IID_IBaseFilter, 
+    (void**)&amp;pSG_Filter
+    );
+
+hr = pGraph-&gt;AddFilter(pSG_Filter, L&quot;SampleGrab&quot;);
+
+// Add the Null Renderer filter to the graph.
+IBaseFilter *pNull;
+
+hr = CoCreateInstance(
+    CLSID_NullRenderer, 
+    NULL, 
+    CLSCTX_INPROC_SERVER,
+    IID_IBaseFilter, 
+    (void**)&amp;pNull
+    );
+
+hr = pGraph-&gt;AddFilter(pNull, L&quot;NullRender&quot;);
+</code></pre>
+<p>You can use the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>ICaptureGraphBuilder2::RenderStream</strong></a> method to connect all three filters in one method call, going from the still pin to the Sample Grabber, and from the Sample Grabber to the Null Renderer:</p>
+<pre lang="C++"><code>hr = pBuild-&gt;RenderStream(
+    &amp;PIN_CATEGORY_STILL, // Connect this pin ...
+    &amp;MEDIATYPE_Video,    // with this media type ...
+    pCap,                // on this filter ...
+    pSG_Filter,          // to the Sample Grabber ...
+    pNull);              // ... and finally to the Null Renderer.
+</code></pre>
+<p>Now use the <a href="isamplegrabber.html"><strong>ISampleGrabber</strong></a> interface to configure the Sample Grabber so that it buffers samples:</p>
+<pre lang="C++"><code>// Configure the Sample Grabber.
+ISampleGrabber *pSG = NULL;
+
+hr = pSG_Filter-&gt;QueryInterface(IID_ISampleGrabber, (void**)&amp;pSG);
+if (SUCCEEDED(hr))
+{
+    hr = pSG-&gt;SetOneShot(FALSE);
+    hr = pSG-&gt;SetBufferSamples(TRUE);
+
+    ...
+</code></pre>
+<p>Set the callback interface with a pointer to your callback object:</p>
+<pre lang="C++"><code>hr = pSG-&gt;SetCallback(&amp;g_StillCapCB, 0); // 0 = Use the SampleCB callback method.
+</code></pre>
+<p>Get the media type that the still pin used to connect with the Sample Grabber:</p>
+<pre lang="C++"><code>// Store the media type for later use.
+AM_MEDIA_TYPE g_StillMediaType;
+
+hr = pSG-&gt;GetConnectedMediaType(&amp;g_StillMediaType);
+pSG-&gt;Release();
+</code></pre>
+<p>This media type will contain the <a href="/windows/win32/api/wingdi/ns-wingdi-bitmapinfoheader"><strong>BITMAPINFOHEADER</strong></a> structure that defines the format of the still image. Free the media type before the application exits:</p>
+<pre lang="C++"><code>// On exit, remember to release the media type.
+FreeMediaType(g_StillMediaType);
+</code></pre>
+<p>What follows is an example of the callback class. Note that the class implements <strong>IUnknown</strong>, which it inherits through the <a href="isamplegrabber.html"><strong>ISampleGrabber</strong></a> interface, but it does not keep a reference count. This is safe because the application creates the object on the stack, and the object remains in scope throughout the lifetime of the filter graph.</p>
+<p>All of the work happens in the <a href="isamplegrabbercb-buffercb.html"><strong>BufferCB</strong></a> method, which is called by the Sample Grabber whenever it gets a new sample. In the following example, the method writes the bitmap to a file:</p>
+<pre lang="C++"><code>class SampleGrabberCallback : public ISampleGrabberCB
+{
+public:
+    // Fake referance counting.
+    STDMETHODIMP_(ULONG) AddRef() { return 1; }
+    STDMETHODIMP_(ULONG) Release() { return 2; }
+
+    STDMETHODIMP QueryInterface(REFIID riid, void **ppvObject)
+    {
+        if (NULL == ppvObject) return E_POINTER;
+        if (riid == __uuidof(IUnknown))
+        {
+            *ppvObject = static_cast&lt;IUnknown*&gt;(this);
+             return S_OK;
+        }
+        if (riid == __uuidof(ISampleGrabberCB))
+        {
+            *ppvObject = static_cast&lt;ISampleGrabberCB*&gt;(this);
+             return S_OK;
+        }
+        return E_NOTIMPL;
+    }
+
+    STDMETHODIMP SampleCB(double Time, IMediaSample *pSample)
+    {
+        return E_NOTIMPL;
+    }
+
+    STDMETHODIMP BufferCB(double Time, BYTE *pBuffer, long BufferLen)
+    {
+        if ((g_StillMediaType.majortype != MEDIATYPE_Video) ||
+            (g_StillMediaType.formattype != FORMAT_VideoInfo) ||
+            (g_StillMediaType.cbFormat &lt; sizeof(VIDEOINFOHEADER)) ||
+            (g_StillMediaType.pbFormat == NULL))
+        {
+            return VFW_E_INVALIDMEDIATYPE;
+        }
+        HANDLE hf = CreateFile(&quot;C:\\Example.bmp&quot;, GENERIC_WRITE, 
+        FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
+        if (hf == INVALID_HANDLE_VALUE)
+        {
+            return E_FAIL;
+        }
+        long cbBitmapInfoSize = g_StillMediaType.cbFormat - SIZE_PREHEADER;
+        VIDEOINFOHEADER *pVideoHeader =
+           (VIDEOINFOHEADER*)g_StillMediaType.pbFormat;
+
+        BITMAPFILEHEADER bfh;
+        ZeroMemory(&amp;bfh, sizeof(bfh));
+        bfh.bfType = 'MB';  // Little-endian for &quot;BM&quot;.
+        bfh.bfSize = sizeof( bfh ) + BufferLen + cbBitmapInfoSize;
+        bfh.bfOffBits = sizeof( BITMAPFILEHEADER ) + cbBitmapInfoSize;
+        
+        // Write the file header.
+        DWORD dwWritten = 0;
+        WriteFile( hf, &amp;bfh, sizeof( bfh ), &amp;dwWritten, NULL );
+        WriteFile(hf, HEADER(pVideoHeader), cbBitmapInfoSize, &amp;dwWritten, NULL);        
+        WriteFile( hf, pBuffer, BufferLen, &amp;dwWritten, NULL );
+        CloseHandle( hf );
+        return S_OK;
+
+    }
+};
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="video-capture-tasks.html">Video Capture Tasks</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

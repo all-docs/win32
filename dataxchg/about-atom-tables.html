@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>About Atom Tables</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: About Atom Tables
+description: This section discusses atom tables.
+ms.assetid: 12114a3e-99a4-480f-9d1a-57c1942b7382
+keywords:</p>
+<ul>
+<li>atoms</li>
+<li>atom tables</li>
+<li>atom names</li>
+<li>Dynamic Data Exchange (DDE),atoms</li>
+<li>DDE (Dynamic Data Exchange),atoms</li>
+<li>global atom tables</li>
+<li>local atom tables</li>
+<li>integer atoms</li>
+<li>string atoms
+ms.topic: article
+ms.date: 08/25/2020</li>
+</ul>
+<hr />
+<h1>About Atom Tables</h1>
+<p>An <em>atom table</em> is a system-defined table that stores strings and corresponding identifiers. An application places a string in an atom table and receives a 16-bit integer, called an <em>atom</em>, that can be used to access the string. A string that has been placed in an atom table is called an <em>atom name</em>.</p>
+<p>The system provides a number of atom tables. Each atom table serves a different purpose. For example, Dynamic Data Exchange (DDE) applications use the <a href="#global-atom-table">global atom table</a> to share item-name and topic-name strings with other applications. Rather than passing actual strings, a DDE application passes global atoms to its partner application. The partner uses the atoms to obtain the strings from the atom table.</p>
+<p>Applications can use local atom tables to store their own item-name associations.</p>
+<p>The system uses atom tables that are not directly accessible to applications. However, the application uses these atoms when calling a variety of functions. For example, registered clipboard formats are stored in an internal atom table used by the system. An application adds atoms to this atom table using the <a href="/windows/desktop/api/Winuser/nf-winuser-registerclipboardformata"><strong>RegisterClipboardFormat</strong></a> function. Also, registered classes are stored in an internal atom table used by the system. An application adds atoms to this atom table using the <a href="/windows/desktop/api/winuser/nf-winuser-registerclassa"><strong>RegisterClass</strong></a> or <a href="/windows/desktop/api/winuser/nf-winuser-registerclassexa"><strong>RegisterClassEx</strong></a> function.</p>
+<p>The following topics are discussed in this section.</p>
+<ul>
+<li><a href="#global-atom-table">Global Atom Table</a></li>
+<li><a href="#user-atom-table">User Atom Table</a></li>
+<li><a href="#local-atom-tables">Local Atom Tables</a></li>
+<li><a href="#atom-types">Atom Types</a>
+<ul>
+<li><a href="#string-atoms">String Atoms</a></li>
+<li><a href="#integer-atoms">Integer Atoms</a></li>
+</ul>
+</li>
+<li><a href="#atom-creation-and-usage-count">Atom Creation and Usage Count</a></li>
+<li><a href="#atom-table-queries">Atom-Table Queries</a></li>
+<li><a href="#atom-string-formats">Atom String Formats</a></li>
+</ul>
+<h2>Global Atom Table</h2>
+<p>The global atom table is available to all applications. When an application places a string in the global atom table, the system generates an atom that is unique throughout the system. Any application that has the atom can obtain the string it identifies by querying the global atom table.</p>
+<p>An application that defines a private DDE-data format for sharing data with other applications should place the format name in the global atom table. This technique prevents conflicts with the names of formats defined by the system or by other applications, and makes the identifiers (atoms) for the messages or formats available to the other applications.</p>
+<h2>User Atom Table</h2>
+<p>In addition to the global atom table, the user atom table is another system atom table that is also shared across all processes. The user atom table is used for a small number of scenarios internal to win32k; for example, windows module names, well known strings in win32k, OLE formats, etc. Although applications do not interact with the user atom table directly, they call several APIsâ€”such as <a href="/windows/win32/api/winuser/nf-winuser-registerclassexa">RegisterClass</a>, <a href="/windows/win32/api/winuser/nf-winuser-registerwindowmessagea">RegisterWindowMessage</a>, and <a href="/windows/win32/api/winuser/nf-winuser-registerclipboardformata">RegisterClipboardFormat</a>â€”that add entries to the user atom table. The entries added by <code>RegisterClass</code> can be deleted by <code>UnregisterClass</code>. However, the entries added by <code>RegisterWindowMessage</code> and <code>RegisterClipboardFormat</code> do not get deleted until the session ends. If the user atom table has no more space and the string being passed in is not already in the table, the call will fail.</p>
+<h3>Atom Table Size</h3>
+<p>Many critical APIs, including <a href="/windows/win32/api/winuser/nf-winuser-createwindowa">CreateWindow</a>, rely on user atoms. Therefore, space exhaustion in the user atom table will result in serious issues; for example, all applications may fail to launch. Here are some recommendations to ensure your application utilizes atom tables efficiently and preserves the reliability and performance of the application and system:</p>
+<ol>
+<li>
+<p>You should limit your app's usage of the user atom table. Storing unique strings using APIs like <code>RegisterClass</code>, <code>RegisterWindowMessage</code>, or <code>RegisterClipboardFormat</code> takes space in the user atom table, which is used globally by other apps to register window classes using strings. If at all possible, you should use <a href="/windows/desktop/api/Winbase/nf-winbase-addatomw">AddAtom</a>/<a href="/windows/desktop/api/Winbase/nf-winbase-deleteatom">DeleteAtom</a> to store strings in a local atom table, or  <a href="/windows/desktop/api/Winbase/nf-winbase-globaladdatoma">GlobalAddAtom</a>/<a href="/windows/desktop/api/Winbase/nf-winbase-globaldeleteatom">GlobalDeleteAtom</a> if the atoms are needed cross-process.</p>
+</li>
+<li>
+<p>If there is concern about the application causing user atom table issues, you can investigate the root cause by connecting the kernel debugger and breaking into the process on calls to <code>UserAddAtomEx</code> (<code>bae1 win32kbase!UserAddAtomEx /p &lt;eprocess&gt; &quot;kc10;g&quot;</code>). Look for <code>user32!</code> on the callstack to see which API is being called. The methodology is similar to the global atom table issue detection explained in <a href="/archive/blogs/ntdebugging/identifying-global-atom-table-leaks">Identifying Global Atom Table Leaks</a>. Another way to dump the contents of the user atom table is by calling <a href="/windows/win32/api/winuser/nf-winuser-getclipboardformatnamea">GetClipboardFormatName</a> over the range of possible atoms from 0xC000 to 0xFFFF. If the total atom count steadily goes up while the application is running or does not return to baseline when the app is closed, there is a problem.</p>
+</li>
+</ol>
+<h2>Local Atom Tables</h2>
+<p>An application can use a local atom table to efficiently manage a large number of strings used only within the application. These strings, and the associated atoms, are available only to the application that created the table.</p>
+<p>An application requiring the same string in a number of structures can reduce memory usage by using a local atom table. Rather than copying the string into each structure, the application can place the string in the atom table and include the resulting atom in the structures. In this way, a string appears only once in memory but can be used many times in the application.</p>
+<p>Applications can also use local atom tables to save time when searching for a particular string. To perform a search, an application need only place the search string in the atom table and compare the resulting atom with the atoms in the relevant structures. Comparing atoms is typically faster than comparing strings.</p>
+<p>Atom tables are implemented as hash tables. By default, a local atom table uses 37 buckets for its hash table. However, you can change the number of buckets used by calling the <a href="/windows/desktop/api/Winbase/nf-winbase-initatomtable"><strong>InitAtomTable</strong></a> function. If the application calls <strong>InitAtomTable</strong>, however, it must do so before calling any other atom-management functions.</p>
+<h2>Atom Types</h2>
+<p>Applications can create two types of atoms: string atoms and integer atoms. The values of integer atoms and string atoms do not overlap, so both types of atoms can be used in the same block of code.</p>
+<p>Several functions accept either strings or atoms as parameters. When passing an atom to these functions, an application can use the <a href="/windows/desktop/api/Winbase/nf-winbase-makeintatom"><strong>MAKEINTATOM</strong></a> macro to convert the atom into a form that can be used by the function.</p>
+<p>The following sections describe atom types.</p>
+<ul>
+<li><a href="#string-atoms">String Atoms</a></li>
+<li><a href="#integer-atoms">Integer Atoms</a></li>
+</ul>
+<h3>String Atoms</h3>
+<p>When applications pass null-terminated strings to the <a href="/windows/desktop/api/Winbase/nf-winbase-globaladdatoma"><strong>GlobalAddAtom</strong></a>, <a href="/windows/desktop/api/Winbase/nf-winbase-addatomw"><strong>AddAtom</strong></a>, <a href="/windows/desktop/api/Winbase/nf-winbase-globalfindatoma"><strong>GlobalFindAtom</strong></a>, and <a href="/windows/desktop/api/Winbase/nf-winbase-findatoma"><strong>FindAtom</strong></a> functions, they receive <em>string atoms</em> (16-bit integers) in return. String atoms have the following properties:</p>
+<ul>
+<li>The values of string atoms are in the range 0xC000 (MAXINTATOM) through 0xFFFF.</li>
+<li>Case is not significant in searches for an atom name in an atom table. Also, the entire string must match in a search operation; no substring matching is performed.</li>
+<li>The string associated with a string atom can be no more than 255 bytes in size. This limitation applies to all atom functions.</li>
+<li>A <em>reference count</em> is associated with each atom name. The count is incremented each time the atom name is added to the table and decremented each time the atom name is deleted from it. This prevents different users of the same string atom from destroying each other's atom names. When the reference count for an atom name equals zero, the system removes the atom and the atom name from the table.</li>
+</ul>
+<h3>Integer Atoms</h3>
+<p>Integer atoms differ from string atoms in the following ways:</p>
+<ul>
+<li>The values of integer atoms are in the range 0x0001 through 0xBFFF (<strong>MAXINTATOM</strong>â€“ 1).</li>
+<li>The string representation of an integer atom is #<em>dddd</em>, where the values represented by <em>dddd</em> are decimal digits. Leading zeros are ignored.</li>
+<li>There is no reference count or storage overhead associated with an integer atom.</li>
+</ul>
+<h2>Atom Creation and Usage Count</h2>
+<p>An application creates a local atom by calling the <a href="/windows/desktop/api/Winbase/nf-winbase-addatomw"><strong>AddAtom</strong></a> function; it creates a global atom by calling the <a href="/windows/desktop/api/Winbase/nf-winbase-globaladdatoma"><strong>GlobalAddAtom</strong></a> function. Both functions require a pointer to a string. The system searches the appropriate atom table for the string and returns the corresponding atom to the application. In the case of a string atom, if the string already resides in the atom table, the system increments the reference count for the string during this process.</p>
+<p>Repeated calls to add the same atom name return the same atom. If the atom name does not exist in the table when <a href="/windows/desktop/api/Winbase/nf-winbase-addatomw"><strong>AddAtom</strong></a> is called, the atom name is added to the table and a new atom is returned. If it is a string atom, its reference count is also set to one.</p>
+<p>An application should call the <a href="/windows/desktop/api/Winbase/nf-winbase-deleteatom"><strong>DeleteAtom</strong></a> function when it no longer needs to use a local atom; it should call the <a href="/windows/desktop/api/Winbase/nf-winbase-globaldeleteatom"><strong>GlobalDeleteAtom</strong></a> function when it no longer needs a global atom. In the case of a string atom, either of these functions reduces the reference count of the corresponding atom by one. When the reference count reaches zero, the system deletes the atom name from the table.</p>
+<p>The atom name of a string atom remains in the global atom table as long as its reference count is greater than zero, even after the application that placed it in the table terminates. A local atom table is destroyed when the associated application terminates, regardless of the reference counts of the atoms in the table.</p>
+<h2>Atom-Table Queries</h2>
+<p>An application can determine whether a particular string is already in an atom table by using the <a href="/windows/desktop/api/Winbase/nf-winbase-findatoma"><strong>FindAtom</strong></a> or <a href="/windows/desktop/api/Winbase/nf-winbase-globalfindatoma"><strong>GlobalFindAtom</strong></a> function. These functions search an atom table for the specified string and, if the string is there, return the corresponding atom.</p>
+<p>An application can use the <a href="/windows/desktop/api/Winbase/nf-winbase-getatomnamea"><strong>GetAtomName</strong></a> or <a href="/windows/desktop/api/Winbase/nf-winbase-globalgetatomnamea"><strong>GlobalGetAtomName</strong></a> function to retrieve an atom-name string from an atom table, provided the application has the atom corresponding to the string being sought. Both functions copy the atom-name string of the specified atom to a buffer and return the length of the string that was copied. <strong>GetAtomName</strong> retrieves an atom-name string from a local atom table, and <strong>GlobalGetAtomName</strong> retrieves an atom-name string from the global atom table.</p>
+<h2>Atom String Formats</h2>
+<p>The <a href="/windows/desktop/api/Winbase/nf-winbase-addatomw"><strong>AddAtom</strong></a>, <a href="/windows/desktop/api/Winbase/nf-winbase-globaladdatoma"><strong>GlobalAddAtom</strong></a>, <a href="/windows/desktop/api/Winbase/nf-winbase-findatoma"><strong>FindAtom</strong></a>, and <a href="/windows/desktop/api/Winbase/nf-winbase-globalfindatoma"><strong>GlobalFindAtom</strong></a> functions take a pointer to a null-terminated string. An application can specify this pointer in one of the following ways.</p>
+<table>
+<thead>
+<tr>
+<th>String format</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>#<em>dddd</em></td>
+<td>An integer specified as a decimal string. Used to create or find an integer atom.</td>
+</tr>
+<tr>
+<td><em>string atom name</em></td>
+<td>A string atom name. Used to add a string atom name to an atom table and receive an atom in return.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Â </p>
+<p>Â </p>
+</body>

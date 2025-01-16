@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Concurrency in WinHTTP</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Concurrency in WinHTTP
+description: Microsoft Windows HTTP Services (WinHTTP) supports multithreaded applications. This topic explains what concurrency requirements must be followed by applications that use WinHTTP.
+ms.assetid: d8493979-24d7-4fe9-a6fa-29c30535de24
+ms.topic: article
+ms.date: 02/09/2023</h2>
+<h1>Concurrency in WinHTTP</h1>
+<p>Microsoft Windows HTTP Services (WinHTTP) supports multithreaded applications. This topic explains what concurrency requirements must be followed by applications that use WinHTTP.</p>
+<h2>Stateless functions</h2>
+<p>Some WinHTTP functions, such as <a href="/windows/win32/api/Winhttp/nf-winhttp-winhttpcrackurl"><strong>WinHttpCrackUrl</strong></a> and <a href="/windows/win32/api/winhttp/nf-winhttp-winhttptimetosystemtime"><strong>WinHttpTimeToSystemTime</strong></a>, don't take any handle as input and are stateless. These functions may be called by multiple threads at the same time.</p>
+<h2>Independent handles</h2>
+<p>Many WinHTTP functions, such as <a href="/windows/win32/api/Winhttp/nf-winhttp-winhttpsendrequest"><strong>WinHttpSendRequest</strong></a>, <a href="/windows/win32/api/Winhttp/nf-winhttp-winhttpwritedata"><strong>WinHttpWriteData</strong></a>, <a href="/windows/win32/api/winhttp/nf-winhttp-winhttpreaddata"><strong>WinHttpReadData</strong></a>, and <a href="/windows/win32/api/Winhttp/nf-winhttp-winhttpclosehandle"><strong>WinHttpCloseHandle</strong></a> accept a handle as input and operate on it. These functions may be called by multiple threads at the same time if each thread uses a different handle.</p>
+<h2>Handle creation functions</h2>
+<p><a href="/windows/win32/api/Winhttp/nf-winhttp-winhttpopen"><strong>WinHttpOpen</strong></a> creates a session handle. Multiple sessions can exist in a process. This function may be called by multiple threads at the same time to create separate sessions.</p>
+<p><a href="/windows/win32/api/Winhttp/nf-winhttp-winhttpconnect"><strong>WinHttpConnect</strong></a> creates a connection handle. Multiple connection handles can exist per session. This function may be called by multiple threads at the same time to create separate connection handles, including connection handles tied to the same session.</p>
+<p><a href="/windows/win32/api/Winhttp/nf-winhttp-winhttpopenrequest"><strong>WinHttpOpenRequest</strong></a> creates a request handle. Multiple requests can exist per connection handle. This function may be called by multiple threads at the same time to create separate requests, including requests tied to the same connection handle.</p>
+<p><a href="/windows/win32/api/Winhttp/nf-winhttp-winhttpwebsocketcompleteupgrade"><strong>WinHttpWebSocketCompleteUpgrade</strong></a> creates a web socket handle. At most one web socket can exist per request, so only one thread may call this function at the same time using the same request.</p>
+<h2>Handle close function</h2>
+<p><a href="/windows/win32/api/Winhttp/nf-winhttp-winhttpclosehandle"><strong>WinHttpCloseHandle</strong></a> closes the session, connection, request, or web socket handle provided to it. Only one thread may call this function at the same time using the same handle.</p>
+<p>For a request operating synchronously, the handle may only be closed if no thread is currently calling a WinHTTP function using that handle and waiting for it to return, or if the application is inside an informational callback for that handle.</p>
+<p>For a request operating asynchronously, the handle may only be closed if no thread is currently calling a WinHTTP function using that handle and waiting for it to return, or if the application is inside an informational or completion callback for that handle.</p>
+<p>Once any thread has called <strong>WinHttpCloseHandle</strong>, your application must ensure that it doesn't use that handle again in any WinHTTP function, including <strong>WinHttpCloseHandle</strong> itself. Internally, WinHTTP may reuse the value for a handle; and if an application were to use a handle after closing it, then a race condition could occur. However, an application may use the handle passed into a callback during that callback, even if that handle has been closed; such calls may fail but they are not inherently unsafe from a concurrency standpoint.</p>
+<p>If an asynchronous operation is pending (that is, the completion callback for that operation has not yet been called), an application may request cancellation of that operation by closing the relevant handle. Note that, even if the handle is closed, the operation may complete successfully rather than being cancelled. Note also that closing a parent handle (for example, a session) is not sufficient to request cancellation of an asynchronous operation on a child handle (for example, a request).</p>
+<h2>Asynchronous callbacks</h2>
+<p>When an asynchronous operation completes, and an application's completion callback executes, an application may then begin another operation using that handle or close the handle (as long as the application hasn't previously closed that handle).</p>
+<h2>Request operations</h2>
+<p>Once an application begins an operation on a request, it may not begin another operation on that request until the first operation completes. For a synchronous operation, the application must wait until the function returns before any thread begins another operation on the same request handle. For an asynchronous operation, the application must wait until the function returns, and the completion callback is called before any thread begins another operation on the same request handle. For asynchronous operations, the application may request cancellation of a pending operation by closing the relevant handle as explained above.</p>
+<p>In some versions of Windows, the send and receive sides of a request are separate and may be used concurrently; an application may do a send-only operation on one thread at the same time that another thread is performing a receive-only operation.</p>
+<h2>Web socket send and receive operations</h2>
+<p>The send and receive sides of a web socket are separate and may be used concurrently; an application may do a send-only operation on one thread at the same time that another thread is performing a receive-only operation.</p>
+<p>The <a href="/windows/win32/api/winhttp/nf-winhttp-winhttpwebsocketreceive"><strong>WinHttpWebSocketReceive</strong></a> functions operates only on the receive side, and it may be called at the same time that another thread is performing a send operation.</p>
+<p>The <a href="/windows/win32/api/winhttp/nf-winhttp-winhttpwebsocketsend"><strong>WinHttpWebSocketSend</strong></a> and <a href="/windows/win32/api/winhttp/nf-winhttp-winhttpwebsocketshutdown"><strong>WinHttpWebSocketShutdown</strong></a> functions operate only on the send side, and one of these functions may be called at the same time that another thread is performing a receive operation.</p>
+<p>The <a href="/windows/win32/api/winhttp/nf-winhttp-winhttpwebsocketclose"><strong>WinHttpWebSocketClose</strong></a> function operates on both the send and receive sides, and it may not be called at the same time that another thread is performing either a send or a receive operation on that web socket.</p>
+</body>

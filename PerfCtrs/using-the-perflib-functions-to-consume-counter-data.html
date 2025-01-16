@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using the PerfLib Functions to Consume Counter Data</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Using the PerfLib Functions to Consume Counter Data
+description: PerfLib API functions can be used to consume V2 Performance Counter data directly when PDH cannot be used.
+ms.date: 08/17/2020
+ms.topic: article</h2>
+<h1>Using the PerfLib Functions to Consume Counter Data</h1>
+<p>Use the PerfLib Consumer functions to consume performance data from V2 performance data providers when you cannot use the <a href="using-the-pdh-functions-to-consume-counter-data.html">Performance Data Helper (PDH) functions</a>. These functions might be used when writing OneCore applications to collect V2 countersets or when you need to collect V2 countersets with minimal dependencies and overhead.</p>
+<blockquote>
+<p>[!TIP]
+The PerfLib V2 Consumer functions are harder to use than the Performance Data Helper (PDH) functions and only support collecting data from V2 providers. The PDH functions should be preferred for most applications.</p>
+</blockquote>
+<p>The PerfLib V2 Consumer functions are the low-level API for collecting data from <strong>V2 providers</strong>. The PerfLib V2 Consumer functions do not support collecting data from <strong>V1 providers</strong>.</p>
+<blockquote>
+<p>[!WARNING]
+The PerfLib V2 consumer functions can potentially collect data from untrusted sources, e.g. from limited-privilege local services or from remote machines. The PerfLib V2 consumer functions do not validate the data for integrity or consistency. It is up to your consumer application to verify that the returned data is consistent, e.g. that the Size values in the returned data block do not exceed the actual size of the returned data block. This is especially important when the consumer application runs at elevated privilege.</p>
+</blockquote>
+<h2>PerfLib Usage</h2>
+<p>The <code>perflib.h</code> header includes the declarations used by V2 user-mode providers (i.e. the PerfLib Provider API) and V2 consumers (i.e. the PerfLib Consumer API). It declares the following functions for consuming V2 performance data:</p>
+<ul>
+<li>Use <a href="/windows/desktop/api/Perflib/nf-perflib-perfenumeratecounterset"><strong>PerfEnumerateCounterSet</strong></a> to get the GUIDs of the countersets that are registered by the V2 providers on the system.</li>
+<li>Use <a href="/windows/desktop/api/Perflib/nf-perflib-perfquerycountersetregistrationinfo"><strong>PerfQueryCounterSetRegistrationInfo</strong></a> to get information about a particular counterset such as the counterset's name, description, type (single-instance or multi-instance), counter types, counter names, and counter descriptions.</li>
+<li>Use <a href="/windows/desktop/api/Perflib/nf-perflib-perfenumeratecountersetinstances"><strong>PerfEnumerateCounterSetInstances</strong></a> to get the names of the currently-active instances of a multi-instance counterset.</li>
+<li>Use <a href="/windows/desktop/api/Perflib/nf-perflib-perfopenqueryhandle"><strong>PerfOpenQueryHandle</strong></a> to create a new query handle to use for collecting data from one or more countersets.</li>
+<li>Use <a href="/windows/desktop/api/Perflib/nf-perflib-perfclosequeryhandle"><strong>PerfCloseQueryHandle</strong></a> to close a query handle.</li>
+<li>Use <a href="/windows/desktop/api/Perflib/nf-perflib-perfaddcounters"><strong>PerfAddCounters</strong></a> to add a query to a query handle.</li>
+<li>Use <a href="/windows/desktop/api/Perflib/nf-perflib-perfdeletecounters"><strong>PerfDeleteCounters</strong></a> to remove a query from a query handle.</li>
+<li>Use <a href="/windows/desktop/api/Perflib/nf-perflib-perfquerycounterinfo"><strong>PerfQueryCounterInfo</strong></a> to get information about the current queries on a query handle.</li>
+<li>Use <a href="/windows/desktop/api/Perflib/nf-perflib-perfquerycounterdata"><strong>PerfQueryCounterData</strong></a> to collect the performance data from a query handle.</li>
+</ul>
+<p>If your consumer will be consuming data only from a specific provider where the GUID and counter indexes are stable and you have access to the <a href="ctrpp.html">CTRPP</a>-generated symbol file (from the CTRPP <code>-ch</code> parameter), you can hard-code the counterset GUID and counter index values into your consumer.</p>
+<p>Otherwise, you will need to load counterset metadata to determine the counterset GUID(s) and counter indexes to use in your query as follows:</p>
+<ul>
+<li>Use <strong>PerfEnumerateCounterSet</strong> to get a list of supported counterset GUIDs.</li>
+<li>For each GUID, use <strong>PerfQueryCounterSetRegistrationInfo</strong> to load the counterset name. Stop when you find the name you are looking for.</li>
+<li>Use <strong>PerfQueryCounterSetRegistrationInfo</strong> to load the remaining metadata (counterset configuration, counter names, counter indexes, counter types) for that counterset.</li>
+</ul>
+<p>If you just need to know the names of the currently-active instances of a counterset (i.e. if you do not need the actual performance data values), you can use <strong>PerfEnumerateCounterSetInstances</strong>. This takes a counterset GUID as input and returns a <code>PERF_INSTANCE_HEADER</code> block with the names and IDs of the currently-active instances of the given counterset.</p>
+<h3>Queries</h3>
+<p>To collect performance data, you need to create a query handle, add queries to it, and collect the data from the queries.</p>
+<p>A query handle can have many queries associated with it. When you call <strong>PerfQueryCounterData</strong> for a query handle, PerfLib will execute all of the handle's queries and collect all of the results.</p>
+<p>Each query specifies a counterset GUID, an instance name filter, an optional instance ID filter, and an optional counter ID filter.</p>
+<ul>
+<li>The counterset GUID is required. It indicates the GUID of the counterset from which the query will collect data. This is similar to the <code>FROM</code> clause of a SQL query.</li>
+<li>The instance name filter is required. It indicates a wildcard pattern that the instance name must match for the instance to be included in the query, with <code>*</code> indicating &quot;any characters&quot; and <code>?</code> indicating &quot;one character&quot;. For single-instance countersets this <strong>MUST</strong> be set to a zero-length string <code>&quot;&quot;</code>. For multi-instance countersets this <strong>MUST</strong> be set to a non-empty string (use <code>&quot;*&quot;</code> to accept all instance names). This is similar to a <code>WHERE InstanceName LIKE NameFilter</code> clause of a SQL query.</li>
+<li>The instance ID filter is optional. If present (i.e. if set to a value other than <code>0xFFFFFFFF</code>), it indicates that the query should only collect instances where the instance ID matches the specified ID. If absent (i.e. if set to <code>0xFFFFFFFF</code>), it indicates that the query should accept all instance IDs. This is similar to a <code>WHERE InstanceId == IdFilter</code> clause of a SQL query.</li>
+<li>The counter ID filter is optional. If present (i.e. if set to a value other than <code>PERF_WILDCARD_COUNTER</code>), it indicates that the query should collect a single counter, similar to a <code>SELECT CounterName</code> clause of a SQL query. If absent (i.e. if set to <code>PERF_WILDCARD_COUNTER</code>), it indicates that the query should collect all available counters, similar to a <code>SELECT *</code> clause of a SQL query.</li>
+</ul>
+<p>Use <strong>PerfAddCounters</strong> to add queries to a query handle. Use <strong>PerfDeleteCounters</strong> to remove queries from a query handle.</p>
+<p>After changing the queries in a query handle, use <strong>PerfQueryCounterInfo</strong> to obtain the query indexes. The indexes indicate the order in which the query results will be returned by <strong>PerfQueryCounterData</strong> (the results will not always match the order in which the queries were added).</p>
+<p>Once the query handle is ready, use <strong>PerfQueryCounterData</strong> to collect the data. You will normally collect the data periodically (once a second or once a minute) then process the data as needed.</p>
+<blockquote>
+<p>[!NOTE]
+Performance counters are not designed to be collected more than once per second.</p>
+</blockquote>
+<p><strong>PerfQueryCounterData</strong> will return a <code>PERF_DATA_HEADER</code> block, which consists of a data header with timestamps followed by a sequence of <code>PERF_COUNTER_HEADER</code> blocks, each containing the results of one query.</p>
+<p>The <code>PERF_COUNTER_HEADER</code> may contain various different kinds of data, as indicated by the value of the <code>dwType</code> field:</p>
+<ul>
+<li><code>PERF_ERROR_RETURN</code> - PerfLib cannot get valid counter data back from provider.</li>
+<li><code>PERF_SINGLE_COUNTER</code> - The query was for a single counter from a single-instance counterset. The results contain only the requested counter value.</li>
+<li><code>PERF_MULTIPLE_COUNTERS</code> - The query was for multiple counters from a single-instance counterset. The result contains the counter values along with information for matching each value up with the corresponding counter (i.e. column headings).</li>
+<li><code>PERF_MULTIPLE_INSTANCES</code> - The query was for a single counter from a multi-instance counterset. The results contain the instance information (i.e. row headings) and one counter value per instance.</li>
+<li><code>PERF_COUNTERSET</code> - The query was for multiple counters from a multi-instance counterset. The results contain the instance information (i.e. row headings), the counter values for each instance, and information for matching each value up with the corresponding counter (i.e. column headings).</li>
+</ul>
+<p>The values returned by <strong>PerfQueryCounterData</strong> are <code>UINT32</code> or <code>UINT64</code> raw values. These usually require some processing to produce the expected formatted values. The required processing depends on the counter's type. Many counter types require additional information for complete processing, such as a timestamp or a value from a &quot;base&quot; counter in the same sample.</p>
+<p>Some counter types are &quot;delta&quot; counters that are only meaningful when compared with the data from a previous sample. For example, a counter of type <code>PERF_SAMPLE_COUNTER</code> has a formatted value that is expected to show a rate (the number of times a particular thing happened per second over the sample interval), but the actual raw value is just a count (the number of times a particular thing has happened in total). To produce the formatted &quot;rate&quot; value, you must apply the formula corresponding to the counter type. The formula for <code>PERF_SAMPLE_COUNTER</code> is <code>(N1 - N0) / ((T1 - T0) / F)</code>: subtract the current sample's value from the previous sample's value (giving the number of times the event occurred during the sample interval) then divide the result by the number of seconds in the sample interval (obtained by subtracting the current sample's timestamp from the previous sample's timestamp and dividing by frequency to convert the timespan into seconds).</p>
+<p>Refer to <a href="calculating-counter-values.html">Calculating Counter Values</a> for more information on computing formatted values from raw values.</p>
+<h2>Sample</h2>
+<p>The following code implements a consumer that uses the PerfLib V2 Consumer functions to read CPU performance information from the &quot;Processor Information&quot; counterset.</p>
+<p>The consumer is organized as follows:</p>
+<ul>
+<li>The <code>CpuPerfCounters</code> class implements the logic for consuming performance data. It encapsulates a query handle and a data buffer into which query results are recorded.</li>
+<li>The <code>CpuPerfTimestamp</code> struct stores the timestamp information for a sample. Each time data is collected the caller receives a single <code>CpuPerfTimestamp</code>.</li>
+<li>The <code>CpuPerfData</code> struct stores the performance information (instance name and raw performance values) for one CPU. Each time data is collected the caller receives an array of <code>CpuPerfData</code> (one per CPU).</li>
+</ul>
+<p>This sample uses hard-coded counterset GUID and counter ID values because it is optimized for a specific counterset (Processor Information) that will not change GUID or ID values. A more-generic class that reads performance data from arbitrary countersets would need to use <strong>PerfQueryCounterSetRegistrationInfo</strong> to look up the mapping between counter IDs and counter values at runtime.</p>
+<p>A simple <code>CpuPerfCountersConsumer.cpp</code> program shows how to use the values from the <code>CpuPerfCounters</code> class.</p>
+<h3>CpuPerfCounters.h</h3>
+<pre lang="cpp"><code>#pragma once
+#include &lt;sal.h&gt;
+
+// Contains timestamp data for a Processor Information data collection.
+struct CpuPerfTimestamp
+{
+    __int64 PerfTimeStamp;   // Timestamp from the high-resolution clock.
+    __int64 PerfTime100NSec; // The number of 100 nanosecond intervals since January 1, 1601, in Coordinated Universal Time (UTC).
+    __int64 PerfFreq;        // The frequency of the high-resolution clock.
+};
+
+// Contains the raw data from a Processor Information sample.
+// Note that the values returned are raw data. Converting from raw data to a
+// friendly value may require computation, and the computation may require
+// two samples of data. The computation depends on the Type and the formula
+// to use for each type.
+// For example, ProcessorTime contains raw data of type PERF_100NSEC_TIMER_INV.
+// Given two samples of data, s0 at time t0 and s1 at time t1, the friendly
+// &quot;% Processor Time&quot; value is computed as:
+// 100*(1-(s1.ProcessorTime-s0.ProcessorTime)/(t1.PerfTime100NSec-t0.PerfTime100NSec))
+struct CpuPerfData
+{
+    wchar_t Name[16]; // Format: &quot;NumaNode,NumaIndex&quot;, &quot;NumaNode,_Total&quot;, or &quot;_Total&quot;.
+    __int64 unsigned ProcessorTime; // % Processor Time (#0, Type=PERF_100NSEC_TIMER_INV)
+    __int64 unsigned UserTime; // % User Time (#1, Type=PERF_100NSEC_TIMER)
+    __int64 unsigned PrivilegedTime; // % Privileged Time (#2, Type=PERF_100NSEC_TIMER)
+    __int32 unsigned Interrupts; // Interrupts / sec (#3, Type=PERF_COUNTER_COUNTER)
+    __int64 unsigned DpcTime; // % DPC Time (#4, Type=PERF_100NSEC_TIMER)
+    __int64 unsigned InterruptTime; // % Interrupt Time (#5, Type=PERF_100NSEC_TIMER)
+    __int32 unsigned DpcsQueued; // DPCs Queued / sec (#6, Type=PERF_COUNTER_COUNTER)
+    __int32 unsigned Dpcs; // DPC Rate (#7, Type=PERF_COUNTER_RAWCOUNT)
+    __int64 unsigned IdleTime; // % Idle Time (#8, Type=PERF_100NSEC_TIMER)
+    __int64 unsigned C1Time; // % C1 Time (#9, Type=PERF_100NSEC_TIMER)
+    __int64 unsigned C2Time; // % C2 Time (#10, Type=PERF_100NSEC_TIMER)
+    __int64 unsigned C3Time; // % C3 Time (#11, Type=PERF_100NSEC_TIMER)
+    __int64 unsigned C1Transitions; // C1 Transitions / sec (#12, Type=PERF_COUNTER_BULK_COUNT)
+    __int64 unsigned C2Transitions; // C2 Transitions / sec (#13, Type=PERF_COUNTER_BULK_COUNT)
+    __int64 unsigned C3Transitions; // C3 Transitions / sec (#14, Type=PERF_COUNTER_BULK_COUNT)
+    __int64 unsigned PriorityTime; // % Priority Time (#15, Type=PERF_100NSEC_TIMER_INV)
+    __int32 unsigned ParkingStatus; // Parking Status (#16, Type=PERF_COUNTER_RAWCOUNT)
+    __int32 unsigned ProcessorFrequency; // Processor Frequency (#17, Type=PERF_COUNTER_RAWCOUNT)
+    __int32 unsigned PercentMaximumFrequency; // % of Maximum Frequency (#18, Type=PERF_COUNTER_RAWCOUNT)
+    __int32 unsigned ProcessorStateFlags; // Processor State Flags (#19, Type=PERF_COUNTER_RAWCOUNT)
+    __int32 unsigned ClockInterrupts; // Clock Interrupts / sec (#20, Type=PERF_COUNTER_COUNTER)
+    __int64 unsigned AverageIdleTime; // Average Idle Time (#21, Type=PERF_PRECISION_100NS_TIMER)
+    __int64 unsigned AverageIdleTimeBase; // Average Idle Time Base (#22, Type=PERF_PRECISION_TIMESTAMP)
+    __int64 unsigned IdleBreakEvents; // Idle Break Events / sec (#23, Type=PERF_COUNTER_BULK_COUNT)
+    __int64 unsigned ProcessorPerformance; // % Processor Performance (#24, Type=PERF_AVERAGE_BULK)
+    __int32 unsigned ProcessorPerformanceBase; // % Processor Performance Base (#25, Type=PERF_AVERAGE_BASE)
+    __int64 unsigned ProcessorUtility; // % Processor Utility (#26, Type=PERF_AVERAGE_BULK)
+    __int64 unsigned PrivilegedUtility; // % Privileged Utility (#28, Type=PERF_AVERAGE_BULK)
+    __int32 unsigned UtilityBase; // % Utility Base (#27, Type=PERF_AVERAGE_BASE)
+    __int32 unsigned PercentPerformanceLimit; // % Performance Limit (#30, Type=PERF_COUNTER_RAWCOUNT)
+    __int32 unsigned PerformanceLimitFlags; // Performance Limit Flags (#31, Type=PERF_COUNTER_RAWCOUNT)
+};
+
+// Performs data collection from the Processor Information performance counter.
+class CpuPerfCounters
+{
+public:
+
+    CpuPerfCounters(CpuPerfCounters const&amp;) = delete;
+    void operator=(CpuPerfCounters const&amp;) = delete;
+
+    ~CpuPerfCounters();
+    CpuPerfCounters() noexcept;
+
+    // Reads CPU performance counter data.
+    // Returns ERROR_SUCCESS (0) on success, ERROR_MORE_DATA if bufferCount is
+    // too small, or another Win32 error code on failure.
+    _Success_(return == 0)
+    unsigned
+    ReadData(
+        _Out_opt_ CpuPerfTimestamp* timestamp,
+        _Out_cap_post_count_(bufferCount, *bufferUsed) CpuPerfData* buffer,
+        unsigned bufferCount,
+        _Out_ unsigned* bufferUsed) noexcept;
+
+private:
+
+    void* m_hQuery;
+    void* m_pData;
+    unsigned m_cbData;
+};
+</code></pre>
+<h3>CpuPerfCounters.cpp</h3>
+<pre lang="cpp"><code>#include &quot;CpuPerfCounters.h&quot;
+#include &lt;windows.h&gt;
+#include &lt;perflib.h&gt;
+#include &lt;winperf.h&gt;
+#include &lt;stdlib.h&gt;
+
+_Check_return_ _Ret_maybenull_ _Post_writable_byte_size_(cb)
+static void*
+AllocateBytes(unsigned cb) noexcept
+{
+    return malloc(cb);
+}
+
+static void
+FreeBytes(_Pre_maybenull_ _Post_invalid_ void* p) noexcept
+{
+    if (p)
+    {
+        free(p);
+    }
+    return;
+}
+
+static void
+AssignCounterValue(
+    _Inout_ __int32 unsigned* pVar,
+    _In_ PERF_COUNTER_DATA const* pData) noexcept
+{
+    if (pData-&gt;dwDataSize == 4 ||
+        pData-&gt;dwDataSize == 8)
+    {
+        *pVar = *reinterpret_cast&lt;__int32 unsigned const*&gt;(pData + 1);
+    }
+}
+
+static void
+AssignCounterValue(
+    _Inout_ __int64 unsigned* pVar,
+    _In_ PERF_COUNTER_DATA const* pData) noexcept
+{
+    if (pData-&gt;dwDataSize == 8)
+    {
+        *pVar = *reinterpret_cast&lt;__int64 unsigned const*&gt;(pData + 1);
+    }
+    else if (pData-&gt;dwDataSize == 4)
+    {
+        *pVar = *reinterpret_cast&lt;__int32 unsigned const*&gt;(pData + 1);
+    }
+}
+
+CpuPerfCounters::~CpuPerfCounters()
+{
+    if (m_hQuery)
+    {
+        PerfCloseQueryHandle(m_hQuery);
+    }
+
+    FreeBytes(m_pData);
+}
+
+CpuPerfCounters::CpuPerfCounters() noexcept
+    : m_hQuery()
+    , m_pData()
+    , m_cbData()
+{
+    return;
+}
+
+_Success_(return == 0)
+unsigned
+CpuPerfCounters::ReadData(
+    _Out_opt_ CpuPerfTimestamp* timestamp,
+    _Out_cap_post_count_(bufferCount, *bufferUsed) CpuPerfData* buffer,
+    unsigned bufferCount,
+    _Out_ unsigned* bufferUsed) noexcept
+{
+    unsigned status;
+    DWORD cbData;
+    PERF_DATA_HEADER* pDataHeader;
+    PERF_COUNTER_HEADER const* pCounterHeader;
+    PERF_MULTI_COUNTERS const* pMultiCounters;
+    PERF_MULTI_INSTANCES const* pMultiInstances;
+    PERF_INSTANCE_HEADER const* pInstanceHeader;
+    unsigned cInstances = 0;
+
+    if (m_hQuery == nullptr)
+    {
+        HANDLE hQuery = 0;
+        status = PerfOpenQueryHandle(nullptr, &amp;hQuery);
+        if (ERROR_SUCCESS != status)
+        {
+            goto Done;
+        }
+
+        struct
+        {
+            PERF_COUNTER_IDENTIFIER Identifier;
+            WCHAR Name[4];
+        } querySpec = {
+            {
+                // ProcessorCounterSetGuid
+                { 0xb4fc721a, 0x378, 0x476f, 0x89, 0xba, 0xa5, 0xa7, 0x9f, 0x81, 0xb, 0x36 },
+                0,
+                sizeof(querySpec),
+                PERF_WILDCARD_COUNTER, // Get all data for each CPU.
+                0xFFFFFFFF // Get data for all instance IDs.
+            },
+            L&quot;*&quot; // Get data for all instance names.
+        };
+
+        status = PerfAddCounters(hQuery, &amp;querySpec.Identifier, sizeof(querySpec));
+        if (ERROR_SUCCESS == status)
+        {
+            status = querySpec.Identifier.Status;
+        }
+
+        if (ERROR_SUCCESS != status)
+        {
+            PerfCloseQueryHandle(hQuery);
+            goto Done;
+        }
+
+        // NOTE: A program that adds more than one query to the handle would need to call
+        // PerfQueryCounterInfo to determine the order of the query results.
+
+        m_hQuery = hQuery;
+    }
+
+    for (;;)
+    {
+        cbData = 0;
+        pDataHeader = static_cast&lt;PERF_DATA_HEADER*&gt;(m_pData);
+        status = PerfQueryCounterData(m_hQuery, pDataHeader, m_cbData, &amp;cbData);
+        if (ERROR_SUCCESS == status)
+        {
+            break;
+        }
+        else if (ERROR_NOT_ENOUGH_MEMORY != status)
+        {
+            goto Done;
+        }
+
+        FreeBytes(m_pData);
+        m_cbData = 0;
+
+        m_pData = AllocateBytes(cbData);
+        if (nullptr == m_pData)
+        {
+            status = ERROR_OUTOFMEMORY;
+            goto Done;
+        }
+
+        m_cbData = cbData;
+    }
+
+    // PERF_DATA_HEADER block = PERF_DATA_HEADER + dwNumCounters PERF_COUNTER_HEADER blocks
+    if (cbData &lt; sizeof(PERF_DATA_HEADER) ||
+        cbData &lt; pDataHeader-&gt;dwTotalSize ||
+        pDataHeader-&gt;dwTotalSize &lt; sizeof(PERF_DATA_HEADER) ||
+        pDataHeader-&gt;dwNumCounters != 1)
+    {
+        status = ERROR_INVALID_DATA;
+        goto Done;
+    }
+
+    // PERF_COUNTERSET block = PERF_COUNTER_HEADER + PERF_MULTI_COUNTERS block + PERF_MULTI_INSTANCES block
+    cbData = pDataHeader-&gt;dwTotalSize - sizeof(PERF_DATA_HEADER);
+    pCounterHeader = reinterpret_cast&lt;PERF_COUNTER_HEADER*&gt;(pDataHeader + 1);
+    if (cbData &lt; sizeof(PERF_COUNTER_HEADER) ||
+        cbData &lt; pCounterHeader-&gt;dwSize ||
+        pCounterHeader-&gt;dwSize &lt; sizeof(PERF_COUNTER_HEADER) ||
+        PERF_COUNTERSET != pCounterHeader-&gt;dwType)
+    {
+        status = ERROR_INVALID_DATA;
+        goto Done;
+    }
+
+    // PERF_MULTI_COUNTERS block = PERF_MULTI_COUNTERS + dwCounters DWORDs
+    cbData = pCounterHeader-&gt;dwSize - sizeof(PERF_COUNTER_HEADER);
+    pMultiCounters = reinterpret_cast&lt;PERF_MULTI_COUNTERS const*&gt;(pCounterHeader + 1);
+    if (cbData &lt; sizeof(PERF_MULTI_COUNTERS) ||
+        cbData &lt; pMultiCounters-&gt;dwSize ||
+        pMultiCounters-&gt;dwSize &lt; sizeof(PERF_MULTI_COUNTERS) ||
+        (pMultiCounters-&gt;dwSize - sizeof(PERF_MULTI_COUNTERS)) / sizeof(DWORD) &lt; pMultiCounters-&gt;dwCounters)
+    {
+        status = ERROR_INVALID_DATA;
+        goto Done;
+    }
+
+    // PERF_MULTI_INSTANCES block = PERF_MULTI_INSTANCES + dwInstances instance data blocks
+    cbData -= pMultiCounters-&gt;dwSize;
+    pMultiInstances = reinterpret_cast&lt;PERF_MULTI_INSTANCES const*&gt;((LPCBYTE)pMultiCounters + pMultiCounters-&gt;dwSize);
+    if (cbData &lt; sizeof(PERF_MULTI_INSTANCES) ||
+        cbData &lt; pMultiInstances-&gt;dwTotalSize ||
+        pMultiInstances-&gt;dwTotalSize &lt; sizeof(PERF_MULTI_INSTANCES))
+    {
+        status = ERROR_INVALID_DATA;
+        goto Done;
+    }
+
+    cInstances = pMultiInstances-&gt;dwInstances;
+    if (bufferCount &lt; cInstances)
+    {
+        status = ERROR_MORE_DATA;
+        goto Done;
+    }
+
+    memset(buffer, 0, sizeof(buffer[0]) * cInstances);
+
+    cbData = pMultiInstances-&gt;dwTotalSize - sizeof(PERF_MULTI_INSTANCES);
+    pInstanceHeader = reinterpret_cast&lt;PERF_INSTANCE_HEADER const*&gt;(pMultiInstances + 1);
+    for (unsigned iInstance = 0; iInstance != pMultiInstances-&gt;dwInstances; iInstance += 1)
+    {
+        CpuPerfData&amp; d = buffer[iInstance];
+
+        // instance data block = PERF_INSTANCE_HEADER block + dwCounters PERF_COUNTER_DATA blocks
+        if (cbData &lt; sizeof(PERF_INSTANCE_HEADER) ||
+            cbData &lt; pInstanceHeader-&gt;Size ||
+            pInstanceHeader-&gt;Size &lt; sizeof(PERF_INSTANCE_HEADER))
+        {
+            status = ERROR_INVALID_DATA;
+            goto Done;
+        }
+
+        unsigned const instanceNameMax = (pInstanceHeader-&gt;Size - sizeof(PERF_INSTANCE_HEADER)) / sizeof(WCHAR);
+        WCHAR const* const instanceName = reinterpret_cast&lt;WCHAR const*&gt;(pInstanceHeader + 1);
+        if (instanceNameMax == wcsnlen(instanceName, instanceNameMax))
+        {
+            status = ERROR_INVALID_DATA;
+            goto Done;
+        }
+
+        wcsncpy_s(d.Name, instanceName, _TRUNCATE);
+
+        cbData -= pInstanceHeader-&gt;Size;
+        PERF_COUNTER_DATA const* pCounterData = reinterpret_cast&lt;PERF_COUNTER_DATA const*&gt;((LPCBYTE)pInstanceHeader + pInstanceHeader-&gt;Size);
+        for (unsigned iCounter = 0; iCounter != pMultiCounters-&gt;dwCounters; iCounter += 1)
+        {
+            if (cbData &lt; sizeof(PERF_COUNTER_DATA) ||
+                cbData &lt; pCounterData-&gt;dwSize ||
+                pCounterData-&gt;dwSize &lt; sizeof(PERF_COUNTER_DATA) + 8 ||
+                pCounterData-&gt;dwSize - sizeof(PERF_COUNTER_DATA) &lt; pCounterData-&gt;dwDataSize)
+            {
+                status = ERROR_INVALID_DATA;
+                goto Done;
+            }
+
+            DWORD const* pCounterIds = reinterpret_cast&lt;DWORD const*&gt;(pMultiCounters + 1);
+            switch (pCounterIds[iCounter])
+            {
+            case 0: // PERF_100NSEC_TIMER_INV
+                AssignCounterValue(&amp;d.ProcessorTime, pCounterData);
+                break;
+            case 1: // PERF_100NSEC_TIMER
+                AssignCounterValue(&amp;d.UserTime, pCounterData);
+                break;
+            case 2: // PERF_100NSEC_TIMER
+                AssignCounterValue(&amp;d.PrivilegedTime, pCounterData);
+                break;
+            case 3: // PERF_COUNTER_COUNTER
+                AssignCounterValue(&amp;d.Interrupts, pCounterData);
+                break;
+            case 4: // PERF_100NSEC_TIMER
+                AssignCounterValue(&amp;d.DpcTime, pCounterData);
+                break;
+            case 5: // PERF_100NSEC_TIMER
+                AssignCounterValue(&amp;d.InterruptTime, pCounterData);
+                break;
+            case 6: // PERF_COUNTER_COUNTER
+                AssignCounterValue(&amp;d.DpcsQueued, pCounterData);
+                break;
+            case 7: // PERF_COUNTER_RAWCOUNT
+                AssignCounterValue(&amp;d.Dpcs, pCounterData);
+                break;
+            case 8: // PERF_100NSEC_TIMER
+                AssignCounterValue(&amp;d.IdleTime, pCounterData);
+                break;
+            case 9: // PERF_100NSEC_TIMER
+                AssignCounterValue(&amp;d.C1Time, pCounterData);
+                break;
+            case 10: // PERF_100NSEC_TIMER
+                AssignCounterValue(&amp;d.C2Time, pCounterData);
+                break;
+            case 11: // PERF_100NSEC_TIMER
+                AssignCounterValue(&amp;d.C3Time, pCounterData);
+                break;
+            case 12: // PERF_COUNTER_BULK_COUNT
+                AssignCounterValue(&amp;d.C1Transitions, pCounterData);
+                break;
+            case 13: // PERF_COUNTER_BULK_COUNT
+                AssignCounterValue(&amp;d.C2Transitions, pCounterData);
+                break;
+            case 14: // PERF_COUNTER_BULK_COUNT
+                AssignCounterValue(&amp;d.C3Transitions, pCounterData);
+                break;
+            case 15: // PERF_100NSEC_TIMER_INV
+                AssignCounterValue(&amp;d.PriorityTime, pCounterData);
+                break;
+            case 16: // PERF_COUNTER_RAWCOUNT
+                AssignCounterValue(&amp;d.ParkingStatus, pCounterData);
+                break;
+            case 17: // PERF_COUNTER_RAWCOUNT
+                AssignCounterValue(&amp;d.ProcessorFrequency, pCounterData);
+                break;
+            case 18: // PERF_COUNTER_RAWCOUNT
+                AssignCounterValue(&amp;d.PercentMaximumFrequency, pCounterData);
+                break;
+            case 19: // PERF_COUNTER_RAWCOUNT
+                AssignCounterValue(&amp;d.ProcessorStateFlags, pCounterData);
+                break;
+            case 20: // PERF_COUNTER_COUNTER
+                AssignCounterValue(&amp;d.ClockInterrupts, pCounterData);
+                break;
+            case 21: // PERF_PRECISION_100NS_TIMER
+                AssignCounterValue(&amp;d.AverageIdleTime, pCounterData);
+                break;
+            case 22: // PERF_PRECISION_TIMESTAMP
+                AssignCounterValue(&amp;d.AverageIdleTimeBase, pCounterData);
+                break;
+            case 23: // PERF_COUNTER_BULK_COUNT
+                AssignCounterValue(&amp;d.IdleBreakEvents, pCounterData);
+                break;
+            case 24: // PERF_AVERAGE_BULK
+                AssignCounterValue(&amp;d.ProcessorPerformance, pCounterData);
+                break;
+            case 25: // PERF_AVERAGE_BASE
+                AssignCounterValue(&amp;d.ProcessorPerformanceBase, pCounterData);
+                break;
+            case 26: // PERF_AVERAGE_BULK
+                AssignCounterValue(&amp;d.ProcessorUtility, pCounterData);
+                break;
+            case 28: // PERF_AVERAGE_BULK
+                AssignCounterValue(&amp;d.PrivilegedUtility, pCounterData);
+                break;
+            case 27: // PERF_AVERAGE_BASE
+                AssignCounterValue(&amp;d.UtilityBase, pCounterData);
+                break;
+            case 30: // PERF_COUNTER_RAWCOUNT
+                AssignCounterValue(&amp;d.PercentPerformanceLimit, pCounterData);
+                break;
+            case 31: // PERF_COUNTER_RAWCOUNT
+                AssignCounterValue(&amp;d.PerformanceLimitFlags, pCounterData);
+                break;
+            }
+
+            cbData -= pCounterData-&gt;dwSize;
+            pCounterData = reinterpret_cast&lt;PERF_COUNTER_DATA const*&gt;((LPCBYTE)pCounterData + pCounterData-&gt;dwSize);
+        }
+
+        pInstanceHeader = reinterpret_cast&lt;PERF_INSTANCE_HEADER const*&gt;(pCounterData);
+    }
+
+    if (nullptr != timestamp)
+    {
+        timestamp-&gt;PerfTimeStamp = pDataHeader-&gt;PerfTimeStamp;
+        timestamp-&gt;PerfTime100NSec = pDataHeader-&gt;PerfTime100NSec;
+        timestamp-&gt;PerfFreq = pDataHeader-&gt;PerfFreq;
+    }
+
+    status = ERROR_SUCCESS;
+
+Done:
+
+    *bufferUsed = cInstances;
+    return status;
+}
+</code></pre>
+<h3>CpuPerfCountersConsumer.cpp</h3>
+<pre lang="cpp"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;CpuPerfCounters.h&quot;
+#include &lt;utility&gt;
+
+int wmain()
+{
+    unsigned status;
+    unsigned const dataMax = 30; // Support up to 30 instances
+    CpuPerfCounters cpc;
+    CpuPerfTimestamp timestamp[2];
+    CpuPerfTimestamp* t0 = timestamp + 0;
+    CpuPerfTimestamp* t1 = timestamp + 1;
+    CpuPerfData data[dataMax * 2];
+    CpuPerfData* d0 = data + 0;
+    CpuPerfData* d1 = data + dataMax;
+    unsigned used;
+
+    status = cpc.ReadData(t0, d0, dataMax, &amp;used);
+    printf(&quot;ReadData0 used=%u, status=%u\n&quot;, used, status);
+
+    for (unsigned iSample = 1; iSample != 10; iSample += 1)
+    {
+        Sleep(1000);
+        status = cpc.ReadData(t1, d1, dataMax, &amp;used);
+        printf(&quot;ReadData%u used=%u, status=%u\n&quot;, iSample, used, status);
+
+        if (status == ERROR_SUCCESS &amp;&amp; used != 0)
+        {
+            // Show the ProcessorTime value from instance #0 (usually the &quot;_Total&quot; instance):
+            auto&amp; s0 = d0[0];
+            auto&amp; s1 = d1[0];
+            printf(&quot;  %ls/%ls = %f\n&quot;, s0.Name, s1.Name,
+                100.0 * (1.0 - static_cast&lt;double&gt;(s1.ProcessorTime - s0.ProcessorTime) / static_cast&lt;double&gt;(t1-&gt;PerfTime100NSec - t0-&gt;PerfTime100NSec)));
+
+            std::swap(t0, t1); // Swap &quot;current&quot; and &quot;previous&quot; timestamp pointers.
+            std::swap(d0, d1); // Swap &quot;current&quot; and &quot;previous&quot; sample pointers.
+        }
+    }
+
+    return status;
+}
+</code></pre>
+</body>

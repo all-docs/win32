@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Windows Touch Manipulation Sample (MTManipulation)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Windows Touch Manipulation Sample (MTManipulation)
+description: This section describes the Windows Touch Manipulation sample.
+ms.assetid: 59b9279c-ffa3-42c3-a01f-3ea7aca8f235
+keywords:</p>
+<ul>
+<li>Windows Touch,code samples</li>
+<li>Windows Touch,sample code</li>
+<li>Windows Touch,manipulations</li>
+<li>Windows Touch,Manipulation sample</li>
+<li>manipulations,sample code</li>
+<li>manipulations,code samples</li>
+<li>Manipulation sample
+ms.topic: article
+ms.date: 02/18/2020</li>
+</ul>
+<hr />
+<h1>Windows Touch Manipulation Sample (MTManipulation)</h1>
+<p>This section describes the Windows Touch Manipulation sample.</p>
+<p>The Windows Touch Manipulation sample demonstrates how to translate, rotate, and scale an object using the <a href="/windows/desktop/api/manipulations/nn-manipulations-imanipulationprocessor"><strong>IManipulationProcessor</strong></a> interface and implementing an <a href="/windows/win32/api/manipulations/nn-manipulations-_imanipulationevents"><strong>_IManipulationEvents</strong></a> event sink. The following screen shot shows how the sample looks when it is running.</p>
+<p><img src="images/mtmanipulation.png" alt="screen shot showing the windows touch manipulation sample, with a rotated blue-outlined white rectangle with blue lines drawn from opposite corners" /></p>
+<p>For this sample, a <strong>CDrawingObject</strong> class is created that can be programmatically translated, rotated, or scaled. An <a href="/windows/desktop/api/manipulations/nn-manipulations-imanipulationprocessor"><strong>IManipulationProcessor</strong></a> interface is instantiated. A manipulation event sink is created that accepts a pointer to the <strong>CDrawingObject</strong> class and the <strong>IManipulationProcessor</strong> interface on its constructor. A connection point to the IManipulationProcessor is created in the manipulation event sink implementation so that events raised by the <strong>IManipulationProcessor</strong> are received by the event sink. Touch data is fed to the <strong>IManipulationProcessor</strong> interface and the interface will then raise <a href="/windows/win32/api/manipulations/nn-manipulations-_imanipulationevents"><strong>_IManipulationEvent</strong></a> events. The event handlers in the <strong>CManipulationEventSink</strong> class will update the orientation of the <strong>CDrawingObject</strong> by calling accessors on the pointer to the <strong>CDrawingObject</strong>.</p>
+<p>The following code shows how the window is set up for touch and how the <strong>CDrawingObject</strong> and <a href="/windows/desktop/api/manipulations/nn-manipulations-imanipulationprocessor"><strong>IManipulationProcessor</strong></a> are instantiated and passed to the <strong>CManipulationEventSink</strong> constructor.</p>
+<pre lang="C++"><code>CDrawingObject g_cRect; // CDrawingObject class holds information about the rectangle
+                        // and it is responsible for painting the rectangle.
+
+(...)
+
+BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
+{
+(...)
+    // Register application window for receiving multi-touch input. Use default settings.
+    if (!RegisterTouchWindow(hWnd, 0))
+    {
+        MessageBox(hWnd, L&quot;Cannot register application window for multi-touch input&quot;, L&quot;Error&quot;, MB_OK);
+        return FALSE;
+    }
+    ASSERT(IsTouchWindow(hWnd, NULL));
+
+    // Instantiate the ManipulationProcessor object
+    HRESULT hr = CoCreateInstance(__uuidof(ManipulationProcessor), NULL, CLSCTX_ALL, IID_PPV_ARGS(&amp;g_pIManipProc));
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;InitInstance: failed to instantiate the ManipulationProcessor object&quot;);
+        return FALSE;
+    }
+
+    // Instantiate the event sink with the manipulation processor and pointer to the rectangle object
+    g_pManipulationEventSink = new CManipulationEventSink(&amp;g_cRect);
+    if (g_pManipulationEventSink == NULL)
+    {
+        ASSERT(g_pManipulationEventSink &amp;&amp; L&quot;InitInstance: failed to instantiate the CManipulationEventSink class&quot;);
+        g_pIManipProc-&gt;Release();
+        g_pIManipProc = NULL;
+        return FALSE;
+    }
+
+    // Establish the link between ManipulationEventSink and ManipulationProcessor
+    if (!g_pManipulationEventSink-&gt;Connect(g_pIManipProc))
+    {
+        ASSERT(FALSE &amp;&amp; L&quot;InitInstance: failed to connect ManipulationEventSink and ManipulationProcessor&quot;);
+        g_pIManipProc-&gt;Release();
+        g_pIManipProc = NULL;
+        g_pManipulationEventSink-&gt;Release();
+        g_pManipulationEventSink = NULL;
+        return FALSE;
+    }
+</code></pre>
+<p>The following code shows the constructor for the manipulation event sink, <strong>CManipulationEventSink</strong>.</p>
+<pre lang="C++"><code>CManipulationEventSink::CManipulationEventSink(CDrawingObject* pcDrawingObject)
+:   m_cRefCount(1),
+    m_pConnection(NULL),
+    m_dwCookie(0),
+    m_pcDrawingObject(pcDrawingObject)
+{
+    ASSERT((pcDrawingObject != NULL) &amp;&amp; L&quot;CManipulationEventSink constructor: incorrect argument&quot;);
+}
+</code></pre>
+<p>The following code shows how the event sink is connected to the manipulation processor.</p>
+<pre lang="C++"><code>bool CManipulationEventSink::Connect(IManipulationProcessor* pManipulationProcessor)
+{
+    // Check input arguments
+    if (pManipulationProcessor == NULL)
+    {
+        ASSERT((pManipulationProcessor != NULL) &amp;&amp; L&quot;CManipulationEventSink::Create : incorrect arguments&quot;);
+        return false;
+    }
+
+    // Check object state
+    if ((m_dwCookie != 0) || (m_pConnection != NULL))
+    {
+        ASSERT((m_dwCookie == 0) &amp;&amp; (m_pConnection == NULL) &amp;&amp; L&quot;CManipulationEventSink::Connect : connection already established&quot;);
+        return false;
+    }
+
+    // Get the container with the connection points.
+    IConnectionPointContainer* pConnectionContainer = NULL;
+    HRESULT hr = pManipulationProcessor-&gt;QueryInterface(&amp;pConnectionContainer);
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CManipulationEventSink::Connect : failed to get the container with the connection points&quot;);
+        return false;
+    }
+
+    // Get a connection point.
+    hr = pConnectionContainer-&gt;FindConnectionPoint(__uuidof(_IManipulationEvents), &amp;m_pConnection);
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CManipulationEventSink::Connect : failed to get a connection point&quot;);
+        pConnectionContainer-&gt;Release();
+        return false;
+    }
+
+    // Release the connection container.
+    pConnectionContainer-&gt;Release();
+
+    // Advise. Establishes an advisory connection between the connection point and the
+    // caller's sink object.
+    hr = m_pConnection-&gt;Advise(this, &amp;m_dwCookie);
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CManipulationEventSink::Connect : failed to Advise&quot;);
+        m_pConnection-&gt;Release();
+        m_pConnection = NULL;
+        return false;
+    }
+
+    return true;
+}
+</code></pre>
+<p>The following code shows how touch data is passed to the manipulation event sink.</p>
+<pre lang="C++"><code>LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+(...)
+
+    switch (message)
+    {
+ (...)
+    // WM_TOUCH message handlers
+    case WM_TOUCH:
+        {
+            // WM_TOUCH message can contain several messages from different contacts
+            // packed together.
+            // Message parameters need to be decoded:
+            UINT  cInputs  = (int) wParam;      // Number of actual per-contact messages
+            TOUCHINPUT* pInputs = new TOUCHINPUT[cInputs]; // Allocate the storage for the parameters of the per-contact messages
+            if (pInputs == NULL)
+            {
+                break;
+            }
+            // Unpack message parameters into the array of TOUCHINPUT structures, each
+            // representing a message for one single contact.
+            if (GetTouchInputInfo((HTOUCHINPUT)lParam, cInputs, pInputs, sizeof(TOUCHINPUT)))
+            {
+                // For each contact, dispatch the message to the appropriate message
+                // handler.
+                for (unsigned int i = 0; i &lt; cInputs; i++)
+                {
+                    if (pInputs[i].dwFlags &amp; TOUCHEVENTF_DOWN)
+                    {
+                        g_pIManipProc-&gt;ProcessDown(pInputs[i].dwID, (FLOAT)pInputs[i].x, (FLOAT)pInputs[i].y);
+                    }
+                    else if (pInputs[i].dwFlags &amp; TOUCHEVENTF_MOVE)
+                    {
+                        g_pIManipProc-&gt;ProcessMove(pInputs[i].dwID, (FLOAT)pInputs[i].x, (FLOAT)pInputs[i].y);
+                    }
+                    else if (pInputs[i].dwFlags &amp; TOUCHEVENTF_UP)
+                    {
+                        g_pIManipProc-&gt;ProcessUp(pInputs[i].dwID, (FLOAT)pInputs[i].x, (FLOAT)pInputs[i].y);
+                    }
+                }
+            }
+            else
+            {
+                // error handling, presumably out of memory
+                ASSERT(FALSE &amp;&amp; L&quot;Error: failed to execute GetTouchInputInfo&quot;);
+                delete [] pInputs;
+                break;
+            }
+            if (!CloseTouchInputHandle((HTOUCHINPUT)lParam))
+            {
+                // error handling, presumably out of memory
+                ASSERT(FALSE &amp;&amp; L&quot;Error: failed to execute CloseTouchInputHandle&quot;);
+                delete [] pInputs;
+                break;
+            }
+            delete [] pInputs;
+
+            // Force redraw of the rectangle
+            InvalidateRect(hWnd, NULL, TRUE);
+        }
+        break;
+</code></pre>
+<p>The following code shows how the event handlers update the object orientation and size on manipulation delta events.</p>
+<pre lang="C++"><code>HRESULT STDMETHODCALLTYPE CManipulationEventSink::ManipulationDelta(
+    /* [in] */ FLOAT /* x */,
+    /* [in] */ FLOAT /* y */,
+    /* [in] */ FLOAT translationDeltaX,
+    /* [in] */ FLOAT translationDeltaY,
+    /* [in] */ FLOAT scaleDelta,
+    /* [in] */ FLOAT /* expansionDelta */,
+    /* [in] */ FLOAT rotationDelta,
+    /* [in] */ FLOAT /* cumulativeTranslationX */,
+    /* [in] */ FLOAT /* cumulativeTranslationY */,
+    /* [in] */ FLOAT /* cumulativeScale */,
+    /* [in] */ FLOAT /* cumulativeExpansion */,
+    /* [in] */ FLOAT /* cumulativeRotation */)
+{
+    m_pcDrawingObject-&gt;ApplyManipulationDelta(translationDeltaX,translationDeltaY,scaleDelta,rotationDelta);
+
+    return S_OK;
+}
+</code></pre>
+<p>The following code is the implementation of <strong>ApplyManipulationDelta</strong> in the <strong>CDrawingObject</strong> class.</p>
+<pre lang="C++"><code>// This function is responsible for manipulation of the rectangle.
+// It is called from CManipulationEventSink class.
+// in:
+//      translationDeltaX - shift of the x-coordinate (1/100 of pixel units)
+//      translationDeltaY - shift of the y-coordinate (1/100 of pixel units)
+//             scaleDelta - scale factor (zoom in/out)
+//          rotationDelta - rotation angle in radians
+void CDrawingObject::ApplyManipulationDelta(
+    const FLOAT translationDeltaX,
+    const FLOAT translationDeltaY,
+    const FLOAT scaleDelta,
+    const FLOAT rotationDelta
+)
+{
+    _ptCenter.x += (LONG) (translationDeltaX / 100.0);
+    _ptCenter.y += (LONG) (translationDeltaY / 100.0);
+
+    _dScalingFactor *= scaleDelta;
+
+    _dRotationAngle -= rotationDelta; // we are subtracting because Y-axis is down
+}
+</code></pre>
+<p>After the <strong>CDrawingObject</strong>'s center points, scale factor, and rotation angle are updated, the object will draw itself transformed.</p>
+<h2>Related topics</h2>
+<p><a href="https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/Win7Samples/Touch/MTManipulation/cpp">Multi-touch Manipulation Application</a>, <a href="https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/Win7Samples/Touch/MTManipulationInertia/cpp">Manipulation and Inertia Sample</a>, <a href="windows-touch-samples.html">Windows Touch Samples</a></p>
+</body>

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adding Stream Information to the ASF File Sink</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Learn about adding stream information to the ASF file sink, which an application can use to archive ASF media data to a file.
+ms.assetid: 21cbde27-a2ca-4298-9197-43bcaf05588d
+title: Adding Stream Information to the ASF File Sink
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Adding Stream Information to the ASF File Sink</h1>
+<p>The ASF file sink is an implementation of <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasink"><strong>IMFMediaSink</strong></a> provided by Media Foundation that an application can use to archive ASF media data to a file. For information about ASF Media Sinks' object model and general usage, see <a href="asf-media-sinks.html">ASF Media Sinks</a>.</p>
+<p>After instantiating the file sink, it must be configured before building the topology. The file sink needs to know about the streams in the output file, the encoding mode information, and the metadata. This topic describes the process of adding stream in the file sink.</p>
+<ul>
+<li><a href="#adding-streams-in-the-asf-file-sink">Adding Streams in the ASF File Sink</a></li>
+<li><a href="#enumerating-stream-sinks">Enumerating Stream Sinks</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Adding Streams in the ASF File Sink</h2>
+<p>The file sink must know of the output streams and their properties so that it can generate output samples accordingly and add them to the output ASF file. These settings are written to the final ASF Header Object.</p>
+<p>To set stream information, you must have a reference to the file sink's ASF ContentInfo object. For information, see <a href="creating-the-asf-file-sink.html">Creating the ASF File Sink</a>.</p>
+<p>The following procedure summarizes the general steps for configuring stream by using the ASF profile object.</p>
+<p><strong>To configure stream information in the ASF file sink</strong></p>
+<ol>
+<li>
+<p>Create an ASF profile object by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-mfcreateasfprofile"><strong>MFCreateASFProfile</strong></a>.</p>
+</li>
+<li>
+<p>For each stream in the output file, create a media type for the target stream to be added in the file sink. The media type must be compatible with the output types supported by the Windows Media encoders.</p>
+<p>For information about adding audio streams to the profile, see Creating Audio Streams for ASF Encoding.</p>
+<p>For information about adding video streams to the profile, see Creating Video Streams for ASF Encoding.</p>
+</li>
+<li>
+<p>Create streams based on the media types created in step 2 by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfprofile-createstream"><strong>IMFASFProfile::CreateStream</strong></a>.</p>
+</li>
+<li>
+<p>Assign a stream number for the newly created stream by calling <a href="/windows/desktop/api/wmcontainer/nn-wmcontainer-imfasfstreamconfig"><strong>IMFASFStreamConfig</strong></a> interface pointer received in step 3.</p>
+</li>
+<li>
+<p>Optionally configure the stream with the following information:</p>
+<ul>
+<li>Leaky bucket parameters by setting the attributes: <a href="mf-asfstreamconfig-leakybucket1-attribute.html"><strong>MF_ASFSTREAMCONFIG_LEAKYBUCKET1</strong></a> or <a href="mf-asfstreamconfig-leakybucket2-attribute.html"><strong>MF_ASFSTREAMCONFIG_LEAKYBUCKET2</strong></a></li>
+<li>Payload extension, mutual exclusion by calling <a href="/windows/desktop/api/wmcontainer/nn-wmcontainer-imfasfstreamconfig"><strong>IMFASFStreamConfig</strong></a> methods.</li>
+</ul>
+</li>
+<li>
+<p>Optionally set data packet size for the profile by setting <a href="mf-asfprofile-minpacketsize-attribute.html"><strong>MF_ASFPROFILE_MINPACKETSIZE</strong></a> and <a href="mf-asfprofile-maxpacketsize-attribute.html"><strong>MF_ASFPROFILE_MAXPACKETSIZE</strong></a> attributes. The ASF profile exposes the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfattributes"><strong>IMFAttributes</strong></a> interface, which an application can get reference to by calling <strong>IMFASFProfile::QueryInterface</strong>.</p>
+</li>
+<li>
+<p>Set encoding information for the stream in the file sink. Discussed in <a href="setting-properties-in-the-file-sink.html">Setting Properties in the File Sink</a>.</p>
+</li>
+<li>
+<p>Add the stream to the profile by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfprofile-setstream"><strong>IMFASFProfile::SetStream</strong></a>.</p>
+</li>
+<li>
+<p>Associate the profile with the ContentInfo object by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfcontentinfo-setprofile"><strong>IMFASFContentInfo::SetProfile</strong></a>.</p>
+</li>
+</ol>
+<p>To modify an existing stream, the application can get a reference to the stream's <a href="/windows/desktop/api/wmcontainer/nn-wmcontainer-imfasfstreamconfig"><strong>IMFASFStreamConfig</strong></a> interface and reconfigure it according to the requirements. To add or remove streams, the application must call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfprofile-removestream"><strong>IMFASFProfile::RemoveStream</strong></a>. To apply these changes, stream modifications or removal, you must set the profile again in the ContentInfo object. This overwrites the existing profile that is already associated with the ContentInfo object.</p>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+//  CreateVideoStream
+//  Create an video stream and add it to the profile.
+//
+//  pProfile: A pointer to the ASF profile.
+//  wStreamNumber: Stream number to assign for the new stream.
+//    pType: A pointer to the source's video media type.
+//-------------------------------------------------------------------
+
+HRESULT CreateVideoStream(IMFASFProfile* pProfile, WORD wStreamNumber, IMFMediaType* pType)
+{
+    if (!pProfile)
+    {
+        return E_INVALIDARG;
+    }
+    if (wStreamNumber &lt; 1 || wStreamNumber &gt; 127 )
+    {
+        return MF_E_INVALIDSTREAMNUMBER;
+    }
+
+    HRESULT hr = S_OK;
+
+    
+    IMFMediaType* pVideoType = NULL;
+    IMFASFStreamConfig* pVideoStream = NULL;
+
+    UINT32 dwBitRate = 0;
+        
+    //Create a new video type from the source type
+    hr = CreateCompressedVideoType(pType, &amp;pVideoType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //Create a new stream with the video type
+    hr = pProfile-&gt;CreateStream(pVideoType, &amp;pVideoStream);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+    
+
+    //Set a valid stream number
+    hr = pVideoStream-&gt;SetStreamNumber(wStreamNumber);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //Add the stream to the profile
+    hr = pProfile-&gt;SetStream(pVideoStream);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    wprintf_s(L&quot;Video Stream created. Stream Number: %d .\n&quot;, wStreamNumber);
+
+done:
+
+    SafeRelease(&amp;pVideoStream);
+    SafeRelease(&amp;pVideoType);
+
+    return hr;
+}
+</code></pre>
+<h2>Enumerating Stream Sinks</h2>
+<p>For each stream in the profile that the ContentInfo object is aware of, the ASF file sink creates and adds a stream sink that contains all the properties of the encoded stream. The ASF file sink is designed to contain fixed streams. This means that you cannot add or remove streams by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-addstreamsink"><strong>IMFMediaSink::AddStreamSink</strong></a> or <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-removestreamsink"><strong>IMFMediaSink::RemoveStreamSink</strong></a>. These calls on the file sink fail with the MF_E_STREAMSINKS_FIXED error code. Adding or removing streams in the profile does not automatically add or remove the stream sinks in the file sink. You must discard the existing instance of the file and recreate it with new stream information if your streams in the profile have changed.</p>
+<p>The following procedure summarizes the general steps for enumerating stream sinks in the ASF file sink.</p>
+<p><strong>To enumerate stream sinks</strong></p>
+<ol>
+<li>
+<p>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-getstreamsinkcount"><strong>IMFMediaSink::GetStreamSinkCount</strong></a> to get the total number of stream sinks in the ASF file sink.</p>
+</li>
+<li>
+<p>Loop through the stream sinks ang get a reference to the stream sink's <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-getstreamsinkbyindex"><strong>GetStreamSinkByIndex</strong></a> interface.</p>
+<p>-or-</p>
+<p>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasink-getstreamsinkbyid"><strong>IMFMediaSink::GetStreamSinkById</strong></a> to get the stream sink by specifying the stream number. Each stream sink is identified with the stream number you set while creating the stream in the profile.</p>
+</li>
+</ol>
+<p>If you are building a partial topology for encoding a media file, you must add the file sink to the topology as an output topology node. You can do so either by specifying each steam sink in the file sink or by setting the file sink activation object and the stream sink identifiers. For more information and code example, see <a href="creating-output-nodes.html">Creating Output Nodes</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="asf-media-sinks.html">ASF Media Sinks</a></p>
+<!-- raw HTML omitted -->
+<p><a href="asf-support-in-media-foundation.html">ASF Support in Media Foundation</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

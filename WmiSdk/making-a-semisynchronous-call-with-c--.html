@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Making a Semisynchronous Call with C++</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Semisynchronous calls are the recommended means to call WMI methods, such as IWbemServices::ExecMethod and provider methods, such as the Chkdsk Method of the Win32_LogicalDisk Class.
+ms.assetid: 3d5ddd77-19f7-42d0-b8ca-a0a11f6b3f0f
+ms.tgt_platform: multiple
+title: Making a Semisynchronous Call with C++
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Making a Semisynchronous Call with C++</h1>
+<p>Semisynchronous calls are the recommended means to call WMI methods, such as <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-execmethod"><strong>IWbemServices::ExecMethod</strong></a> and provider methods, such as the <a href="/windows/desktop/CIMWin32Prov/chkdsk-method-in-class-win32-logicaldisk"><strong>Chkdsk Method of the Win32_LogicalDisk Class</strong></a>.</p>
+<p>One disadvantage of synchronous processing is that the caller thread is blocked until the call completes. The blockage can cause a delay in processing time. In contrast, an asynchronous call must implement <a href="swbemsink.html"><strong>SWbemSink</strong></a> in script. In C++, asynchronous code must implement the <a href="iwbemobjectsink.html"><strong>IWbemObjectSink</strong></a> interface, use multiple threads, and control the flow of information back to the caller. Large result sets from queries, for example, can take a considerable amount of time to deliver and forces the caller to spend significant system resources to handle the delivery.</p>
+<p>Semisynchronous processing solves both the thread blockage and uncontrolled delivery problems by polling a special status object that implements the <a href="/windows/desktop/api/Wbemcli/nn-wbemcli-iwbemcallresult"><strong>IWbemCallResult</strong></a> interface. Through <strong>IWbemCallResult</strong>, you can improve the speed and efficiency of queries, enumerations, and event notifications.</p>
+<p>The following procedure describes how to make a semisynchronous call with the <a href="/windows/desktop/api/WbemCli/nn-wbemcli-iwbemservices"><strong>IWbemServices</strong></a> interface.</p>
+<p><strong>To make a semisynchronous call with the IWbemServices interface</strong></p>
+<ol>
+<li>
+<p>Make your call as normal, but with the <strong>WBEM_FLAG_RETURN_IMMEDIATELY</strong> flag set in the <em>IFlags</em> parameter.</p>
+<p>You can combine <strong>WBEM_FLAG_RETURN_IMMEDIATELY</strong> with other flags that are valid for the specific method. For example, use the <strong>WBEM_FLAG_FORWARD_ONLY</strong> flag for all calls that return enumerators. Setting these flags in combination saves time and space, and improves responsiveness.</p>
+</li>
+<li>
+<p>Poll for your results.</p>
+<p>If you call a method that returns an enumerator, such as <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-createclassenum"><strong>IWbemServices::CreateClassEnum</strong></a> or <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-execquery"><strong>IWbemServices::ExecQuery</strong></a>, you can poll the enumerators with the <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-ienumwbemclassobject-next"><strong>IEnumWbemClassObject::Next</strong></a> or <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-ienumwbemclassobject-nextasync"><strong>IEnumWbemClassObject::NextAsync</strong></a> methods. The <strong>IEnumWbemClassObject::NextAsync</strong> call is nonblocking and returns immediately. In the background, WMI begins to deliver the requested number of objects by calling <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemobjectsink-indicate"><strong>IWbemObjectSink::Indicate</strong></a>. WMI then stops and waits for another <strong>NextAsync</strong> call.</p>
+<p>If you call a method that does not return an enumerator, such as <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-getobject"><strong>IWbemServices::GetObject</strong></a>, you must set the <em>ppCallResult</em> parameter to a valid pointer. Use the <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemcallresult-getcallstatus"><strong>IWbemCallResult::GetCallStatus</strong></a> on the returned pointer to retrieve <strong>WBEM_S_NO_ERROR</strong>.</p>
+</li>
+<li>
+<p>Finish your call.</p>
+<p>For a call that returns an enumerator, WMI calls <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemobjectsink-setstatus"><strong>IWbemObjectSink::SetStatus</strong></a> to report the completion of the operation. If you do not need the entire result, release the enumerator by calling the <a href="/windows/desktop/api/Wbemcli/nn-wbemcli-ienumwbemclassobject"><strong>IEnumWbemClassObject</strong></a>::<a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> method. Calling <strong>Release</strong> results in WMI canceling the delivery of all objects that remain.</p>
+<p>For a call that does not use an enumerator, retrieve the <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemcallresult-getcallstatus"><strong>GetCallStatus</strong></a> object through the <em>plStatus</em> parameter of your method.</p>
+</li>
+</ol>
+<p>The C++ code example in this topic requires the following #include statements to compile correctly.</p>
+<pre lang="C++"><code>#include &lt;comdef.h&gt;
+#include &lt;wbemidl.h&gt;
+</code></pre>
+<p>The following code example shows how to make a semisynchronous call to <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-getobject"><strong>GetObject</strong></a>.</p>
+<pre lang="C++"><code>void GetObjSemiSync(IWbemServices *pSvc)
+{
+
+    IWbemCallResult *pCallRes = 0;
+    IWbemClassObject *pObj = 0;
+    
+    HRESULT hRes = pSvc-&gt;GetObject(_bstr_t(L&quot;MyClass=\&quot;AAA\&quot;&quot;), 0,
+        0, 0, &amp;pCallRes
+        );
+        
+    if (hRes || pCallRes == 0)
+        return;
+        
+    while (true)
+    {
+        LONG lStatus = 0;
+        HRESULT hRes = pCallRes-&gt;GetCallStatus(5000, &amp;lStatus);
+        if ( hRes == WBEM_S_NO_ERROR || hRes != WBEM_S_TIMEDOUT )
+            break;
+
+        // Do another task
+    }
+
+    hRes = pCallRes-&gt;GetResultObject(5000, &amp;pObj);
+    if (hRes)
+    {
+        pCallRes-&gt;Release();
+        return;
+    }
+
+    pCallRes-&gt;Release();
+
+    // Use the object.
+
+    // ...
+
+    // Release it.
+    // ===========
+        
+    pObj-&gt;Release();    // Release objects not owned.            
+  
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="calling-a-method.html">Calling a Method</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

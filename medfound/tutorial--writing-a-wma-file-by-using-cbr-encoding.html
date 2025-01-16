@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tutorial: Writing a WMA File by Using WMContainer Objects</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This tutorial demonstrates writing a new audio file (.wma) by extracting media content from an uncompressed audio file (.wav) and then compressing it in ASF format.
+ms.assetid: f310c6ed-52e7-4828-9d4c-2f7ced9080c5
+title: 'Tutorial: Writing a WMA File by Using WMContainer Objects'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Tutorial: Writing a WMA File by Using WMContainer Objects</h1>
+<p>This tutorial demonstrates writing a new audio file (.wma) by extracting media content from an uncompressed audio file (.wav) and then compressing it in ASF format. The encoding mode used for the conversion is <a href="constant-bit-rate-encoding.html">Constant Bit Rate Encoding</a> (CBR). In this mode, before the encoding session, the application specifies a target bit rate that the encoder must achieve.</p>
+<p>In this tutorial, you will create a console application that takes the input and output filenames as arguments. The application gets the uncompressed media samples from a wave file parsing application, which is provided with this tutorial. These samples are sent to the encoder for conversion to Windows Media Audio 9 format. The encoder is configured for CBR encoding and uses the first bit rate available during media type negotiation as the target bit rate. The encoded samples are sent to the multiplexer for packetization in ASF data format. These packets will be written to a byte stream that represents the ASF Data Object. After the data section is ready, you will create an ASF audio file and write the new ASF Header Object that consolidates all the header information and then append the ASF Data Object byte stream.</p>
+<p>This tutorial contains the following sections:</p>
+<ul>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#terminology">Terminology</a></li>
+<li><a href="#1-set-up-the-project">1. Set up the Project</a></li>
+<li><a href="#2-declare-helper-functions">2. Declare Helper Functions</a></li>
+<li><a href="#3-open-an-audio-file">3. Open an Audio File</a></li>
+<li><a href="#4-configure-the-encoder">4. Configure the Encoder</a></li>
+<li><a href="#5-create-the-asf-contentinfo-object">5. Create the ASF ContentInfo object.</a></li>
+<li><a href="#6-create-the-asf-multiplexer">6. Create the ASF Multiplexer</a></li>
+<li><a href="#7-generate-new-asf-data-packets">7. Generate New ASF Data Packets</a></li>
+<li><a href="#8-write-the-asf-file">8. Write the ASF File</a></li>
+<li><a href="#9-define-the-entry-point-function">9. Define the Entry-Point Function</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Prerequisites</h2>
+<p>This tutorial assumes the following:</p>
+<ul>
+<li>You are familiar with the structure of an ASF file and the components provided by Media Foundation to work with ASF Objects. These components include ContentInfo, splitter, multiplexer, and profile objects. For more information, see <a href="wmcontainer-asf-components.html">WMContainer ASF Components</a>.</li>
+<li>You are familiar with Windows Media encoders, and the various encoding types, particularly CBR. For more information, see <a href="windows-media-encoders.html">Windows Media Encoders</a> .</li>
+<li>You are familiar with <a href="media-buffers.html">Media Buffers</a> and byte streams: Specifically, file operations using a byte stream, and writing the contents of a media buffer to a byte stream.</li>
+</ul>
+<h2>Terminology</h2>
+<p>This tutorial uses the following terms:</p>
+<ul>
+<li>Source media type: Media type object, exposes <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediatype"><strong>IMFMediaType</strong></a> interface, which describes the contents of the input file.</li>
+<li>Audio profile: Profile object, exposes <a href="/windows/desktop/api/wmcontainer/nn-wmcontainer-imfasfprofile"><strong>IMFASFProfile</strong></a> interface, which contains only audio streams of the output file.</li>
+<li>Stream sample: Media sample, exposes <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfsample"><strong>IMFSample</strong></a> interface, represents the input file's media data obtained from the encoder in a compressed state.</li>
+<li>ContentInfo object: <a href="asf-contentinfo-object.html">ASF ContentInfo Object</a>, exposes <a href="/windows/desktop/api/wmcontainer/nn-wmcontainer-imfasfcontentinfo"><strong>IMFASFContentInfo</strong></a> interface, which represents the ASF Header Object of the output file.</li>
+<li>Data byte stream: Byte stream object, exposes <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfbytestream"><strong>IMFByteStream</strong></a> interface, which represents the entire ASF Data Object portion of the output file.</li>
+<li>Data packet: Media sample, exposes <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfsample"><strong>IMFSample</strong></a> interface, generated by the <a href="asf-multiplexer.html">ASF Multiplexer</a>; represents an ASF data packet that will be written to the data byte stream.</li>
+<li>Output byte stream: Byte stream object, exposes <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfbytestream"><strong>IMFByteStream</strong></a> interface, which contains the contents of the output file.</li>
+</ul>
+<h2>1. Set up the Project</h2>
+<ol>
+<li>
+<p>Include the following headers in your source file:</p>
+<pre lang="C++"><code>#include &lt;new&gt;
+#include &lt;stdio.h&gt;       // Standard I/O
+#include &lt;windows.h&gt;     // Windows headers
+#include &lt;mfapi.h&gt;       // Media Foundation platform
+#include &lt;wmcontainer.h&gt; // ASF interfaces
+#include &lt;mferror.h&gt;     // Media Foundation error codes
+</code></pre>
+</li>
+<li>
+<p>Link to the following library files:</p>
+<ul>
+<li>mfplat.lib</li>
+<li>mf.lib</li>
+<li>mfuuid.lib</li>
+</ul>
+</li>
+<li>
+<p>Declare the <a href="saferelease.html">SafeRelease</a> function.</p>
+</li>
+<li>
+<p>Include the CWmaEncoder class in your project. For the complete source code of this class, see <a href="encoder-example-code.html">Encoder Example Code</a>.</p>
+</li>
+</ol>
+<h2>2. Declare Helper Functions</h2>
+<p>This tutorial uses the following helper functions to read and write from a byte stream.</p>
+<ul>
+<li><code>AppendToByteStream</code>: Appends the contents of one byte stream to another byte stream.</li>
+<li>WriteBufferToByteStream: Writes data from a media buffer to a byte stream.</li>
+</ul>
+<p>For more information, see <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfbytestream-write"><strong>IMFByteStream::Write</strong></a>. The following code shows these helper functions:</p>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+// AppendToByteStream
+//
+// Reads the contents of pSrc and writes them to pDest.
+//-------------------------------------------------------------------
+
+HRESULT AppendToByteStream(IMFByteStream *pSrc, IMFByteStream *pDest)
+{
+    HRESULT hr = S_OK;
+
+    const DWORD READ_SIZE = 1024;
+
+    BYTE buffer[READ_SIZE];
+
+    while (1)
+    {
+        ULONG cbRead;
+
+        hr = pSrc-&gt;Read(buffer, READ_SIZE, &amp;cbRead);
+
+        if (FAILED(hr)) { break; }
+
+        if (cbRead == 0)
+        {
+            break;
+        }
+
+        hr = pDest-&gt;Write(buffer, cbRead, &amp;cbRead);
+
+        if (FAILED(hr)) { break; }
+    }
+
+    return hr;
+}
+</code></pre>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+// WriteBufferToByteStream
+//
+// Writes data from a media buffer to a byte stream.
+//-------------------------------------------------------------------
+
+HRESULT WriteBufferToByteStream(
+    IMFByteStream *pStream,   // Pointer to the byte stream.
+    IMFMediaBuffer *pBuffer,  // Pointer to the media buffer.
+    DWORD *pcbWritten         // Receives the number of bytes written.
+    )
+{
+    HRESULT hr = S_OK;
+    DWORD cbData = 0;
+    DWORD cbWritten = 0;
+    BYTE *pMem = NULL;
+
+    hr = pBuffer-&gt;Lock(&amp;pMem, NULL, &amp;cbData);
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pStream-&gt;Write(pMem, cbData, &amp;cbWritten);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        if (pcbWritten)
+        {
+            *pcbWritten = cbWritten;
+        }
+    }
+
+    if (pMem)
+    {
+        pBuffer-&gt;Unlock();
+    }
+    return hr;
+}
+</code></pre>
+<h2>3. Open an Audio File</h2>
+<p>This tutorial assumes that your application will generate uncompressed audio for encoding. For that purpose, two functions are declared in this tutorial:</p>
+<pre lang="C++"><code>HRESULT OpenAudioFile(PCWSTR pszURL, IMFMediaType **ppAudioFormat);
+HRESULT GetNextAudioSample(BOOL *pbEOS, IMFSample **ppSample);
+</code></pre>
+<p>The implementation of these functions is left to the reader.</p>
+<ul>
+<li>The <code>OpenAudioFile</code> function should open the media file specified by <em>pszURL</em> and return a pointer to a media type that describes an audio stream.</li>
+<li>The <code>GetNextAudioSample</code> function should read uncompressed PCM audio from the file that was opened by <code>OpenAudioFile</code>. When the end of the file is reached, <em>pbEOS</em> receives the value <strong>TRUE</strong>. Otherwise, <em>ppSample</em> receives a media sample that contains the audio buffer.</li>
+</ul>
+<h2>4. Configure the Encoder</h2>
+<p>Next, create the encoder, configure it to produce CBR-encoded stream samples, and negotiate the input and the output media types.</p>
+<p>In Media Foundation, encoders (expose the <a href="/windows/desktop/api/mftransform/nn-mftransform-imftransform"><strong>IMFTransform</strong></a> interface) are implemented as <a href="media-foundation-transforms.html">Media Foundation Transforms</a> (MFT).</p>
+<p>In this tutorial, the encoder is implemented in the <code>CWmaEncoder</code> class that provides a wrapper for the MFT. For the complete source code of this class, see <a href="encoder-example-code.html">Encoder Example Code</a>.</p>
+<blockquote>
+<p>[!Note]<br />
+You can optionally specify the encoding type as CBR. By default, the encoder is configured to use CBR encoding. For more information, see <a href="constant-bit-rate-encoding.html">Constant Bit Rate Encoding</a>. You can set additional properties depending on the type of encoding, for information about the properties that are specific to an encoding mode, see <a href="quality-based-variable-bit-rate--vbr--encoding.html">Quality-Based Variable Bit Rate Encoding</a>, <a href="unconstrained-variable-bit-rate--vbr--encoding.html">Unconstrained Variable Bit Rate Encoding</a>, and <a href="peak-constrained-variable-bit-rate--vbr--encoding.html">Peak-Constrained Variable Bit Rate Encoding</a>.</p>
+</blockquote>
+<p>Â </p>
+<pre lang="C++"><code>    CWmaEncoder* pEncoder = NULL; //Pointer to the Encoder object.
+
+    hr = OpenAudioFile(sInputFileName, &amp;pInputType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Initialize the WMA encoder wrapper.
+
+    pEncoder = new (std::nothrow) CWmaEncoder();
+    if (pEncoder == NULL)
+    {
+        hr = E_OUTOFMEMORY;
+        goto done;
+    }
+
+    hr = pEncoder-&gt;Initialize();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pEncoder-&gt;SetEncodingType(EncodeMode_CBR);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pEncoder-&gt;SetInputType(pInputType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+</code></pre>
+<h2>5. Create the ASF ContentInfo object.</h2>
+<p>The <a href="asf-contentinfo-object.html">ASF ContentInfo Object</a> contains information about the various header objects of the output file.</p>
+<p>First, create an ASF profile for the audio stream:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-mfcreateasfprofile"><strong>MFCreateASFProfile</strong></a> to create an empty ASF profile object. The ASF profile exposes the <a href="/windows/desktop/api/wmcontainer/nn-wmcontainer-imfasfprofile"><strong>IMFASFProfile</strong></a> interface. For more information, see <a href="creating-and-configuring-asf-streams.html">Creating and Configuring ASF Streams</a>.</li>
+<li>Get the encoded audio format from the <code>CWmaEncoder</code> object.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfprofile-createstream"><strong>IMFASFProfile::CreateStream</strong></a> to create a new stream for the ASF profile. Pass in a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediatype"><strong>IMFMediaType</strong></a> interface, which represents the stream format.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfstreamconfig-setstreamnumber"><strong>IMFASFStreamConfig::SetStreamNumber</strong></a> to assign a stream identifier.</li>
+<li>Set the &quot;leaky bucket&quot; parameters by setting the <a href="mf-asfstreamconfig-leakybucket1-attribute.html"><strong>MF_ASFSTREAMCONFIG_LEAKYBUCKET1</strong></a> attribute on the stream object.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfprofile-setstream"><strong>IMFASFProfile::SetStream</strong></a> to add the new stream to the profile.</li>
+</ol>
+<p>Now create the ASF ContentInfo object as follows:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-mfcreateasfcontentinfo"><strong>MFCreateASFContentInfo</strong></a> to create an empty ContentInfo object.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfcontentinfo-setprofile"><strong>IMFASFContentInfo::SetProfile</strong></a> to set the ASF profile.</li>
+</ol>
+<p>The following code shows these steps:</p>
+<pre lang="C++"><code>HRESULT CreateASFContentInfo(
+    CWmaEncoder* pEncoder,
+    IMFASFContentInfo** ppContentInfo
+    )
+{
+    HRESULT hr = S_OK;
+    
+    IMFASFProfile* pProfile = NULL;
+    IMFMediaType* pMediaType = NULL;
+    IMFASFStreamConfig* pStream = NULL;
+    IMFASFContentInfo* pContentInfo = NULL;
+
+    // Create the ASF profile object.
+
+    hr = MFCreateASFProfile(&amp;pProfile); 
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Create a stream description for the encoded audio.
+
+    hr = pEncoder-&gt;GetOutputType(&amp;pMediaType); 
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pProfile-&gt;CreateStream(pMediaType, &amp;pStream); 
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pStream-&gt;SetStreamNumber(DEFAULT_STREAM_NUMBER); 
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Set &quot;leaky bucket&quot; values.
+
+    LeakyBucket bucket;
+
+    hr = pEncoder-&gt;GetLeakyBucket1(&amp;bucket);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pStream-&gt;SetBlob(
+        MF_ASFSTREAMCONFIG_LEAKYBUCKET1, 
+        (UINT8*)&amp;bucket, 
+        sizeof(bucket)
+        );
+
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //Add the stream to the profile
+
+    hr = pProfile-&gt;SetStream(pStream);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Create the ASF ContentInfo object.
+
+    hr = MFCreateASFContentInfo(&amp;pContentInfo); 
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pContentInfo-&gt;SetProfile(pProfile); 
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Return the pointer to the caller.
+
+    *ppContentInfo = pContentInfo;
+    (*ppContentInfo)-&gt;AddRef();
+
+done:
+    SafeRelease(&amp;pProfile);
+    SafeRelease(&amp;pStream);
+    SafeRelease(&amp;pMediaType);
+    SafeRelease(&amp;pContentInfo);
+    return hr;
+}
+</code></pre>
+<h2>6. Create the ASF Multiplexer</h2>
+<p>The <a href="asf-multiplexer.html">ASF Multiplexer</a> generates ASF data packets.</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-mfcreateasfmultiplexer"><strong>MFCreateASFMultiplexer</strong></a> to create the ASF multiplexer.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-initialize"><strong>IMFASFMultiplexer::Initialize</strong></a> to initialize the multiplexer. Pass in a pointer to the ASF Content Info object, which was created in the previous section.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-setflags"><strong>IMFASFMultiplexer::SetFlags</strong></a> to set the <strong>MFASF_MULTIPLEXER_AUTOADJUST_BITRATE</strong> flag. When this setting is used, the multiplexer automatically adjusts the bit rate of the ASF content to match the characteristics of the streams being multiplexed.</li>
+</ol>
+<pre lang="C++"><code>HRESULT CreateASFMux( 
+    IMFASFContentInfo* pContentInfo,
+    IMFASFMultiplexer** ppMultiplexer
+    )
+{
+    HRESULT hr = S_OK;
+    
+    IMFMediaType* pMediaType = NULL;
+    IMFASFMultiplexer *pMultiplexer = NULL;
+
+    // Create and initialize the ASF Multiplexer object.
+
+    hr = MFCreateASFMultiplexer(&amp;pMultiplexer);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pMultiplexer-&gt;Initialize(pContentInfo);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Enable automatic bit-rate adjustment.
+
+    hr = pMultiplexer-&gt;SetFlags(MFASF_MULTIPLEXER_AUTOADJUST_BITRATE);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    *ppMultiplexer = pMultiplexer;
+    (*ppMultiplexer)-&gt;AddRef();
+
+done:
+    SafeRelease(&amp;pMultiplexer);
+    return hr;
+}
+</code></pre>
+<h2>7. Generate New ASF Data Packets</h2>
+<p>Next, generate ASF data packets for the new file. These data packets will constitute the final ASF Data Object for the new file. To generate new ASF data packets:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreatetempfile"><strong>MFCreateTempFile</strong></a> to create a temporary byte stream to hold the ASF data packets.</li>
+<li>Call the application-defined <code>GetNextAudioSample</code> function to get uncompressed audio data for the encoder.</li>
+<li>Pass the uncompressed audio to the encoder for compression. For more information, see <a href="processing-data-in-the-encoder.html">Processing Data in the Encoder</a></li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-processsample"><strong>IMFASFMultiplexer::ProcessSample</strong></a> to send the compressed audio samples to the ASF multiplexer for packetization.</li>
+<li>Get the ASF packets from the multiplexer and write them to the temporary byte stream. For more information, see <a href="generating-new-asf-data-packets.html">Generating New ASF Data Packets</a>.</li>
+<li>When you reach the end of the source stream, drain the encoder and pull the remaining compressed samples from the encoder. For more information about draining an MFT, see <a href="basic-mft-processing-model.html">Basic MFT Processing Model</a>.</li>
+<li>After all samples are sent to the multiplexer, call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-flush"><strong>IMFASFMultiplexer::Flush</strong></a> and pull the remaining ASF packets from the multiplexer.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-end"><strong>IMFASFMultiplexer::End</strong></a>.</li>
+</ol>
+<p>The following code generates ASF data packets. The function returns a pointer to a byte stream that contains the ASF Data Object.</p>
+<pre lang="C++"><code>HRESULT EncodeData(
+    CWmaEncoder* pEncoder, 
+    IMFASFContentInfo* pContentInfo,
+    IMFASFMultiplexer* pMux, 
+    IMFByteStream** ppDataStream) 
+{
+    HRESULT hr = S_OK;
+
+    IMFByteStream* pStream = NULL;
+    IMFSample* pInputSample = NULL;
+    IMFSample* pWmaSample = NULL;
+
+    BOOL bEOF = FALSE;
+
+   // Create a temporary file to hold the data stream.
+   hr = MFCreateTempFile(
+        MF_ACCESSMODE_READWRITE, 
+        MF_OPENMODE_DELETE_IF_EXIST,
+        MF_FILEFLAGS_NONE,
+        &amp;pStream
+        );
+
+   if (FAILED(hr))
+   {
+       goto done;
+   }
+
+    BOOL bNeedInput = TRUE;
+
+    while (TRUE)
+    {
+        if (bNeedInput)
+        {
+            hr = GetNextAudioSample(&amp;bEOF, &amp;pInputSample);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+
+            if (bEOF)
+            {
+                // Reached the end of the input file.
+                break;
+            }
+
+            // Encode the uncompressed audio sample.
+            hr = pEncoder-&gt;ProcessInput(pInputSample);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+
+            bNeedInput = FALSE;
+        }
+
+        if (bNeedInput == FALSE)
+        {
+            // Get data from the encoder.
+
+            hr = pEncoder-&gt;ProcessOutput(&amp;pWmaSample);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+
+            // pWmaSample can be NULL if the encoder needs more input.
+
+            if (pWmaSample)
+            {
+                hr = pMux-&gt;ProcessSample(DEFAULT_STREAM_NUMBER, pWmaSample, 0);
+                if (FAILED(hr))
+                {
+                    goto done;
+                }
+
+                //Collect the data packets and write them to a stream
+                hr = GenerateASFDataPackets(pMux, pStream);
+                if (FAILED(hr))
+                {
+                    goto done;
+                }
+            }
+            else
+            {
+                bNeedInput = TRUE;
+            }
+        }
+        
+        SafeRelease(&amp;pInputSample);
+        SafeRelease(&amp;pWmaSample);
+    }
+
+    // Drain the MFT and pull any remaining samples from the encoder.
+
+    hr = pEncoder-&gt;Drain();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    while (TRUE)
+    {
+        hr = pEncoder-&gt;ProcessOutput(&amp;pWmaSample);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        if (pWmaSample == NULL)
+        {
+            break;
+        }
+
+        hr = pMux-&gt;ProcessSample(DEFAULT_STREAM_NUMBER, pWmaSample, 0);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        //Collect the data packets and write them to a stream
+        hr = GenerateASFDataPackets(pMux, pStream);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        SafeRelease(&amp;pWmaSample);
+    }
+
+    // Flush the mux and get any pending ASF data packets.
+    hr = pMux-&gt;Flush();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = GenerateASFDataPackets(pMux, pStream);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+    
+    // Update the ContentInfo object
+    hr = pMux-&gt;End(pContentInfo);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //Return stream to the caller that contains the ASF encoded data.
+    *ppDataStream = pStream;
+    (*ppDataStream)-&gt;AddRef();
+
+done:
+    SafeRelease(&amp;pStream);
+    SafeRelease(&amp;pInputSample);
+    SafeRelease(&amp;pWmaSample);
+    return hr;
+}
+</code></pre>
+<p>Code for the <code>GenerateASFDataPackets</code> function is shown in the topic <a href="generating-new-asf-data-packets.html">Generating New ASF Data Packets</a>.</p>
+<h2>8. Write the ASF File</h2>
+<p>Next, write the ASF header to a media buffer by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfcontentinfo-generateheader"><strong>IMFASFContentInfo::GenerateHeader</strong></a>. This method converts data stored in the ContentInfo object into binary data in ASF Header Object format. For more information, see <a href="generating-a-new-asf-header-object.html">Generating a New ASF Header Object</a>.</p>
+<p>After the new ASF Header Object has been generated, create a byte stream for the output file. First write the Header Object to the output byte stream. Follow the Header Object with the Data Object contained in the data byte stream.</p>
+<pre lang="C++"><code>HRESULT WriteASFFile( 
+     IMFASFContentInfo *pContentInfo, 
+     IMFByteStream *pDataStream,
+     PCWSTR pszFile
+     )
+{
+    HRESULT hr = S_OK;
+    
+    IMFMediaBuffer* pHeaderBuffer = NULL;
+    IMFByteStream* pWmaStream = NULL;
+
+    DWORD cbHeaderSize = 0;
+    DWORD cbWritten = 0;
+
+    //Create output file
+    hr = MFCreateFile(MF_ACCESSMODE_WRITE, MF_OPENMODE_DELETE_IF_EXIST,
+        MF_FILEFLAGS_NONE, pszFile, &amp;pWmaStream);
+
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+
+    // Get the size of the ASF Header Object.
+    hr = pContentInfo-&gt;GenerateHeader (NULL, &amp;cbHeaderSize);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Create a media buffer.
+    hr = MFCreateMemoryBuffer(cbHeaderSize, &amp;pHeaderBuffer);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Populate the media buffer with the ASF Header Object.
+    hr = pContentInfo-&gt;GenerateHeader(pHeaderBuffer, &amp;cbHeaderSize);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Write the ASF header to the output file.
+    hr = WriteBufferToByteStream(pWmaStream, pHeaderBuffer, &amp;cbWritten);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Append the data stream to the file.
+
+    hr = pDataStream-&gt;SetCurrentPosition(0);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = AppendToByteStream(pDataStream, pWmaStream);
+
+done:
+    SafeRelease(&amp;pHeaderBuffer);
+    SafeRelease(&amp;pWmaStream);
+    return hr;
+}
+</code></pre>
+<h2>9. Define the Entry-Point Function</h2>
+<p>Now you can put the previous steps together into a complete application. Before using any of the Media Foundation objects, initialize the Media Foundation platform by calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfstartup"><strong>MFStartup</strong></a>. When you are done, call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfshutdown"><strong>MFShutdown</strong></a>. For more information, see <a href="initializing-media-foundation.html">Initializing Media Foundation</a>.</p>
+<p>The following code shows the complete console application. The command-line argument specifies the name of the file to convert and the name of the new audio file.</p>
+<pre lang="C++"><code>int wmain(int argc, WCHAR* argv[])
+{
+    HeapSetInformation(NULL, HeapEnableTerminationOnCorruption, NULL, 0);
+
+    if (argc != 3)
+    {
+        wprintf_s(L&quot;Usage: %s input.wmv, %s output.wma&quot;);
+        return 0;
+    }
+
+    const WCHAR* sInputFileName = argv[1];    // Source file name
+    const WCHAR* sOutputFileName = argv[2];  // Output file name
+    
+    IMFMediaType* pInputType = NULL;
+    IMFASFContentInfo* pContentInfo = NULL;
+    IMFASFMultiplexer* pMux = NULL;
+    IMFByteStream* pDataStream = NULL;
+
+    CWmaEncoder* pEncoder = NULL; //Pointer to the Encoder object.
+
+    HRESULT hr = CoInitializeEx(
+        NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = MFStartup(MF_VERSION);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    CWmaEncoder* pEncoder = NULL; //Pointer to the Encoder object.
+
+    hr = OpenAudioFile(sInputFileName, &amp;pInputType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Initialize the WMA encoder wrapper.
+
+    pEncoder = new (std::nothrow) CWmaEncoder();
+    if (pEncoder == NULL)
+    {
+        hr = E_OUTOFMEMORY;
+        goto done;
+    }
+
+    hr = pEncoder-&gt;Initialize();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pEncoder-&gt;SetEncodingType(EncodeMode_CBR);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pEncoder-&gt;SetInputType(pInputType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Create the WMContainer objects.
+    hr = CreateASFContentInfo(pEncoder, &amp;pContentInfo);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = CreateASFMux(pContentInfo, &amp;pMux);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Convert uncompressed data to ASF format.
+    hr = EncodeData(pEncoder, pContentInfo, pMux, &amp;pDataStream);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Write the ASF objects to the output file.
+    hr = WriteASFFile(pContentInfo, pDataStream, sOutputFileName);
+
+done:
+    SafeRelease(&amp;pInputType);
+    SafeRelease(&amp;pContentInfo);
+    SafeRelease(&amp;pMux);
+    SafeRelease(&amp;pDataStream);
+    delete pEncoder;
+
+    MFShutdown();
+    CoUninitialize();
+
+    if (FAILED(hr))
+    {
+        wprintf_s(L&quot;Error: 0x%X\n&quot;, hr);
+    }
+
+    return 0;
+} 
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="wmcontainer-asf-components.html">WMContainer ASF Components</a></p>
+<!-- raw HTML omitted -->
+<p><a href="asf-support-in-media-foundation.html">ASF Support in Media Foundation</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

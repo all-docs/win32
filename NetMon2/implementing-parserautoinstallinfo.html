@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementing ParserAutoInstallInfo</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Network Monitor uses the ParserAutoInstallInfo export function to install a parser. When ParserAutoInstallInfo is called, the parser returns a PF_PARSERDLLINFO structure containing all the information that Network Monitor needs to install a parser DLL.
+ms.assetid: 1add9988-9cb2-43f9-8ae2-32acfe21b6f3
+title: Implementing ParserAutoInstallInfo
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Implementing ParserAutoInstallInfo</h1>
+<p>Network Monitor uses the <a href="parserautoinstallinfo.html"><strong>ParserAutoInstallInfo</strong></a> export function to install a parser. When <strong>ParserAutoInstallInfo</strong> is called, the parser returns a <a href="pf-parserdllinfo.html"><strong>PF_PARSERDLLINFO</strong></a> structure containing all the information that Network Monitor needs to install a parser DLL.</p>
+<blockquote>
+<p>[!Note]<br />
+Network Monitor keeps a list of existing parsers in the <a href="p.html"><em>Parser.ini</em></a> file, and creates a separate INI file for each installed parser.</p>
+</blockquote>
+<p>Â </p>
+<p>During the installation process, the parser DLL must identify the following:</p>
+<ul>
+<li>The number of parsers in the DLLâ€”including a name and comment description for each parser.</li>
+<li>The protocols that precede the parser protocol.</li>
+<li>The protocols that follow the parser protocol.</li>
+</ul>
+<blockquote>
+<p>[!Note]<br />
+Network Monitor uses the preceding and following parser protocol information to update the <a href="h.html"><em>handoff sets</em></a> and <a href="f.html"><em>follow sets</em></a> of parsers that your parser DLL identifies.</p>
+</blockquote>
+<p>Â </p>
+<p>The following procedure identifies the steps necessary to implement <a href="parserautoinstallinfo.html"><strong>ParserAutoInstallInfo</strong></a>.</p>
+<p><strong>To implement ParserAutoInstallInfo</strong></p>
+<ol>
+<li>Allocate a <a href="pf-parserdllinfo.html"><strong>PF_PARSERDLLINFO</strong></a> structure using <strong>HeapAlloc</strong>.</li>
+<li>Return memory to the heap using <strong>HeapFree</strong>.</li>
+<li>Be aware that this call must also allocate a <a href="pf-parserinfo.html"><strong>PF_PARSERINFO</strong></a> structure for each parser in the DLL.</li>
+<li>Specify the number of parsers (typically one) that the DLL contains in the <strong>nParsers</strong> member of <a href="pf-parserdllinfo.html"><strong>PF_PARSERDLLINFO</strong></a>.</li>
+<li>Specify a name, comment, and optional Help file in the <strong>szProtocolName</strong>, <strong>szComment</strong>, and <strong>szHelpFile</strong> members of each <a href="pf-parserinfo.html"><strong>PF_PARSERINFO</strong></a> structure.</li>
+<li>Specify the protocols that precede each DLL protocol. One of the following conditions applies to an incoming handoff set.
+<ul>
+<li>If the preceding protocols can determine that your protocol follows from data in the preceding protocols, set the <strong>pWhoHandsOffToMe</strong> member of <a href="pf-parserinfo.html"><strong>PF_PARSERINFO</strong></a>. In this case, your protocol is then added to the <a href="h.html"><em>handoff sets</em></a> of the preceding protocols.</li>
+<li>If the preceding protocols cannot determine that your protocol follows from data in the preceding protocols, set <strong>pWhoCanPrecedeMe</strong> member of <a href="pf-parserinfo.html"><strong>PF_PARSERINFO</strong></a>. In this case, the your protocol is then added to the <a href="f.html"><em>follow sets</em></a> of the protocols.</li>
+</ul>
+</li>
+<li>Specify the protocols that follow each DLL protocol. One of the following conditions applies to an outgoing follow-set.
+<ul>
+<li>If your protocol can determine which protocols follow based on data in your protocol, set the <strong>pWhoDoIHandOffTo</strong> member of <a href="pf-parserinfo.html"><strong>PF_PARSERINFO</strong></a>. In this case, these protocols are added to the <a href="h.html"><em>handoff set</em></a> of your protocols.</li>
+<li>If your protocol cannot determine which protocols follow based on data in your protocol, set the <strong>pWhoCanFollowMe</strong> member of <a href="pf-parserinfo.html"><strong>PF_PARSERINFO</strong></a>. In this case, these protocols are added to the <a href="f.html"><em>follow set</em></a> of your protocol.</li>
+</ul>
+</li>
+<li>Return the <a href="pf-parserdllinfo.html"><strong>PF_PARSERDLLINFO</strong></a> structure to Network Monitor.</li>
+</ol>
+<p>The following is a basic implementation of <a href="parserautoinstallinfo.html"><strong>ParserAutoInstallInfo</strong></a>. The code example is taken from the generic parser that Network Monitor provides.</p>
+<pre lang="syntax"><code>#include &lt;windows.h&gt;
+
+PPF_PARSERDLLINFO WINAPI ParserAutoInstallInfo() 
+{
+
+  /////////////////////////////////////////////////////////////////
+  //
+  // Allocate memory for PF_PARSERDLLINFO structure.
+  //
+  /////////////////////////////////////////////////////////////////
+  PPF_PARSERDLLINFO pParserDllInfo; 
+  PPF_PARSERINFO    pParserInfo;
+  DWORD NumProtocols;
+        DWORD NumParsers;
+        DWORD NumFollows;
+  NumParsers = 1;
+  
+  pParserDllInfo = (PPF_PARSERDLLINFO)HeapAlloc( GetProcessHeap(),
+                                                 HEAP_ZERO_MEMORY,
+                                                 sizeof( PF_PARSERDLLINFO ) +
+                                                 NumParsers * sizeof( PF_PARSERINFO) );
+  if( pParserDllInfo == NULL)
+  {
+    return NULL;
+  }
+  
+
+    
+  /////////////////////////////////////////////////////////////////
+  //
+  // Specify the number of parsers in the DLL.
+  //
+  /////////////////////////////////////////////////////////////////
+  
+  pParserDllInfo-&gt;nParsers = NumParsers;
+  
+
+  /////////////////////////////////////////////////////////////////
+  // 
+  // Specify the name, comment, and Help file for each protocol.
+  // 
+  /////////////////////////////////////////////////////////////////
+  pParserInfo = &amp;(pParserDllInfo-&gt;ParserInfo[0]);
+  sprintf_s( pParserInfo-&gt;szProtocolName, MAX_PROTOCOL_NAME_LEN, 
+    &quot;TestProtocol&quot; );
+  sprintf_s( pParserInfo-&gt;szComment, MAX_PROTOCOL_COMMENT_LEN,
+    &quot;Test protocol for SDK&quot; );
+  sprintf_s( pParserInfo-&gt;szHelpFile, MAX_PATH, &quot;&quot;);
+  
+
+  
+  /////////////////////////////////////////////////////////////////
+  //
+  // Specify preceding protocols.
+  //
+  /////////////////////////////////////////////////////////////////
+  PPF_HANDOFFSET    pHandoffSet;
+  PPF_HANDOFFENTRY  pHandoffEntry;
+  
+  // Allocate PF_HANDOFFSET structure.
+  NumHandoffs = 1;                   
+  pHandoffSet = (PPF_HANDOFFSET)HeapAlloc( GetProcessHeap(),
+                                           HEAP_ZERO_MEMORY,
+                                           sizeof( PF_HANDOFFSET ) +
+                                           NumHandoffs * sizeof( PF_HANDOFFENTRY) );
+  if( pHandoffSet == NULL )
+  {
+     return pParserDllInfo;
+  }
+
+  // Fill in handoff set
+  pParserInfo-&gt;pWhoHandsOffToMe = pHandoffSet;
+  pHandoffSet-&gt;nEntries = NumHandoffs;
+
+  // TCP PORT FFFF
+  pHandoffEntry = &amp;(pHandoffSet-&gt;Entry[0]);
+  sprintf_s( pHandoffEntry-&gt;szIniFile, MAX_PATH, &quot;TCPIP.INI&quot; );
+  sprintf_s( pHandoffEntry-&gt;szIniSection, MAX_PATH, &quot;TCP_HandoffSet&quot; );
+  sprintf_s( pHandoffEntry-&gt;szProtocol, MAX_PROTOCOL_NAME_LEN, 
+    &quot;BLRPLATE&quot; );
+  pHandoffEntry-&gt;dwHandOffValue =        0xFFFF;
+  pHandoffEntry-&gt;ValueFormatBase =       HANDOFF_VALUE_FORMAT_BASE_DECIMAL;    
+  
+  
+
+  /////////////////////////////////////////////////////////////////
+  //
+  // Specify the following protocols.
+  //
+  /////////////////////////////////////////////////////////////////
+  PPF_FOLLOWSET     pFollowSet;
+  PPF_FOLLOWENTRY   pFollowEntry;
+ 
+  // Allocate PF_FOLLOWSET structure
+  NumFollows = 1;
+  pFollowSet = (PPF_FOLLOWSET)HeapAlloc( GetProcessHeap(),
+                                         HEAP_ZERO_MEMORY,
+                                         sizeof( PF_FOLLOWSET ) +
+                                         NumFollows * sizeof( PF_FOLLOWENTRY) );
+  if( pFollowSet == NULL )
+  {
+    return pParserDllInfo;
+  }
+
+  // Fill in the follow set
+  pParserInfo-&gt;pWhoCanFollowMe = pFollowSet;
+  pFollowSet-&gt;nEntries = NumFollows;
+
+  // Add SMB
+  pFollowEntry = &amp;(pFollowSet-&gt;Entry[0]);
+  sprintf_s( pFollowEntry-&gt;szProtocol, MAX_PROTOCOL_NAME_LEN, &quot;SMB&quot; );
+  
+
+
+  /////////////////////////////////////////////////////////////////
+  //
+  // Return the PF_PARSERDLLINFO structure.
+  //
+  /////////////////////////////////////////////////////////////////
+  return pParserDllInfo;
+
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

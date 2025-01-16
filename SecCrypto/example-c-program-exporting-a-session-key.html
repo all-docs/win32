@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Exporting a Session Key</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example creates a random session key and creates an exportable key BLOB. The example illustrates the use of CryptGetUserKey, CryptExportKey, and related functions.
+ms.assetid: a7f2fdd1-9514-4cda-bae2-2f379dd9a27d
+title: 'Example C Program: Exporting a Session Key'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Exporting a Session Key</h1>
+<p>The following example creates a random session key and creates an exportable <a href="../secgloss/k-gly.html"><em>key BLOB</em></a>. The example illustrates the use of <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptgetuserkey"><strong>CryptGetUserKey</strong></a>, <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptexportkey"><strong>CryptExportKey</strong></a>, and related functions.</p>
+<p>This example illustrates the following tasks and CryptoAPI functions:</p>
+<ul>
+<li>Acquiring a CSP context using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptacquirecontexta"><strong>CryptAcquireContext</strong></a>.</li>
+<li>Gaining access to two different pairs of public/private keys using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptgetuserkey"><strong>CryptGetUserKey</strong></a>.</li>
+<li>Generating an exportable session key using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptgenkey"><strong>CryptGenKey</strong></a>.</li>
+<li>Creating a <a href="../secgloss/s-gly.html"><em>simple key BLOB</em></a> containing a session key using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptexportkey"><strong>CryptExportKey</strong></a>.</li>
+<li>Destroying a session key and access to the two pairs of public/private keys using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptdestroykey"><strong>CryptDestroyKey</strong></a>.</li>
+<li>Releasing the CSP context using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptreleasecontext"><strong>CryptReleaseContext</strong></a>.</li>
+</ul>
+<p>This example uses the function <a href="myhandleerror.html"><strong>MyHandleError</strong></a>. The code for this function is included with the sample. Code for this and other auxiliary functions is also listed under <a href="general-purpose-functions.html">General Purpose Functions</a>.</p>
+<pre lang="C++"><code>//--------------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+// This example program creates a session key and a simple key 
+// BLOB holding that session key. The key BLOB can be written to disk 
+// and later read from a disk file.
+#pragma comment(lib, &quot;crypt32.lib&quot;)
+
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Wincrypt.h&gt;
+#define MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+void MyHandleError(char *s);
+
+void main(void)
+{
+//--------------------------------------------------------------------
+// Declare and initialize variables.
+
+HCRYPTPROV hProv;       // CSP handle
+HCRYPTKEY hSignKey;     // Signature key pair handle
+HCRYPTKEY hXchgKey;     // Exchange key pair handle
+HCRYPTKEY hKey;         // Session key handle
+BYTE *pbKeyBlob;        // Pointer to a simple key BLOB
+DWORD dwBlobLen;        // The length of the key BLOB
+
+//--------------------------------------------------------------------
+// Acquire a cryptographic provider context handle.
+
+if(CryptAcquireContext(
+   &amp;hProv, 
+   NULL, 
+   NULL, 
+   PROV_RSA_FULL, 
+   0)) 
+{
+    printf(&quot;The CSP has been acquired. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Error during CryptAcquireContext.&quot;);
+}
+//--------------------------------------------------------------------
+// Get a handle to the signature key.
+// The signature key must exist before it can be retrieved. For more
+// information, see the CryptGetUserKey documentation.
+
+if(CryptGetUserKey(
+   hProv, 
+   AT_SIGNATURE, 
+   &amp;hSignKey)) 
+{
+    printf(&quot;The signature key has been acquired. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Error during CryptGetUserKey for signkey.&quot;);
+}
+//--------------------------------------------------------------------
+// Get a handle to the key exchange key.
+// The key must exist before it can be retrieved. For more
+// information, see the CryptGetUserKey documentation.
+
+if(CryptGetUserKey(
+   hProv, 
+   AT_KEYEXCHANGE, 
+   &amp;hXchgKey)) 
+{
+    printf(&quot;The key exchange key has been acquired. \n&quot;);
+}
+else
+{
+    printf(&quot;Error during CryptGetUserKey exchange key.&quot;);
+}
+// hSignKey may be used to verify a signature. hXchgKey will be used
+// to export a session key.
+
+//--------------------------------------------------------------------
+// Generate a session key.
+
+if (CryptGenKey(     
+    hProv,      
+    CALG_RC4,      
+    CRYPT_EXPORTABLE, 
+    &amp;hKey))
+{   
+    printf(&quot;Original session key is created. \n&quot;);
+}
+else
+{
+   MyHandleError(&quot;ERROR -- CryptGenKey.&quot;);
+}
+// Determine the size of the key BLOB and allocate memory.
+
+if(CryptExportKey(
+   hKey, 
+   hXchgKey, 
+   SIMPLEBLOB, 
+   0, 
+   NULL, 
+   &amp;dwBlobLen)) 
+{
+     printf(&quot;Size of the BLOB for the session key determined. \n&quot;);
+}
+else
+{
+     MyHandleError(&quot;Error computing BLOB length.&quot;);
+}
+
+if(pbKeyBlob = (BYTE*)malloc(dwBlobLen)) 
+{
+    printf(&quot;Memory has been allocated for the BLOB. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Out of memory. \n&quot;);
+}
+//--------------------------------------------------------------------
+// Export the key into a simple key BLOB.
+
+if(CryptExportKey(
+   hKey, 
+   hXchgKey, 
+   SIMPLEBLOB, 
+   0, 
+   pbKeyBlob, 
+   &amp;dwBlobLen))
+{
+     printf(&quot;Contents have been written to the BLOB. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Error during CryptExportKey.&quot;);
+}
+//--------------------------------------------------------------------
+//   At this point, other processing such as writing the key BLOB to
+//   a file could be done.
+
+//--------------------------------------------------------------------
+// After all processing, clean up.
+
+//--------------------------------------------------------------------
+//  Free the memory used by the key BLOB.
+
+free(pbKeyBlob);
+
+// Destroy the session key.
+if(hKey)
+    CryptDestroyKey(hKey);
+
+// Destroy the signature key handle.
+if(hSignKey)
+    CryptDestroyKey(hSignKey);
+
+// Destroy the key exchange key handle.
+if(hXchgKey)
+     CryptDestroyKey(hXchgKey);
+
+// Release the provider handle.
+if(hProv) 
+   CryptReleaseContext(hProv, 0);
+printf(&quot;The program ran to completion without error. \n&quot;);
+
+}// End of main                                                    
+
+//--------------------------------------------------------------------
+//  This example uses the function MyHandleError, a simple error
+//  handling function, to print an error message and exit 
+//  the program. 
+//  For most applications, replace this function with one 
+//  that does more extensive error reporting.
+
+void MyHandleError(char *s)
+{
+    printf(&quot;An error occurred in running the program.\n&quot;);
+    printf(&quot;%s\n&quot;,s);
+    printf(&quot;Error number %x\n.&quot;,GetLastError());
+    printf(&quot;Program terminating.\n&quot;);
+    exit(1);
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

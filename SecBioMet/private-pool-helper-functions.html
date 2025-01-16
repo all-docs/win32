@@ -1,0 +1,1496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Private Pool Helper Functions</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Private Pool Helper Functions
+description: Contains helper functions for the setup, identification, and enrollment console projects.
+ms.assetid: 90FED859-0DCD-43D5-9940-675127232968
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Private Pool Helper Functions</h1>
+<p>The following sections contains code necessary to support the setup, identification, and enrollment console projects.</p>
+<ul>
+<li><a href="#targetverh">Targetver.h</a></li>
+<li><a href="#stdafxh">Stdafx.h</a></li>
+<li><a href="#biohelperh">BioHelper.h</a></li>
+<li><a href="#configcpp">Config.cpp</a></li>
+<li><a href="#displaycpp">Display.cpp</a></li>
+</ul>
+<h2>Targetver.h</h2>
+<p>This sample was created for WindowsÂ 7 and later operating systems.</p>
+<pre lang="C++"><code>#pragma once
+#ifndef _WIN32_WINNT            
+#define _WIN32_WINNT NTDDI_WIN7 
+#endif
+</code></pre>
+<h2>Stdafx.h</h2>
+<pre lang="C++"><code>// stdafx.h : include file for standard system include files,
+// or project specific include files that are used frequently but
+// are changed infrequently
+//
+
+#pragma once
+
+#include &quot;targetver.h&quot;
+
+#define WIN32_LEAN_AND_MEAN     
+
+#define _CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES 1
+
+#include &lt;stdio.h&gt;
+#include &lt;tchar.h&gt;
+
+#include &lt;windows.h&gt;
+#include &lt;winbio.h&gt;
+
+#include &lt;vector&gt;
+#include &lt;string&gt;
+
+#ifndef ARGUMENT_PRESENT
+#define ARGUMENT_PRESENT(x) (((x) != NULL))
+#endif
+
+#ifndef TSTRING
+#ifdef _UNICODE
+typedef std::wstring TSTRING;
+#else
+typedef std::string TSTRING;
+#endif
+#endif
+
+#include &quot;BioHelper.h&quot;
+</code></pre>
+<h2>BioHelper.h</h2>
+<pre lang="C++"><code>/******************************************************************************
+THIS CODE AND INFORMATION IS PROVIDED &quot;AS IS&quot; WITHOUT WARRANTY OF
+ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
+PARTICULAR PURPOSE.
+
+Copyright (C) Microsoft.  All rights reserved.
+
+This source code is only intended as a supplement to Microsoft Development
+Tools and/or WinHelp documentation.  See these sources for detailed information
+regarding the Microsoft samples programs.
+******************************************************************************/
+
+#pragma once
+
+namespace BioHelper
+{
+
+typedef struct _POOL_CONFIGURATION {
+    ULONG ConfigurationFlags;
+    ULONG DatabaseAttributes;
+    WINBIO_UUID DatabaseId;
+    WINBIO_UUID DataFormat;
+    WCHAR SensorAdapter[MAX_PATH];
+    WCHAR EngineAdapter[MAX_PATH];
+    WCHAR StorageAdapter[MAX_PATH];
+} POOL_CONFIGURATION, *PPOOL_CONFIGURATION;
+
+HRESULT
+CreateCompatibleConfiguration(
+    __in WINBIO_UNIT_SCHEMA* UnitSchema,
+    __out POOL_CONFIGURATION* Configuration
+    );
+
+HRESULT
+RegisterDatabase(
+    __in WINBIO_STORAGE_SCHEMA* StorageSchema
+    );
+
+HRESULT
+UnregisterDatabase(
+    __in WINBIO_UUID *DatabaseId
+    );
+
+HRESULT
+RegisterPrivateConfiguration(
+    __in WINBIO_UNIT_SCHEMA* UnitSchema,
+    __in POOL_CONFIGURATION* Configuration
+    );
+
+HRESULT
+UnregisterPrivateConfiguration(
+    __in WINBIO_UNIT_SCHEMA* UnitSchema,
+    __in WINBIO_UUID *DatabaseId,
+    __out bool *ConfigurationRemoved
+    );
+
+//
+// Display routines...
+//
+// Caller must release returned message 
+// buffer with LocalFree()
+LPTSTR
+ConvertErrorCodeToString(
+    __in HRESULT ErrorCode
+    );
+
+LPCTSTR
+ConvertSubFactorToString(
+    __in WINBIO_BIOMETRIC_SUBTYPE SubFactor
+    );
+
+LPCTSTR
+ConvertRejectDetailToString(
+    __in WINBIO_REJECT_DETAIL RejectDetail
+    );
+
+}; // namespace BioHelper
+</code></pre>
+<h2>Config.cpp</h2>
+<p>The following file contains configuration management routines.</p>
+<pre lang="C++"><code>/******************************************************************************
+THIS CODE AND INFORMATION IS PROVIDED &quot;AS IS&quot; WITHOUT WARRANTY OF
+ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
+PARTICULAR PURPOSE.
+
+Copyright (C) Microsoft.  All rights reserved.
+
+This source code is only intended as a supplement to Microsoft Development
+Tools and/or WinHelp documentation.  See these sources for detailed information
+regarding the Microsoft samples programs.
+******************************************************************************/
+
+/*
+    Configuration management routines...
+*/
+#include &quot;stdafx.h&quot;
+
+namespace BioHelper
+{
+//
+// Forward declarations of local functions...
+//
+static HRESULT
+CompareConfiguration(
+    __in HKEY SourceConfigList,
+    __in LPWSTR SourceConfigKey,
+    __in POOL_CONFIGURATION* TargetConfig,
+    __out bool *IsEqual
+    );
+
+static bool
+ConvertStringToUuid(
+    __in LPWSTR UuidString,
+    __out WINBIO_UUID *Uuid
+    );
+
+static bool
+ConvertUuidToString(
+    __in WINBIO_UUID *Uuid,
+    __out LPWSTR UuidStringBuffer,
+    __in SIZE_T UuidStringBufferLength,
+    __in bool IncludeBraces
+    );
+
+inline static bool
+IsKeyNameNumeric(
+    __in LPWSTR KeyName,
+    __in DWORD KeyNameLength    // in characters
+    )
+{
+    if (KeyNameLength == 0)
+    {
+        return false;
+    }
+    else
+    {
+        for (DWORD i = 0; i &lt; KeyNameLength; ++i)
+        {
+            if (!iswdigit(KeyName[i]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+HRESULT
+CreateCompatibleConfiguration(
+    __in WINBIO_UNIT_SCHEMA* UnitSchema,
+    __out POOL_CONFIGURATION* Configuration
+    )
+{
+    HRESULT hr = S_OK;
+
+    if (!ARGUMENT_PRESENT(UnitSchema) ||
+        !ARGUMENT_PRESENT(Configuration))
+    {
+        return E_POINTER;
+    }
+
+    WINBIO_STORAGE_SCHEMA *storageArray = NULL;
+    SIZE_T storageCount = 0;
+    hr = WinBioEnumDatabases( WINBIO_TYPE_FINGERPRINT, &amp;storageArray, &amp;storageCount );
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    std::wstring regPath = L&quot;System\\CurrentControlSet\\Enum\\&quot;;
+    regPath += UnitSchema-&gt;DeviceInstanceId;
+    regPath += L&quot;\\Device Parameters\\WinBio\\Configurations&quot;;
+
+    HKEY configListKey = NULL;
+    LONG regStatus = RegOpenKeyExW( 
+                        HKEY_LOCAL_MACHINE, 
+                        regPath.c_str(), 
+                        0, 
+                        KEY_READ, 
+                        &amp;configListKey 
+                        );
+    if (regStatus != ERROR_SUCCESS)
+    {
+        WinBioFree( storageArray );
+        storageArray = NULL;
+        storageCount = 0;
+        return HRESULT_FROM_WIN32(regStatus);
+    }
+
+    DWORD subkeyIndex = 0;
+    for (;;)
+    {
+        hr = S_OK;
+
+        DWORD sensorMode = 0;
+        ULONG configFlags = 0;
+        DWORD systemSensor = 0;
+        WINBIO_UUID dataFormat = {};
+        ULONG attributes = 0;
+        WCHAR sensorAdapter[MAX_PATH] = {};
+        WCHAR engineAdapter[MAX_PATH] = {};
+        WCHAR storageAdapter[MAX_PATH] = {};
+
+        WCHAR subkeyName[MAX_PATH] = {};
+        DWORD subkeyNameLength = ARRAYSIZE(subkeyName);
+        regStatus = RegEnumKeyExW( 
+                        configListKey, 
+                        subkeyIndex, 
+                        (LPWSTR)&amp;subkeyName, 
+                        &amp;subkeyNameLength, 
+                        NULL, 
+                        NULL, 
+                        NULL, 
+                        NULL 
+                        );
+        if (regStatus != ERROR_SUCCESS)
+        {
+            if (regStatus == ERROR_NO_MORE_ITEMS)
+            {
+                hr = S_OK;
+            }
+            else
+            {
+                hr = HRESULT_FROM_WIN32(regStatus);
+            }
+            break;
+        }
+
+        if (IsKeyNameNumeric( subkeyName, subkeyNameLength ))
+        {
+            std::wstring configKeyPath = regPath + L&quot;\\&quot;;
+            configKeyPath += subkeyName;
+
+            HKEY configKey = NULL;
+            hr = HRESULT_FROM_WIN32(
+                    RegOpenKeyExW(
+                            HKEY_LOCAL_MACHINE, 
+                            configKeyPath.c_str(), 
+                            0, 
+                            KEY_READ, 
+                            &amp;configKey 
+                            ));
+            if (SUCCEEDED(hr))
+            {
+                /*
+                    Extract values in this configuration
+                        SensorMode              - REG_DWORD
+                        SystemSensor            - REG_DWORD
+                        DatabaseId              - REG_SZ
+                        SensorAdapterBinary     - REG_SZ
+                        EngineAdapterBinary     - REG_SZ
+                        StorageAdapterBinary    - REG_SZ
+                */
+                DWORD dataSize = sizeof(sensorMode);
+                hr = HRESULT_FROM_WIN32(
+                        RegGetValueW( 
+                            configKey, 
+                            NULL, 
+                            L&quot;SensorMode&quot;, 
+                            RRF_RT_REG_DWORD, 
+                            NULL, 
+                            &amp;sensorMode, 
+                            &amp;dataSize 
+                            ));
+                if (SUCCEEDED(hr))
+                {
+                    switch (sensorMode)
+                    {
+                    case WINBIO_SENSOR_BASIC_MODE:
+                        configFlags = WINBIO_FLAG_BASIC;
+                        break;
+
+                    case WINBIO_SENSOR_ADVANCED_MODE:
+                        configFlags = WINBIO_FLAG_ADVANCED;
+                        break;
+
+                    default:
+                        configFlags = WINBIO_FLAG_DEFAULT;
+                        break;
+                    }
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    dataSize = sizeof(systemSensor);
+                    hr = HRESULT_FROM_WIN32(
+                            RegGetValueW( 
+                                configKey, 
+                                NULL, 
+                                L&quot;SystemSensor&quot;, 
+                                RRF_RT_REG_DWORD, 
+                                NULL, 
+                                &amp;systemSensor, 
+                                &amp;dataSize 
+                                ));
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    WCHAR databaseIdString[40] = {};
+                    dataSize = sizeof(databaseIdString);
+                    hr = HRESULT_FROM_WIN32(
+                            RegGetValueW( 
+                                configKey, 
+                                NULL, 
+                                L&quot;DatabaseId&quot;, 
+                                RRF_RT_REG_SZ, 
+                                NULL, 
+                                &amp;databaseIdString, 
+                                &amp;dataSize 
+                                ));
+                    if (SUCCEEDED(hr))
+                    {
+                        // convert string to GUID and find that GUID 
+                        // in database list; capture corresponding 
+                        // data-format GUID
+                        WINBIO_UUID databaseIdGuid;
+                        ConvertStringToUuid( databaseIdString, &amp;databaseIdGuid );
+
+                        bool databaseFound = false;
+                        for (SIZE_T i = 0; i &lt; storageCount; ++i)
+                        {
+                            if (storageArray[i].DatabaseId == databaseIdGuid)
+                            {
+                                dataFormat = storageArray[i].DataFormat;
+                                attributes = storageArray[i].Attributes;
+                                databaseFound = true;
+                                break;
+                            }
+                        }
+                        if (!databaseFound)
+                        {
+                            hr = WINBIO_E_DATABASE_CANT_FIND;
+                        }
+                    }
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    dataSize = sizeof(sensorAdapter);
+                    hr = HRESULT_FROM_WIN32(
+                            RegGetValueW( 
+                                configKey, 
+                                NULL, 
+                                L&quot;SensorAdapterBinary&quot;, 
+                                RRF_RT_REG_SZ, 
+                                NULL, 
+                                &amp;sensorAdapter, 
+                                &amp;dataSize 
+                                ));
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    dataSize = sizeof(engineAdapter);
+                    hr = HRESULT_FROM_WIN32(
+                            RegGetValueW( 
+                                configKey, 
+                                NULL, 
+                                L&quot;EngineAdapterBinary&quot;, 
+                                RRF_RT_REG_SZ, 
+                                NULL, 
+                                &amp;engineAdapter, 
+                                &amp;dataSize 
+                                ));
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    dataSize = sizeof(storageAdapter);
+                    hr = HRESULT_FROM_WIN32(
+                            RegGetValueW( 
+                                configKey, 
+                                NULL, 
+                                L&quot;StorageAdapterBinary&quot;, 
+                                RRF_RT_REG_SZ, 
+                                NULL, 
+                                &amp;storageAdapter, 
+                                &amp;dataSize 
+                                ));
+                }
+
+                RegCloseKey(configKey);
+                configKey = NULL;
+            }
+        }
+        if (SUCCEEDED(hr))
+        {
+            if (systemSensor)
+            {
+                // copy results to output structure - we only want this
+                // one if it's a derived from a system sensor config
+                Configuration-&gt;ConfigurationFlags = configFlags;
+                Configuration-&gt;DatabaseAttributes = attributes;
+                Configuration-&gt;DataFormat = dataFormat;
+                wcscpy_s( Configuration-&gt;SensorAdapter, MAX_PATH, sensorAdapter);
+                wcscpy_s( Configuration-&gt;EngineAdapter, MAX_PATH, engineAdapter);
+                wcscpy_s( Configuration-&gt;StorageAdapter, MAX_PATH, storageAdapter);
+                break;
+            }
+            else
+            {
+                ++subkeyIndex;
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+    RegCloseKey( configListKey );
+    configListKey = NULL;
+
+    if (storageArray != NULL)
+    {
+        WinBioFree( storageArray );
+        storageArray = NULL;
+        storageCount = 0;
+    }
+
+    return hr;
+}
+
+//-----------------------------------------------------------------------------
+
+HRESULT
+RegisterDatabase(
+    __in WINBIO_STORAGE_SCHEMA* StorageSchema
+    )
+{
+    /*
+        HKLM\System\CurrentControlSet\Services\WbioSrvc\Databases\{guid} -- NOTE THE CURLY BRACES
+            Attributes          - REG_DWORD
+            AutoCreate          - REG_DWORD (1)
+            AutoName            - REG_DWORD (1)     -- this is reset to zero when the service creates the DB
+            BiometricType       - REG_DWORD (8)     -- WINBIO_TYPE_FINGERPRINT
+            ConnectionString    - REG_SZ &quot;&quot;
+            Filepath            - REG_SZ &quot;&quot;         -- set by service
+            Format              - REG_SZ &quot;guid&quot;     -- NOTE: *NO* CURLY BRACES
+            InitialSize         - REG_DWORD (32)
+    */
+    HRESULT hr = S_OK;
+
+    if (!ARGUMENT_PRESENT(StorageSchema))
+    {
+        return E_POINTER;
+    }
+
+    WCHAR databaseKeyName[MAX_PATH] = {};
+    if (!ConvertUuidToString( 
+            &amp;StorageSchema-&gt;DatabaseId, 
+            databaseKeyName, 
+            ARRAYSIZE(databaseKeyName), 
+            true
+            ))
+    {
+        return E_INVALIDARG;
+    }
+
+    WCHAR dataFormat[MAX_PATH] = {};
+    if (!ConvertUuidToString( 
+            &amp;StorageSchema-&gt;DataFormat, 
+            dataFormat, 
+            ARRAYSIZE(dataFormat), 
+            false
+            ))
+    {
+        return E_INVALIDARG;
+    }
+
+    HKEY databaseListKey = NULL;
+    hr = HRESULT_FROM_WIN32(
+            RegOpenKeyExW( 
+                HKEY_LOCAL_MACHINE, 
+                L&quot;System\\CurrentControlSet\\Services\\WbioSrvc\\Databases&quot;, 
+                0, 
+                KEY_WRITE,
+                &amp;databaseListKey 
+                ));
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    HKEY newDatabaseKey = NULL;
+    DWORD keyDisposition = 0;
+    hr = HRESULT_FROM_WIN32(
+            RegCreateKeyExW(
+                databaseListKey, 
+                databaseKeyName, 
+                0, 
+                NULL, 
+                REG_OPTION_NON_VOLATILE, 
+                KEY_WRITE, 
+                NULL, 
+                &amp;newDatabaseKey,
+                &amp;keyDisposition
+                ));
+    if (SUCCEEDED(hr))
+    {
+        if (keyDisposition == REG_OPENED_EXISTING_KEY)
+        {
+            hr = WINBIO_E_DATABASE_ALREADY_EXISTS;
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = HRESULT_FROM_WIN32(
+                    RegSetValueExW( 
+                        newDatabaseKey, 
+                        L&quot;Attributes&quot;, 
+                        0, 
+                        REG_DWORD, 
+                        (LPBYTE)&amp;StorageSchema-&gt;Attributes, 
+                        sizeof(StorageSchema-&gt;Attributes)
+                        ));
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            DWORD autoCreate = 1;
+            hr = HRESULT_FROM_WIN32(
+                    RegSetValueExW( 
+                        newDatabaseKey, 
+                        L&quot;AutoCreate&quot;, 
+                        0, 
+                        REG_DWORD, 
+                        (LPBYTE)&amp;autoCreate, 
+                        sizeof(autoCreate)
+                        ));
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            DWORD autoName = 1;
+            hr = HRESULT_FROM_WIN32(
+                    RegSetValueExW( 
+                        newDatabaseKey, 
+                        L&quot;AutoName&quot;, 
+                        0, 
+                        REG_DWORD, 
+                        (LPBYTE)&amp;autoName, 
+                        sizeof(autoName)
+                        ));
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            WINBIO_BIOMETRIC_TYPE biometricType = WINBIO_TYPE_FINGERPRINT;
+            hr = HRESULT_FROM_WIN32(
+                    RegSetValueExW( 
+                        newDatabaseKey, 
+                        L&quot;BiometricType&quot;, 
+                        0, 
+                        REG_DWORD, 
+                        (LPBYTE)&amp;biometricType, 
+                        sizeof(biometricType)
+                        ));
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = HRESULT_FROM_WIN32(
+                    RegSetValueExW( 
+                        newDatabaseKey, 
+                        L&quot;ConnectionString&quot;, 
+                        0, 
+                        REG_SZ, 
+                        (LPBYTE)L&quot;&quot;, 
+                        sizeof(WCHAR)
+                        ));
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = HRESULT_FROM_WIN32(
+                    RegSetValueExW( 
+                        newDatabaseKey, 
+                        L&quot;Filepath&quot;, 
+                        0, 
+                        REG_SZ, 
+                        (LPBYTE)L&quot;&quot;, 
+                        sizeof(WCHAR)
+                        ));
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = HRESULT_FROM_WIN32(
+                    RegSetValueExW( 
+                        newDatabaseKey, 
+                        L&quot;Format&quot;, 
+                        0, 
+                        REG_SZ, 
+                        (LPBYTE)dataFormat, 
+                        (DWORD)((wcsnlen_s(
+                                    dataFormat, 
+                                    ARRAYSIZE(dataFormat)) + 1) * sizeof(WCHAR))
+                                    ));
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            DWORD initialSize = 32;
+            hr = HRESULT_FROM_WIN32(
+                    RegSetValueExW( 
+                        newDatabaseKey, 
+                        L&quot;InitialSize&quot;, 
+                        0, 
+                        REG_DWORD, 
+                        (LPBYTE)&amp;initialSize, 
+                        sizeof(initialSize)
+                        ));
+        }
+
+        RegCloseKey( newDatabaseKey );
+        newDatabaseKey = NULL;
+    }
+
+    RegCloseKey( databaseListKey );
+    databaseListKey = NULL;
+    return hr;
+}
+
+//-----------------------------------------------------------------------------
+
+HRESULT
+UnregisterDatabase(
+    __in WINBIO_UUID *DatabaseId
+    )
+{
+    HRESULT hr = S_OK;
+
+    if (!ARGUMENT_PRESENT(DatabaseId))
+    {
+        return E_POINTER;
+    }
+
+    WCHAR databaseKeyName[MAX_PATH] = {};
+    if (!ConvertUuidToString( 
+            DatabaseId, 
+            databaseKeyName, 
+            ARRAYSIZE(databaseKeyName), 
+            true
+            ))
+    {
+        return E_INVALIDARG;
+    }
+
+    WINBIO_STORAGE_SCHEMA *storageArray = NULL;
+    SIZE_T storageCount = 0;
+    hr = WinBioEnumDatabases( WINBIO_TYPE_FINGERPRINT, &amp;storageArray, &amp;storageCount );
+    if (SUCCEEDED(hr))
+    {
+        WINBIO_STORAGE_SCHEMA *storageSchema = NULL;
+        for (SIZE_T i = 0; i &lt; storageCount; ++i)
+        {
+            if (storageArray[i].DatabaseId == *DatabaseId)
+            {
+                storageSchema = &amp;storageArray[i];
+                break;
+            }
+        }
+
+        if (storageSchema == NULL)
+        {
+            hr = WINBIO_E_DATABASE_CANT_FIND;
+        }
+        else
+        {
+            HKEY databaseListKey = NULL;
+            hr = HRESULT_FROM_WIN32(
+                    RegOpenKeyExW( 
+                        HKEY_LOCAL_MACHINE, 
+                        L&quot;System\\CurrentControlSet\\Services\\WbioSrvc\\Databases&quot;, 
+                        0, 
+                        KEY_WRITE,
+                        &amp;databaseListKey 
+                        ));
+            if (SUCCEEDED(hr))
+            {
+                hr = HRESULT_FROM_WIN32(
+                        RegDeleteKeyExW(
+                            databaseListKey,
+                            databaseKeyName,
+                            KEY_WOW64_64KEY,
+                            0
+                            ));
+                if (SUCCEEDED(hr) &amp;&amp;
+                    wcsnlen_s(storageSchema-&gt;FilePath, ARRAYSIZE(storageSchema-&gt;FilePath)) &gt; 0)
+                {
+                    // delete the database file
+                    if (!DeleteFileW( storageSchema-&gt;FilePath ))
+                    {
+                        hr = HRESULT_FROM_WIN32(GetLastError());
+                    }
+                }
+
+                RegCloseKey( databaseListKey );
+                databaseListKey = NULL;
+            }
+        }
+
+        WinBioFree(storageArray);
+        storageArray = NULL;
+        storageCount = 0;
+    }
+
+    return hr;
+}
+
+//-----------------------------------------------------------------------------
+
+HRESULT
+RegisterPrivateConfiguration(
+    __in WINBIO_UNIT_SCHEMA* UnitSchema,
+    __in POOL_CONFIGURATION* Configuration
+    )
+{
+    HRESULT hr = S_OK;
+
+    if (!ARGUMENT_PRESENT(UnitSchema) ||
+        !ARGUMENT_PRESENT(Configuration))
+    {
+        return E_POINTER;
+    }
+
+    DWORD sensorMode = 0;
+    if (Configuration-&gt;ConfigurationFlags &amp; WINBIO_FLAG_BASIC)
+    {
+        sensorMode = WINBIO_SENSOR_BASIC_MODE;
+    }
+    else if (Configuration-&gt;ConfigurationFlags &amp; WINBIO_FLAG_ADVANCED)
+    {
+        sensorMode = WINBIO_SENSOR_ADVANCED_MODE;
+    }
+    else
+    {
+        return WINBIO_E_CONFIGURATION_FAILURE;
+    }
+
+    WCHAR databaseId[MAX_PATH];
+    if (!ConvertUuidToString( 
+            &amp;Configuration-&gt;DatabaseId, 
+            databaseId, 
+            ARRAYSIZE(databaseId), 
+            false
+            ))
+    {
+        return E_INVALIDARG;
+    }
+
+    std::wstring regPath = L&quot;System\\CurrentControlSet\\Enum\\&quot;;
+    regPath += UnitSchema-&gt;DeviceInstanceId;
+    regPath += L&quot;\\Device Parameters\\WinBio\\Configurations&quot;;
+
+    HKEY configListKey = NULL;
+    LONG regStatus = RegOpenKeyExW( 
+                        HKEY_LOCAL_MACHINE, 
+                        regPath.c_str(), 
+                        0, 
+                        KEY_READ | KEY_WRITE,
+                        &amp;configListKey 
+                        );
+    if (regStatus != ERROR_SUCCESS)
+    {
+        return HRESULT_FROM_WIN32(regStatus);
+    }
+
+    LONG highestConfigKeyValue = -1;
+    DWORD subkeyIndex = 0;
+    for (;;)
+    {
+        hr = S_OK;
+
+        WCHAR subkeyName[MAX_PATH] = {};
+        DWORD subkeyNameLength = ARRAYSIZE(subkeyName);
+        regStatus = RegEnumKeyExW( 
+                        configListKey, 
+                        subkeyIndex, 
+                        (LPWSTR)&amp;subkeyName, 
+                        &amp;subkeyNameLength, 
+                        NULL, 
+                        NULL, 
+                        NULL, 
+                        NULL 
+                        );
+        if (regStatus != ERROR_SUCCESS)
+        {
+            if (regStatus == ERROR_NO_MORE_ITEMS)
+            {
+                hr = S_OK;
+            }
+            else
+            {
+                hr = HRESULT_FROM_WIN32(regStatus);
+            }
+            break;
+        }
+
+        if (IsKeyNameNumeric( subkeyName, subkeyNameLength ))
+        {
+            // See if the config we're trying to register 
+            // is already registered for this sensor
+            bool collision = false;
+            hr = CompareConfiguration(
+                    configListKey,
+                    subkeyName,
+                    Configuration,
+                    &amp;collision
+                    );
+            if (SUCCEEDED(hr) &amp;&amp; collision)
+            {
+                hr = WINBIO_E_CONFIGURATION_FAILURE;
+            }
+            if (FAILED(hr))
+            {
+                break;
+            }
+
+            // Convert key name to number and see if 
+            // it's bigger than the highest one we've
+            // seen so far; if so, keep it
+            LONG thisKey = _wtoi(subkeyName);
+            highestConfigKeyValue = max( thisKey, highestConfigKeyValue );
+        }
+        ++subkeyIndex;
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        WCHAR newConfigKeyName[20] = {};
+        _itow_s( (highestConfigKeyValue + 1), newConfigKeyName, ARRAYSIZE(newConfigKeyName), 10 );
+
+        HKEY newConfigKey = NULL;
+        DWORD keyDisposition = 0;
+        hr = HRESULT_FROM_WIN32(
+                RegCreateKeyExW(
+                    configListKey, 
+                    newConfigKeyName, 
+                    0, 
+                    NULL, 
+                    REG_OPTION_NON_VOLATILE, 
+                    KEY_WRITE, 
+                    NULL, 
+                    &amp;newConfigKey,
+                    &amp;keyDisposition
+                    ));
+        if (SUCCEEDED(hr))
+        {
+            /*
+                Create values for this configuration
+                    SensorMode              - REG_DWORD
+                    SystemSensor            - REG_DWORD (always zero for private configs)
+                    DatabaseId              - REG_SZ
+                    SensorAdapterBinary     - REG_SZ
+                    EngineAdapterBinary     - REG_SZ
+                    StorageAdapterBinary    - REG_SZ
+            */
+            hr = HRESULT_FROM_WIN32(
+                    RegSetValueExW( 
+                        newConfigKey, 
+                        L&quot;SensorMode&quot;, 
+                        0, 
+                        REG_DWORD, 
+                        (LPBYTE)&amp;sensorMode, 
+                        sizeof(sensorMode)
+                        ));
+
+            if (SUCCEEDED(hr))
+            {
+                DWORD sytemSensor = 0;
+                hr = HRESULT_FROM_WIN32(
+                        RegSetValueExW( 
+                            newConfigKey, 
+                            L&quot;SystemSensor&quot;, 
+                            0, 
+                            REG_DWORD, 
+                            (LPBYTE)&amp;sytemSensor, 
+                            sizeof(sytemSensor)
+                            ));
+            }
+
+            if (SUCCEEDED(hr))
+            {
+                hr = HRESULT_FROM_WIN32(
+                        RegSetValueExW( 
+                            newConfigKey, 
+                            L&quot;DatabaseId&quot;, 
+                            0, 
+                            REG_SZ, 
+                            (LPBYTE)databaseId, 
+                            (DWORD)((wcsnlen_s(
+                                        databaseId, 
+                                        ARRAYSIZE(databaseId)) + 1) * sizeof(WCHAR))
+                                        ));
+            }
+
+            if (SUCCEEDED(hr))
+            {
+                hr = HRESULT_FROM_WIN32(
+                        RegSetValueExW( 
+                            newConfigKey, 
+                            L&quot;SensorAdapterBinary&quot;, 
+                            0, 
+                            REG_SZ, 
+                            (LPBYTE)Configuration-&gt;SensorAdapter, 
+                            (DWORD)((wcsnlen_s(
+                                        Configuration-&gt;SensorAdapter, 
+                                        ARRAYSIZE(Configuration-&gt;SensorAdapter)) + 1) * sizeof(WCHAR))
+                                        ));
+            }
+
+            if (SUCCEEDED(hr))
+            {
+                hr = HRESULT_FROM_WIN32(
+                        RegSetValueExW( 
+                            newConfigKey, 
+                            L&quot;EngineAdapterBinary&quot;, 
+                            0, 
+                            REG_SZ, 
+                            (LPBYTE)Configuration-&gt;EngineAdapter, 
+                            (DWORD)((wcsnlen_s(
+                                        Configuration-&gt;EngineAdapter, 
+                                        ARRAYSIZE(Configuration-&gt;EngineAdapter)) + 1) * sizeof(WCHAR))
+                                        ));
+            }
+
+            if (SUCCEEDED(hr))
+            {
+                hr = HRESULT_FROM_WIN32(
+                        RegSetValueExW( 
+                            newConfigKey, 
+                            L&quot;StorageAdapterBinary&quot;, 
+                            0, 
+                            REG_SZ, 
+                            (LPBYTE)Configuration-&gt;StorageAdapter, 
+                            (DWORD)((wcsnlen_s(
+                                        Configuration-&gt;StorageAdapter, 
+                                        ARRAYSIZE(Configuration-&gt;StorageAdapter)) + 1) * sizeof(WCHAR))
+                                        ));
+            }
+
+            RegCloseKey( newConfigKey );
+            newConfigKey = NULL;
+        }
+    }
+
+    RegCloseKey( configListKey );
+    configListKey = NULL;
+
+    return hr;
+}
+
+//-----------------------------------------------------------------------------
+
+HRESULT
+UnregisterPrivateConfiguration(
+    __in WINBIO_UNIT_SCHEMA* UnitSchema,
+    __in WINBIO_UUID *DatabaseId,
+    __out bool *ConfigurationRemoved
+    )
+{
+    HRESULT hr = S_OK;
+
+    if (!ARGUMENT_PRESENT(UnitSchema) ||
+        !ARGUMENT_PRESENT(DatabaseId))
+    {
+        return E_POINTER;
+    }
+
+    WCHAR targetDatabaseId[40];
+    if (!ConvertUuidToString( 
+            DatabaseId, 
+            targetDatabaseId, 
+            ARRAYSIZE(targetDatabaseId), 
+            false
+            ))
+    {
+        return E_INVALIDARG;
+    }
+
+    std::wstring regPath = L&quot;System\\CurrentControlSet\\Enum\\&quot;;
+    regPath += UnitSchema-&gt;DeviceInstanceId;
+    regPath += L&quot;\\Device Parameters\\WinBio\\Configurations&quot;;
+
+    HKEY configListKey = NULL;
+    hr = HRESULT_FROM_WIN32(
+            RegOpenKeyExW( 
+                HKEY_LOCAL_MACHINE, 
+                regPath.c_str(), 
+                0, 
+                KEY_READ | KEY_WRITE,
+                &amp;configListKey 
+                ));
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    bool configurationRemoved = false;
+    DWORD subkeyIndex = 0;
+    for (;;)
+    {
+        hr = S_OK;
+
+        WCHAR configKeyName[MAX_PATH] = {};
+        DWORD configKeyNameLength = ARRAYSIZE(configKeyName);
+        LONG regStatus = RegEnumKeyExW( 
+                            configListKey, 
+                            subkeyIndex, 
+                            (LPWSTR)&amp;configKeyName, 
+                            &amp;configKeyNameLength, 
+                            NULL, 
+                            NULL, 
+                            NULL, 
+                            NULL 
+                            );
+        if (regStatus != ERROR_SUCCESS)
+        {
+            if (regStatus == ERROR_NO_MORE_ITEMS)
+            {
+                hr = S_OK;
+            }
+            else
+            {
+                hr = HRESULT_FROM_WIN32(regStatus);
+            }
+            break;
+        }
+
+        if (IsKeyNameNumeric( configKeyName, configKeyNameLength ))
+        {
+            WCHAR configDatabaseId[40] = {};
+            DWORD dataSize = sizeof(configDatabaseId);
+            hr = HRESULT_FROM_WIN32(
+                    RegGetValueW( 
+                        configListKey, 
+                        configKeyName, 
+                        L&quot;DatabaseId&quot;, 
+                        RRF_RT_REG_SZ, 
+                        NULL, 
+                        &amp;configDatabaseId, 
+                        &amp;dataSize 
+                        ));
+            if (SUCCEEDED(hr) &amp;&amp;
+                _wcsnicmp(configDatabaseId, targetDatabaseId, ARRAYSIZE(configDatabaseId)) == 0)
+            {
+                hr = HRESULT_FROM_WIN32(
+                        RegDeleteKeyExW(
+                            configListKey,
+                            configKeyName,
+                            KEY_WOW64_64KEY,
+                            0
+                            ));
+                if (SUCCEEDED(hr))
+                {
+                    configurationRemoved = true;
+                }
+            }
+        }
+        if (SUCCEEDED(hr))
+        {
+            ++subkeyIndex;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    RegCloseKey( configListKey );
+    configListKey = NULL;
+    *ConfigurationRemoved = configurationRemoved;
+    return hr;
+}
+
+//-----------------------------------------------------------------------------
+
+static HRESULT
+CompareConfiguration(
+    __in HKEY SourceConfigList,
+    __in LPWSTR SourceConfigKey,
+    __in POOL_CONFIGURATION* TargetConfig,
+    __out bool *IsEqual
+    )
+{
+
+    if (SourceConfigList == NULL)
+    {
+        return E_INVALIDARG;
+    }
+
+    if (!ARGUMENT_PRESENT(SourceConfigKey) ||
+        !ARGUMENT_PRESENT(TargetConfig) ||
+        !ARGUMENT_PRESENT(IsEqual))
+    {
+        return E_POINTER;
+    }
+
+    WCHAR targetDatabaseId[40];
+    if (!ConvertUuidToString( 
+            &amp;TargetConfig-&gt;DatabaseId, 
+            targetDatabaseId, 
+            ARRAYSIZE(targetDatabaseId), 
+            false
+            ))
+    {
+        return E_INVALIDARG;
+    }
+
+    HKEY srcConfig = NULL;
+    HRESULT hr = HRESULT_FROM_WIN32(
+                    RegOpenKeyExW(
+                        SourceConfigList,
+                        SourceConfigKey,
+                        0,
+                        KEY_READ,
+                        &amp;srcConfig
+                        ));
+    if (SUCCEEDED(hr))
+    {
+        bool isEqual = true;
+
+        WCHAR configDatabaseId[40] = {};
+        DWORD dataSize = sizeof(configDatabaseId);
+        hr = HRESULT_FROM_WIN32(
+                RegGetValueW( 
+                    srcConfig, 
+                    NULL, 
+                    L&quot;DatabaseId&quot;, 
+                    RRF_RT_REG_SZ, 
+                    NULL, 
+                    &amp;configDatabaseId, 
+                    &amp;dataSize 
+                    ));
+        if (SUCCEEDED(hr) &amp;&amp;
+            _wcsnicmp(configDatabaseId, targetDatabaseId, ARRAYSIZE(configDatabaseId)) != 0)
+        {
+            isEqual = false;
+        }
+
+        RegCloseKey( srcConfig );
+        srcConfig = NULL;
+
+        if (SUCCEEDED(hr))
+        {
+            *IsEqual = isEqual;
+        }
+    }
+    return hr;
+}
+
+//-----------------------------------------------------------------------------
+
+static bool
+ConvertStringToUuid(
+    __in LPWSTR UuidString,
+    __out WINBIO_UUID *Uuid
+    )
+{
+    int data1 = 0;
+    int data2 = 0;
+    int data3 = 0;
+    int data40 = 0;
+    int data41 = 0;
+    int data42 = 0;
+    int data43 = 0;
+    int data44 = 0;
+    int data45 = 0;
+    int data46 = 0;
+    int data47 = 0;
+    int conversionCount = swscanf_s(
+        UuidString, 
+        L&quot;%8x-%4x-%4x-%2x%2x-%2x%2x%2x%2x%2x%2x&quot;,
+        &amp;data1,
+        &amp;data2,
+        &amp;data3,
+        &amp;data40,
+        &amp;data41,
+        &amp;data42,
+        &amp;data43,
+        &amp;data44,
+        &amp;data45,
+        &amp;data46,
+        &amp;data47
+        );
+
+    if (conversionCount != 11)
+    {
+        return false;
+    }
+
+    Uuid-&gt;Data1    = data1;
+    Uuid-&gt;Data2    = (WORD)data2;
+    Uuid-&gt;Data3    = (WORD)data3;
+    Uuid-&gt;Data4[0] = (BYTE)data40;
+    Uuid-&gt;Data4[1] = (BYTE)data41;
+    Uuid-&gt;Data4[2] = (BYTE)data42;
+    Uuid-&gt;Data4[3] = (BYTE)data43;
+    Uuid-&gt;Data4[4] = (BYTE)data44;
+    Uuid-&gt;Data4[5] = (BYTE)data45;
+    Uuid-&gt;Data4[6] = (BYTE)data46;
+    Uuid-&gt;Data4[7] = (BYTE)data47;
+
+    return true;
+}
+
+//-----------------------------------------------------------------------------
+
+static bool
+ConvertUuidToString(
+    __in WINBIO_UUID *Uuid,
+    __out LPWSTR UuidStringBuffer,
+    __in SIZE_T UuidStringBufferLength,
+    __in bool IncludeBraces
+    )
+{
+    const PWSTR fmt_no_braces = L&quot;%8X-%4X-%4X-%2X%2X-%2X%2X%2X%2X%2X%2X&quot;;
+    const PWSTR fmt_braces    = L&quot;{%8X-%4X-%4X-%2X%2X-%2X%2X%2X%2X%2X%2X}&quot;;
+
+    int charsWritten = swprintf_s( 
+                            UuidStringBuffer, 
+                            UuidStringBufferLength, 
+                            IncludeBraces?fmt_braces:fmt_no_braces,
+                            Uuid-&gt;Data1,
+                            Uuid-&gt;Data2,
+                            Uuid-&gt;Data3,
+                            Uuid-&gt;Data4[0],
+                            Uuid-&gt;Data4[1],
+                            Uuid-&gt;Data4[2],
+                            Uuid-&gt;Data4[3],
+                            Uuid-&gt;Data4[4],
+                            Uuid-&gt;Data4[5],
+                            Uuid-&gt;Data4[6],
+                            Uuid-&gt;Data4[7]
+                            );
+    if (charsWritten &lt; 0)
+    {
+        return false;
+    }
+    return true;
+}
+
+//-----------------------------------------------------------------------------
+
+
+}; // namespace BioHelper
+
+</code></pre>
+<h2>Display.cpp</h2>
+<p>The following file contains output formatting routines.</p>
+<pre lang="C++"><code>/******************************************************************************
+THIS CODE AND INFORMATION IS PROVIDED &quot;AS IS&quot; WITHOUT WARRANTY OF
+ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
+PARTICULAR PURPOSE.
+
+Copyright (C) Microsoft.  All rights reserved.
+
+This source code is only intended as a supplement to Microsoft Development
+Tools and/or WinHelp documentation.  See these sources for detailed information
+regarding the Microsoft samples programs.
+******************************************************************************/
+
+/*
+    Output formatting routines...
+*/
+#include &quot;stdafx.h&quot;
+
+
+typedef struct _SUBFACTOR_TEXT {
+    WINBIO_BIOMETRIC_SUBTYPE SubFactor;
+    LPCTSTR Text;
+} SUBFACTOR_TEXT, *PSUBFACTOR_TEXT;
+
+static const SUBFACTOR_TEXT g_SubFactorText[] = {
+    {WINBIO_SUBTYPE_NO_INFORMATION,             _T(&quot;(No information)&quot;)},
+    {WINBIO_ANSI_381_POS_RH_THUMB,              _T(&quot;RH thumb&quot;)},
+    {WINBIO_ANSI_381_POS_RH_INDEX_FINGER,       _T(&quot;RH index finger&quot;)},
+    {WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER,      _T(&quot;RH middle finger&quot;)},
+    {WINBIO_ANSI_381_POS_RH_RING_FINGER,        _T(&quot;RH ring finger&quot;)},
+    {WINBIO_ANSI_381_POS_RH_LITTLE_FINGER,      _T(&quot;RH little finger&quot;)},
+    {WINBIO_ANSI_381_POS_LH_THUMB,              _T(&quot;LH thumb&quot;)},
+    {WINBIO_ANSI_381_POS_LH_INDEX_FINGER,       _T(&quot;LH index finger&quot;)},
+    {WINBIO_ANSI_381_POS_LH_MIDDLE_FINGER,      _T(&quot;LH middle finger&quot;)},
+    {WINBIO_ANSI_381_POS_LH_RING_FINGER,        _T(&quot;LH ring finger&quot;)},
+    {WINBIO_ANSI_381_POS_LH_LITTLE_FINGER,      _T(&quot;LH little finger&quot;)},
+    {WINBIO_SUBTYPE_ANY,                        _T(&quot;Any finger&quot;)},
+};
+static const SIZE_T k_SubFactorTextTableSize = sizeof(g_SubFactorText)/sizeof(SUBFACTOR_TEXT);
+
+
+typedef struct _REJECT_DETAIL_TEXT {
+    WINBIO_REJECT_DETAIL RejectDetail;
+    LPCTSTR Text;
+} REJECT_DETAIL_TEXT, *PREJECT_DETAIL_TEXT;
+
+static const REJECT_DETAIL_TEXT g_RejectDetailText[] = {
+    {WINBIO_FP_TOO_HIGH,        _T(&quot;Scan your fingerprint a little lower.&quot;)},
+    {WINBIO_FP_TOO_LOW,         _T(&quot;Scan your fingerprint a little higher.&quot;)},
+    {WINBIO_FP_TOO_LEFT,        _T(&quot;Scan your fingerprint more to the right.&quot;)},
+    {WINBIO_FP_TOO_RIGHT,       _T(&quot;Scan your fingerprint more to the left.&quot;)},
+    {WINBIO_FP_TOO_FAST,        _T(&quot;Scan your fingerprint more slowly.&quot;)},
+    {WINBIO_FP_TOO_SLOW,        _T(&quot;Scan your fingerprint more quickly.&quot;)},
+    {WINBIO_FP_POOR_QUALITY,    _T(&quot;The quality of the fingerprint scan was not sufficient to make a match.  Check to make sure the sensor is clean.&quot;)},
+    {WINBIO_FP_TOO_SKEWED,      _T(&quot;Hold your finger flat and straight when scanning your fingerprint.&quot;)},
+    {WINBIO_FP_TOO_SHORT,       _T(&quot;Use a longer stroke when scanning your fingerprint.&quot;)},
+    {WINBIO_FP_MERGE_FAILURE,   _T(&quot;Unable to merge samples into a single enrollment. Try to repeat the enrollment procedure from the beginning.&quot;)},
+};
+static const SIZE_T k_RejectDetailTextTableSize = sizeof(g_RejectDetailText)/sizeof(REJECT_DETAIL_TEXT);
+
+
+namespace BioHelper
+{
+
+LPTSTR
+ConvertErrorCodeToString(
+    __in HRESULT ErrorCode
+    )
+{
+    TCHAR *messageBuffer = NULL;
+    DWORD messageLength = 0;
+
+    std::vector&lt;TCHAR&gt; systemPath;
+    UINT systemPathSize = 0;
+    systemPathSize = GetSystemWindowsDirectory( NULL, 0);
+    systemPath.resize(systemPathSize);
+    systemPathSize = GetSystemWindowsDirectory( (LPTSTR)&amp;systemPath[0], systemPathSize);
+
+    TSTRING libraryPath = &amp;systemPath[0];
+    libraryPath += _T(&quot;\\system32\\winbio.dll&quot;);
+
+    HMODULE winbioLibrary = NULL;
+    winbioLibrary = LoadLibraryEx(
+                        libraryPath.c_str(),
+                        NULL,
+                        LOAD_LIBRARY_AS_DATAFILE |
+                            LOAD_LIBRARY_AS_IMAGE_RESOURCE
+                        );
+    if (winbioLibrary != NULL)
+    {
+        messageLength = FormatMessage(
+                            FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                                FORMAT_MESSAGE_FROM_HMODULE |
+                                FORMAT_MESSAGE_FROM_SYSTEM,
+                            winbioLibrary,
+                            ErrorCode,
+                            0,                      // LANGID
+                            (LPTSTR)&amp;messageBuffer,
+                            0,                      // arg count
+                            NULL                    // arg array
+                            );
+        if (messageLength &gt; 0)
+        {
+            // success
+            messageBuffer[messageLength] = _T('\0');
+        }
+        FreeLibrary(winbioLibrary);
+        winbioLibrary = NULL;
+    }
+
+    if (messageBuffer == NULL)
+    {
+        messageLength = 10 ;    // &quot;0x&quot; + &quot;%08x&quot;
+        messageBuffer = (TCHAR*)LocalAlloc( LPTR, (messageLength + 1) * sizeof(TCHAR));
+        if (messageBuffer != NULL)
+        {
+            _stprintf_s( messageBuffer, messageLength, _T(&quot;0x%08x&quot;), ErrorCode);
+        }
+    }
+
+    // Caller must release buffer with LocalFree()
+    return messageBuffer;
+}
+
+//-----------------------------------------------------------------------------
+
+LPCTSTR
+ConvertSubFactorToString(
+    __in WINBIO_BIOMETRIC_SUBTYPE SubFactor
+    )
+{
+    SIZE_T index = 0;
+    for (index = 0; index &lt; k_SubFactorTextTableSize; ++index)
+    {
+        if (g_SubFactorText[index].SubFactor == SubFactor)
+        {
+            return g_SubFactorText[index].Text;
+        }
+    }
+    return _T(&quot;&lt;Unknown&gt;&quot;);
+}
+
+//-----------------------------------------------------------------------------
+
+LPCTSTR
+ConvertRejectDetailToString(
+    __in WINBIO_REJECT_DETAIL RejectDetail
+    )
+{
+    SIZE_T index = 0;
+    for (index = 0; index &lt; k_RejectDetailTextTableSize; ++index)
+    {
+        if (g_RejectDetailText[index].RejectDetail == RejectDetail)
+        {
+            return g_RejectDetailText[index].Text;
+        }
+    }
+    return _T(&quot;Reason for failure couldn't be diagnosed.&quot;);
+}
+
+//-----------------------------------------------------------------------------
+
+
+}; // namespace BioHelper
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

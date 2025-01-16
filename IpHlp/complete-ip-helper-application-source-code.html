@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Complete IP Helper Application Source Code</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following is the complete source code for the IP Helper application. Additional error checking has been added to source code.
+ms.assetid: c0290660-8a18-4d5c-8f0a-df15da1a9167
+title: Complete IP Helper Application Source Code
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Complete IP Helper Application Source Code</h1>
+<p>The following is the complete source code for the IP Helper application. Additional error checking has been added to source code.</p>
+<pre lang="C++"><code>#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+#include &lt;windows.h&gt;
+
+#include &lt;winsock2.h&gt;
+#include &lt;ws2tcpip.h&gt;
+
+#include &lt;iphlpapi.h&gt;
+
+#include &lt;stdio.h&gt;
+#include &lt;time.h&gt;
+
+// Need to link with Iphlpapi.lib and Ws2_32.lib
+#pragma comment(lib, &quot;iphlpapi.lib&quot;)
+#pragma comment(lib, &quot;ws2_32.lib&quot;)
+
+#define MALLOC(x) HeapAlloc(GetProcessHeap(), 0, (x))
+#define FREE(x) HeapFree(GetProcessHeap(), 0, (x))
+/* Note: could also use malloc() and free() */
+
+int main()
+{
+
+    /* Some general variables */
+    ULONG ulOutBufLen;
+    DWORD dwRetVal;
+    unsigned int i;
+  
+    /* variables used for GetNetworkParams */
+    FIXED_INFO *pFixedInfo;
+    IP_ADDR_STRING *pIPAddr;
+
+    /* variables used for GetAdapterInfo */
+    IP_ADAPTER_INFO *pAdapterInfo;
+    IP_ADAPTER_INFO *pAdapter;
+
+    /* variables used to print DHCP time info */
+    struct tm newtime;
+    char buffer[32];
+    errno_t error;
+
+    /* variables used for GetInterfaceInfo */
+    IP_INTERFACE_INFO *pInterfaceInfo;
+
+    /* variables used for GetIpAddrTable */
+    MIB_IPADDRTABLE *pIPAddrTable;
+    DWORD dwSize;
+    IN_ADDR IPAddr;
+    char *strIPAddr;
+
+    /* variables used for AddIpAddress */
+    UINT iaIPAddress;
+    UINT imIPMask;
+    ULONG NTEContext;
+    ULONG NTEInstance;
+
+    /* variables used for GetIpStatistics */
+    MIB_IPSTATS *pStats;
+
+    /* variables used for GetTcpStatistics */
+    MIB_TCPSTATS *pTCPStats;
+
+    printf(&quot;------------------------\n&quot;);
+    printf(&quot;This is GetNetworkParams\n&quot;);
+    printf(&quot;------------------------\n&quot;);
+
+    pFixedInfo = (FIXED_INFO *) MALLOC(sizeof (FIXED_INFO));
+    if (pFixedInfo == NULL) {
+        printf(&quot;Error allocating memory needed to call GetNetworkParams\n&quot;);
+        return 1;
+    }
+    ulOutBufLen = sizeof (FIXED_INFO);
+
+    if (GetNetworkParams(pFixedInfo, &amp;ulOutBufLen) == ERROR_BUFFER_OVERFLOW) {
+        FREE(pFixedInfo);
+        pFixedInfo = (FIXED_INFO *) MALLOC(ulOutBufLen);
+        if (pFixedInfo == NULL) {
+            printf(&quot;Error allocating memory needed to call GetNetworkParams\n&quot;);
+            return 1;
+        }
+    }
+
+    if (dwRetVal = GetNetworkParams(pFixedInfo, &amp;ulOutBufLen) != NO_ERROR) {
+        printf(&quot;GetNetworkParams failed with error %d\n&quot;, dwRetVal);
+        if (pFixedInfo)
+            FREE(pFixedInfo);
+        return 1;
+    } else {
+        printf(&quot;\tHost Name: %s\n&quot;, pFixedInfo-&gt;HostName);
+        printf(&quot;\tDomain Name: %s\n&quot;, pFixedInfo-&gt;DomainName);
+        printf(&quot;\tDNS Servers:\n&quot;);
+        printf(&quot;\t\t%s\n&quot;, pFixedInfo-&gt;DnsServerList.IpAddress.String);
+
+        pIPAddr = pFixedInfo-&gt;DnsServerList.Next;
+        while (pIPAddr) {
+            printf(&quot;\t\t%s\n&quot;, pIPAddr-&gt;IpAddress.String);
+            pIPAddr = pIPAddr-&gt;Next;
+        }
+
+        printf(&quot;\tNode Type: &quot;);
+        switch (pFixedInfo-&gt;NodeType) {
+        case 1:
+            printf(&quot;%s\n&quot;, &quot;Broadcast&quot;);
+            break;
+        case 2:
+            printf(&quot;%s\n&quot;, &quot;Peer to peer&quot;);
+            break;
+        case 4:
+            printf(&quot;%s\n&quot;, &quot;Mixed&quot;);
+            break;
+        case 8:
+            printf(&quot;%s\n&quot;, &quot;Hybrid&quot;);
+            break;
+        default:
+            printf(&quot;\n&quot;);
+        }
+
+        printf(&quot;\tNetBIOS Scope ID: %s\n&quot;, pFixedInfo-&gt;ScopeId);
+
+        if (pFixedInfo-&gt;EnableRouting)
+            printf(&quot;\tIP Routing Enabled: Yes\n&quot;);
+        else
+            printf(&quot;\tIP Routing Enabled: No\n&quot;);
+
+        if (pFixedInfo-&gt;EnableProxy)
+            printf(&quot;\tWINS Proxy Enabled: Yes\n&quot;);
+        else
+            printf(&quot;\tWINS Proxy Enabled: No\n&quot;);
+
+        if (pFixedInfo-&gt;EnableDns)
+            printf(&quot;\tNetBIOS Resolution Uses DNS: Yes\n&quot;);
+        else
+            printf(&quot;\tNetBIOS Resolution Uses DNS: No\n&quot;);
+    }
+
+    /* Free allocated memory no longer needed */
+    if (pFixedInfo) {
+        FREE(pFixedInfo);
+        pFixedInfo = NULL;
+    }
+
+    printf(&quot;------------------------\n&quot;);
+    printf(&quot;This is GetAdaptersInfo\n&quot;);
+    printf(&quot;------------------------\n&quot;);
+
+    pAdapterInfo = (IP_ADAPTER_INFO *) MALLOC(sizeof (IP_ADAPTER_INFO));
+    if (pAdapterInfo == NULL) {
+        printf(&quot;Error allocating memory needed to call GetAdapterInfo\n&quot;);
+        return 1;
+    }
+    ulOutBufLen = sizeof (IP_ADAPTER_INFO);
+
+    if (GetAdaptersInfo(pAdapterInfo, &amp;ulOutBufLen) == ERROR_BUFFER_OVERFLOW) {
+        FREE(pAdapterInfo);
+        pAdapterInfo = (IP_ADAPTER_INFO *) MALLOC(ulOutBufLen);
+        if (pAdapterInfo == NULL) {
+            printf(&quot;Error allocating memory needed to call GetAdapterInfo\n&quot;);
+            return 1;
+        }
+    }
+
+    if ((dwRetVal = GetAdaptersInfo(pAdapterInfo, &amp;ulOutBufLen)) != NO_ERROR) {
+        printf(&quot;GetAdaptersInfo failed with error %d\n&quot;, dwRetVal);
+        if (pAdapterInfo)
+            FREE(pAdapterInfo);
+        return 1;
+    }
+
+    pAdapter = pAdapterInfo;
+    while (pAdapter) {
+        printf(&quot;\tAdapter Name: \t%s\n&quot;, pAdapter-&gt;AdapterName);
+        printf(&quot;\tAdapter Desc: \t%s\n&quot;, pAdapter-&gt;Description);
+        printf(&quot;\tAdapter Addr: \t&quot;);
+        for (i = 0; i &lt; (int) pAdapter-&gt;AddressLength; i++) {
+            if (i == (pAdapter-&gt;AddressLength - 1))
+                printf(&quot;%.2X\n&quot;, (int) pAdapter-&gt;Address[i]);
+            else
+                printf(&quot;%.2X-&quot;, (int) pAdapter-&gt;Address[i]);
+        }
+        printf(&quot;\tIP Address: \t%s\n&quot;,
+               pAdapter-&gt;IpAddressList.IpAddress.String);
+        printf(&quot;\tIP Mask: \t%s\n&quot;, pAdapter-&gt;IpAddressList.IpMask.String);
+
+        printf(&quot;\tGateway: \t%s\n&quot;, pAdapter-&gt;GatewayList.IpAddress.String);
+        printf(&quot;\t***\n&quot;);
+
+        if (pAdapter-&gt;DhcpEnabled) {
+            printf(&quot;\tDHCP Enabled: \tYes\n&quot;);
+            printf(&quot;\tDHCP Server: \t%s\n&quot;,
+                   pAdapter-&gt;DhcpServer.IpAddress.String);
+
+            printf(&quot;\tLease Obtained: &quot;);
+            /* Display local time */
+            error = _localtime32_s(&amp;newtime, (__time32_t*) &amp;pAdapter-&gt;LeaseObtained);
+            if (error)
+                printf(&quot;\tInvalid Argument to _localtime32_s\n&quot;);
+
+            else {
+                // Convert to an ASCII representation 
+                error = asctime_s(buffer, 32, &amp;newtime);
+                if (error)
+                    printf(&quot;Invalid Argument to asctime_s\n&quot;);
+                else
+                    /* asctime_s returns the string terminated by \n\0 */
+                    printf(&quot;%s&quot;, buffer);
+            }
+
+            printf(&quot;\tLease Expires:  &quot;);
+            error = _localtime32_s(&amp;newtime, (__time32_t*) &amp;pAdapter-&gt;LeaseExpires);
+            if (error)
+                printf(&quot;Invalid Argument to _localtime32_s\n&quot;);
+            else {
+                // Convert to an ASCII representation 
+                error = asctime_s(buffer, 32, &amp;newtime);
+                if (error)
+                    printf(&quot;Invalid Argument to asctime_s\n&quot;);
+                else
+                    /* asctime_s returns the string terminated by \n\0 */
+                    printf(&quot;%s&quot;, buffer);
+            }
+        } else
+            printf(&quot;\tDHCP Enabled: \tNo\n&quot;);
+
+        if (pAdapter-&gt;HaveWins) {
+            printf(&quot;\tHave Wins: \tYes\n&quot;);
+            printf(&quot;\tPrimary Wins Server: \t%s\n&quot;,
+                   pAdapter-&gt;PrimaryWinsServer.IpAddress.String);
+            printf(&quot;\tSecondary Wins Server: \t%s\n&quot;,
+                   pAdapter-&gt;SecondaryWinsServer.IpAddress.String);
+        } else
+            printf(&quot;\tHave Wins: \tNo\n&quot;);
+
+        printf(&quot;\n&quot;);
+        pAdapter = pAdapter-&gt;Next;
+    }
+
+    printf(&quot;------------------------\n&quot;);
+    printf(&quot;This is GetInterfaceInfo\n&quot;);
+    printf(&quot;------------------------\n&quot;);
+
+    pInterfaceInfo = (IP_INTERFACE_INFO *) MALLOC(sizeof (IP_INTERFACE_INFO));
+    if (pInterfaceInfo == NULL) {
+        printf(&quot;Error allocating memory needed to call GetInterfaceInfo\n&quot;);
+        return 1;
+    }
+    ulOutBufLen = sizeof (IP_INTERFACE_INFO);
+    if (GetInterfaceInfo(pInterfaceInfo, &amp;ulOutBufLen) ==
+        ERROR_INSUFFICIENT_BUFFER) {
+        FREE(pInterfaceInfo);
+        pInterfaceInfo = (IP_INTERFACE_INFO *) MALLOC(ulOutBufLen);
+        if (pInterfaceInfo == NULL) {
+            printf(&quot;Error allocating memory needed to call GetInterfaceInfo\n&quot;);
+            return 1;
+        }
+        printf(&quot;\t The size needed for the output buffer ulLen = %ld\n&quot;,
+               ulOutBufLen);
+    }
+
+    if ((dwRetVal = GetInterfaceInfo(pInterfaceInfo, &amp;ulOutBufLen)) == NO_ERROR) {
+        printf(&quot;\tNum Adapters: %ld\n\n&quot;, pInterfaceInfo-&gt;NumAdapters);
+        for (i = 0; i &lt; (unsigned int) pInterfaceInfo-&gt;NumAdapters; i++) {
+            printf(&quot;\tAdapter Index[%d]: %ld\n&quot;, i,
+                   pInterfaceInfo-&gt;Adapter[i].Index);
+            printf(&quot;\tAdapter Name[%d]:  %ws\n\n&quot;, i,
+                   pInterfaceInfo-&gt;Adapter[i].Name);
+        }
+        printf(&quot;GetInterfaceInfo call succeeded.\n&quot;);
+    } else {
+        LPVOID lpMsgBuf = NULL;
+
+        if (FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, dwRetVal, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),       // Default language
+                          (LPTSTR) &amp; lpMsgBuf, 0, NULL)) {
+            printf(&quot;\tError: %s&quot;, lpMsgBuf);
+        }
+        LocalFree(lpMsgBuf);
+    }
+
+    /* If DHCP enabled, release and renew the IP address */
+    /* THIS WORKS BUT IT TAKES A LONG TIME AND INTERRUPTS NET CONNECTIONS */
+    if (pAdapterInfo-&gt;DhcpEnabled &amp;&amp; pInterfaceInfo-&gt;NumAdapters) {
+        printf(&quot;Calling IpReleaseAddress for Adapter[%d]\n&quot;, 0);
+        if ((dwRetVal =
+             IpReleaseAddress(&amp;pInterfaceInfo-&gt;Adapter[0])) == NO_ERROR) {
+            printf(&quot;Ip Release succeeded.\n&quot;);
+        }
+        if ((dwRetVal =
+             IpRenewAddress(&amp;pInterfaceInfo-&gt;Adapter[0])) == NO_ERROR) {
+            printf(&quot;Ip Renew succeeded.\n&quot;);
+        }
+    }
+
+    /* Free allocated memory no longer needed */
+    if (pAdapterInfo) {
+        FREE(pAdapterInfo);
+        pAdapterInfo = NULL;
+    }
+    if (pInterfaceInfo) {
+        FREE(pInterfaceInfo);
+        pInterfaceInfo = NULL;
+    }
+
+    printf(&quot;----------------------\n&quot;);
+    printf(&quot;This is GetIpAddrTable\n&quot;);
+    printf(&quot;----------------------\n&quot;);
+
+    pIPAddrTable = (MIB_IPADDRTABLE *) MALLOC(sizeof (MIB_IPADDRTABLE));
+    if (pIPAddrTable == NULL) {
+        printf(&quot;Error allocating memory needed to call GetIpAddrTable\n&quot;);
+        return 1;
+    }
+    dwSize = 0;
+    IPAddr.S_un.S_addr = ntohl(pIPAddrTable-&gt;table[1].dwAddr);
+    strIPAddr = inet_ntoa(IPAddr);
+
+    if (GetIpAddrTable(pIPAddrTable, &amp;dwSize, 0) == ERROR_INSUFFICIENT_BUFFER) {
+        FREE(pIPAddrTable);
+        pIPAddrTable = (MIB_IPADDRTABLE *) MALLOC(dwSize);
+        if (pIPAddrTable == NULL) {
+            printf(&quot;Error allocating memory needed to call GetIpAddrTable\n&quot;);
+            return 1;
+        }
+    }
+
+    if ((dwRetVal = GetIpAddrTable(pIPAddrTable, &amp;dwSize, 0)) != NO_ERROR) {
+        printf(&quot;GetIpAddrTable failed with error %d\n&quot;, dwRetVal);
+        if (pIPAddrTable)
+            FREE(pIPAddrTable);
+        return 1;
+    }
+
+    printf(&quot;\tNum Entries: %ld\n&quot;, pIPAddrTable-&gt;dwNumEntries);
+    for (i = 0; i &lt; (unsigned int) pIPAddrTable-&gt;dwNumEntries; i++) {
+        printf(&quot;\n\tInterface Index[%d]:\t%ld\n&quot;, i,
+               pIPAddrTable-&gt;table[i].dwIndex);
+        IPAddr.S_un.S_addr = (u_long) pIPAddrTable-&gt;table[i].dwAddr;
+        printf(&quot;\tIP Address[%d]:     \t%s\n&quot;, i, inet_ntoa(IPAddr));
+        IPAddr.S_un.S_addr = (u_long) pIPAddrTable-&gt;table[i].dwMask;
+        printf(&quot;\tSubnet Mask[%d]:    \t%s\n&quot;, i, inet_ntoa(IPAddr));
+        IPAddr.S_un.S_addr = (u_long) pIPAddrTable-&gt;table[i].dwBCastAddr;
+        printf(&quot;\tBroadCast[%d]:      \t%s (%ld%)\n&quot;, i, inet_ntoa(IPAddr),
+               pIPAddrTable-&gt;table[i].dwBCastAddr);
+        printf(&quot;\tReassembly size[%d]:\t%ld\n&quot;, i,
+               pIPAddrTable-&gt;table[i].dwReasmSize);
+        printf(&quot;\tAddress Index[%d]:  \t%ld\n&quot;, i,
+               pIPAddrTable-&gt;table[i].dwIndex);
+        printf(&quot;\tType and State[%d]:&quot;, i);
+        if (pIPAddrTable-&gt;table[i].wType &amp; MIB_IPADDR_PRIMARY)
+            printf(&quot;\tPrimary IP Address&quot;);
+        if (pIPAddrTable-&gt;table[i].wType &amp; MIB_IPADDR_DYNAMIC)
+            printf(&quot;\tDynamic IP Address&quot;);
+        if (pIPAddrTable-&gt;table[i].wType &amp; MIB_IPADDR_DISCONNECTED)
+            printf(&quot;\tAddress is on disconnected interface&quot;);
+        if (pIPAddrTable-&gt;table[i].wType &amp; MIB_IPADDR_DELETED)
+            printf(&quot;\tAddress is being deleted&quot;);
+        if (pIPAddrTable-&gt;table[i].wType &amp; MIB_IPADDR_TRANSIENT)
+            printf(&quot;\tTransient address&quot;);
+        printf(&quot;\n&quot;);
+    }
+
+    iaIPAddress = inet_addr(&quot;192.168.0.27&quot;);
+    imIPMask = inet_addr(&quot;255.255.255.0&quot;);
+
+    NTEContext = 0;
+    NTEInstance = 0;
+
+    if ((dwRetVal = AddIPAddress(iaIPAddress,
+                                 imIPMask,
+                                 pIPAddrTable-&gt;table[0].
+                                 dwIndex,
+                                 &amp;NTEContext, &amp;NTEInstance)) != NO_ERROR) {
+
+        LPVOID lpMsgBuf;
+        printf(&quot;\tError adding IP address.\n&quot;);
+
+        if (FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, dwRetVal, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),       // Default language
+                          (LPTSTR) &amp; lpMsgBuf, 0, NULL)) {
+            printf(&quot;\tError: %s&quot;, lpMsgBuf);
+        }
+        LocalFree(lpMsgBuf);
+    }
+
+    if ((dwRetVal = DeleteIPAddress(NTEContext)) != NO_ERROR) {
+        printf(&quot;DeleteIPAddress failed with error %d\n&quot;, dwRetVal);
+    }
+
+    /* Free allocated memory no longer needed */
+    if (pIPAddrTable) {
+        FREE(pIPAddrTable);
+        pIPAddrTable = NULL;
+    }
+
+    printf(&quot;-------------------------\n&quot;);
+    printf(&quot;This is GetIPStatistics()\n&quot;);
+    printf(&quot;-------------------------\n&quot;);
+
+    pStats = (MIB_IPSTATS *) MALLOC(sizeof (MIB_IPSTATS));
+    if (pStats == NULL) {
+        printf(&quot;Error allocating memory needed to call GetIpStatistics\n&quot;);
+        return 1;
+    }
+
+    if ((dwRetVal = GetIpStatistics(pStats)) != NO_ERROR) {
+        printf(&quot;GetIPStatistics failed with error %d\n&quot;, dwRetVal);
+        if (pStats)
+            FREE(pStats);
+        return 1;
+    }
+
+    printf(&quot;\tNumber of IP addresses: %ld\n&quot;, pStats-&gt;dwNumAddr);
+    printf(&quot;\tNumber of Interfaces: %ld\n&quot;, pStats-&gt;dwNumIf);
+    printf(&quot;\tReceives: %ld\n&quot;, pStats-&gt;dwInReceives);
+    printf(&quot;\tOut Requests: %ld\n&quot;, pStats-&gt;dwOutRequests);
+    printf(&quot;\tRoutes: %ld\n&quot;, pStats-&gt;dwNumRoutes);
+    printf(&quot;\tTimeout Time: %ld\n&quot;, pStats-&gt;dwReasmTimeout);
+    printf(&quot;\tIn Delivers: %ld\n&quot;, pStats-&gt;dwInDelivers);
+    printf(&quot;\tIn Discards: %ld\n&quot;, pStats-&gt;dwInDiscards);
+    printf(&quot;\tTotal In: %ld\n&quot;, pStats-&gt;dwInDelivers + pStats-&gt;dwInDiscards);
+    printf(&quot;\tIn Header Errors: %ld\n&quot;, pStats-&gt;dwInHdrErrors);
+
+    /* Free allocated memory no longer needed */
+    if (pStats) {
+        FREE(pStats);
+        pStats = NULL;
+    }
+
+    printf(&quot;-------------------------\n&quot;);
+    printf(&quot;This is GetTCPStatistics()\n&quot;);
+    printf(&quot;-------------------------\n&quot;);
+
+    pTCPStats = (MIB_TCPSTATS *) MALLOC(sizeof (MIB_TCPSTATS));
+    if (pTCPStats == NULL) {
+        printf(&quot;Error allocating memory needed to call GetTcpStatistics\n&quot;);
+        return 1;
+    }
+
+    if ((dwRetVal = GetTcpStatistics(pTCPStats)) != NO_ERROR) {
+        printf(&quot;GetTcpStatistics failed with error %d\n&quot;, dwRetVal);
+        if (pTCPStats)
+            FREE(pTCPStats);
+        return 1;
+    }
+
+    printf(&quot;\tActive Opens: %ld\n&quot;, pTCPStats-&gt;dwActiveOpens);
+    printf(&quot;\tPassive Opens: %ld\n&quot;, pTCPStats-&gt;dwPassiveOpens);
+    printf(&quot;\tSegments Recv: %ld\n&quot;, pTCPStats-&gt;dwInSegs);
+    printf(&quot;\tSegments Xmit: %ld\n&quot;, pTCPStats-&gt;dwOutSegs);
+    printf(&quot;\tTotal # Conxs: %ld\n&quot;, pTCPStats-&gt;dwNumConns);
+
+    /* Free allocated memory no longer needed */
+    if (pTCPStats) {
+        FREE(pTCPStats);
+        pTCPStats = NULL;
+    }
+
+    return 0;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

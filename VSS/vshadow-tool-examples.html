@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VShadow Tool Examples</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: &quot;Learn more about: VShadow Tool Examples&quot;
+ms.assetid: 6a69b75b-ee4a-4613-ba05-d2deb42759b7
+title: VShadow Tool Examples
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>VShadow Tool Examples</h1>
+<p>The following examples show how to use the VShadow tool to perform the most common tasks:</p>
+<ul>
+<li><a href="#accessing-shadow-copy-properties-from-a-cmd-script">Accessing Shadow Copy Properties from a CMD Script</a></li>
+<li><a href="#accessing-nonpersistent-shadow-copies">Accessing Nonpersistent Shadow Copies</a></li>
+<li><a href="#copying-a-file-from-a-shadow-copy">Copying a File from a Shadow Copy</a></li>
+<li><a href="#enumerating-all-files-on-a-shadow-copy-device">Enumerating All Files on a Shadow Copy Device</a></li>
+<li><a href="#importing-a-transportable-shadow-copy">Importing a Transportable Shadow Copy</a></li>
+<li><a href="#including-writers-or-components">Including Writers or Components</a></li>
+<li><a href="#excluding-writers-or-components">Excluding Writers or Components</a></li>
+<li><a href="#breaking-shadow-copy-sets-using-the-breaksnapshotsetex-method">Breaking Shadow Copy Sets Using the BreakSnapshotSetEx Method</a></li>
+</ul>
+<p>For a complete list of command-line options and their use, see <a href="vshadow-tool-and-sample.html">VShadow Tool and Sample</a>.</p>
+<h2>Accessing Shadow Copy Properties from a CMD Script</h2>
+<p>If you use the <strong>-script</strong> optional flag when you create shadow copies, VShadow creates a CMD script file containing environment variables related to the newly created shadow copies, such as the following:</p>
+<ul>
+<li>The shadow copy set ID, which is stored in the %VSHADOW_SET_ID% environment variable</li>
+<li>The shadow copy IDs, which are stored in variables of the form %VSHADOW_ID_<em>NNN</em>%, where <em>NNN</em> represents the index of the source volume in the VShadow command line</li>
+<li>The shadow copy device names, which are stored in variables of the form %VSHADOW_DEVICE_<em>NNN</em>%, where <em>NNN</em> is the index of the source volume in the VShadow command line</li>
+</ul>
+<p>You can use the generated CMD file to perform limited management operations on the shadow copies.</p>
+<blockquote>
+<p>[!Note]<br />
+The <a href="/windows/win32/api/VsBackup/nf-vsbackup-ivssbackupcomponents-backupcomplete"><strong>BackupComplete</strong></a> writer event is sent after the <strong>-exec</strong> script is executed. VSS calls the <strong>IVssBackupComponents::BackupComplete</strong> method to signal to the writers that the backup is completed, and the writers can potentially truncate logs at this point. Therefore, it is important to verify that the shadow/backup actually completed. If the backup failed, you can cancel the creation process by returning a nonzero exit code in the executed script/command. (See the documentation for the exit command in the <a href="/previous-versions/windows/it-pro/windows-server-2012-R2-and-2012/cc754340(v=ws.11)">Windows Command Line Reference</a>.) If the custom command returns with a nonzero exit code, then the shadow copy creation is canceled and <strong>IVssBackupComponents::BackupComplete</strong> will not be called.</p>
+</blockquote>
+<p>Â </p>
+<p>The following example shows how to create a persistent shadow copy from the command line and use the CMD script to expose it.</p>
+<ol>
+<li><strong>vshadow -p -nw -script=SETVAR1.cmd c:</strong></li>
+<li><strong>call SETVAR1.cmd</strong></li>
+<li><strong>C:\&gt;vshadow -el=%VSHADOW_ID_1%,c:\directory1</strong></li>
+</ol>
+<h2>Accessing Nonpersistent Shadow Copies</h2>
+<p>Nonpersistent shadow copies are automatically deleted when the program that creates them (in this case, VShadow) exits. To access the contents of these shadow copies, VShadow allows you to execute a script after the shadow copies are created but before the VShadow program exits.</p>
+<p>The following example shows how to use the -exec command-line option to run a script called &quot;enum.cmd&quot;:</p>
+<p><strong>vshadow -nw -exec=enum.cmd c:</strong></p>
+<p>In the executed script, you can also run the generated SETVAR script in this custom command. This allows the script to access the contents of the shadow copies directly. Remember that the shadow device can be retrieved from the VSHADOW_DEVICE_NNN environment variable.</p>
+<p>Here is an example enum.cmd script:</p>
+<pre lang="syntax"><code>call SETVAR1.cmd
+for /R %VSHADOW_DEVICE_1%\ %%i in (*.*) do @echo %%i
+</code></pre>
+<p>Here is the command line to execute the enum.cmd script:</p>
+<p><strong>vshadow -nw -exec=c:\enum.cmd -script=setvar1.cmd c:</strong></p>
+<h2>Copying a File from a Shadow Copy</h2>
+<p>The following example shows how to copy a file from a shadow copy.</p>
+<ol>
+<li><strong>dir &gt; c:\somefile.txt</strong></li>
+<li><strong>vshadow -p -nw -script=SETVAR1.cmd c:</strong></li>
+<li><strong>call SETVAR1.cmd</strong></li>
+<li><strong>copy %VSHADOW_DEVICE_1%\somefile.txt c:\somefile_bak.txt</strong></li>
+</ol>
+<h2>Enumerating All Files on a Shadow Copy Device</h2>
+<p>The following example shows how to enumerate all files on a shadow copy device from a batch file.</p>
+<ol>
+<li><strong>dir &gt; c:\somefile.txt</strong></li>
+<li><strong>vshadow -p -nw -script=SETVAR1.cmd c:</strong></li>
+<li><strong>call SETVAR1.cmd</strong></li>
+<li><strong>for /R %VSHADOW_DEVICE_1%\ %%i in (*) do @echo %%i</strong></li>
+</ol>
+<h2>Importing a Transportable Shadow Copy</h2>
+<p>To create a transportable shadow copy on one machine and import it to another machine, you must have two computers that are connected (through a SAN configuration) to a storage array that supports VSS hardware shadow copies. A VSS hardware provider must be installed on each computer.</p>
+<p>The following example shows how to create and import the shadow copy.</p>
+<ol>
+<li>
+<p>Create the shadow copy set on computer A (the production server) by typing the following command after the command prompt:</p>
+<p><strong>vshadow -p -t=bc1.xml</strong></p>
+<p>This will not expose any shadow copy devices on computer A.</p>
+</li>
+<li>
+<p>Copy the backup components document (bc1.xml) from computer A to computer B.</p>
+</li>
+<li>
+<p>Import the shadow set on machine B by typing the following command:</p>
+<p><strong>vshadow -i=bc1.xml</strong></p>
+</li>
+</ol>
+<p>Optionally, you could expose these shadow copies as drive letters or mounted folders. Also, you could potentially break the shadow set to make the new shadow copy volumes read-write.</p>
+<p>To automate the shadow set management process you might use the <strong>-script</strong> command-line option to generate the CMD script containing the shadow copy IDs. Then you can copy the generated script along with the backup components to the other computer.</p>
+<p>The following example shows how to create, expose, and break transportable shadow copies using CMD scripts.</p>
+<ol>
+<li>
+<p>Create the shadow copy set on computer A (the production server) from the command line as follows:</p>
+<p><strong>vshadow -p -t=bc1.xml -script=sc1.cmd</strong></p>
+<p>Specify the <strong>-script</strong> option to generate the script containing the proper environment variable definitions. Note that this will not expose any shadow copy devices on computer A.</p>
+</li>
+<li>
+<p>Copy the backup components document (bc1.xml) and the generated script (sc1.cmd) from computer A to computer B.</p>
+</li>
+<li>
+<p>Import the shadow set on machine B by typing the following command:</p>
+<p><strong>vshadow -i=bc1.xml</strong></p>
+<p>This will surface the created devices on computer B.</p>
+</li>
+<li>
+<p>Run the generated script to set the environment variables for the shadow copy set by typing the file name at the command prompt as in the following example:</p>
+<p><strong>sc1.cmd</strong></p>
+<p>This will set the relevant environment variables as described in Access Shadow Copy Properties from a CMD Script.</p>
+</li>
+<li>
+<p>Expose the shadow copies on computer B by typing the following commands:</p>
+<ol>
+<li><strong>rmdir /s c:\mount_point</strong></li>
+<li><strong>mkdir c:\mount_point</strong></li>
+<li><strong>vshadow â€“el=%VSHADOW_ID_1%,c:\mount_point</strong></li>
+</ol>
+<p>This will surface the created shadow copy devices on computer B.</p>
+</li>
+<li>
+<p>Break the shadow copy set to make the volumes writable by typing the following command:<strong>C:\&gt;vshadow â€“bw=%VSHADOW_SET_ID%</strong></p>
+</li>
+</ol>
+<p>Note that nonpersistent transportable shadow copies can also be imported, but they are automatically deleted when the <strong>vshadow</strong> <strong>-i</strong> process exits. To import the shadow copies before they are deleted, you must use the <strong>-exec</strong> command-line option as described in Access Nonpersistent Shadow Copies.</p>
+<h2>Including Writers or Components</h2>
+<p>By default, all writers participate in shadow copy creation. To determine which writers and components will be included in a shadow copy set, use the <strong>-wm</strong> or <strong>-wm2</strong> command-line option as described in <a href="vshadow-tool-and-sample.html">Listing Writer Status and Metadata</a>.</p>
+<p>To verify that all of a writer's components are included, use the <strong>-wi</strong> optional flag in any of the following formats:</p>
+<ul>
+<li><strong>vshadow</strong> <strong>-wi</strong> <em>WriterName</em></li>
+<li><strong>vshadow</strong> <strong>-wi</strong> <strong>&quot;<em><strong>Writer Name String</strong></em>&quot;</strong></li>
+<li><strong>vshadow</strong> <strong>-wi</strong> <strong>{<em><strong>WriterID</strong></em>}</strong></li>
+<li><strong>vshadow</strong> <strong>-wi</strong> <strong>{<em><strong>InstanceID</strong></em>}</strong></li>
+</ul>
+<p>To verify that specific components are included, use the <strong>-wi</strong> optional flag in any of the following formats:</p>
+<ul>
+<li><strong>vshadow</strong> <strong>-wi</strong> <em>WriterName</em>**:\<em><strong>LogicalPath</strong></em>\**<em>ComponentName</em></li>
+<li><strong>vshadow</strong> <strong>-wi</strong> **&quot;<em><strong>Writer Name String</strong></em>&quot;:\<em><strong>LogicalPath</strong></em>\**<em>ComponentName</em></li>
+<li><strong>vshadow</strong> <strong>-wi</strong> **{<em><strong>WriterID</strong></em>}:\<em><strong>LogicalPath</strong></em>\**<em>ComponentName</em></li>
+<li><strong>vshadow</strong> <strong>-wi</strong> **{<em><strong>InstanceID</strong></em>}:\<em><strong>LogicalPath</strong></em>\**<em>ComponentName</em></li>
+</ul>
+<p>The following examples show how to use the <strong>-wi</strong> optional flag.</p>
+<ul>
+<li>
+<p>Specifying <em>WriterName</em>:\<em>LogicalPath</em>\<em>ComponentName</em>:</p>
+<p><strong>vshadow -wi=&quot;Registry Writer:\Registry&quot;</strong></p>
+</li>
+<li>
+<p>Specifying {<em>WriterID</em>}:</p>
+<p><strong>vshadow -wi={BE000CBE-11FE-4426-9C58-531AA6355FC4}</strong></p>
+</li>
+<li>
+<p>Specifying more than one writer or component:</p>
+<p><strong>vshadow -wi=&quot;Registry Writer:\Registry&quot; -wi=&quot;COM+ REGDB Writer&quot;</strong></p>
+</li>
+</ul>
+<h2>Excluding Writers or Components</h2>
+<p>To exclude all writers, use the <strong>-nw</strong> optional flag when creating the shadow copy.</p>
+<p>To exclude all of a writer's components, use the <strong>-wx</strong> optional flag in any of the following formats:</p>
+<ul>
+<li><strong>vshadow</strong> <strong>-wx</strong> <em>WriterName</em></li>
+<li><strong>vshadow</strong> <strong>-wx</strong> <strong>&quot;<em><strong>Writer Name String</strong></em>&quot;</strong></li>
+<li><strong>vshadow</strong> <strong>-wx</strong> <strong>{<em><strong>WriterID</strong></em>}</strong></li>
+<li><strong>vshadow</strong> <strong>-wx</strong> <strong>{<em><strong>InstanceID</strong></em>}</strong></li>
+</ul>
+<p>To exclude specific components, use the <strong>-wx</strong> optional flag in any of the following formats:</p>
+<ul>
+<li><strong>vshadow</strong> <strong>-wx</strong> <em>WriterName</em>**:\<em><strong>LogicalPath</strong></em>\**<em>ComponentName</em></li>
+<li><strong>vshadow</strong> <strong>-wx</strong> **&quot;<em><strong>Writer Name String</strong></em>&quot;:\<em><strong>LogicalPath</strong></em>\**<em>ComponentName</em></li>
+<li><strong>vshadow</strong> <strong>-wx</strong> **{<em><strong>WriterID</strong></em>}:\<em><strong>LogicalPath</strong></em>\**<em>ComponentName</em></li>
+<li><strong>vshadow</strong> <strong>-wx</strong> **{<em><strong>InstanceID</strong></em>}:\<em><strong>LogicalPath</strong></em>\**<em>ComponentName</em></li>
+</ul>
+<p>The following examples show how to use the <strong>-wx</strong> optional flag.</p>
+<ul>
+<li>
+<p>Specifying <em>WriterName</em>:\<em>LogicalPath</em>\<em>ComponentName</em>:</p>
+<p><strong>vshadow -wx=&quot;Registry Writer:\Registry&quot;</strong></p>
+</li>
+<li>
+<p>Specifying {<em>WriterID</em>}:</p>
+<p><strong>vshadow -wx={BE000CBE-11FE-4426-9C58-531AA6355FC4}</strong></p>
+</li>
+<li>
+<p>Specifying more than one writer or component:</p>
+<p><strong>vshadow -wx=&quot;Registry Writer:\Registry&quot; -wx=&quot;COM+ REGDB Writer&quot;</strong></p>
+</li>
+</ul>
+<h2>Breaking Shadow Copy Sets Using the BreakSnapshotSetEx Method</h2>
+<p>The following examples show how to use the <strong>-bex</strong> command-line option.</p>
+<ul>
+<li>
+<p>Specifying that the shadow copy LUN will be masked from the host:</p>
+<p><strong>vshadow</strong> <strong>-bex</strong> <strong>-mask</strong></p>
+</li>
+<li>
+<p>Specifying that the shadow copy LUN will be exposed to the host as a read/write volume:</p>
+<p><strong>vshadow</strong> <strong>-bex</strong> <strong>-rw</strong></p>
+</li>
+<li>
+<p>Specifying that the shadow copy LUN will be exposed to the host as a read/write volume, and that none of the disk signatures on the shadow copy LUNs will be reverted to that of the original LUNs:</p>
+<p><strong>vshadow</strong> <strong>-bex</strong> <strong>-norevert</strong></p>
+</li>
+</ul>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DirectX Video Acceleration IAMVideoAccelerator Operational Specification</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: DirectX Video Acceleration IAMVideoAccelerator Operational Specification
+ms.assetid: 25ee05d5-8554-4739-9122-e3c0255bf965
+title: DirectX Video Acceleration IAMVideoAccelerator Operational Specification
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>DirectX Video Acceleration IAMVideoAccelerator Operational Specification</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>The precise mechanism of operation is as follows:</p>
+<ol>
+<li>
+<p>Each restricted mode profile defined herein has an associated DirectX VA GUID which can be supported by a downstream input pin's <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-queryaccept"><strong>IPin::QueryAccept</strong></a> and <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-receiveconnection"><strong>IPin::ReceiveConnection</strong></a> and listed in <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-getvideoacceleratorguids"><strong>IAMVideoAccelerator::GetVideoAcceleratorGUIDs</strong></a>.</p>
+</li>
+<li>
+<p>Similarly, each encryption protocol type for use with DirectX VA shall have an associated encryption protocol type GUID which can be supported by a downstream input pin's <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-queryaccept"><strong>IPin::QueryAccept</strong></a> and <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-receiveconnection"><strong>IPin::ReceiveConnection</strong></a> and listed in <strong>IAMVideoAccelerator::GetVideoAcceleratorGUIDs</strong>. The &quot;no encryption&quot; GUID DXVA_NoEncrypt shall not be sent in this list, as support for it is required and therefore implicit.</p>
+</li>
+<li>
+<p>After calling <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-receiveconnection"><strong>IPin::ReceiveConnection</strong></a> to attempt a connection to the downstream input pin, the decoder's <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoacceleratornotify-getcreatevideoacceleratordata"><strong>IAMVideoAcceleratorNotify::GetCreateVideoAcceleratorData</strong></a> shall return a pointer to a DXVA_ConnectMode data structure containing the connection mode information for the connection. <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-getcompbufferinfo"><strong>IAMVideoAccelerator::GetCompBufferInfo</strong></a> shall be called with *pdwNumTypesCompBuffers = 16 and shall return compressed buffer information based on the convention that the type number of each buffer (as defined in Section 3.4 of the DirectX VA specification) can be used directly as the zero-based index into the array of <strong>AMVACompBufferInfo</strong> data structures that is returned. This requires that for any buffer types that will not be used (including buffer type 0, since there is no defined use of that buffer type), the accelerator driver will provide AMVACompBufferInfo data structures with some form of &quot;dummy&quot; parameter values (such as dwNumCompBuffers=0, dwWidthToCreate=0, dwHeightToCreate=0, and dwBytesToAllocate=0).</p>
+</li>
+<li>
+<p>DXVA function indications and associated data buffers are sent using <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-execute"><strong>IAMVideoAccelerator::Execute</strong></a>. The DXVA function is indicated in the dwFunction parameter of the call. The only DXVA functions that are relevant for initialization are DXVA_ConfigQueryOrReplyFunc and DXVA_EncryptProtocolFunc.</p>
+<ul>
+<li>
+<p>If dwFunction contains a DXVA_ConfigQueryOrReplyFunc, the lpPrivateInputData pointer for passing data to the accelerator in this call shall point to a configuration data structure, the lpPrivateOutputData pointer for receiving information from the accelerator shall point to an area where an alternative or duplicate configuration data structure can be placed, the pamvaBufferInfo pointer for an array of AMVABUFFERINFO shall be <strong>NULL</strong>, and dwNumBuffers shall be zero. The returned HRESULT contains the S_OK or S_FALSE indication, or E_FAIL or E_INVALIDARG or some other error indication HRESULT in the event of a severe problem in protocol execution (such as an invalid configuration parameter). All calls to <strong>IAMVideoAccelerator::Execute</strong> for all uses of DXVA_ConfigQueryOrReplyFunc shall precede all other calls to <strong>IAMVideoAccelerator::Execute</strong>.</p>
+</li>
+<li>
+<p>If dwFunction contains a DXVA_EncryptProtocolFunc, the lpPrivateInputData pointer for passing data to the accelerator in this call shall point to an encryption protocol data structure that begins with DXVA_EncryptProtocolHeader, the lpPrivateOutputData pointer for receiving information from the accelerator shall point to an area where the data to be returned (such as a certificate) by the encryption protocol (which will begin with DXVA_EncryptProtocolHeader) can be placed, the pamvaBufferInfo pointer for an array of AMVABUFFERINFO shall be <strong>NULL</strong>, and dwNumBuffers shall be zero. The returned HRESULT contains S_OK as long as the encryption protocol is functioning normally and contains E_FAIL or E_INVALIDARG or some other error indication HRESULT in the event of a severe problem in protocol execution.</p>
+<p>After initialization of operation in the above fashion, the actual operation of the decoder proceeds as follows:</p>
+</li>
+</ul>
+</li>
+<li>
+<p><strong>IAMVideoAccelerator::BeginFrame</strong> shall be called prior to sending any bDXVA_Func with compressed buffer parameters which cause writes to an uncompressed destination surface. The purpose of <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-beginframe"><strong>IAMVideoAccelerator::BeginFrame</strong></a> in DirectX VA is to associate destination surfaces with index values and to notify the video accelerator driver of the intent to initiate writes a surface so that the driver can respond with an indication of whether the surface is ready to be overwritten. The <strong>AMVABeginFrameInfo</strong> structure passed in <strong>IAMVideoAccelerator::BeginFrame</strong> shall contain a pInputData pointer to single WORD wBeginPictureIndex parameter matching the frame index passed into <strong>IAMVideoAccelerator::BeginFrame</strong> (and dwSizeInputData shall be 2). This is the index to be used in a compressed buffer to command a write to the surface (for example, to be used as wDecodedPictureIndex, wDeblockedPictureIndex, wBlendedDestinationIndex, or wPicResampleDestPicIndex). Each call to <strong>IAMVideoAccelerator::BeginFrame</strong> shall be paired with a corresponding call to <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-endframe"><strong>IAMVideoAccelerator::EndFrame</strong></a> as described below. For example, if a compressed picture is to be decoded and then alpha blended using front-end buffer-to-buffer blending with a graphic image, there would be a call to <strong>IAMVideoAccelerator::BeginFrame</strong> prior to decoding the compressed picture into a surface specified in wDecodedPictureIndex, then a call to <strong>IAMVideoAccelerator::EndFrame</strong> after passing all compressed buffers used to decode the picture, then a second call to <strong>IAMVideoAccelerator::BeginFrame</strong> prior to commanding alpha blending combination of the graphic source with the decoded picture into a surface specified in wBlendedDestinationIndex, and then a second call to <strong>IAMVideoAccelerator::EndFrame</strong> after the alpha blend combination operation.The pointer pOutputData in AMVABeginFrameInfo shall be <strong>NULL</strong> (and dwSizeOutputData shall be &quot;0&quot;). The HRESULT that is returned by <strong>IAMVideoAccelerator::BeginFrame</strong> shall be:</p>
+<ul>
+<li>S_OK if the uncompressed surface is available and ready for use.</li>
+<li>E_PENDING if the uncompressed surface is not yet available for use but will become available soon (if the uncompressed surface is being read for display and the reading/display of the surface has not yet been completed).</li>
+<li>E_FAIL or E_INVALIDARG some other error indication only if a data format or protocol error is detected (such as an incorrect value of dwSizeInputData or a non-<strong>NULL</strong> pOutputData).</li>
+</ul>
+</li>
+<li>
+<p>DXVA function indications and associated data buffers are sent using <strong>IAMVideoAccelerator::Execute</strong>. More than one bDXVA_Func value may be indicated in the same call to <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-execute"><strong>IAMVideoAccelerator::Execute</strong></a>. The bDXVA_Func values shall be packed into the dwFunction parameter of the call, with the first function command in the eight MSBs, the next command in the next eight bits, and so on, with any remaining bits padded out with zeros. The value 0xFF for bDXVA_Func indicates that the bDXVA_Func is extended to two or four bytes. If the second byte is also 0xFF, this indicates that bDXVA_Func is extended to four bytes. If the upper four bits of the third byte are 0xF or 0x0, this indicates that bDXVA_Func contains a DXVA_ConfigQueryOrReplyFunc or DXVA_EncryptProtocolFunc. Multi-byte commands shall not indicate continuation past the end of dwFunction. Care must be taken by the decoder to ensure that no sequential dependencies are present between different bDXVA_Func values specified in the same call to <strong>IAMVideoAccelerator::Execute</strong> and that all potential race conditions (such as between picture decoding and sub-picture blending, between sub-picture loading and sub-picture blending, and so on) are prevented by appropriate calls to <strong>IAMVideoAccelerator::BeginFrame</strong> and <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-queryrenderstatus"><strong>IAMVideoAccelerator::QueryRenderStatus</strong></a> before subsequent calls to <strong>IAMVideoAccelerator::Execute</strong>.</p>
+<ul>
+<li>
+<p>If dwFunction contains a DXVA_ConfigQueryOrReplyFunc, the lpPrivateInputData pointer for passing data to the accelerator in this call shall point to a configuration data structure, the lpPrivateOutputData pointer for receiving information from the accelerator shall point to an area where an alternative or duplicate configuration data structure can be placed, the pamvaBufferInfo pointer for an array of AMVABUFFERINFO shall be <strong>NULL</strong>, and dwNumBuffers shall be zero. The returned HRESULT contains the S_OK or S_FALSE indication in response to the query, or E_FAIL or E_INVALIDARG some other error indication HRESULT in the event of a severe problem in protocol execution (such as an invalid.configuration parameter). All calls to <strong>IAMVideoAccelerator::Execute</strong> for all uses of DXVA_ConfigQueryOrReplyFunc shall precede all other calls to <strong>IAMVideoAccelerator::Execute</strong>.</p>
+</li>
+<li>
+<p>If dwFunction contains a DXVA_EncryptProtocolFunc, the lpPrivateInputData pointer for passing data to the accelerator in this call shall point to an encryption protocol data structure that begins with DXVA_EncryptProtocolHeader, the lpPrivateOutputData pointer for receiving information from the accelerator shall point to an area where the data to be returned (such as a certificate) by the encryption protocol (which will begin with DXVA_EncryptProtocolHeader) can be placed, the pamvaBufferInfo pointer for an array of AMVABUFFERINFO shall be <strong>NULL</strong>, and dwNumBuffers shall be zero. The returned HRESULT contains S_OK as long as the encryption protocol is functioning normally and contains E_FAIL or E_INVALIDARG or some other error indication HRESULT in the event of a severe problem in protocol execution.</p>
+</li>
+<li>
+<p>If dwFunction does not contain a DXVA_ConfigQueryOrReplyFunc or DXVA_EncryptProtocolFunc, the lpPrivateInputData pointer for passing data to the accelerator shall point to a buffer description list. The first four entries in the buffer description list structure for each buffer (dwTypeIndex, dwBufferIndex, dwDataOffset, and dwDataSize) shall be equal to those in the AMVABUFFERINFO data structure for the same buffer. If bDXVA_Func is equal to &quot;1&quot; is specified within dwFunction and bPicReadbackRequests is &quot;1&quot;, the lpPrivateOutputData pointer for receiving information from the accelerator shall point to an area of persistent memory (for example heap) to be filled in with read-back macroblock data from the accelerator (such data not guaranteed to be present until <strong>IAMVideoAccelerator::QueryRenderStatus</strong> for writing to the same picture parameters buffer indicates S_OK as described in item 10 below). Otherwise, the lpPrivateOutputData pointer for receiving information from the accelerator shall point to a single DWORD to be set to one of the following indication values (particularly useful for reporting bitstream errors in off-host VLD operation).</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Execution OK.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Minor problem in data format encountered.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Significant problem in data format encountered.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Severe problem in data format encountered.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Other severe problem encountered.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>If either type of &quot;severe&quot; problem is indicated, the software decoder should cease to operate the function(s) unless corrective action can be taken. This data returned from the accelerator shall not be read by the host until after the buffer rendering for the picture has completed, as can be tested by <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-queryrenderstatus"><strong>IAMVideoAccelerator::QueryRenderStatus</strong></a>. The returned HRESULT contains S_OK as long as the interface operation is functioning normally and may return E_FAIL or E_INVALIDARG or some other error indication HRESULT in the event of a severe problem.</p>
+</li>
+</ul>
+</li>
+<li>
+<p>The picture decoding parameters buffer shall be among the first buffers sent for the decoding of each picture when using <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-execute"><strong>IAMVideoAccelerator::Execute</strong></a> with bDXVA_Func equal to &quot;1&quot;, and all the buffers for decoding a picture in a bitstream shall be sent before any buffers for decoding subsequent pictures. If a macroblock control command buffer is sent, a corresponding residual difference data buffer shall be sent (containing data for the same macroblocks) with the same <strong>IAMVideoAccelerator::Execute</strong> call.</p>
+</li>
+<li>
+<p><a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-endframe"><strong>IAMVideoAccelerator::EndFrame</strong></a> shall be called after all compressed buffers have been sent that will cause the creation of the output content in a specified uncompressed surface (a result of operations specified for wDecodedPictureIndex, wDeblockedPictureIndex, wBlendedDestinationIndex, or wPicResampleDestPicIndex). The purpose of this call to <strong>IAMVideoAccelerator::EndFrame</strong> is to notify the video accelerator hardware that all data needed for the specified operation has been sent. The pointer to data to send downstream through <strong>IAMVideoAccelerator::EndFrame</strong> shall point to a single WORD wEndPictureIndex containing the index of the frame that is ending. This parameter shall match the wBeginPictureIndex value specified in the prior call to <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-beginframe"><strong>IAMVideoAccelerator::BeginFrame</strong></a> before the sending of the relevant compressed buffers. Subsequent to a call to <strong>IAMVideoAccelerator::EndFrame</strong>, the uncompressed surface with index wEndPictureIndex shall not be found in any picture's wDecodedPictureIndex, wDeblockedPictureIndex, wBlendedDestinationIndex, or wPicResampleDestPicIndex until after another call to <strong>IAMVideoAccelerator::BeginFrame</strong> is issued to announce that this will occur and an S_OK has been returned as a result. However, that destination surface index may occur in subsequent read access commands such as wForwardRefPictureIndex, wBackwardRefPictureIndex, wPicResampleSourcePicIndex, or bRefPicSelect[i]. The HRESULT returned by <strong>IAMVideoAccelerator::EndFrame</strong> shall be S_OK unless there is some kind of data format or protocol error, in which case it can be E_FAIL or E_INVALIDARG or some other error indication.</p>
+</li>
+<li>
+<p>In the case of field based decoding (for example, in MPEG-2 bitstreams) there will not be a one-to-one mapping of functional pictures in the bitstream to uncompressed surfaces in the accelerator interface. When decoding field pictures in an MPEG-2 bitstream, there will be two &quot;pictures&quot; decoded to produce one complete output uncompressed surface. In the DirectX VA interface definition, each frame corresponds to each use of wDecodedPictureIndex, wDeblockedPictureIndex, wBlendedDestinationIndex, or wPicResampleDestPicIndex. Thus two pairs of calls to <strong>IAMVideoAccelerator::BeginFrame</strong> and <strong>IAMVideoAccelerator::EndFrame</strong> are required for the decoding of field pictures into output uncompressed surfaces.</p>
+</li>
+<li>
+<p>A call to <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-queryrenderstatus"><strong>IAMVideoAccelerator::QueryRenderStatus</strong></a> with dwFlags equal to zero which occurs sometime after a call to <strong>IAMVideoAccelerator::EndFrame</strong> with a particular wEndPictureIndex and checks the status of a buffer that was sent that contained the wEndPictureIndex in wDecodedPictureIndex, wDeblockedPictureIndex, wBlendedDestinationIndex, or wPicResampleDestPicIndex will return an S_OK indication if all of the operations to write the data to the uncompressed surface have completed and will return E_PENDING if the operation has not yet completed. E_FAIL or E_INVALIDARG or some other error indication may be returned in the event of a protocol error.</p>
+</li>
+</ol>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="mapping-directx-video-acceleration-to-iamvideoaccelerator.html">Mapping DirectX Video Acceleration to IAMVideoAccelerator</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

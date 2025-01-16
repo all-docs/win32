@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating a Disk Cleanup Handler</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Creating a Disk Cleanup Handler
+description: One axiom proven time and again in the world of computers is that regardless of the size of your computer's storage capacity, you will eventually fill it up.
+ms.assetid: f85e0db7-fbdb-452e-90c8-672f716b5692
+keywords:</p>
+<ul>
+<li>disk cleanup handlers</li>
+<li>Disk Cleanup</li>
+<li>DataDrivenCleaner</li>
+<li>register,disk cleanup handlers
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Creating a Disk Cleanup Handler</h1>
+<p>One axiom proven time and again in the world of computers is that regardless of the size of your computer's storage capacity, you will eventually fill it up. While the average size of a computer's hard disk has increased dramatically over time, applications have also grown accordingly, leaving users looking for ways to create more free hard disk space. Available space is also reduced by the many temporary files that applications create for backup or performance reasons. When disk space becomes low, it becomes necessary to reduce the amount of space used by applications. Disk space can be freed using a variety of means, including the following:</p>
+<ul>
+<li>Deleting files.</li>
+<li>Compressing files.</li>
+<li>Moving files to a backup medium.</li>
+<li>Transferring files to a remote server.</li>
+</ul>
+<p>Files that are good candidates for cleanup include:</p>
+<ul>
+<li>Files that the user will never need again.</li>
+<li>Temporary files that exist only for performance reasons.</li>
+<li>Files that can be restored, if needed, from an installation CD.</li>
+<li>Data files that have possibly been superseded by newer versions, such as old backup files.</li>
+<li>Older files that have not been used in a long time.</li>
+</ul>
+<p>Deletion is particularly appropriate for files that the user will never need again for example, files that are temporarily cached for performance reasons. Deletion is also appropriate for files that are easily restored, such as graphics files that can be reloaded from an installation CD. Files that the user might need later or that would be difficult to reconstruct are better candidates for compression or backup.</p>
+<p>Expecting a user to manually clean the file system is not a good solution. The user may not know where many of the files are located or how to recognize which ones can be safely removed. In addition, there's the risk that the user might delete essential files.</p>
+<p>The following facets of the Disk Cleanup utility are discussed in this topic.</p>
+<ul>
+<li><a href="#the-windows-disk-cleanup-utility">The Windows Disk Cleanup Utility</a></li>
+<li><a href="#implementation-basics">Implementation Basics</a>
+<ul>
+<li><a href="#initializeinitializeex">Initialize/InitializeEx</a></li>
+<li><a href="#getspaceused">GetSpaceUsed</a></li>
+<li><a href="#showproperties">ShowProperties</a></li>
+<li><a href="#purge">Purge</a></li>
+<li><a href="#deactivate">Deactivate</a></li>
+</ul>
+</li>
+<li><a href="#registering-a-disk-cleanup-handler">Registering a Disk Cleanup Handler</a>
+<ul>
+<li><a href="#registering-a-handlers-clsid">Registering a Handler's CLSID</a></li>
+<li><a href="#registering-a-handler-with-the-disk-cleanup-manager-general">Registering a Handler with the Disk Cleanup Manager: General</a></li>
+<li><a href="#registering-a-handler-with-the-disk-cleanup-manager-windows-2000-or-later-systems">Registering a Handler with the Disk Cleanup Manager: Windows 2000 or Later Systems</a></li>
+<li><a href="#using-the-datadrivencleaner-object">Using the DataDrivenCleaner Object</a></li>
+<li><a href="#example-registration-of-a-disk-cleanup-handler">Example Registration of a Disk Cleanup Handler</a></li>
+</ul>
+</li>
+</ul>
+<h2>The Windows Disk Cleanup Utility</h2>
+<p>Starting on Windows 98, the Windows operating system includes Disk Cleanup, a utility that makes it much easier for the user to manage available hard disk space. The Disk Cleanup utility is designed to free up as much disk space as possible and decrease the risk that the user will delete essential files accidentally.</p>
+<p>Disk cleanup can be initiated in three ways.</p>
+<ul>
+<li>The user can initiate disk cleanup by clicking <strong>Start</strong>; pointing to <strong>All Programs</strong>, <strong>Accessories</strong>, and <strong>System Tools</strong>; and then clicking <strong>Disk Cleanup</strong>.</li>
+<li>The system notifies the user with a message box that unused disk space has reached critical mode. The critical mode threshold for a drive larger than 2.25 gigabytes (GB) is 200 megabytes (MB). Subsequent warnings are given at 80, 50, and 1 MB. The user is given the option of freeing disk space manually or starting the Disk Cleanup utility.</li>
+<li>The user can have the Windows Scheduled Task Wizard (known as the Maintenance Wizard on older systems) run the Disk Cleanup utility automatically at scheduled times.</li>
+</ul>
+<p>The basic challenge inherent in disk cleanup is to free as much disk space as possible without deleting essential files. Because there is no standard way to mark files for cleanup, no single application can reliably detect and clean all unessential files. The Disk Cleanup utility addresses this problem by splitting the cleanup operation between a single <em>disk cleanup manager</em> and a collection of <em>disk cleanup handlers</em>.</p>
+<p>When the Disk Cleanup utility is run, the user sees the following dialog box. (If more than one disk or disk partition exists on the computer, the user is first asked to choose a drive before this dialog is displayed.)</p>
+<p><img src="images/cleanup1.png" alt="screen shot of the clean up dialog box" /></p>
+<p>The disk cleanup manager is part of the operating system. It displays the dialog box shown in the preceding illustration, handles user input, and manages the cleanup operation. The actual selection and cleanup of unneeded files is done by the individual disk cleanup handlers shown in the disk cleanup manager's list box. The user has the option of enabling or disabling individual handlers by selecting or clearing their check box in the disk cleanup manager's UI.</p>
+<p>Each handler is responsible for a well defined set of files. For example, the selected handler in the illustration is responsible for cleaning up downloaded program files. The handler selected in the illustration also provides a <strong>View Files</strong> button. By clicking the button, the user can request that the handler display a UI typically a Windows Explorer window that allows the user to specify which files or classes of files to clean.</p>
+<p>Although Windows comes with a number of disk cleanup handlers, they aren't designed to handle files produced by other applications. Instead, the disk cleanup manager is designed to be flexible and extensible by enabling any developer to implement and register their own disk cleanup handler. Any developer can extend the available disk cleanup services by implementing and registering a disk cleanup handler.</p>
+<p>All applications that produce temporary files can and should implement and register a disk cleanup handler. Doing so gives users a convenient and reliable way to manage the application's temporary files. When you implement the handler, you can decide which files are affected and determine how the actual cleanup happens.</p>
+<h2>Implementation Basics</h2>
+<p>Cleanup handlers are in-process server Component Object Model (COM) objects. Windows provides an existing handler object called the DataDrivenCleaner for your use. You can also opt to implement a handler yourself for more flexibility. These objects then allow you to specify how to select files, free disk space, and, in the case of an implemented handler, display the optional UI for more granular control. This section addresses the matter of implementing your own handler. For details concerning the use of the DataDrivenCleaner object, see <a href="#using-the-datadrivencleaner-object">Using the DataDrivenCleaner Object</a>.</p>
+<p>A disk cleanup handler should perform these five basic tasks.</p>
+<ul>
+<li>Initialize the handler object.</li>
+<li>Scan the disk to determine how much disk space can be freed.</li>
+<li>Display the UI to obtain user feedback about which files to clean. (Optional)</li>
+<li>Do the cleanup.</li>
+<li>Shut down.</li>
+</ul>
+<p>To allow the disk cleanup manager to manage these tasks, a handler must export either <a href="/windows/desktop/api/Emptyvc/nn-emptyvc-iemptyvolumecache"><strong>IEmptyVolumeCache</strong></a> for Windows 98 or <a href="/windows/desktop/api/Emptyvc/nn-emptyvc-iemptyvolumecache2"><strong>IEmptyVolumeCache2</strong></a> for Windows Millennium Edition (Windows Me), Windows 2000, and Windows XP. Because <strong>IEmptyVolumeCache2</strong> inherits from <strong>IEmptyVolumeCache</strong>, adding only the additional method <strong>InitializeEx</strong>, relatively little extra work is required to implement both. Unless your handler is intended for only one of these operating systems, it should export both interfaces.</p>
+<p>To export these interfaces, you must implement these methods corresponding to the five basic tasks.</p>
+<ul>
+<li><a href="#initializeinitializeex">Initialize/InitializeEx</a></li>
+<li><a href="#getspaceused">GetSpaceUsed</a></li>
+<li><a href="#showproperties">ShowProperties</a></li>
+<li><a href="#purge">Purge</a></li>
+<li><a href="#deactivate">Deactivate</a></li>
+</ul>
+<h3>Initialize/InitializeEx</h3>
+<p>The two initialization methods, which are quite similar, are called when the Disk Cleanup utility is run. The Windows 98 disk cleanup manager calls a handler's <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-initialize"><strong>IEmptyVolumeCache::Initialize</strong></a> method. The Windows Millennium Edition (Windows Me), Windows 2000, or Windows XP disk cleanup manager, however, first tries calling <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache2-initializeex"><strong>IEmptyVolumeCache2::InitializeEx</strong></a> and only uses <strong>IEmptyVolumeCache::Initialize</strong> if <a href="/windows/desktop/api/Emptyvc/nn-emptyvc-iemptyvolumecache2"><strong>IEmptyVolumeCache2</strong></a> is not exposed by the handler. The disk cleanup manager passes information to the method, such as the handler's registry key and the disk volume that is to be cleaned.</p>
+<p>Either method can return various display strings and set one or more flags. The primary difference between the two methods is how the text displayed in the disk cleanup manager is handled. The following three strings are affected.</p>
+<table>
+<thead>
+<tr>
+<th>String</th>
+<th>Purpose</th>
+<th>Initialize</th>
+<th>InitializeEx</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Display Name</td>
+<td>The handler's name displayed in the disk cleanup manager's list box.</td>
+<td>If <em>ppwszDisplayName</em> is <strong>NULL</strong>, the default value is retrieved from the registry.</td>
+<td>A properly localized string must be specified in <em>ppwszDisplayName</em> no registry values are used.</td>
+</tr>
+<tr>
+<td>Description</td>
+<td>Descriptive text displayed below the list box when the handler's name is selected.</td>
+<td>If <em>ppwszDescription</em> is <strong>NULL</strong>, the default value is retrieved from the registry.</td>
+<td>A properly localized string must be specified in <em>ppwszDescription</em> no registry values are used.</td>
+</tr>
+<tr>
+<td>Button Text</td>
+<td>Text for the optional button that allows users to display the handler's UI.</td>
+<td>No parameter available. Must be specified in the registry.</td>
+<td>A properly localized string must be specified in <em>ppwszBtnText</em> no registry values are used.</td>
+</tr>
+</tbody>
+</table>
+<p>The <em>pdwFlags</em> parameter found in both initialization methods recognizes the same set of flags. Two of these flags are passed to the method by the disk cleanup manager.</p>
+<ul>
+<li>
+<p><strong>EVCF_SETTINGSMODE</strong></p>
+<p>If the disk cleanup manager is being run on a schedule, it sets the <strong>EVCF_SETTINGSMODE</strong> flag. If this flag is set, the disk cleanup manager does not call the <a href="#getspaceused">GetSpaceUsed</a>, <a href="#purge">Purge</a>, or <a href="#showproperties">ShowProperties</a> methods. The handler's <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-initialize"><strong>Initialize</strong></a> or <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache2-initializeex"><strong>InitializeEx</strong></a> method must handle all of the tasks normally performed by <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-getspaceused"><strong>GetSpaceUsed</strong></a> and <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-purge"><strong>Purge</strong></a>. Because there is no opportunity for user feedback, only those files that are extremely safe to clean up should be touched. You should ignore the initialization method's <em>pcwszVolume</em> parameter and clean unneeded files regardless of what drive they are on.</p>
+</li>
+<li>
+<p><strong>EVCF_OUTOFDISKSPACE</strong></p>
+<p>If the <strong>EVCF_OUTOFDISKSPACE</strong> flag is set, the user's disk drive is critically short of space. The handler should be aggressive about deleting files, even if it results in a performance loss. However, the handler obviously should not delete files that would cause an application to fail or the user to lose data.</p>
+</li>
+</ul>
+<p>The remaining flags are set by the disk cleanup handler and returned to the disk cleanup manager. For more information, see the method reference pages for <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-initialize"><strong>IEmptyVolumeCache::Initialize</strong></a> and <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache2-initializeex"><strong>IEmptyVolumeCache2::InitializeEx</strong></a>.</p>
+<ul>
+<li>
+<p>EVCF_DONTSHOWIFZERO</p>
+<p>Display the handler in the disk cleanup manager's list box only if the value returned by <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-getspaceused"><strong>GetSpaceUsed</strong></a> indicates that the handler can free some disk space.</p>
+</li>
+<li>
+<p>EVCF_ENABLEBYDEFAULT</p>
+<p>Specifies that the handler is enabled by default. It will run every time a disk cleanup takes place unless the user disables it by clearing its check box in the disk cleanup manager's list of handlers.</p>
+</li>
+<li>
+<p>EVCF_ENABLEBYDEFAULT_AUTO</p>
+<p>Specifies that the handler is automatically enabled to run during scheduled cleanups.</p>
+</li>
+<li>
+<p>EVCF_HASSETTINGS</p>
+<p>Set this flag if your handler has a UI to display. In response, the disk cleanup manager displays a button when that handler is selected in the list box. If that button is clicked, the disk cleanup manager calls <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-showproperties"><strong>ShowProperties</strong></a>.</p>
+</li>
+<li>
+<p>EVCF_REMOVEFROMLIST</p>
+<p>Delete the handler's name from the list of available handlers after the handler has been run once. The handler's registry information is also deleted.</p>
+</li>
+</ul>
+<h3>GetSpaceUsed</h3>
+<p>The disk cleanup manager calls this method to determine how much space a disk cleanup handler can potentially free. The disk cleanup manager then displays that value to the right of the handler's name in the list box. This operation is performed on all of the handlers registered with the disk cleanup manager when the manager is launched and before the manager's main UI is displayed. When <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-getspaceused"><strong>GetSpaceUsed</strong></a> is called, the handler should scan the files that it is responsible for, determine which of them are cleanup candidates, and return the amount of disk space that it can free.</p>
+<p>Because scanning can be a lengthy process, the disk cleanup manager uses this method's <em>picb</em> parameter to pass a pointer to an <a href="/windows/desktop/api/Emptyvc/nn-emptyvc-iemptyvolumecachecallback"><strong>IEmptyVolumeCacheCallBack</strong></a> interface. The handler uses the interface periodically during the scan to call <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecachecallback-scanprogress"><strong>IEmptyVolumeCacheCallBack::ScanProgress</strong></a>, which serves two purposes.</p>
+<ul>
+<li>Allows the disk cleanup manager to update a progress bar, informing the user how the scan is progressing.</li>
+<li>Notifies the handler to stop the scan in the event that the progress window's <strong>Cancel</strong> button is clicked. That button event is not communicated directly to the handler; instead, the disk cleanup manager returns E_ABORT the next time <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-getspaceused"><strong>GetSpaceUsed</strong></a> calls <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecachecallback-scanprogress"><strong>IEmptyVolumeCacheCallBack::ScanProgress</strong></a>.</li>
+</ul>
+<h3>ShowProperties</h3>
+<p>Before starting cleanup, the handler can display a UI typically in the form of a Windows Explorer window that allows the user to see a list of files or classes of files selected for cleanup by the handler. If the handler sets the <strong>EVCF_HASSETTINGS</strong> flag when <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-initialize"><strong>Initialize</strong></a> or <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache2-initializeex"><strong>InitializeEx</strong></a> is called, the user can request the UI by clicking the button displayed for that purpose in the disk cleanup manager. The button text varies from handler to handler, but &quot;View Files,&quot; &quot;View Pages,&quot; and &quot;Options&quot; are common labels.</p>
+<p>When the button is clicked, the disk cleanup manager calls <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-showproperties"><strong>ShowProperties</strong></a> to prompt the handler to display the UI. The UI should be created as a child of the window whose handle is passed in the <strong>ShowProperties</strong> method's <em>hwnd</em> parameter.</p>
+<h3>Purge</h3>
+<p>The disk cleanup manager calls the handler's <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-purge"><strong>Purge</strong></a> method to set the cleanup in motion. The method's <em>picb</em> parameter is a pointer to the disk cleanup manager's <a href="/windows/desktop/api/Emptyvc/nn-emptyvc-iemptyvolumecachecallback"><strong>IEmptyVolumeCacheCallBack</strong></a> interface. As with the <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-getspaceused"><strong>GetSpaceUsed</strong></a> method, the handler should use the callback interface periodically to report its progress and query the disk cleanup manager whether the user has clicked <strong>Cancel</strong>. However, note that the <strong>Purge</strong> method must call <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecachecallback-purgeprogress"><strong>IEmptyVolumeCacheCallBack::PurgeProgress</strong></a>, not <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecachecallback-scanprogress"><strong>ScanProgress</strong></a>.</p>
+<h3>Deactivate</h3>
+<p>The <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-deactivate"><strong>Deactivate</strong></a> method is called when the disk cleanup manager is preparing to shut down. The handler should perform any needed cleanup tasks and return. If you don't want the handler to be run again, set the <strong>EVCF_REMOVEFROMLIST</strong> flag in the initialization method's <em>pdwFlags</em> parameter. If this flag is set, the disk cleanup manager removes the handler from its list and deletes the handler's registry entries. You must re-add the registry entries to run the handler again. This flag is typically used for handlers that are run only once.</p>
+<h2>Registering a Disk Cleanup Handler</h2>
+<p>To add a handler to the disk cleanup manager's list, certain keys and values must be added to the Windows registry.</p>
+<ul>
+<li><a href="#registering-a-handlers-clsid">Registering a Handler's CLSID</a></li>
+<li><a href="#registering-a-handler-with-the-disk-cleanup-manager-general">Registering a Handler with the Disk Cleanup Manager: General</a></li>
+<li><a href="#registering-a-handler-with-the-disk-cleanup-manager-windows-2000-or-later-systems">Registering a Handler with the Disk Cleanup Manager: Windows 2000 or Later Systems</a></li>
+<li><a href="#using-the-datadrivencleaner-object">Using the DataDrivenCleaner Object</a></li>
+<li><a href="#example-registration-of-a-disk-cleanup-handler">Example Registration of a Disk Cleanup Handler</a></li>
+</ul>
+<h3>Registering a Handler's CLSID</h3>
+<p>As with all COM objects, the handler object's GUID and DLL must be registered under the <strong>CLSID</strong> key in <strong>HKEY_CLASSES_ROOT</strong>. You can also register an icon that is displayed next to the handler's name in the disk cleanup manager's list box, but this is optional. The following example shows the keys, values, and data involved.</p>
+<pre><code>HKEY_CLASSES_ROOT
+   CLSID
+      Handler's GUID
+         DefaultIcon
+            (Default) = Handler's Icon Path, Icon Index
+         InprocServer32
+            (Default) = Handler's DLL path
+            ThreadingModel = Apartment
+</code></pre>
+<h3>Registering a Handler with the Disk Cleanup Manager: General</h3>
+<p>To complete the registration, a handler must add a key holding its specifics as shown here. The remainder of this section discusses the contents of this key.</p>
+<pre><code>HKEY_LOCAL_MACHINE
+   Software
+      Microsoft
+         Windows
+            CurrentVersion
+               Explorer
+                  VolumeCaches
+                     Handler's Key
+</code></pre>
+<p>In general, the name of the key holding a handler's particulars is named for the type of file that it handles, such as <strong>Downloaded Program Files</strong>, but this is not a requirement. The following table details the possible values found under this key.</p>
+<blockquote>
+<p>[!Note]<br />
+Only the Default value specifying the handler's class identifier (CLSID) is required all other values are optional.</p>
+</blockquote>
+<!-- raw HTML omitted -->
+<h3>Registering a Handler with the Disk Cleanup Manager: Windows 2000 or Later Systems</h3>
+<p>Specifying display text in the registry can make it difficult to localize software. For this reason, Windows 2000 and Windows XP support the <a href="/windows/desktop/api/Emptyvc/nn-emptyvc-iemptyvolumecache2"><strong>IEmptyVolumeCache2</strong></a> interface with its preferred initialization method <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache2-initializeex"><strong>InitializeEx</strong></a>. Under Windows 2000 or later, an attempt is always made to call <strong>IEmptyVolumeCache2::InitializeEx</strong> before <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache-initialize"><strong>IEmptyVolumeCache::Initialize</strong></a>. The system only uses <strong>Initialize</strong> to initialize a handler if <strong>IEmptyVolumeCache2</strong> is not exposed.</p>
+<p>In regard to the registry, the only difference under Windows 2000 or later is that you can omit the AdvancedButtonText, Display, and Description values when <a href="/windows/desktop/api/Emptyvc/nf-emptyvc-iemptyvolumecache2-initializeex"><strong>IEmptyVolumeCache2::InitializeEx</strong></a> is exposed by the handler. Those values, containing properly localized text, are provided to the disk cleanup manager when it calls <strong>InitializeEx</strong>.</p>
+<h3>Using the DataDrivenCleaner Object</h3>
+<p>A basic disk cleanup handler, called the DataDrivenCleaner, is provided by the operating system. To use this object as a handler rather than implementing your own, use the CLSID {C0E13E61-0CC6-11d1-BBB6-0060978B2AE6} as the Default value for the handler's subkey under <strong>VolumeCaches</strong> as described in <a href="#registering-a-handler-with-the-disk-cleanup-manager-general">Registering a Handler with the Disk Cleanup Manager: General</a>.</p>
+<p>The DataDrivenCleaner does not expose <a href="/windows/desktop/api/Emptyvc/nn-emptyvc-iemptyvolumecache2"><strong>IEmptyVolumeCache2</strong></a>, so the Display and Description values are provided through the registry. When declaring those strings, be aware that this could cause localization issues. Localized text can be provided through the PropertyBag value. The AdvancedButtonText value is ignored since no UI, and thus no button to display it, is available for this handler.</p>
+<h3>Example Registration of a Disk Cleanup Handler</h3>
+<p>The following shows an example registration for a disk cleanup handler implemented by The Phone Company. This handler implements both <a href="/windows/desktop/api/Emptyvc/nn-emptyvc-iemptyvolumecache"><strong>IEmptyVolumeCache</strong></a> and <a href="/windows/desktop/api/Emptyvc/nn-emptyvc-iemptyvolumecache2"><strong>IEmptyVolumeCache2</strong></a>, and so provides AdvancedButtonText, Description, and Display values in case it is used on a computer running Windows 98. The handler combines the CSIDL and Folder values to search for files in the C:\Program Files\The Phone Company\Temp directory, and the DDEVCF_DOSUBDIRS flag is set so that its subdirectories are also searched. Only those files with .tmp and .tpc extensions are considered for cleanup, and the DDEVCF_PRIVATE_LASTACCESS flag is set so that out of those files, only those that have not been accessed for 14 days or more are considered. The DDEVCF_DONTSHOWIFZERO flag is also set so that the handler does not appear on the list unless it has found cleanup candidates.</p>
+<pre><code>HKEY_LOCAL_MACHINE
+   Software
+      Microsoft
+         Windows
+            CurrentVersion
+               Explorer
+                  VolumeCaches
+                     The Phone Company Files
+                        (Default) = {the CLSID GUID}
+                        AdvancedButtonText = &amp;View Files
+                        CleanupString = c:\tpc.exe
+                        CSIDL = 0x00000026
+                        Description = Old temporary files.
+                        Display = The Phone Company Files
+                        FileList = *.tmp|*.tpc
+                        Flags = 0x10000021
+                        Folder = \The Phone Company\Temp
+                        IconPath = c:\Program Files\The Phone Company\tpc.dll,2
+                        LastAccess = 0x0000000e
+                        Priority = 200
+                        PropertyBag = {Property Bag CLSID GUID}
+</code></pre>
+</body>

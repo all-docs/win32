@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Certificate Revocation Lists</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Certificate Revocation Lists
+ms.assetid: 146e7e4a-4281-4f5c-8346-d6c0d5f5442f
+title: Certificate Revocation Lists
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Certificate Revocation Lists</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This topic describes how to examine the certificate revocation list (CRL) for revoked drivers when using Certified Output Protection Protocol (COPP).</p>
+<p>The CRL contains digests of revoked certificates and can be provided and signed only by Microsoft. The CRL is distributed through digital rights management (DRM) licenses. The CRL can revoke any certificate in the driver's certificates chain. If any certificate in the chain is revoked, then that certificate and all of the certificates below it in the chain are also revoked.</p>
+<p>To get the CRL, the application must use the Windows Media Format SDK, version 9 or later, and perform the following steps:</p>
+<ol>
+<li>Call <strong>WMCreateReader</strong> to create the Windows Media Format SDK reader object.</li>
+<li>Query the reader object for the <strong>IWMDRMReader</strong> interface.</li>
+<li>Call <strong>IWMDRMReader::GetDRMProperty</strong> with a value of g_wszWMDRMNet_Revocation to get the CRL. You must call this method twice: Once to get the size of the buffer to allocate, and once to fill the buffer. The second call returns a string that contains the CRL. The entire string is base-64 encoded.</li>
+<li>Decode the base-64 encoded string. You can use the <strong>CryptStringToBinary</strong> function to do this. This function is part of CryptoAPI.</li>
+</ol>
+<blockquote>
+<p>[!Note]<br />
+To use the <strong>IWMDRMReader</strong> interface, you must obtain a static DRM library from Microsoft and link your application to this library file. For more information, see the topic &quot;Obtaining the Required DRM Library&quot; in the Windows Media Format SDK documentation.</p>
+</blockquote>
+<p>Â </p>
+<p>If the CRL is not present on the user's computer, the <strong>GetDRMProperty</strong> method returns NS_E_DRM_UNSUPPORTED_PROPERTY. Currently, the only way to obtain the CRL is to acquire a DRM license.</p>
+<p>The following code shows a function that returns the CRL:</p>
+<pre lang="C++"><code>////////////////////////////////////////////////////////////////////////
+//  Name: GetCRL
+//  Description: Gets the certificate revocation list (CRL).
+//
+//  ppBuffer: Receives a pointer to the buffer that contains the CRL.
+//  pcbBuffer: Receives the size of the buffer returned in ppBuffer.
+//
+//  The caller must free the returned buffer by calling CoTaskMemFree.
+////////////////////////////////////////////////////////////////////////
+HRESULT GetCRL(BYTE **ppBuffer, DWORD *pcbBuffer)
+{
+    IWMReader *pReader = NULL;
+    IWMDRMReader *pDrmReader = NULL;
+    HRESULT hr = S_OK;
+
+    // DRM attribute data.
+    WORD cbAttributeLength = 0;
+    BYTE *pDataBase64 = NULL;
+    WMT_ATTR_DATATYPE type;
+
+    // Buffer for base-64 decoded CRL.
+    BYTE *pCRL = NULL;
+    DWORD cbCRL = 0;
+
+    // Create the WMReader object.
+    hr = WMCreateReader(NULL, 0, &amp;pReader);
+
+    // Query for the IWMDRMReader interface.
+    if (SUCCEEDED(hr))
+    {
+        hr = pReader-&gt;QueryInterface(
+            IID_IWMDRMReader, (void**)&amp;pDrmReader);
+    }
+
+    // Call GetDRMProperty once to find the size of the buffer.
+    if (SUCCEEDED(hr))
+    {
+        hr = pDrmReader-&gt;GetDRMProperty(
+            g_wszWMDRMNET_Revocation,
+            &amp;type,
+            NULL,
+            &amp;cbAttributeLength
+            );
+    }
+
+    // Allocate a buffer.
+    if (SUCCEEDED(hr))
+    {
+        pDataBase64 = (BYTE*)CoTaskMemAlloc(cbAttributeLength);
+        if (pDataBase64 == NULL)
+        {
+            hr = E_OUTOFMEMORY;
+        }
+    }
+
+    // Call GetDRMProperty again to get the property.
+    if (SUCCEEDED(hr))
+    {
+        hr = pDrmReader-&gt;GetDRMProperty(
+            g_wszWMDRMNET_Revocation,
+            &amp;type,
+            pDataBase64,
+            &amp;cbAttributeLength
+            );
+    }
+
+    // Find the size of the buffer for the base-64 decoding.
+    if (SUCCEEDED(hr))
+    {
+        BOOL bResult = CryptStringToBinary(
+            (WCHAR*)pDataBase64,    // Base-64 encoded string.
+            0,                      // Null-terminated.
+            CRYPT_STRING_BASE64,    
+            NULL,                   // Buffer (NULL).
+            &amp;cbCRL,                 // Receives the size of the buffer. 
+            NULL, NULL              // Optional.
+            );
+        if (!bResult)
+        {
+            hr = __HRESULT_FROM_WIN32(GetLastError());
+        }
+    }
+
+    // Allocate a buffer for the CRL.
+    if (SUCCEEDED(hr))
+    {
+        pCRL = (BYTE*)CoTaskMemAlloc(cbCRL);
+        if (pCRL == NULL)
+        {
+            hr = E_OUTOFMEMORY;
+        }
+    }
+
+    // Base-64 decode to get the CRL.
+    if (SUCCEEDED(hr))
+    {
+        BOOL bResult = CryptStringToBinary(
+            (WCHAR*)pDataBase64,    // Base-64 encoded string.
+            0,                      // Null-terminated.
+            CRYPT_STRING_BASE64,    
+            pCRL,                   // Buffer.
+            &amp;cbCRL,                 // Receives the size of the buffer. 
+            NULL, NULL              // Optional.
+            );
+        if (!bResult)
+        {
+            hr = __HRESULT_FROM_WIN32(GetLastError());
+        }
+    }
+
+    // Return the buffer to the caller. Caller must free the buffer.
+    if (SUCCEEDED(hr))
+    {
+        *ppBuffer = pCRL;
+        *pcbBuffer = cbCRL;
+    }
+    else
+    {
+        CoTaskMemFree(pCRL);
+    }
+
+    CoTaskMemFree(pDataBase64);
+    SAFE_RELEASE(pReader);
+    SAFE_RELEASE(pDrmReader);
+    return hr;
+}
+</code></pre>
+<p>Next, the application must verify that the CRL is valid. To do so, verify that the CRL certificate, which is part of the CRL, is directly signed by the Microsoft Root Certificate and has the SignCRL element value set to 1. Also, verify the signature of the CRL.</p>
+<p>After the CRL is verified, the application can store it. The CRL version number should also be checked before storing so that the application always stores the newest version.</p>
+<p>The CRL has the following format.</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Header</td>
+<td>32-bit CRL version32-bit number of entries</td>
+</tr>
+<tr>
+<td>Revocation Entries</td>
+<td>Multiple 160-bit revocation entries</td>
+</tr>
+<tr>
+<td>Certificate</td>
+<td>32-bit certificate lengthVariable-length certificate</td>
+</tr>
+<tr>
+<td>Signature</td>
+<td>8-bit signature type16-bit signature lengthVariable-length signature</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+All integer values are unsigned and are represented in big-endian (network byte order) notation.</p>
+</blockquote>
+<p>Â </p>
+<p>CRL Section Descriptions</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Header</p>
+<!-- raw HTML omitted -->
+<p>The header contains the version number of the CRL and the number of revocation entries in the CRL. A CRL can contain zero or more entries.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Revocation entries</p>
+<!-- raw HTML omitted -->
+<p>Each revocation entry is the 160-bit digest of a revoked certificate. Compare this digest with the DigestValue element within the certificate.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Certificate</p>
+<!-- raw HTML omitted -->
+<p>The certificate section contains a 32-bit value indicating the length (in bytes) of the XML certificate and its certificate chain, along with a byte array that contains both the XML certificate of the Certificate Authority (CA) and the certificate chain that has Microsoft as the Root. The certificate must be signed by a CA that has the authority to issue CRLs.</p>
+<blockquote>
+<p>[!Note]<br />
+The certificate must not be null-terminated.</p>
+</blockquote>
+<p>Â </p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->Signature</p>
+<!-- raw HTML omitted -->
+<p>The signature section contains the signature type and length, and the digital signature itself. The 8-bit type is set to 2 to indicate that it uses SHA-1 with 1024-bit RSA encryption. The length is a 16-bit value containing the length of the digital signature in bytes. The digital signature is calculated over all prior sections of the CRL.</p>
+<p>The signature is calculated using the RSASSA-PSS digital signature scheme that is defined in PKCS #1 (version 2.1). The hash function is SHA-1, which is defined in Federal Information Processing Standard (FIPS) 180-2, and the mask generation function is MGF1, which is defined in section B.2.1 in PKCS #1 (version 2.1). The RSASP1 and RSAVP1 operations use RSA with a 1024-bit modulus with a verification exponent of 65537.</p>
+<!-- raw HTML omitted -->
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-certified-output-protection-protocol--copp.html">Using Certified Output Protection Protocol (COPP)</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

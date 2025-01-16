@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flip model, dirty rectangles, scrolled areas</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Flip model, dirty rectangles, scrolled areas
+description: Describes the benefits of using the new flip-model swap chain and of optimizing presentation by specifying dirty rectangles and scrolled areas.
+ms.assetid: 22236FBD-E881-49B5-8AE9-96FB526DFEF8
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Flip model, dirty rectangles, scrolled areas</h1>
+<p>DXGI 1.2 supports a new flip-model swap chain, dirty rectangles, and scrolled areas. We explain the benefits of using the new flip-model swap chain and of optimizing presentation by specifying dirty rectangles and scrolled areas.</p>
+<h2>DXGI flip-model presentation</h2>
+<p>DXGI 1.2 adds support for the flip presentation model for Direct3D 10 and later APIs. In WindowsÂ 7, Direct3D 9EX first adopted <a href="../direct3darticles/direct3d-9ex-improvements.html">flip-model presentation</a> to avoid unnecessarily copying the swap-chain buffer. By using flip model, back buffers are flipped between the runtime and Desktop Window Manager (DWM), so DWM always composes directly from the back buffer instead of copying the back buffer content.</p>
+<p>DXGI 1.2 APIs include a revised DXGI swap-chain interface, <a href="/windows/desktop/api/DXGI1_2/nn-dxgi1_2-idxgiswapchain1"><strong>IDXGISwapChain1</strong></a>. You can use multiple <a href="/windows/desktop/api/DXGI1_2/nn-dxgi1_2-idxgifactory2"><strong>IDXGIFactory2</strong></a> interface methods to create the appropriate <strong>IDXGISwapChain1</strong> object to use with an <a href="../winprog/windows-data-types.html"><strong>HWND</strong></a> handle, a <a href="/uwp/api/Windows.UI.Core.CoreWindow">CoreWindow</a> object, <a href="../directcomp/directcomposition-portal.html">DirectComposition</a>, or the <a href="/uwp/api/Windows.UI.Xaml"><strong>Windows.UI.Xaml</strong></a> framework.</p>
+<p>You select the flip presentation model by specifying the <a href="/windows/desktop/api/DXGI/ne-dxgi-dxgi_swap_effect"><strong>DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL</strong></a> enumeration value in the <strong>SwapEffect</strong> member of the <a href="/windows/desktop/api/DXGI1_2/ns-dxgi1_2-dxgi_swap_chain_desc1"><strong>DXGI_SWAP_CHAIN_DESC1</strong></a> structure and by setting the <strong>BufferCount</strong> member of <strong>DXGI_SWAP_CHAIN_DESC1</strong> to a minimum of 2. For more info about how to use DXGI flip model, see <a href="dxgi-flip-model.html">DXGI flip model</a>. Because of the flip presentation model's smoother presentation and other new functionality, we recommend that you use flip presentation model for all new apps that you write with Direct3D 10 and later APIs.</p>
+<h2>Using dirty rectangles and the scroll rectangle in swap chain presentation</h2>
+<p>By using dirty rectangles and the scroll rectangle in swap chain presentation, you save on the usage of memory bandwidth and the related usage of system power because the amount of pixel data that the operating system needs to draw the next presented frame is reduced if the operating system doesn't need to draw the entire frame. For apps that are often displayed via Remote Desktop Connection and other remote-accessing technologies, the savings are particularly noticeable in the display quality because these technologies use dirty rectangles and scroll metadata.</p>
+<p>You can use scroll only with DXGI swap chains that run in flip presentation model. You can use dirty rectangles with DXGI swap chains that run in both flip model and bitblt model (set with <a href="/windows/desktop/api/DXGI/ne-dxgi-dxgi_swap_effect"><strong>DXGI_SWAP_EFFECT_SEQUENTIAL</strong></a>).</p>
+<p>In this scenario and illustration we show the functionality of using dirty rectangles and scroll. Here, a scrollable app contains text and animating video. The app uses dirty rectangles to just update the animating video and new line for the window, instead of updating the entire window. The scroll rectangle allows the operating system to copy and translate the previously rendered content on the new frame and to render only the new line on the new frame.</p>
+<p>The app performs presentation by calling the <a href="/windows/desktop/api/DXGI1_2/nf-dxgi1_2-idxgiswapchain1-present1"><strong>IDXGISwapChain1::Present1</strong></a> method. In this call, the app passes a pointer to a <a href="/windows/desktop/api/DXGI1_2/ns-dxgi1_2-dxgi_present_parameters"><strong>DXGI_PRESENT_PARAMETERS</strong></a> structure that includes dirty rectangles and the number of dirty rectangles, or the scroll rectangle and the associated scroll offset, or both dirty rectangles and the scroll rectangle. Our app passes 2 dirty rectangles and the scroll rectangle. The scroll rectangle is the area of the previous frame that the operating system needs to copy to the current frame before it renders the current frame. The app specifies the animating video and new line as dirty rectangles, and the operating system renders them on the current frame.</p>
+<p><img src="images/dxgipresentparam.png" alt="illustration of scroll and dirty rectangles overlapping" /></p>
+<pre lang="syntax"><code>DirtyRectsCount = 2
+pDirtyRects[ 0 ] = { 10, 30, 40, 50 } // Video
+pDirtyRects[ 1 ] = { 0, 70, 50, 80 } // New line
+*pScrollRect = { 0, 0, 50, 70 }
+*pScrollOffset = { 0, -10 }
+</code></pre>
+<p>The dashed rectangle shows the scroll rectangle in the current frame. The scroll rectangle is specified by the <strong>pScrollRect</strong> member of <a href="/windows/desktop/api/DXGI1_2/ns-dxgi1_2-dxgi_present_parameters"><strong>DXGI_PRESENT_PARAMETERS</strong></a>. The arrow shows the scroll offset. The scroll offset is specified by the <strong>pScrollOffset</strong> member of <strong>DXGI_PRESENT_PARAMETERS</strong>. Filled rectangles show dirty rectangles that the app updated with new content. The filled rectangles are specified by the <strong>DirtyRectsCount</strong> and <strong>pDirtyRects</strong> members of <strong>DXGI_PRESENT_PARAMETERS</strong>.</p>
+<h3>Sample 2-buffer flip-model swap chain with dirty rectangles and scroll rectangle</h3>
+<p>The next illustration and sequence shows an example of a DXGI flip-model presentation operation that uses dirty rectangles and a scroll rectangle. In this example we use the minimum number of buffers for flip-model presentation, which is a buffer count of two, one front buffer that contains the app display content and one back buffer that contains the current frame that the app wants to render.</p>
+<ol>
+<li>As shown in the front buffer at the beginning of the frame, the scrollable app initially shows a frame with some text and animating video.</li>
+<li>To render the next frame, the app renders onto the back buffer the dirty rectangles that update the animating video and the new line for the window.</li>
+<li>When the app calls <a href="/windows/desktop/api/DXGI1_2/nf-dxgi1_2-idxgiswapchain1-present1"><strong>IDXGISwapChain1::Present1</strong></a>, it specifies the dirty rectangles and the scroll rectangle and offset. The runtime next copies the scroll rectangle from the previous frame minus the updated dirty rectangles onto the current back buffer.</li>
+<li>The runtime finally swaps the front and back buffers.</li>
+</ol>
+<p><img src="images/2-buffer-flip-model-swap-chain.png" alt="example of flip-model swap chain with scroll and dirty rectangles" /></p>
+<h3>Tracking dirty rectangles and scroll rectangles across multiple frames</h3>
+<p>When you use dirty rectangles in your app, you must track the dirty rectangles to support incremental rendering. When your app calls <a href="/windows/desktop/api/DXGI1_2/nf-dxgi1_2-idxgiswapchain1-present1"><strong>IDXGISwapChain1::Present1</strong></a> with dirty rectangles, you must ensure that every pixel within the dirty rectangles is up to date. If you aren't completely re-rendering the whole area of the dirty rectangle or if you canâ€™t know for certain the areas that are dirtied, you must copy some data from the previous fully coherent back buffer to the current, stale back buffer before you start rendering.</p>
+<p>The runtime copies only the differences between updated areas of the previous frame and updated areas of the current frame onto the current back buffer. If these areas intersect, the runtime copies only the difference between them. As you can see in the following diagram and sequence, you must copy the intersection between the dirty rectangle from frame 1 and the dirty rectangle from frame 2 into frame 2â€™s dirty rectangle.</p>
+<ol>
+<li>Present dirty rectangle in frame 1.</li>
+<li>Copy intersection between the dirty rectangle from frame 1 and the dirty rectangle from frame 2 into frame 2â€™s dirty rectangle.</li>
+<li>Present dirty rectangle in frame 2.</li>
+</ol>
+<p><img src="images/track-dirty-rects-scroll-rects.png" alt="tracking scroll and dirty rectangles across multiple frames" /></p>
+<p>To generalize, for a swap chain with N buffers, the area that the runtime copies from the last frame to the current frame on the current frameâ€™s present is:</p>
+<p><img src="images/runtime-copy-equation.png" alt="equation to calculate area that runtime copies" /></p>
+<p>where buffer indicates the buffer index in a swap chain, starting with current buffer index at zero.</p>
+<p>You can keep track of any intersections between the previous frame and the current frameâ€™s dirty rectangles by keeping a copy of the previous frameâ€™s dirty rectangles or by re-rendering the new frameâ€™s dirty rectangles with the appropriate content from the previous frame.</p>
+<p>Similarly, in the cases where the swap chain has more than 2 back buffers, you must ensure that overlapping areas between the current bufferâ€™s dirty rectangles and the dirty rectangles of all previous frameâ€™s are copied or re-rendered.</p>
+<h3>Tracking a single intersection between 2 dirty rectangles</h3>
+<p>In the simplest case, when you update a single dirty rectangle per frame, the dirty rectangles across two frames might intersect. To find out whether the dirty rectangle of the previous frame and the dirty rectangle of the current frame overlap, you need to verify whether the dirty rectangle of the previous frame intersects with the dirty rectangle of the current frame. You can call the GDI <a href="/windows/win32/api/winuser/nf-winuser-intersectrect"><strong>IntersectRect</strong></a> function to determine whether two <a href="/windows/win32/api/windef/ns-windef-rect"><strong>RECT</strong></a> structures that represent the two dirty rectangles intersect.</p>
+<p>In this code snippet, a call to <a href="/windows/win32/api/winuser/nf-winuser-intersectrect"><strong>IntersectRect</strong></a> returns the intersection of two dirty rectangles in another <a href="/windows/win32/api/windef/ns-windef-rect"><strong>RECT</strong></a> called dirtyRectCopy. After the code snippet determines that the two dirty rectangles intersect, it calls the <a href="/windows/win32/api/d3d11_1/nf-d3d11_1-id3d11devicecontext1-copysubresourceregion1"><strong>ID3D11DeviceContext1::CopySubresourceRegion1</strong></a> method to copy the region of intersection into the current frame.</p>
+<pre><code>RECT dirtyRectPrev, dirtyRectCurrent, dirtyRectCopy;
+ 
+if (IntersectRect( &amp;dirtyRectCopy, &amp;dirtyRectPrev, &amp;dirtyRectCurrent ))
+{
+       D3D11_BOX intersectBox;
+       intersectBox.left    = dirtyRectCopy.left;
+       intersectBox.top     = dirtyRectCopy.top;
+       intersectBox.front   = 0;
+       intersectBox.right   = dirtyRectCopy.right;
+       intersectBox.bottom  = dirtyRectCopy.bottom;
+       intersectBox.back    = 1;
+ 
+       d3dContext-&gt;CopySubresourceRegion1(pBackbuffer,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    pPrevBackbuffer,
+                                    0,
+                                    &amp;intersectBox,
+                                    0
+                                    );
+}
+
+// Render additional content to the current pBackbuffer and call Present1.
+</code></pre>
+<p>If you use this code snippet in your application, the app will then be ready to call <a href="/windows/desktop/api/DXGI1_2/nf-dxgi1_2-idxgiswapchain1-present1"><strong>IDXGISwapChain1::Present1</strong></a> to update the current frame with the current dirty rectangle.</p>
+<h3>Tracking intersections between N dirty rectangles</h3>
+<p>If you specify multiple dirty rectangles, which can include a dirty rectangle for the newly revealed scroll line, per frame, you need to verify and track any overlaps that might occur between all the dirty rectangles of the previous frame and all the dirty rectangles of the current frame. To calculate the intersections between the dirty rectangles of the previous frame and the dirty rectangles of the current frame, you can group the dirty rectangles into regions.</p>
+<p>In this code snippet, we call the GDI <a href="/windows/win32/api/wingdi/nf-wingdi-setrectrgn"><strong>SetRectRgn</strong></a> function to convert each dirty rectangle into a rectangular region and then we call the GDI <a href="/windows/win32/api/wingdi/nf-wingdi-combinergn"><strong>CombineRgn</strong></a> function to combine all the dirty rectangular regions into a group.</p>
+<pre><code>HRGN hDirtyRgnPrev, hDirtyRgnCurrent, hRectRgn; // Handles to regions 
+// Save all the dirty rectangles from the previous frame.
+ 
+RECT dirtyRect[N]; // N is the number of dirty rectangles in current frame, which includes newly scrolled area.
+ 
+int iReturn;
+SetRectRgn(hDirtyRgnCurrent, 
+       dirtyRect[0].left, 
+       dirtyRect[0].top, 
+       dirtyRect[0].right, 
+       dirtyRect[0].bottom 
+       );
+
+for (int i = 1; i&lt;N; i++)
+{
+   SetRectRgn(hRectRgn, 
+          dirtyRect[0].left, 
+          dirtyRect[0].top, 
+          dirtyRect[0].right, 
+          dirtyRect[0].bottom 
+          );
+
+   iReturn = CombineRgn(hDirtyRgnCurrent,
+                        hDirtyRgnCurrent,
+                        hRectRgn,
+                        RGN_OR
+                        );
+   // Handle the error that CombineRgn returns for iReturn.
+}
+</code></pre>
+<p>You can now use the GDI <a href="/windows/win32/api/wingdi/nf-wingdi-combinergn"><strong>CombineRgn</strong></a> function to determine the intersection between the dirty region of the previous frame and the dirty region of the current frame. After you obtain the intersecting region, call the GDI <a href="/windows/win32/api/wingdi/nf-wingdi-getregiondata"><strong>GetRegionData</strong></a> function to obtain each individual rectangle from the intersecting region and then call the <a href="/windows/win32/api/d3d11_1/nf-d3d11_1-id3d11devicecontext1-copysubresourceregion1"><strong>ID3D11DeviceContext1::CopySubresourceRegion1</strong></a> method to copy each intersecting rectangle into the current back buffer. The next code snippet shows how to use these GDI and Direct3D functions.</p>
+<pre><code>HRGN hIntersectRgn;
+bool bRegionsIntersect;
+iReturn = CombineRgn(hIntersectRgn, hDirtyRgnCurrent, hDirtyRgnPrev, RGN_AND);
+if (iReturn == ERROR)
+{
+       // Handle error.
+}
+else if(iReturn == NULLREGION)
+{
+       bRegionsIntersect = false;
+}
+else
+{
+       bRegionsIntersect = true;
+}
+ 
+if (bRegionsIntersect)
+{
+       int rgnDataSize = GetRegionData(hIntersectRgn, 0, NULL);
+       if (rgnDataSize)
+       {
+              char pMem[] = new char[size];
+              RGNDATA* pRgnData = reinterpret_cast&lt;RGNDATA*&gt;(pMem);
+              iReturn = GetRegionData(hIntersectRgn, rgnDataSize, pRgnData);
+              // Handle iReturn failure.
+ 
+              for (int rectcount = 0; rectcount &lt; pRgnData-&gt;rdh.nCount; ++r)
+              {
+                     const RECT* pIntersectRect = reinterpret_cast&lt;RECT*&gt;(pRgnData-&gt;Buffer) +                                            
+                                                  rectcount;                
+                     D3D11_BOX intersectBox;
+                     intersectBox.left    = pIntersectRect-&gt;left;
+                     intersectBox.top     = pIntersectRect-&gt;top;
+                     intersectBox.front   = 0;
+                     intersectBox.right   = pIntersectRect-&gt;right;
+                     intersectBox.bottom  = pIntersectRect-&gt;bottom;
+                     intersectBox.back    = 1;
+ 
+                     d3dContext-&gt;CopySubresourceRegion1(pBackbuffer,
+                                                      0,
+                                                      0,
+                                                      0,
+                                                      0,
+                                                      pPrevBackbuffer,
+                                                      0,
+                                                      &amp;intersectBox,
+                                                      0
+                                                      );
+              }
+
+              delete [] pMem;
+       }
+}
+</code></pre>
+<h3>Bitblt model swap chain with dirty rectangles</h3>
+<p>You can use dirty rectangles with DXGI swap chains that run in bitblt model (set with <a href="/windows/desktop/api/DXGI/ne-dxgi-dxgi_swap_effect"><strong>DXGI_SWAP_EFFECT_SEQUENTIAL</strong></a>). Bitblt model swap chains that use more than one buffer must also track overlapping dirty rectangles across frames in the same way as described in <a href="#tracking-dirty-rectangles-and-scroll-rectangles-across-multiple-frames">Tracking dirty rectangles and scroll rectangles across multiple frames</a> for flip model swap chains. Bitblt model swap chains with just one buffer need not track overlapping dirty rectangles because the entire buffer is redrawn every frame.</p>
+<h2>Related topics</h2>
+<p><a href="dxgi-1-2-improvements.html">DXGI 1.2 Improvements</a></p>
+</body>

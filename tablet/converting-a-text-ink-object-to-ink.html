@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Converting a Text Ink Object to Ink</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Implementation of converting from a text ink object (tInk) to ink.
+ms.assetid: 9365da4c-3667-49f0-838f-f099d28dab44
+title: Converting a Text Ink Object to Ink
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Converting a Text Ink Object to Ink</h1>
+<p>Implementation of converting from a text ink object (tInk) to ink.</p>
+<h2>To convert from a text ink object to ink</h2>
+<ol>
+<li>Use the <a href="/windows/win32/api/objidl/nn-objidl-ipersiststream">IPersistStream</a> interface to write the contents of the text ink object out to a stream. The text ink object uses ink serialized format to write to the steam.</li>
+<li>Read the contents of the stream into a BYTE array.</li>
+<li>Use the <a href="inkdisp-class.html"><strong>InkDisp</strong></a> object's <a href="/windows/desktop/api/msinkaut/nf-msinkaut-iinkdisp-load"><strong>Load</strong></a> method to load the contents of the stream into the <strong>InkDisp</strong> object.</li>
+</ol>
+<h2>Text Ink Object to Ink Object Example</h2>
+<p>The following code fragment converts a text ink object to ink.</p>
+<p>First, the code obtains a text ink object.</p>
+<pre lang="C++"><code>/* Create a variable to hold the text ink object */
+CComPtr&lt;IInkObject *&gt; spITextInk;
+
+/* Obtain the text ink object */
+</code></pre>
+<p>Then, the code creates a pointer for the stream that holds the contents of the text ink object.</p>
+<pre lang="C++"><code>// Create a Stream pointer to hold the saved object
+CComPtr&lt;IStream *&gt; spStream = NULL; 
+</code></pre>
+<p>Then, the code obtains the <a href="/windows/win32/api/objidl/nn-objidl-ipersiststream">IPersistStream</a> interface from the text ink object.</p>
+<pre lang="C++"><code>// Declare the IPersistStream to be used for retrieving the saved data from the text ink
+CComPtr&lt;IPersistStream *&gt; spIPersistStream = NULL;
+// Get the actual IPersistStream interface off of the TextInk
+HRESULT hr = pITextInk-&gt;QueryInterface(IID_IPersistStream, (void **)&amp;spIPersistStream);
+ASSERT(SUCCEEDED(hr) &amp;&amp; spIPersistStream);
+</code></pre>
+<p>Then, the code uses the <a href="/windows/win32/api/objidl/nn-objidl-ipersiststream">IPersistStream</a> interface to save the contents of the text ink object to the stream.</p>
+<pre lang="C++"><code>if( SUCCEEDED(hr) &amp;&amp; pIPersistStream )
+{
+    // Create the stream 
+    if( SUCCEEDED(hr=CreateStreamOnHGlobal(NULL, TRUE, &amp;spStream)) &amp;&amp; spStream )
+    {
+        // Save the TextInk through IPersistStream Interface to the IStream
+        hr = spIPersistStream-&gt;Save(spStream, FALSE);
+    }
+}
+</code></pre>
+<p>Then, the code creates an <a href="inkcollector-class.html"><strong>InkCollector</strong></a> object, creates an <a href="inkdisp-class.html"><strong>InkDisp</strong></a> object for the <strong>InkCollector</strong>, attaches the <strong>InkCollector</strong> to the application window, and enables ink collection on the <strong>InkCollector</strong>.</p>
+<pre lang="C++"><code>// Now create an InkCollector object along with InkDisp Object
+if( SUCCEEDED(hr) &amp;&amp; spStream)
+{
+    CComPtr&lt;IInkCollector *&gt; spIInkCollector;
+    CComPtr&lt;IInkDisp *&gt; spIInkDisp = NULL;
+
+    // Create the InkCollector object.
+    hr = CoCreateInstance(CLSID_InkCollector, 
+        NULL, CLSCTX_INPROC_SERVER, 
+        IID_IInkCollector, 
+        (void **) &amp;spIInkCollector);
+    if (FAILED(hr)) 
+        return -1;
+
+    // Get a pointer to the Ink object
+    hr = spIInkCollector-&gt;get_Ink(&amp;spIInkDisp);
+    if (FAILED(hr)) 
+        return -1;
+
+    // Tell InkCollector the window to collect ink in
+    hr = spIInkCollector-&gt;put_hWnd((long)hwnd);
+    if (FAILED(hr)) 
+        return -1;
+
+    // Enable ink input in the window
+    hr = spIInkCollector-&gt;put_Enabled(VARIANT_TRUE);
+    if (FAILED(hr)) 
+        return -1;
+</code></pre>
+<p>Then, the code retrieves the size of the stream and creates a safe array to hold the contents of the stream.</p>
+<pre lang="C++"><code>    // Now create a variant data type based on the IStream data
+    const LARGE_INTEGER li0 = {0, 0};
+    ULARGE_INTEGER uli = {0,0};
+
+    // Find the size of the stream
+    hr = spStream-&gt;Seek(li0, STREAM_SEEK_END, &amp;uli);
+    ASSERT(0 == uli.HighPart);
+    DWORD dwSize = uli.LowPart;
+
+    // Set uli to point to the beginning of the stream.
+    hr=spStream-&gt;Seek(li0, STREAM_SEEK_SET, &amp;uli);
+    ASSERT(SUCCEEDED(hr));
+
+    // Create a safe array to hold the stream contents
+    if( SUCCEEDED(hr) )
+    {
+        VARIANT vtData;
+        VariantInit(&amp;vtData);
+        vtData.vt = VT_ARRAY | VT_UI1;
+
+        vtData.parray = ::SafeArrayCreateVector(VT_UI1, 0, dwSize);
+        if (vtData.parray)
+        {
+</code></pre>
+<p>Finally, the code accesses the safe array and uses the <a href="inkdisp-class.html"><strong>InkDisp</strong></a> object's <a href="/windows/desktop/api/msinkaut/nf-msinkaut-iinkdisp-load"><strong>Load</strong></a> method to load the ink from the array.</p>
+<pre lang="C++"><code>            DWORD dwRead = 0;
+            LPBYTE pbData = NULL; 
+
+            if (SUCCEEDED(::SafeArrayAccessData(vtData.parray, (void**)&amp;pbData)))
+            {
+                // Read the data from the stream to the varian data and load that into an InkDisp object
+                if (TRUE == spStream-&gt;Read(pbData, uli.LowPart, &amp;dwRead)
+                    &amp;&amp; SUCCEEDED(spIInkDisp-&gt;Load(vtData)))
+                {
+                    hr = S_OK;
+                }
+                ::SafeArrayUnaccessData(vtData.parray);
+            }
+            ::SafeArrayDestroy(vtData.parray);
+        }
+    }
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

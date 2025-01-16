@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Transferring Image Data in WIA 2.0</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Because image data transfer is stream-based in Windows Image Acquisition (WIA)Â 2.0, you do not need to specify a destination type (e.g.
+ms.assetid: ebb9fce5-9450-4ffe-b480-b21670b60f90
+title: Transferring Image Data in WIA 2.0
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Transferring Image Data in WIA 2.0</h1>
+<blockquote>
+<p>[!Note]<br />
+This tutorial demonstrates how to transfer image data in applications that run on WindowsÂ Vista or later. See <a href="-wia-transferring-image-data.html">Transfering Image Data in WIA 1.0</a> for information about transferring image data in applications that run on WindowsÂ XP or earlier.</p>
+</blockquote>
+<p>Â </p>
+<p>Because image data transfer is stream-based in Windows Image Acquisition (WIA)Â 2.0, you do not need to specify a destination type (e.g. memory or file). The application simply gives WIA 2.0 the stream to use, and the driver reads or writes to the stream. The stream can be a file stream, a memory stream, or any other type of stream, and is transparent to the driver. Using streams also provides an easy integration with the Image Processing filter.</p>
+<p>Use the methods of the <a href="-wia-iwiatransfer.html"><strong>IWiaTransfer</strong></a> interface to transfer data from a WIA 2.0 device to an application. This interface is available through the <a href="-wia-iwiaitem2.html"><strong>IWiaItem2</strong></a> interface. The <strong>IWiaTransfer</strong> interface has methods for requesting uploading or downloading of data to and from a device. These methods take a callback that the application provides, and use an <a href="/windows/win32/api/objidl/nn-objidl-istream">IStream</a> provided by the application for the actual destination of the data transfer.</p>
+<p>Applications must query an image item to obtain a pointer to its <a href="-wia-iwiatransfer.html"><strong>IWiaTransfer</strong></a> interface, as shown in the following code sample:</p>
+<pre><code>    // Get the IWiaTransfer interface
+    //
+    IWiaTransfer *pWiaTransfer = NULL;
+    hr = pIWiaItem2-&gt;QueryInterface(IID_IWiaTransfer,(void**)&amp;pWiaTransfer);
+</code></pre>
+<p>In the previous code, we assume that <strong>pWiaItem2</strong> is a valid pointer to the <a href="-wia-iwiaitem2.html"><strong>IWiaItem2</strong></a> interface. The call to <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)">IUnknown::QueryInterface</a> fills <strong>pWiaTransfer</strong> with a pointer to the <a href="-wia-iwiatransfer.html"><strong>IWiaTransfer</strong></a> interface of the item referred to by <strong>pWiaItem2</strong>.</p>
+<p>The application then instantiates the callback object, as shown here.</p>
+<pre><code>    //   Instantiate the object which receives the callbacks
+    //
+    CWiaTransferCallback *pWiaClassCallback = new CWiaTransferCallback;
+</code></pre>
+<p>The application next sets the properties by using <a href="/windows/desktop/api/wia_xp/nn-wia_xp-iwiapropertystorage"><strong>IWiaPropertyStorage</strong></a> interface of <a href="-wia-iwiaitem2.html"><strong>IWiaItem2</strong></a> item, and performs the transfer.</p>
+<p>Downloading:</p>
+<pre><code>    // Download   
+    hr = pWiaTransfer-&gt;Download(0,pWiaClassCallback);
+</code></pre>
+<p>Uploading:</p>
+<pre><code>    //Create child item which eventually will be the uploaded image 
+    IWiaItem2* pWiaItemChild = NULL;
+    HRESULT hr = pIWiaItem2-&gt;CreateChildItem(WiaItemTypeImage|WiaItemTypeFile,0,bzUploadFileName,&amp;pWiaItemChild);
+    
+    if(SUCCEEDED(hr))
+    {
+                
+        //Set the format for the child item as BMP 
+        IWiaPropertyStorage* pWiaChildPropertyStorage = NULL;
+        hr = pWiaItemChild-&gt;QueryInterface( IID_IWiaPropertyStorage, (void**)&amp;pWiaChildPropertyStorage );
+        if(SUCCEEDED(hr))
+        {
+            WritePropertyGuid(pWiaChildPropertyStorage,WIA_IPA_FORMAT,WiaImgFmt_BMP );
+
+            //release pWiaChildPropertyStorage
+            pWiaChildPropertyStorage-&gt;Release();
+            pWiaChildPropertyStorage = NULL;
+        }
+        
+
+        //Get the IWiaTransfer interface of the child
+        IWiaTransfer* pWiaTransferChild = NULL;
+        hr = pWiaItemChild-&gt;QueryInterface( IID_IWiaTransfer, (void**)&amp;pWiaTransferChild );
+        if(SUCCEEDED(hr)){
+            IStream* pUploadStream = NULL;
+                                        
+            //Create stream on test.BMP file
+            hr = SHCreateStreamOnFile(L&quot;test.BMP&quot;,STGM_READ, &amp;pUploadStream);
+            if(SUCCEEDED(hr)){
+                pWiaTransferChild-&gt;Upload(0,pUploadStream,pWiaClassCallback);
+                
+            }
+         }
+   
+      }
+</code></pre>
+<p>Here is the complete data transfer sample:</p>
+<pre><code>HRESULT TransferWiaItem( IWiaItem2 *pIWiaItem2)
+{
+    // Validate arguments
+    if (NULL == pIWiaItem2)
+    {
+        _tprintf(TEXT(&quot;\nInvalid parameters passed&quot;));
+        return E_INVALIDARG;
+    }
+    
+    // Get the IWiaTransfer interface
+    IWiaTransfer *pWiaTransfer = NULL;
+    HRESULT hr = pIWiaItem2-&gt;QueryInterface( IID_IWiaTransfer, (void**)&amp;pWiaTransfer );
+    if (SUCCEEDED(hr))
+    {
+        // Create our callback class
+        CWiaTransferCallback *pWiaClassCallback = new CWiaTransferCallback;
+        if (pWiaClassCallback)
+        {
+            
+              LONG lItemType = 0;
+              hr = pIWiaItem2-&gt;GetItemType( &amp;lItemType );
+
+              //download all items which have WiaItemTypeTransfer flag set
+              if(lItemType &amp; WiaItemTypeTransfer)
+              {
+
+                  // If it is a folder, do folder download . Hence with one API call, all the leaf nodes of this folder 
+                  // will be transferred
+                  if ((lItemType &amp; WiaItemTypeFolder))
+                  {
+                        _tprintf ( L&quot;\nI am a folder item&quot;);
+                        hr = pWiaTransfer-&gt;Download(WIA_TRANSFER_ACQUIRE_CHILDREN, pWiaClassCallback);
+                        if(S_OK == hr)
+                        {
+                            _tprintf(TEXT(&quot;\npWiaTransfer-&gt;Download() on folder item SUCCEEDED&quot;));
+                        }
+                        else if(S_FALSE == hr)
+                        {
+                            ReportError(TEXT(&quot;\npWiaTransfer-&gt;Download() on folder item returned S_FALSE. Folder may not be having child items&quot;),hr);
+                        }
+                        else if(FAILED(hr))
+                        {
+                            ReportError(TEXT(&quot;\npWiaTransfer-&gt;Download() on folder item failed&quot;),hr);
+                        }
+                   }
+
+                  
+                  // If this is an file type, do file download
+                  else if (lItemType &amp; WiaItemTypeFile )
+                  {
+                      hr = pWiaTransfer-&gt;Download(0,pWiaClassCallback);
+                      if(S_OK == hr)
+                      {
+                          _tprintf(TEXT(&quot;\npWiaTransfer-&gt;Download() on file item SUCCEEDED&quot;));
+                      }
+                      else if(S_FALSE == hr)
+                      {
+                          ReportError(TEXT(&quot;\npWiaTransfer-&gt;Download() on file item returned S_FALSE. File may be empty&quot;),hr);
+                      }
+                      else if(FAILED(hr))
+                      {
+                         ReportError(TEXT(&quot;\npWiaTransfer-&gt;Download() on file item failed&quot;),hr);
+                      }
+                  }                     
+                }
+                
+                // Release our callback.  It should now delete itself.
+                pWiaClassCallback-&gt;Release();
+                pWiaClassCallback = NULL;
+        }
+        else
+        {
+            ReportError( TEXT(&quot;\nUnable to create CWiaTransferCallback class instance&quot;) );
+        }
+            
+        // Release the IWiaTransfer
+        pWiaTransfer-&gt;Release();
+        pWiaTransfer = NULL;
+    }
+    else
+    {
+        ReportError( TEXT(&quot;\npIWiaItem2-&gt;QueryInterface failed on IID_IWiaTransfer&quot;), hr );
+    }
+    return hr;
+}
+
+// Callback Class should be something like this:
+
+class CWiaTransferCallback : public IWiaTransferCallback
+{
+public: // Constructors, destructor
+    CWiaTransferCallback () : m_cRef(1) {};
+    ~ CWiaTransferCallback () {};
+
+public: // IWiaTransferCallback
+    HRESULT __stdcall TransferCallback(
+        LONG                lFlags,
+        WiaTransferParams   *pWiaTransferParams)
+    {
+        HRESULT hr = S_OK;
+
+        switch (pWiaTransferParams-&gt;lMessage)
+        {
+            case WIA_TRANSFER_MSG_STATUS:
+                ...
+                break;
+            case WIA_TRANSFER_MSG_END_OF_STREAM:
+                ...
+                break;
+            case WIA_TRANSFER_MSG_END_OF_TRANSFER:
+                ...
+                break;
+            default:
+                break;
+        }
+
+        return hr;
+    }
+
+    HRESULT __stdcall GetNextStream(
+        LONG    lFlags,
+        BSTR    bstrItemName,
+        BSTR    bstrFullItemName,
+        IStream **ppDestination)
+    {
+
+        HRESULT hr = S_OK;
+
+        //  Return a new stream for this item's data.
+        //
+        hr = CreateDestinationStream(bstrItemName, ppDestination);
+        return hr;
+    }
+
+public: // IUnknown
+        .
+        .
+        . // Etc.
+
+private:
+    /// For ref counting implementation
+    LONG                m_cRef;
+};
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

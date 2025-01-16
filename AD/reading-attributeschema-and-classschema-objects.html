@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reading attributeSchema and classSchema Objects</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Reading attributeSchema and classSchema Objects
+description: This topic provides code examples and guidelines for reading directly from attributeSchema and classSchema objects in the schema container.
+ms.assetid: a60558e1-88a1-493c-9340-a90143b11f60
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Reading attributeSchema and classSchema Objects AD</li>
+<li>objects AD , Reading attributeSchema and classSchema Objects
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Reading attributeSchema and classSchema Objects</h1>
+<p>This topic provides code examples and guidelines for reading directly from <strong>attributeSchema</strong> and <strong>classSchema</strong> objects in the schema container. Be aware that, in most programming situations, when you must read data about a class or attribute definition, it is more effective to read data from the abstract schema as described in <a href="reading-the-abstract-schema.html">Reading the Abstract Schema</a>.</p>
+<p>The interfaces and techniques used to read from the schema container are those used to read any object in Active Directory Domain Services. The guidelines include:</p>
+<ul>
+<li>To bind to the schema container, obtain its distinguished name which can be retrieved by binding to rootDSE and reading the <strong>schemaNamingContext</strong> property, as described in <a href="serverless-binding-and-rootdse.html">Serverless Binding and RootDSE</a>.</li>
+<li>Use an <a href="/windows/desktop/api/iads/nn-iads-iadscontainer"><strong>IADsContainer</strong></a> pointer for the schema container to enumerate the <strong>attributeSchema</strong> and <strong>classSchema</strong> objects.</li>
+<li>Use the <a href="/windows/desktop/api/iads/nn-iads-iads"><strong>IADs</strong></a> or <a href="/windows/desktop/api/iads/nn-iads-idirectoryobject"><strong>IDirectoryObject</strong></a> interface to retrieve the properties of an <strong>attributeSchema</strong> and <strong>classSchema</strong> object.</li>
+<li>Use the <a href="/windows/desktop/api/adshlp/nf-adshlp-adsopenobject"><strong>ADsOpenObject</strong></a> or <a href="/windows/desktop/api/adshlp/nf-adshlp-adsgetobject"><strong>ADsGetObject</strong></a> functions to bind directly to an <strong>attributeSchema</strong> or <strong>classSchema</strong> object.</li>
+<li>If you are reading multiple <strong>attributeSchema</strong> or <strong>classSchema</strong> objects, you can increase performance by binding to an <a href="/windows/desktop/api/iads/nn-iads-iadscontainer"><strong>IADsContainer</strong></a> pointer on the schema container and using the <a href="/windows/desktop/api/iads/nf-iads-iadscontainer-getobject"><strong>IADsContainer.GetObject</strong></a> method to bind to the individual class and attribute objects. This is more efficient than making repeated <a href="/windows/desktop/api/adshlp/nf-adshlp-adsopenobject"><strong>ADsOpenObject</strong></a> or <a href="/windows/desktop/api/adshlp/nf-adshlp-adsgetobject"><strong>ADsGetObject</strong></a> calls to bind to the individual class and attribute objects. Use the <strong>cn</strong> attribute to build the relative path for the <strong>IADsContainer.GetObject</strong> call (for example, &quot;cn=user&quot; for the <strong>classSchema</strong> object for the user class).</li>
+<li>Use an <a href="/windows/desktop/api/iads/nn-iads-idirectorysearch"><strong>IDirectorySearch</strong></a> pointer for the schema container to query the schema for attributes or classes that match a search filter.</li>
+</ul>
+<p>For a code example that demonstrates different methods of searching for schema objects, see <a href="example-code-for-searching-for-schema-objects.html">Example Code for Searching for Schema Objects</a>.</p>
+<p>The following C++ code example binds to an <a href="/windows/desktop/api/iads/nn-iads-iadscontainer"><strong>IADsContainer</strong></a> pointer on the schema container and then uses the <a href="/windows/desktop/api/adshlp/nf-adshlp-adsbuildenumerator"><strong>ADsBuildEnumerator</strong></a> and <a href="/windows/desktop/api/adshlp/nf-adshlp-adsenumeratenext"><strong>ADsEnumerateNext</strong></a> functions to enumerate its contents. Be aware that the enumeration includes all <strong>attributeSchema</strong> and <strong>classSchema</strong> objects as well as a single <strong>subSchema</strong> object, which is the abstract schema.</p>
+<p>For each enumerated object, the code example uses the <a href="/windows/desktop/ADSI/iads-property-methods"><strong>IADs.Class</strong></a> property to determine whether it is an <strong>attributeSchema</strong> or <strong>classSchema</strong> object. The code example shows how to read the properties that are unavailable from the abstract schema.</p>
+<pre lang="C++"><code>//  Add activeds.lib to the project.
+//  Add adsiid.lib to the project.
+
+#include &quot;stdafx.h&quot;
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;ole2.h&gt;
+#include &lt;activeds.h&gt;
+#include &lt;atlbase.h&gt;
+
+//  Forward declarations.
+void ProcessAttribute(IADs *pChild);
+void ProcessClass(IADs *pChild);
+
+//  Entry point for the application.
+int wmain(int argc, WCHAR* argv[])
+{
+    HRESULT hr;
+
+    hr = CoInitialize(NULL);
+    if(SUCCEEDED(hr))
+    {
+        CComBSTR sbstrDSPath;
+        CComVariant svar;
+        IADs *pRootDSE = NULL;
+        IADsContainer *pSchema = NULL;  
+        IEnumVARIANT *pEnum = NULL;
+        ULONG lFetch;
+        CComBSTR sbstrClass; 
+        DWORD dwClasses = 0, dwAttributes = 0, dwUnknownClass = 0;
+
+        //  Bind to rootDSE to get the schemaNamingContext property.
+        hr = ADsGetObject(L&quot;LDAP://rootDSE&quot;, IID_IADs, (void**)&amp;pRootDSE);
+        if (FAILED(hr)) 
+        {
+            wprintf(L&quot;ADsGetObject failed: 0x%x\n&quot;, hr);
+            goto cleanup;
+        }
+
+        hr = pRootDSE-&gt;Get(CComBSTR(&quot;schemaNamingContext&quot;), &amp;svar);
+        sbstrDSPath = &quot;LDAP://&quot;;
+        sbstrDSPath += svar.bstrVal;
+
+        //  Bind to the actual schema container.
+        wprintf(L&quot;Binding to %s\n&quot;, sbstrDSPath);
+        hr = ADsGetObject(sbstrDSPath, IID_IADsContainer, (void**) &amp;pSchema);
+        if (FAILED(hr)) 
+        {
+            wprintf(L&quot;ADsGetObject to schema failed: 0x%x\n&quot;, hr);
+            goto cleanup;
+        }
+
+        //  Enumerate the attribute and class objects in the schema container.
+        hr = ADsBuildEnumerator(pSchema, &amp;pEnum);
+        if (FAILED(hr)) 
+        {
+            wprintf(L&quot;ADsBuildEnumerator failed: 0x%x\n&quot;, hr);
+            goto cleanup;
+        }
+
+        hr = ADsEnumerateNext(pEnum, 1, &amp;svar, &amp;lFetch);
+        while(S_OK == hr &amp;&amp; 1 == lFetch)
+        {
+            IADs *pChild = NULL;
+
+            //  Get an IADs pointer on the child object.
+            hr = V_DISPATCH(&amp;svar)-&gt;QueryInterface(IID_IADs, (void**) &amp;pChild);
+            if (SUCCEEDED(hr)) 
+            {
+                //  Verify that this is a class, attribute, or subSchema object.
+                hr = pChild-&gt;get_Class(&amp;sbstrClass);
+                if (SUCCEEDED(hr)) 
+                {
+                    //  Get data. This depends on type of schema element.
+                    if (_wcsicmp(L&quot;classSchema&quot;, sbstrClass) == 0)
+                    {
+                        dwClasses++;
+                        wprintf(L&quot;%s\n&quot;, sbstrClass);
+                        ProcessClass(pChild);
+                        wprintf(L&quot;\n&quot;);
+                    }
+                    else if (_wcsicmp(L&quot;attributeSchema&quot;, sbstrClass) == 0)
+                    {
+                        dwAttributes++;
+                        wprintf(L&quot;%s\n&quot;, sbstrClass);
+                        ProcessAttribute(pChild);
+                        wprintf(L&quot;\n&quot;);
+                    }
+                    else if (_wcsicmp(L&quot;subSchema&quot;, sbstrClass) == 0) 
+                    {
+                        wprintf(L&quot;abstract schema&quot;);
+                        wprintf(L&quot;\n&quot;);
+                    }
+                    else
+                    {
+                        dwUnknownClass++;
+                    }
+                }
+
+                pChild-&gt;Release();
+            }
+
+            hr = ADsEnumerateNext(pEnum, 1, &amp;svar, &amp;lFetch);
+        }
+
+        wprintf(L&quot;Classes: %u\nAttributes: %u\nUnknown: %u\n&quot;, dwClasses, dwAttributes, dwUnknownClass);
+
+cleanup:
+        if (pRootDSE)
+        {
+            pRootDSE-&gt;Release();
+        }
+
+        if (pEnum)
+        {
+            ADsFreeEnumerator(pEnum);
+        }
+
+        if (pSchema)
+        {
+            pSchema-&gt;Release();
+        }
+
+    }    
+
+    CoUninitialize();
+
+    return 0;
+}
+
+
+//  PrintGUIDFromVariant
+//  Prints a GUID in string format.
+void PrintGUIDFromVariant(VARIANT varGUID)
+{
+    HRESULT hr;
+    void HUGEP *pArray;
+    WCHAR szGUID[40];
+    LPGUID pGUID;
+
+    DWORD dwLen = sizeof(GUID);
+
+    hr = SafeArrayAccessData(V_ARRAY(&amp;varGUID), &amp;pArray);
+    if(SUCCEEDED(hr))
+    {
+        pGUID = (LPGUID)pArray;
+
+        //  Convert GUID to string.
+        StringFromGUID2(*pGUID, szGUID, 40); 
+
+        //  Print GUID.
+        wprintf(L&quot;,%s&quot;,szGUID);
+
+        SafeArrayUnaccessData(V_ARRAY(&amp;varGUID));
+    }
+}
+
+
+// PrintADSPropertyValue
+void PrintADSPropertyValue(VARIANT var, BSTR bstrPropName, HRESULT hr) 
+{
+    if (E_ADS_PROPERTY_NOT_FOUND == hr)
+    {
+        wprintf(L&quot;-- not set --\n&quot;);
+    }
+    else if (FAILED(hr))
+    {
+        wprintf(L&quot;get %s failed: 0x%x\n&quot;, bstrPropName, hr);
+    }
+    else 
+    {
+        switch (var.vt) 
+        {
+        case VT_BSTR:
+            wprintf(L&quot;%s\n&quot;, var.bstrVal);
+            break;
+
+        case VT_I4:
+            wprintf(L&quot;%u\n&quot;, var.iVal);
+            break;
+
+        case VT_BOOL:
+            wprintf(L&quot;%s\n&quot;, var.boolVal ? L&quot;TRUE&quot; : L&quot;FALSE&quot;);
+            break;
+
+        default:
+            wprintf(L&quot;-- ??? --\n&quot;);
+        }
+    }
+}
+
+//  ProcessAttribute
+//  Gets information about an attributeClass object.
+void ProcessAttribute(IADs *pChild)
+{
+    HRESULT hr;
+    CComVariant svar;
+    CComBSTR sbstrPropName;
+
+    //  Get the attribute Common-Name (cn) property. 
+    sbstrPropName = &quot;cn&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the attribute lDAPDisplayName.
+    sbstrPropName = &quot;lDAPDisplayName&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the class linkID. 
+    sbstrPropName = &quot;linkID&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the attribute schemaIDGUID. 
+    sbstrPropName = &quot;schemaIDGUID&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    if (E_ADS_PROPERTY_NOT_FOUND == hr)
+    {
+        wprintf(L&quot;-- not set --\n&quot;);
+    }
+    else if(SUCCEEDED(hr))
+    {
+        PrintGUIDFromVariant(svar);
+    }
+
+    //  Get the attribute attributeSecurityGUID. 
+    sbstrPropName = &quot;attributeSecurityGUID&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    if (E_ADS_PROPERTY_NOT_FOUND == hr)
+    {
+        wprintf(L&quot;-- not set --\n&quot;);
+    }
+    else if (SUCCEEDED(hr))
+    {
+        PrintGUIDFromVariant(svar);
+    }
+
+    //  Get the attribute attributeSyntax property. 
+    sbstrPropName = &quot;attributeSyntax&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the attribute's oMSyntax property. 
+    sbstrPropName = &quot;oMSyntax&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+}
+
+
+//  ProcessClass
+//  Gets information about a schema class.
+void ProcessClass(IADs *pChild)
+{
+    HRESULT hr;
+    CComVariant svar;
+    CComBSTR sbstrPropName;
+
+    //  Get the class cn.
+    sbstrPropName = &quot;cn&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the class lDAPDisplayName.
+    sbstrPropName = &quot;lDAPDisplayName&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the class schemaIDGUID. 
+    sbstrPropName = &quot;schemaIDGUID&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;,get schemaIDGUID failed: 0x%x&quot;, hr);
+    }
+    else 
+    {
+        PrintGUIDFromVariant(svar);
+    }
+
+    //  Get the class adminDescription property. 
+    sbstrPropName = &quot;adminDescription&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the class adminDisplayName property. 
+    sbstrPropName = &quot;adminDisplayName&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the class rDNAttID. 
+    sbstrPropName = &quot;rDNAttID&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the class defaultHidingValue. 
+    sbstrPropName = &quot;defaultHidingValue&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the class defaultObjectCategory. 
+    sbstrPropName = &quot;defaultObjectCategory&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the class systemOnly value.
+    sbstrPropName = &quot;systemOnly&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+
+    //  Get the class defaultSecurityDescriptor.
+    sbstrPropName = &quot;defaultSecurityDescriptor&quot;;
+    hr = pChild-&gt;Get(sbstrPropName, &amp;svar);
+    PrintADSPropertyValue(svar, sbstrPropName, hr);
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

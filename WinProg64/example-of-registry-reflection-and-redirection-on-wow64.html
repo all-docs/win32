@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example of Registry Redirection on WOW64</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Example of Registry Redirection on WOW64
+description: The following example code demonstrates the separate views of the registry provided by the registry redirector on 64-bit Windows.
+ms.assetid: b3ca2a47-402d-4e91-88bc-ddda6c776468
+keywords:</p>
+<ul>
+<li>examples 64-bit Windows Programming</li>
+<li>64-bit Windows programming guide examples 64-bit Windows Programming</li>
+<li>64-bit Windows programming guide examples 64-bit Windows Programming , registry redirection on WOW64</li>
+<li>registry redirection example 64-bit Windows Programming</li>
+<li>64-bit Windows programming guide 64-bit Windows Programming , examples See 64-bit Windows programming guide examples
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Example of Registry Redirection on WOW64</h1>
+<p>The following example code demonstrates the separate views of the registry provided by the registry redirector on 64-bit Windows. It also demonstrates how the values of keys are set depending on whether a key is shared or redirected. For more information, see <a href="shared-registry-keys.html">Registry Keys Affected by WOW64</a>.</p>
+<p>Compile the following code separately for both 32-bit and 64-bit Windows. Run each resulting executable file on 64-bit Windows and compare the output. Sample output for both versions is listed below the source code.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+
+#pragma comment(lib, &quot;advapi32.lib&quot;)
+
+// Define application constants.
+#if defined(_WIN64)
+
+#define VIEW_DATA L&quot;Hello! 64-bit World&quot;
+#define ALT_VIEW_DATA L&quot;Hello! 32-bit World&quot;
+#define CROSS_ACCESS KEY_WOW64_32KEY
+
+#else
+
+#define VIEW_DATA L&quot;Hello! 32-bit World&quot;
+#define ALT_VIEW_DATA L&quot;Hello! 64-bit World&quot;
+#define CROSS_ACCESS KEY_WOW64_64KEY
+
+#endif
+
+// Create a registry key and set its value.
+// Return TRUE if the function succeeds, FALSE if it fails.
+BOOL
+    CreateRegistryKeyValue(
+        HKEY hKeyParent,
+        PWCHAR KeyName,
+        REGSAM rsAccessMask,
+        REGSAM rsSamViewFlag,
+        PBYTE pValue,
+        DWORD dwValueSize
+        )
+{
+    DWORD dwDisposition;
+    HKEY  hKey;
+    DWORD dwRet;
+
+    dwRet = 
+        RegCreateKeyEx(
+            hKeyParent,
+            KeyName,
+            0,
+            NULL,
+            REG_OPTION_NON_VOLATILE,
+            rsAccessMask | rsSamViewFlag,
+            NULL,
+            &amp;hKey,
+            &amp;dwDisposition);
+
+    if (dwRet != ERROR_SUCCESS)
+    {
+        printf(&quot;Error opening or creating key.\n&quot;);
+        return FALSE;
+    }
+
+    // Attempt to set the value of the key.
+    // If the call fails, close the key and return.
+    if (ERROR_SUCCESS !=
+            RegSetValueEx(
+                hKey,
+                NULL,
+                0,
+                REG_SZ,
+                pValue,
+                dwValueSize))
+    {
+        printf(&quot;Could not set registry value.\n&quot;);
+        RegCloseKey(hKey);
+        return FALSE;
+    }
+
+    RegCloseKey(hKey);
+    return TRUE;
+}
+
+// Access a registry key and print its value.
+// Return TRUE if the function succeeds, FALSE if it fails.
+BOOL
+    AccessRegistryKeyValue(
+        HKEY hKeyParent,
+        PWCHAR KeyName,
+        REGSAM rsAccessMask,
+        REGSAM rsSamViewFlag
+        )
+{
+    HKEY hKey;
+    WCHAR Buffer[MAX_PATH];
+    DWORD dwSize = sizeof(Buffer);
+    DWORD dwType;
+    DWORD dwRet;
+
+    dwRet =
+        RegOpenKeyEx(
+            hKeyParent,
+            KeyName,
+            0,
+            rsAccessMask | rsSamViewFlag,
+            &amp;hKey);
+
+    if (dwRet != ERROR_SUCCESS)
+    {
+        printf(&quot;Error opening key!\n&quot;);
+        return FALSE;
+    }
+
+    if (ERROR_SUCCESS !=
+            RegQueryValueEx(
+                hKey,
+                NULL,
+                0,
+                &amp;dwType,
+                (PBYTE)Buffer,
+                &amp;dwSize))
+    {
+        printf(&quot;Could not read registry value.\n&quot;);
+        RegCloseKey(hKey);
+        return FALSE;
+    }
+
+    if (rsSamViewFlag != 0)
+    {
+        printf(&quot;Alternate view:   %S\n&quot;, Buffer);
+    }
+    else
+    {
+        printf(&quot;Default view:     %S\n&quot;, Buffer);
+    }
+
+    RegCloseKey(hKey);
+    return TRUE;
+}
+
+int
+main()
+{
+    BOOL Res;
+
+    // Define the list of keys to work with.
+    typedef struct {
+        HKEY hkRoot;
+        LPWSTR szRootName;
+        LPWSTR szName;
+    }KEYDATA;
+
+    KEYDATA Keys[] =
+    {
+        { HKEY_LOCAL_MACHINE, L&quot;HKLM&quot;, L&quot;Software\\Hello World&quot; },
+        { HKEY_CLASSES_ROOT,  L&quot;HKCR&quot;, L&quot;Hello&quot; },
+        { HKEY_CLASSES_ROOT,  L&quot;HKCR&quot;, L&quot;CLSID\\{00000000-0000-0000-0000-ABCD00000000}&quot; },
+        { HKEY_CLASSES_ROOT,  L&quot;HKCR&quot;, L&quot;CLSID\\{00000000-0000-0000-0000-ABCD00000000}\\InprocServer32&quot; },
+        { HKEY_CLASSES_ROOT,  L&quot;HKCR&quot;, L&quot;CLSID\\{00000000-0000-0000-0000-ABCD00000000}\\LocalServer32&quot; }
+    };
+
+    // Now create the keys.
+    for (int i = 0; i &lt; _countof(Keys); i++)
+    {
+        // Create the keys in the alternate view of the registry.
+        Res = 
+            CreateRegistryKeyValue(
+                Keys[i].hkRoot,
+                Keys[i].szName,
+                KEY_READ | KEY_WRITE,
+                CROSS_ACCESS,
+                (PBYTE)ALT_VIEW_DATA,
+                sizeof(ALT_VIEW_DATA));
+        if (Res == FALSE)
+        {
+            printf(&quot;Could not create keys in alternate view of the registry.\n&quot;);
+            return 1; 
+       }
+
+        // Create the keys in the default view of the registry.
+        Res = 
+            CreateRegistryKeyValue(
+                Keys[i].hkRoot,
+                Keys[i].szName,
+                KEY_READ | KEY_WRITE,
+                0,
+                (PBYTE)VIEW_DATA,
+                sizeof(VIEW_DATA));
+        if (Res == FALSE)
+        {
+            printf(&quot;Could not create keys in default view of the registry.\n&quot;);
+            return 1;
+        }
+    }
+
+    // Access the registry and print key values.
+    printf(&quot;Application string: %S\n&quot;, VIEW_DATA);
+
+    for (int i = 0; i &lt; _countof(Keys); i++)
+    {
+        printf(&quot;%S\\%S\n&quot;, Keys[i].szRootName, Keys[i].szName);
+        Res = 
+            AccessRegistryKeyValue(
+                Keys[i].hkRoot,
+                Keys[i].szName,
+                KEY_READ, 
+                0);
+        if (Res == FALSE)
+        {
+            printf(&quot;Unable to access default view of registry.\n&quot;);
+            return 1;
+        }
+
+        // Calls with CROSS_ACCESS explicitly access the alternate registry view.
+        Res =
+            AccessRegistryKeyValue(
+                Keys[i].hkRoot,
+                Keys[i].szName,
+                KEY_READ,
+                CROSS_ACCESS);
+        if (Res == FALSE)
+        {
+            printf(&quot;Unable to access alternate view of registry.\n&quot;);
+            return 1;
+        }
+    }
+    return 0;
+}
+</code></pre>
+<p>When the 64-bit version of the example is run, it produces the following output. The values of both the default and alternate views of <strong>HKCR\Hello</strong> are the same because this key is shared. The values of the other keys differ because they are redirected.</p>
+<p><strong>Windows ServerÂ 2008, WindowsÂ Vista, Windows ServerÂ 2003 and WindowsÂ XP:</strong> When this example is run on these operating systems, the default and alternate views of the LocalServer32 key have the same value. This is because the LocalServer32 key is redirected and <em>reflected</em>, which causes its value to be synchronized between the 64-bit and 32-bit views of the registry as soon as the handle to the key is closed. Registry reflection was removed starting with Windows 7. For more information, see <a href="registry-reflection.html">Registry Reflection</a>.</p>
+<pre lang="syntax"><code>Application string: Hello! 64-bit World
+HKLM\Software\Hello World
+Default view:     Hello! 64-bit World
+Alternate view:   Hello! 32-bit World
+HKCR\Hello
+Default view:     Hello! 64-bit World
+Alternate view:   Hello! 64-bit World
+HKCR\CLSID\{00000000-0000-0000-0000-ABCD00000000}
+Default view:     Hello! 64-bit World
+Alternate view:   Hello! 32-bit World
+HKCR\CLSID\{00000000-0000-0000-0000-ABCD00000000}\InprocServer32
+Default view:     Hello! 64-bit World
+Alternate view:   Hello! 32-bit World
+HKCR\CLSID\{00000000-0000-0000-0000-ABCD00000000}\LocalServer32
+Default view:     Hello! 64-bit World
+Alternate view:   Hello! 32-bit World
+</code></pre>
+<p>When the 32-bit version of the example is run, it produces the following output. For a 32-bit application, the 64-bit view of the registry is the alternate view so the values are reversed, except for HKCR\Hello, which is a shared key.</p>
+<pre lang="syntax"><code>Application string: Hello! 32-bit World
+HKLM\Software\Hello World
+Default view:     Hello! 32-bit World
+Alternate view:   Hello! 64-bit World
+HKCR\Hello
+Default view:     Hello! 32-bit World
+Alternate view:   Hello! 32-bit World
+HKCR\CLSID\{00000000-0000-0000-0000-ABCD00000000}
+Default view:     Hello! 32-bit World
+Alternate view:   Hello! 64-bit World
+HKCR\CLSID\{00000000-0000-0000-0000-ABCD00000000}\InprocServer32
+Default view:     Hello! 32-bit World
+Alternate view:   Hello! 64-bit World
+HKCR\CLSID\{00000000-0000-0000-0000-ABCD00000000}\LocalServer32
+Default view:     Hello! 32-bit World
+Alternate view:   Hello! 64-bit World
+</code></pre>
+<p>To examine the effect of running this example with regedit, inspect the values of the following keys. Note that applications should avoid using Wow6432Node in hard-coded registry paths.</p>
+<p><strong>HKLM\SOFTWARE\Hello World</strong><br />
+<strong>HKLM\SOFTWARE\Wow6432Node\Hello World</strong><br />
+<strong>HKCR\CLSID\{00000000-0000-0000-0000-ABCD00000000}</strong><br />
+<strong>HKCR\CLSID\{00000000-0000-0000-0000-ABCD00000000}\InprocServer32</strong><br />
+<strong>HKCR\CLSID\{00000000-0000-0000-0000-ABCD00000000}\LocalServer32</strong><br />
+<strong>HKCR\Hello HKCR\Wow6432Node\CLSID\{00000000-0000-0000-0000-ABCD00000000}</strong><br />
+<strong>HKCR\Wow6432Node\CLSID\{00000000-0000-0000-0000-ABCD00000000}\InprocServer32</strong><br />
+<strong>HKCR\Wow6432Node\CLSID\{00000000-0000-0000-0000-ABCD00000000}\LocalServer32</strong><br />
+<strong>HKCR\Wow6432Node\Hello</strong></p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="registry-redirector.html">Registry Redirector</a></p>
+<!-- raw HTML omitted -->
+<p><a href="registry-reflection.html">Registry Reflection</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

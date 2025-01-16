@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Find a Filters Peer</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Find a Filters Peer
+ms.assetid: 74d9fe65-f7f4-4971-9550-27884ac4146b
+title: Find a Filters Peer
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Find a Filters Peer</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>Given a filter, you can traverse the graph by finding the filters to which it is connected. Start by enumerating the filter's pins. For each pin, check whether that pin is connected to another pin. If so, query the other pin for it's owning filter. You can walk the graph in the upstream direction by enumerating the filter's input pins, or in the downstream direction by enumerating the output pins.</p>
+<p>The following function searches upstream or downstream for a connected filter. It returns the first matching filter that it finds:</p>
+<pre lang="C++"><code>// Get the first upstream or downstream filter
+HRESULT GetNextFilter(
+    IBaseFilter *pFilter, // Pointer to the starting filter
+    PIN_DIRECTION Dir,    // Direction to search (upstream or downstream)
+    IBaseFilter **ppNext) // Receives a pointer to the next filter.
+{
+    if (!pFilter || !ppNext) return E_POINTER;
+
+    IEnumPins *pEnum = 0;
+    IPin *pPin = 0;
+    HRESULT hr = pFilter-&gt;EnumPins(&amp;pEnum);
+    if (FAILED(hr)) return hr;
+    while (S_OK == pEnum-&gt;Next(1, &amp;pPin, 0))
+    {
+        // See if this pin matches the specified direction.
+        PIN_DIRECTION ThisPinDir;
+        hr = pPin-&gt;QueryDirection(&amp;ThisPinDir);
+        if (FAILED(hr))
+        {
+            // Something strange happened.
+            hr = E_UNEXPECTED;
+            pPin-&gt;Release();
+            break;
+        }
+        if (ThisPinDir == Dir)
+        {
+            // Check if the pin is connected to another pin.
+            IPin *pPinNext = 0;
+            hr = pPin-&gt;ConnectedTo(&amp;pPinNext);
+            if (SUCCEEDED(hr))
+            {
+                // Get the filter that owns that pin.
+                PIN_INFO PinInfo;
+                hr = pPinNext-&gt;QueryPinInfo(&amp;PinInfo);
+                pPinNext-&gt;Release();
+                pPin-&gt;Release();
+                pEnum-&gt;Release();
+                if (FAILED(hr) || (PinInfo.pFilter == NULL))
+                {
+                    // Something strange happened.
+                    return E_UNEXPECTED;
+                }
+                // This is the filter we're looking for.
+                *ppNext = PinInfo.pFilter; // Client must release.
+                return S_OK;
+            }
+        }
+        pPin-&gt;Release();
+    }
+    pEnum-&gt;Release();
+    // Did not find a matching filter.
+    return E_FAIL;
+}
+</code></pre>
+<p>The function calls <a href="/windows/desktop/api/Strmif/nf-strmif-ibasefilter-enumpins"><strong>IBaseFilter::EnumPins</strong></a> to enumerate the first filter's pins. For each pin, it calls <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-querydirection"><strong>IPin::QueryDirection</strong></a> to check whether the pin matches the specified direction (input or output). If so, the function determines whether that pin is connected to another pin, by calling the <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-connectedto"><strong>IPin::ConnectedTo</strong></a> method. Finally, it calls <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-querypininfo"><strong>IPin::QueryPinInfo</strong></a> on the connected pin. This method returns a structure that contains, among other things, a pointer to that pin's owning filter. This pointer is returned to the caller in the <em>ppNext</em> parameter. The caller must release the pointer.</p>
+<p>The following code shows how to call this function:</p>
+<pre lang="C++"><code>IBaseFilter *pF; // Pointer to some filter.
+IBaseFilter *pUpstream = NULL;
+if (SUCCEEDED(GetNextFilter(pF, PINDIR_INPUT, &amp;pUpstream)))
+{
+    // Use pUpstream ...
+    pUpstream-&gt;Release();
+}
+</code></pre>
+<p>A filter might be connected to two or more filters in either direction. For example, it might be a splitter filter, with several filters downstream from it. Or it might be a mux filter, with several filters upstream from it. Therefore, you might want to collect all of them into a list.</p>
+<p>The following code shows one possible way to implement such a function. It uses the DirectShow <a href="cgenericlist.html"><strong>CGenericList</strong></a> class; you could write an equivalent function using some other data structure.</p>
+<pre lang="C++"><code>#include &lt;streams.h&gt;  // Link to the DirectShow base class library
+// Define a typedef for a list of filters.
+typedef CGenericList&lt;IBaseFilter&gt; CFilterList;
+
+// Forward declaration. Adds a filter to the list unless it's a duplicate.
+void AddFilterUnique(CFilterList &amp;FilterList, IBaseFilter *pNew);
+
+// Find all the immediate upstream or downstream peers of a filter.
+HRESULT GetPeerFilters(
+    IBaseFilter *pFilter, // Pointer to the starting filter
+    PIN_DIRECTION Dir,    // Direction to search (upstream or downstream)
+    CFilterList &amp;FilterList)  // Collect the results in this list.
+{
+    if (!pFilter) return E_POINTER;
+
+    IEnumPins *pEnum = 0;
+    IPin *pPin = 0;
+    HRESULT hr = pFilter-&gt;EnumPins(&amp;pEnum);
+    if (FAILED(hr)) return hr;
+    while (S_OK == pEnum-&gt;Next(1, &amp;pPin, 0))
+    {
+        // See if this pin matches the specified direction.
+        PIN_DIRECTION ThisPinDir;
+        hr = pPin-&gt;QueryDirection(&amp;ThisPinDir);
+        if (FAILED(hr))
+        {
+            // Something strange happened.
+            hr = E_UNEXPECTED;
+            pPin-&gt;Release();
+            break;
+        }
+        if (ThisPinDir == Dir)
+        {
+            // Check if the pin is connected to another pin.
+            IPin *pPinNext = 0;
+            hr = pPin-&gt;ConnectedTo(&amp;pPinNext);
+            if (SUCCEEDED(hr))
+            {
+                // Get the filter that owns that pin.
+                PIN_INFO PinInfo;
+                hr = pPinNext-&gt;QueryPinInfo(&amp;PinInfo);
+                pPinNext-&gt;Release();
+                if (FAILED(hr) || (PinInfo.pFilter == NULL))
+                {
+                    // Something strange happened.
+                    pPin-&gt;Release();
+                    pEnum-&gt;Release();
+                    return E_UNEXPECTED;
+                }
+                // Insert the filter into the list.
+                AddFilterUnique(FilterList, PinInfo.pFilter);
+                PinInfo.pFilter-&gt;Release();
+            }
+        }
+        pPin-&gt;Release();
+    }
+    pEnum-&gt;Release();
+    return S_OK;
+}
+void AddFilterUnique(CFilterList &amp;FilterList, IBaseFilter *pNew)
+{
+    if (pNew == NULL) return;
+
+    POSITION pos = FilterList.GetHeadPosition();
+    while (pos)
+    {
+        IBaseFilter *pF = FilterList.GetNext(pos);
+        if (IsEqualObject(pF, pNew))
+        {
+            return;
+        }
+    }
+    pNew-&gt;AddRef();  // The caller must release everything in the list.
+    FilterList.AddTail(pNew);
+}
+</code></pre>
+<p>To complicate matters somewhat, a filter can have multiple pin connections to the same filter. To avoid putting duplicates into the list, query each <strong>IBaseFilter</strong> pointer for <strong>IUnknown</strong> and compare the <strong>IUnknown</strong> pointers. By the rules of COM, two interface pointers refer to the same object if and only if they return identical <strong>IUnknown</strong> pointers. In the previous example, the AddFilterUnique function handles this detail.</p>
+<p>The following example shows how to use the GetPeerFilters function:</p>
+<pre lang="C++"><code>IBaseFilter *pF; // Pointer to some filter.
+CFilterList FList(NAME(&quot;MyList&quot;));  // List to hold the downstream peers.
+hr = GetPeerFilters(pF, PINDIR_OUTPUT, FList);
+if (SUCCEEDED(hr))
+{
+    POSITION pos = FList.GetHeadPosition();
+    while (pos)
+    {
+        IBaseFilter *pDownstream = FList.GetNext(pos);
+        pDownstream-&gt;Release();
+    }
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="general-graph-building-techniques.html">General Graph-Building Techniques</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

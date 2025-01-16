@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How Decoders Use IAMVideoAccelerator</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: How Decoders Use IAMVideoAccelerator
+ms.assetid: 0bc6b65b-4502-4c6f-a0f2-82a2bd444d1d
+title: How Decoders Use IAMVideoAccelerator
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>How Decoders Use IAMVideoAccelerator</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>The <a href="/previous-versions/windows/desktop/api/videoacc/nn-videoacc-iamvideoaccelerator"><strong>IAMVideoAccelerator</strong></a> interface enables generic video acceleration operations, including DirectX Video Acceleration (VA). For non-DirectX VA acceleration, the decoder and video driver must both adhere to a common protocol.</p>
+<p>This section describes the general order of operations that any decoder should follow when using this interface. Further information specific to DirectX VA-based decoders can be found in <a href="mapping-directx-video-acceleration-to-iamvideoaccelerator.html">Mapping DirectX Video Acceleration to IAMVideoAccelerator</a>.</p>
+<blockquote>
+<p>[!Note]<br />
+This interface is available in WindowsÂ 2000 and later.</p>
+</blockquote>
+<p>Â </p>
+<p>The <a href="/previous-versions/windows/desktop/api/videoacc/nn-videoacc-iamvideoaccelerator"><strong>IAMVideoAccelerator</strong></a> interface is exposed on the input pin of the <a href="overlay-mixer-filter.html">Overlay Mixer</a> or Video Mixing Renderer (VMR). The <a href="/previous-versions/windows/desktop/api/videoacc/nn-videoacc-iamvideoacceleratornotify"><strong>IAMVideoAcceleratorNotify</strong></a> interface is exposed on the decoder's output pin. The sequence of events for connecting the filter pins is as follows:</p>
+<ol>
+<li>
+<p>The Filter Graph Manager calls <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-connect"><strong>IPin::Connect</strong></a> on the decoder filter's output pin. An <a href="/windows/win32/api/strmif/ns-strmif-am_media_type"><strong>AM_MEDIA_TYPE</strong></a> is an optional parameter.</p>
+<ul>
+<li><a href="/windows/win32/api/strmif/ns-strmif-am_media_type"><strong>AM_MEDIA_TYPE</strong></a> is a data structure that describes a type of media. It contains a majortype GUID (which in our case should be MEDIATYPE_Video), a subtype GUID (which in our case should be a video accelerator GUID), and a variety of other things. One of those things is a format type GUID containing information about the media, including in our case the width and height of an uncompressed video picture, most likely in an <a href="/previous-versions/windows/desktop/api/amvideo/ns-amvideo-mpeg1videoinfo"><strong>MPEG1VIDEOINFO</strong></a>, <a href="/previous-versions/windows/desktop/api/amvideo/ns-amvideo-videoinfoheader"><strong>VIDEOINFOHEADER</strong></a>, <a href="/previous-versions/windows/desktop/api/dvdmedia/ns-dvdmedia-mpeg2videoinfo"><strong>MPEG2VIDEOINFO</strong></a>, or <a href="/previous-versions/windows/desktop/api/dvdmedia/ns-dvdmedia-videoinfoheader2"><strong>VIDEOINFOHEADER2</strong></a> structure.</li>
+<li>The <a href="/windows/win32/api/strmif/ns-strmif-am_media_type"><strong>AM_MEDIA_TYPE</strong></a> structure, if present, tells the decoder to operate using the specified media type, which may be &quot;fully specified&quot; or &quot;partially specified&quot;. If &quot;fully specified,&quot; the decoder would normally simply attempt to operate with that media type. If &quot;partially specified,&quot; it will attempt to find a &quot;fully-specified&quot; compatible mode of operation that it can use to connect in a manner consistent with the &quot;partially-specified&quot; media type.</li>
+<li>The ordinary manner for attempting to find a &quot;fully-specified&quot; media type to use for a connection is to simply run through a list of every &quot;fully-specified&quot; media type that the output pin supports which is compatible with the &quot;partially-specified&quot; media type and attempt to connect with each of them until successful. The process would normally be similar if no AM_MEDIA_TYPE is contained in the <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-connect"><strong>IPin::Connect</strong></a> call, but with the output pin needing to check all of its media types.</li>
+</ul>
+</li>
+<li>
+<p>If the decoder wants to check whether a specific <a href="/windows/win32/api/strmif/ns-strmif-am_media_type"><strong>AM_MEDIA_TYPE</strong></a> (including a video accelerator GUID) is supported by the downstream input pin, it can call that pin's <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-queryaccept"><strong>IPin::QueryAccept</strong></a> (with the video accelerator GUID as the subtype of the <strong>AM_MEDIA_TYPE</strong>) or it can simply attempt to connect to that pin as described in item 5 below.</p>
+</li>
+<li>
+<p>If the decoder does not know which video accelerator GUIDs the downstream input pin supports and does not wish to propose just some particular candidate video accelerator GUID by calling the downstream input pin's <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-queryaccept"><strong>IPin::QueryAccept</strong></a>, the decoder can call <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-getvideoacceleratorguids"><strong>IAMVideoAccelerator::GetVideoAcceleratorGUIDs</strong></a> to get a list of the video accelerator GUIDs the pin supports.</p>
+</li>
+<li>
+<p>For some particular video accelerator GUIDs, the decoder can call the downstream input pin's <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-getuncompformatssupported"><strong>IAMVideoAccelerator::GetUncompFormatsSupported</strong></a> to get a list of the <strong>DDPIXELFORMAT</strong> pixel formats that can be used to render a specific video accelerator GUID. The list returned should be considered to be in decreasing preference order (that is, with the most preferred format listed first).</p>
+</li>
+<li>
+<p>The decoder calls the downstream input pin's <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-receiveconnection"><strong>IPin::ReceiveConnection</strong></a>, passing it an <a href="/windows/win32/api/strmif/ns-strmif-am_media_type"><strong>AM_MEDIA_TYPE</strong></a> with the proper video accelerator GUID as the subtype of the media type. This sets up the connection for operation, including the creation of the uncompressed output surfaces (which are allocated using the width and height found in <strong>AM_MEDIA_TYPE</strong>, and the number of surfaces to allocate found by a call described below, and whatever other information the video accelerator has available and wishes to use for that purposeâ€”such as the video accelerator GUID itself). If the downstream input pin rejects the video accelerator GUID or some other aspect of the connection, this can cause the <strong>IPin::ReceiveConnection</strong> to fail. If <strong>IPin::ReceiveConnection</strong> fails, this is indicated in a returned <strong>HRESULT</strong>, and the decoder can try to make the call again, for example, with a new video accelerator GUID in the <strong>AM_MEDIA_TYPE</strong> structure.</p>
+<ul>
+<li>
+<p>[!Note]</p>
+<blockquote>
+<p>This is another way (and the most definitive way) for the decoder to determine what is supported by the downstream input pinâ€”simply calling <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-receiveconnection"><strong>IPin::ReceiveConnection</strong></a> and trying to connect, and then checking whether the connection attempt was successful.</p>
+</blockquote>
+<p>Â </p>
+</li>
+<li>
+<p>During the <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-receiveconnection"><strong>IPin::ReceiveConnection</strong></a>, the renderer calls the decoder's <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoacceleratornotify-getuncompsurfacesinfo"><strong>IAMVideoAcceleratorNotify::GetUncompSurfacesInfo</strong></a>, passing it the video accelerator GUID and an <a href="/previous-versions/windows/desktop/api/amva/ns-amva-amvauncompbufferinfo"><strong>AMVAUncompBufferInfo</strong></a> structure, in order to figure out how many uncompressed surfaces to allocate. The decoder fills in and returns the structure, which contains the minimum and maximum number of surfaces to be allocated of the particular type, and a <strong>DDPIXELFORMAT</strong> structure describing the pixel format of the surfaces to be allocated.</p>
+</li>
+<li>
+<p>[!Note]</p>
+<blockquote>
+<p>Nothing is actually passed in to the decoder in the call to <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoacceleratornotify-getuncompsurfacesinfo"><strong>IAMVideoAcceleratorNotify::GetUncompSurfacesInfo</strong></a> other than the video accelerator GUID.</p>
+</blockquote>
+<p>Â </p>
+</li>
+</ul>
+</li>
+<li>
+<p>The renderer calls the decoder's <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoacceleratornotify-setuncompsurfacesinfo"><strong>IAMVideoAcceleratorNotify::SetUncompSurfacesInfo</strong></a>, passing to the decoder the actual number of uncompressed surfaces that were allocated.</p>
+</li>
+<li>
+<p>The renderer calls the decoder's <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoacceleratornotify-getcreatevideoacceleratordata"><strong>IAMVideoAcceleratorNotify::GetCreateVideoAcceleratorData</strong></a> to get any data needed to initialize the video accelerator.</p>
+</li>
+<li>
+<p>The decoder calls <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-getcompbufferinfo"><strong>IAMVideoAccelerator::GetCompBufferInfo</strong></a>, passing it a video accelerator GUID, an <a href="/previous-versions/windows/desktop/api/amva/ns-amva-amvauncompdatainfo"><strong>AMVAUncompDataInfo</strong></a> structure, and the number of compressed buffer types, to get in return a set of <a href="/previous-versions/windows/desktop/api/amva/ns-amva-amvacompbufferinfo"><strong>AMVACompBufferInfo</strong></a> data structures, one corresponding to each type of compressed data buffer used by the video accelerator GUID.</p>
+<ul>
+<li>The <a href="/previous-versions/windows/desktop/api/amva/ns-amva-amvauncompdatainfo"><strong>AMVAUncompDataInfo</strong></a> structure contains the width and height of the decoded uncompressed data (in pixels) and the DDPIXELFORMAT of the uncompressed picture.</li>
+<li>The <a href="/previous-versions/windows/desktop/api/amva/ns-amva-amvacompbufferinfo"><strong>AMVACompBufferInfo</strong></a> data structures returned each contain:
+<ul>
+<li>
+<p>The number of compressed buffers needed of the specific type.</p>
+</li>
+<li>
+<p>The width and height of the surface to create (fields which may or may not have any actual meaning).</p>
+<blockquote>
+<p>[!Note]<br />
+The DirectDraw surface allocation operation for the compressed buffers does not currently provide for the width or height of these surfaces to be greater than or equal to 2^15, although the surface allocation call may not overtly fail if this limit is violated. Therefore, the driver could structure its requests for compressed buffer memory to avoid such extreme sizes. For example, rather than requesting a buffer with width=&quot;1&quot; and height=&quot;65536&quot;, the driver should request a buffer of width=&quot;1024&quot; and height=&quot;64&quot;.</p>
+</blockquote>
+<p>Â </p>
+</li>
+<li>
+<p>The total number of bytes to be used by the surface.</p>
+</li>
+<li>
+<p>A structure of type <strong>DDSCAPS2</strong> defining a DirectDrawSurface object, describing the capabilities to create surfaces to store compressed data.</p>
+</li>
+<li>
+<p>A DDPIXELFORMAT, describing the pixel format used to create surfaces to store compressed data (a field which may or may not have any actual meaning).</p>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ol>
+<blockquote>
+<p>[!Note]<br />
+The renderer's calls to some of the decoder's <a href="/previous-versions/windows/desktop/api/videoacc/nn-videoacc-iamvideoacceleratornotify"><strong>IAMVideoAcceleratorNotify</strong></a> interface methods may (and normally would) occur inside of the decoder's call to the renderer's <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-receiveconnection"><strong>IPin::ReceiveConnection</strong></a>. Specifically, this applies to the following:</p>
+<ul>
+<li><a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoacceleratornotify-getuncompsurfacesinfo"><strong>IAMVideoAcceleratorNotify::GetUncompSurfacesInfo</strong></a>,</li>
+<li><a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoacceleratornotify-setuncompsurfacesinfo"><strong>IAMVideoAcceleratorNotify::SetUncompSurfacesInfo</strong></a>, and</li>
+<li><a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoacceleratornotify-getcreatevideoacceleratordata"><strong>IAMVideoAcceleratorNotify::GetCreateVideoAcceleratorData</strong></a>.</li>
+</ul>
+</blockquote>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+To support dynamic format changes, the decoder may also call <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-receiveconnection"><strong>IPin::ReceiveConnection</strong></a> and other methods per above while the filters are connected and running. This capability is provided in order to support dynamic format changes (although not in the H.263, Annex P, sense - as all data sets are started up again from scratch and any reference picture information is therefore lost).</p>
+</blockquote>
+<p>Â </p>
+<p>The following is a description of <a href="/previous-versions/windows/desktop/api/videoacc/nn-videoacc-iamvideoaccelerator"><strong>IAMVideoAccelerator</strong></a> use during operation after initialization:</p>
+<ol>
+<li>
+<p>For each uncompressed surface, the decoder calls <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-beginframe"><strong>IAMVideoAccelerator::BeginFrame</strong></a> to begin the processing to create the output picture. When it does this, the decoder sends an <a href="/previous-versions/windows/desktop/api/amva/ns-amva-amvabeginframeinfo"><strong>AMVABeginFrameInfo</strong></a> structure.</p>
+<ul>
+<li>
+<p>The <a href="/previous-versions/windows/desktop/api/amva/ns-amva-amvabeginframeinfo"><strong>AMVABeginFrameInfo</strong></a> structure contains an index for a destination buffer, a pointer to some data to send downstream, and a pointer to a place where the accelerator can put some data for the decoder to read.</p>
+</li>
+<li>
+<p>NOTE 1: The accelerator does not actually receive the destination buffer index, as it is translated by the renderer before going downstream.</p>
+</li>
+<li>
+<p>NOTE 2: <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-beginframe"><strong>IAMVideoAccelerator::BeginFrame</strong></a> can be called more than once between calls to <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-endframe"><strong>IAMVideoAccelerator::EndFrame</strong></a>.</p>
+</li>
+<li>
+<p>NOTE 3: There is no assumption within the interface operation that <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-beginframe"><strong>IAMVideoAccelerator::BeginFrame</strong></a> and <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-endframe"><strong>IAMVideoAccelerator::EndFrame</strong></a> need to be called for the processing of every individual picture in the bitstream.</p>
+<p>What <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-beginframe"><strong>IAMVideoAccelerator::BeginFrame</strong></a> does, as far as the interface is concerned, is create an association within the renderer between an index and an uncompressed surface. It also provides a means to call a specific function in a device driver (with support of a means of passing arbitrary data back and forth between the decoder and the device driver).</p>
+<p>(However, in DirectX VA operation there is a requirement described below that <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-beginframe"><strong>IAMVideoAccelerator::BeginFrame</strong></a> and <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-endframe"><strong>IAMVideoAccelerator::EndFrame</strong></a> do need to be called for the processing of every individual picture in the bitstream.)</p>
+</li>
+</ul>
+</li>
+<li>
+<p>For sending uncompressed data to the accelerator, the decoder calls:</p>
+<ul>
+<li><a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-queryrenderstatus"><strong>IAMVideoAccelerator::QueryRenderStatus</strong></a> to determine whether a buffer is safe for reading from or writing to.</li>
+<li><a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-getbuffer"><strong>IAMVideoAccelerator::GetBuffer</strong></a> to lock and obtain access to a specified buffer (if it has not previously called this to get that access). <strong>GetBuffer</strong> can also be used to get a copy of the contents of the last uncompressed output picture for which <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-beginframe"><strong>IAMVideoAccelerator::BeginFrame</strong></a> was called, providing <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-endframe"><strong>IAMVideoAccelerator::EndFrame</strong></a> has not been called for that destination buffer index. If the DDI returns a render status of DDERR_WASSTILLDRAWING for the requested buffer, a sleep loop will be operated within <strong>GetBuffer</strong> until this condition is cleared. In order to call <strong>GetBuffer</strong>, the decoder will need some information from an <a href="/previous-versions/windows/desktop/api/amva/ns-amva-amvacompbufferinfo"><strong>AMVACompBufferInfo</strong></a> data structure which is obtained by calling <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-getcompbufferinfo"><strong>IAMVideoAccelerator::GetCompBufferInfo</strong></a>.</li>
+<li><a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-execute"><strong>IAMVideoAccelerator::Execute</strong></a> to indicate that the data in a set of compressed buffers as indicated in an array of <a href="/previous-versions/windows/desktop/api/amva/ns-amva-amvabufferinfo"><strong>AMVABUFFERINFO</strong></a> data structures should be processed. A function code dwFunction is passed to the driver in this call. A lpPrivateInputData pointer is also passed to some data to send downstream, and a lpPrivateOutputData pointer is passed to a place where the downstream process can put some data for the decoder to read.</li>
+<li><a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-releasebuffer"><strong>IAMVideoAccelerator::ReleaseBuffer</strong></a> to indicate that the decoder has completed use of a specified buffer for the moment and no longer needs locked access to the buffer. (If the decoder wishes to continue to use the buffer, it can simply not call <strong>IAMVideoAccelerator::ReleaseBuffer</strong> for the moment, thus avoiding the need to call <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-getbuffer"><strong>IAMVideoAccelerator::GetBuffer</strong></a> until it really intends to not use the buffer anymore.) The decoder should not write into the buffer after <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-execute"><strong>Execute</strong></a> is called until <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-queryrenderstatus"><strong>QueryRenderStatus</strong></a> indicates that the buffer is safe for writing.</li>
+</ul>
+</li>
+<li>
+<p>To complete output processing for a destination buffer, the decoder calls <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-endframe"><strong>IAMVideoAccelerator::EndFrame</strong></a>. It can pass some arbitrary data downstream with this call, and that's essentially all that happens as a result of this call. It doesn't send a destination buffer index in this call, so it can't indicate to the accelerator precisely what destination buffer is completed unless this indication is contained in the arbitrary data that is passed.</p>
+</li>
+<li>
+<p>To display a frame, the decoder calls <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-displayframe"><strong>IAMVideoAccelerator::DisplayFrame</strong></a> with the index of the frame to display and a <a href="/windows/desktop/api/Strmif/nn-strmif-imediasample"><strong>IMediaSample</strong></a> structure containing start and stop time stamps and relevant flags such as <strong>dwTypeSpecificFlags</strong> in the <a href="/windows/win32/api/strmif/ns-strmif-am_sample2_properties"><strong>AM_SAMPLE2_PROPERTIES</strong></a> structure, and <strong>dwInterlaceFlags</strong> in the <a href="/previous-versions/windows/desktop/api/dvdmedia/ns-dvdmedia-videoinfoheader2"><strong>VIDEOINFOHEADER2</strong></a> structure. The decoder must verify that all decompression operations that affect the content of the frame have completed before calling <strong>DisplayFrame</strong>.</p>
+</li>
+<li>
+<p>Finally, the decoder should, upon completion of all processing, indicate completion of all remaining begun output frames by calling <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-endframe"><strong>IAMVideoAccelerator::EndFrame</strong></a> and release all of its locked buffers by calling <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-releasebuffer"><strong>IAMVideoAccelerator::ReleaseBuffer</strong></a> for each unreleased buffer.</p>
+</li>
+</ol>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="decoder-interfaces-and-specifications.html">Decoder Interfaces and Specifications</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

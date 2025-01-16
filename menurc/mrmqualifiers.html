@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Qualifiers in MRM</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Qualifiers in MRM
+description: Description of qualifiers used by MRM.
+keywords:</p>
+<ul>
+<li>MrmCreateResourceIndexer MrmCreateConfig MrmIndexString MrmIndexFile MrmIndexEmbeddedData Menus and Other Resources
+ms.topic: article</li>
+</ul>
+<hr />
+<h1>Qualifiers in MRM</h1>
+<p>The Resource Indexer (and the MRT runtime) use &quot;qualifiers&quot; to determine the context(s) in which a given
+resource candidate should be used. Every resource has a name and one or more candidates (or values), and
+each candidate has zero or more qualifiers. For more info on naming resources, see
+<a href="mrmresourcenames.html">Resource names in MRM</a>.</p>
+<p>For example, there may be a string resource named <strong>greeting</strong> with three different candidates for
+three different localizations:</p>
+<ul>
+<li>For English, the text &quot;Hello&quot;</li>
+<li>For German, the text &quot;Hallo&quot;</li>
+<li>For Korean, the text &quot;ì•ˆë…•í•˜ì„¸ìš”&quot;</li>
+</ul>
+<p>These candidates are added to the Indexer with the correct language qualifiers, and these are stored in the
+PRI file so that MRT knows which one to use at runtime. For example, to add these three strings to an indexer
+one might use:</p>
+<pre lang="C++"><code>    HRESULT hr{};
+    hr = MrmIndexString(indexer, L&quot;ms-resource:///strings/greeting&quot;, L&quot;Hello&quot;, L&quot;language-en&quot;);
+    hr |= MrmIndexString(indexer, L&quot;ms-resource:///strings/greeting&quot;, L&quot;Hallo&quot;, L&quot;language-de&quot;);
+    hr |= MrmIndexString(indexer, L&quot;ms-resource:///strings/greeting&quot;, L&quot;ì•ˆë…•í•˜ì„¸ìš”&quot;, L&quot;language-ko&quot;);
+    if (FAILED(hr)) { /* error handling */ }
+</code></pre>
+<p><strong>Language</strong> is only one of the possible qualifiers; other common qualifiers include <strong>Scale</strong> (for specifying
+images at different resolutions) or <strong>Contrast</strong> (for different contrast settings).
+A complete list of qualifiers is listed in the
+<a href="/windows/windows-app-sdk/api/winrt/microsoft.windows.applicationmodel.resources.resourcecontext.qualifiervalues"><strong>ResourceContext.QualifierValues</strong></a>
+topic.</p>
+<p>Note that the &quot;short&quot; form of the qualifiers (e.g. &quot;lang&quot; instead of &quot;language&quot;) are <em>not</em> supported by the MRM APIs;
+you must use the long-form. Nevertheless, the functions <a href="mrmindexfileautoqualifiers.html"><strong>MrmIndexFileAutoQualifiers</strong></a>
+and <a href="mrmindexresourcecontainerautoqualifiers.html"><strong>MrmIndexResourceContainerAutoQualifiers</strong></a> that infer
+qualifiers from file paths do support the short forms.</p>
+<p>Qualifiers are specified as strings in the form <code>name-value</code>, such as <code>language-en</code> or <code>scale-200</code>.
+(The values for a <strong>Language</strong> qualifier may also contain hyphens, such as <code>en-us</code>.) Both the name and the value
+are case-insensitive, so <code>LANGUAGE-EN-US</code>, <code>Language-En-Us</code>, and <code>language-en-us</code> are all equivalent.</p>
+<p>Note it is an error to specify two candidates for the same resource with the same qualifiers but different
+values. Unfortunately, this error is <em>not</em> surfaced when resources are added to the indexer
+(e.g. when calling <strong>MrmIndexString</strong>) but at the time the PRI file is generated - generation will return
+<strong>ERROR_MRM_DUPLICATE_ENTRY</strong> but provide no indication of which resource caused the problem.</p>
+<p>For example, this code snippet will succeed when adding a duplicate candidate, but fail later
+during PRI generation:</p>
+<pre lang="C++"><code>// Add &quot;color = red&quot;. Returns S_OK, since all arguments are valid.
+hr = MrmIndexString(indexer, L&quot;ms-resource:///strings/color&quot;, L&quot;red&quot;, L&quot;language-en&quot;); 
+// Add &quot;color = blue&quot;. Returns S_OK, since all arguments are valid (in isolation).
+hr = MrmIndexString(indexer, L&quot;ms-resource:///strings/color&quot;, L&quot;blue&quot;, L&quot;language-en&quot;); 
+
+// Fails with ERROR_MRM_DUPLICATE_ENTRY since there are two English candidates for &quot;strings/color&quot; 
+// (&quot;red&quot; and &quot;blue&quot;). 
+hr = MrmCreateResourceFile(indexer, MrmPackagingModeStandaloneFile, MrmPackagingOptionsNone, fileName);
+</code></pre>
+<p>If the exact same candidate is added twice (e.g. in the code above, if the second call repeated &quot;red&quot;
+instead of using &quot;blue&quot;) then the duplicate is ignored and no error is generated.</p>
+<h2>Qualifier lists</h2>
+<p>Resource candidates can have more than one qualifier. For example, image files may need candidates based
+on both <strong>Scale</strong> (100%, 200%, etc.) and <strong>Contrast</strong> (standard or high). If the image contains text, it
+may also need to be qualified based on <strong>Language</strong>.</p>
+<p>Multiple qualifiers are specified in a single string, separated by underscores. For example, an image
+candidate for high contrast at 200% scaled would use the qualifier <code>contrast-high_scale-200</code>. The order in
+which qualifiers are specified in the list does not matter; MRT has a built-in order of importance for each
+qualifier (e.g. <strong>Language</strong> is more important than <strong>Scale</strong>).</p>
+<p>Although it is not an error to repeat a qualifier in a qualifier list (even with different values), all but
+the first will be ignored.</p>
+<ul>
+<li><code>language-en_language-en</code> (specify English twice - effective language is English)</li>
+<li><code>language-en_language-de</code> (specify English then German - effective language is English)</li>
+<li><code>language-de_language-en</code> (specify German then English - effective language is German)</li>
+</ul>
+<p>As noted above, it is an error to add two resource candidates with the same qualifiers but different
+values. This is irrespective of the ordering of the qualifiers in a qualifier list.</p>
+<h2>Neutral candidates</h2>
+<p>When adding resource candidates to the indexer, you can specify an emptry string (or null pointer) as the
+qualifier to indicate that the candidate is &quot;neutral&quot; and can match any context. For example, the name of the
+app shown in the Start menu may be a neutral candidate because app names are not typically localized
+(and they don't depend on other things like Scale or Contrast). Neutral candidates can be used in addition
+to specific candidates, if desired.</p>
+<p>For example:</p>
+<pre lang="C++"><code>// The name of the app is the same, regardless of language, scale, etc.
+hr = MrmIndexString(indexer, L&quot;ms-resource:///strings/AppName&quot;, L&quot;Contoso Widgets&quot;, nullptr); 
+
+// The name of the publisher is always &quot;Contoso Inc.&quot; except in Australia, where it is &quot;Contoso PTY LTD&quot;.
+hr = MrmIndexString(indexer, L&quot;ms-resource:///strings/AppPublisher&quot;, L&quot;Contoso Inc.&quot;, nullptr); 
+hr = MrmIndexString(indexer, L&quot;ms-resource:///strings/AppPublisher&quot;, L&quot;Contoso PTY LTD&quot;, L&quot;homeregion-au&quot;); 
+</code></pre>
+<h2>Default Qualifiers</h2>
+<p>When creating a config file (via one of the <strong>MrmCreateConfig...</strong> functions) or creating a Resource Indexer
+(via one of the <strong>MrmCreateResourceIndexer...</strong> functions) The <strong>defaultQualifiers</strong> are the qualifiers
+(such as language) that indicate the resource candidates to be used if no better matches can be found.
+For example, if an app has resources in English and French, but it is running on system with the language set
+to Japanese, the language specified as the &quot;default qualifier&quot; when the PRI file was created will be used.
+The default qualifiers also determine which language and scale should be used to create the main PRI file
+when using <strong>AutoSplit</strong> packaging (see <a href="mrmpackagingmode.html"><strong>MrmPackagingMode</strong></a> for more info).</p>
+<p>Note that all resources <em>should</em> have a candidate specified with the default qualifiers (or a neutral candidate),
+otherwise there would be nothing to fall back to in case there was no best match. Note that failing
+to provide a fallback candidate is <em>not</em> considered an error (the indexer will generate an empty-string
+candidate for you) but it can result in a poor user experience or application bugs.</p>
+</body>

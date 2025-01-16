@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Supporting WPD device-side content</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Supporting WPD device-side content (ContextMenu)
+description: Learn how to use the Windows Shell API or the WPD API to get data for WPD device objects, which is not accessible through the file system in Windows Vista.
+ms.assetid: 47fb7f49-9026-43c1-be46-8a520c048862
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Supporting WPD device-side content</h1>
+<p>Because device-side content is not accessible through the file system in Windows Vista, you'll need to use either the Windows Shell API or the WPD API to retrieve data for device objects. This is the primary difference between a normal context menu handler and a WPD context menu handler. The following sample code demonstrates the retrieval of device-side content using the Windows Shell API.</p>
+<p>The first step is the initialization of the item identifier list or PIDL. (This list contains the unique identifier for the given device object.)</p>
+<pre lang="C++"><code>HRESULT CWPDContextMenu::_InitializePIDLArray(IDataObject *pDataObj)
+{
+    if (m_cfHIDA == 0)
+    {
+        m_cfHIDA = (CLIPFORMAT)RegisterClipboardFormat(CFSTR_SHELLIDLIST);
+    }
+
+    STGMEDIUM   medium;
+    FORMATETC   fmte = {m_cfHIDA, NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+
+    HRESULT hr = pDataObj-&gt;GetData(&amp;fmte, &amp;medium);
+    if (SUCCEEDED(hr))
+    {
+        SIZE_T cb = GlobalSize(medium.hGlobal);
+        CIDA *pida = (CIDA*)GlobalAlloc(GPTR, cb);
+        if (pida)
+        {
+            void *pv = GlobalLock(medium.hGlobal);
+            if (pv != NULL)
+            {
+                CopyMemory(pida, pv, cb);
+                GlobalUnlock(medium.hGlobal);
+                m_pida = pida;
+                _ExaminePIDLArray();
+            }
+            else
+            {
+                hr = E_UNEXPECTED;
+            }
+        }
+        else
+        {
+            hr = E_OUTOFMEMORY;
+        }
+        ReleaseStgMedium(&amp;medium);
+    }
+
+    return hr;
+}
+</code></pre>
+<p>The initialization function calls the _ExaminePIDLArray function, which retrieves the properties for object identified by a PIDL in the PIDL array.</p>
+<pre lang="C++"><code>HRESULT CWPDContextMenu::_ExaminePIDLArray()
+{
+    CComPtr&lt;IShellFolder2&gt; spParentFolder;
+
+    CComVariant  variant;
+
+    LPITEMIDLIST pidl = NULL;
+    HRESULT      hr = S_OK;
+    UINT         index = 0;
+
+    pidl = GetPIDL(m_pida, index);
+    if (pidl)
+    {
+        hr = SHBindToParent(pidl, IID_PPV_ARGS(&amp;spParentFolder), NULL);
+        IF_FAILED_JUMP(hr, Exit);
+    }
+
+    do
+    {
+        CComPtr&lt;IPropertySetStorage&gt; spSetStorage;
+        CComPtr&lt;IPropertyStorage&gt;    spPropStorage;
+
+        // Get the IpropertySetStorage interface for this PIDL. This method could also
+        // be used to retrieve an IPortableDevice interface to allow more low-level interaction
+        // with the WPD API.
+        hr = spParentFolder-&gt;BindToObject(ILFindLastID(pidl), NULL, IID_PPV_ARGS(&amp;spSetStorage));
+        if (SUCCEEDED(hr))
+        {
+            hr = spSetStorage-&gt;Open(WPD_FUNCTIONAL_OBJECT_PROPERTIES_V1, STGM_READ, &amp;spPropStorage);
+            if (SUCCEEDED(hr))
+            {
+                PROPVARIANT PropVar = {0};
+                PROPSPEC    PropSpec = {0};
+
+                PropSpec.ulKind = PRSPEC_PROPID;
+                PropSpec.propid = 2; // WPD_FUNCTIONAL_OBJECT_CATEGORY
+
+                PropVariantInit(&amp;PropVar);
+
+                hr = spPropStorage-&gt;ReadMultiple(1, &amp;PropSpec, &amp;PropVar);
+                if (SUCCEEDED(hr) &amp;&amp; PropVar.vt == VT_CLSID)
+                {
+                    // The PIDL array contains a non-file object.
+                    // This means we don't want to take over the
+                    // default menu action.
+                    m_bPIDAContainsOnlyFiles = FALSE;
+                    PropVariantClear(&amp;PropVar);
+                    break;
+                }
+                else
+                {
+                    CComPtr&lt;IPropertyStorage&gt;    spObjectProperties;
+                    hr = spSetStorage-&gt;Open(WPD_OBJECT_PROPERTIES_V1, STGM_READ, &amp;spObjectProperties);
+                    if (SUCCEEDED(hr))
+                    {
+                        PropSpec.ulKind = PRSPEC_PROPID;
+                        PropSpec.propid = 7; // WPD_OBJECT_CONTENT_TYPE
+                        
+                        PropVariantClear(&amp;PropVar);
+                        hr = spObjectProperties-&gt;ReadMultiple(1, &amp;PropSpec, &amp;PropVar);
+                        if (SUCCEEDED(hr) &amp;&amp; PropVar.vt == VT_CLSID)
+                        {
+                            if (IsEqualGUID(*PropVar.puuid, WPD_CONTENT_TYPE_FOLDER))
+                            {
+                                // The PIDL array contains a folder object.
+                                // This means we don't want to take over the
+                                // default menu action.
+                                m_bPIDAContainsOnlyFiles = FALSE;
+                                PropVariantClear(&amp;PropVar);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                PropVariantClear(&amp;PropVar);
+            }
+        }
+
+        UI_SAFE_ILFREE(pidl);
+
+        pidl = GetPIDL(m_pida, ++index);
+    } while (pidl != NULL &amp;&amp; index &lt; m_pida-&gt;cidl);
+
+Exit:
+    UI_SAFE_ILFREE(pidl);
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="programming-guide.html"><strong>Programming Guide</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

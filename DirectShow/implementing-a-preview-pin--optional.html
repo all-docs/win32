@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementing a Preview Pin (Optional)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to implement a preview pin on a DirectShow capture filter.
+ms.assetid: 60306702-97d4-4627-8fbe-e7c8750f3902
+title: Implementing a Preview Pin (Optional)
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Implementing a Preview Pin (Optional)</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This topic describes how to implement a preview pin on a DirectShow capture filter.</p>
+<p>If your filter has a preview pin, the preview pin must send a copy of the data delivered by the capture pin. Only send data from the preview pin when doing so will not cause the capture pin to drop frames. The capture pin always has priority over the preview pin.</p>
+<p>The capture pin and the preview pin must send data with the same format. Therefore, they must connect using identical media types. If the capture pin connects first, the preview pin should offer the same media type, and reject any others types. If the preview pin connects first, and the capture pin connects with a different media type, the preview pin should reconnect using the new media type. If the filter downstream from the preview pin rejects the new type, the capture pin should also reject the type. Use the <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-queryaccept"><strong>IPin::QueryAccept</strong></a> method to query the filter downstream from the preview pin, and use the <a href="/windows/desktop/api/Strmif/nf-strmif-ifiltergraph-reconnect"><strong>IFilterGraph::Reconnect</strong></a> method to reconnect the pin. These rules also apply if the Filter Graph Manager reconnects the capture pin.</p>
+<p>The following example shows an outline of this process:</p>
+<pre lang="C++"><code>// Override CBasePin::CheckMediaType.
+CCapturePin::CheckMediaType(CMediaType *pmt)
+{
+    if (m_pMyPreviewPin-&gt;IsConnected()) 
+    {
+        // The preview pin is already connected, so query the pin it is
+        // connected to. If the other pin rejects it, so do we.
+        hr = m_pMyPreviewPin-&gt;GetConnected()-&gt;QueryAccept(pmt);
+        if (hr != S_OK) 
+        {
+            // The preview pin cannot reconnect with this media type.
+            return E_INVALIDARG;
+        }
+        // The preview pin will reconnect when SetMediaType is called.
+    }
+    // Decide whether the capture pin accepts the format. 
+    BOOL fAcceptThisType = ...  // (Not shown.)
+    return (fAcceptThisType? S_OK : E_FAIL);
+}
+
+// Override CBasePin::SetMediaType.
+CCapturePin::SetMediaType(CMediaType *pmt);
+{
+    if (m_pMyPreviewPin-&gt;IsConnected()) 
+    {
+        // The preview pin is already connected, so it must reconnect.
+        if (m_pMyPreviewPin-&gt;GetConnected()-&gt;QueryAccept(pmt) == S_OK)
+        {
+            // The downstream pin will accept the new type, so it's safe
+            // to reconnect. 
+            m_pFilter-&gt;m_pGraph-&gt;Reconnect(m_pMyPreviewPin);
+        }
+        else
+        {
+            return VFW_E_INVALIDMEDIATYPE;
+        }
+    }
+    // Now do anything that the capture pin needs to set the type.
+    hr = MyInternalSetMediaType(pmt);
+
+    // And finally, call the base-class method.
+    return CBasePin::SetMediaType(pmt);
+}
+
+CPreviewPin::CheckMediaType(CMediaType *pmt)
+{
+    if (m_pMyCapturePin-&gt;IsConnected())
+    {
+       // The preview pin must connect with the same type.
+       CMediaType cmt = m_pMyCapturePin-&gt;m_mt;
+       return (*pmt == cmt ? S_OK : VFW_E_INVALIDMEDIATYPE);
+    }
+    // Decide whether the preview pin accepts the format. You can use your 
+    // knowledge of which types the capture pin will accept. Regardless,
+    // when the capture pin connects, the preview pin will reconnect.
+    return (fAcceptThisType? S_OK : E_FAIL);
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="how-filters-connect.html">How Filters Connect</a></p>
+<!-- raw HTML omitted -->
+<p><a href="writing-capture-filters.html">Writing Capture Filters</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

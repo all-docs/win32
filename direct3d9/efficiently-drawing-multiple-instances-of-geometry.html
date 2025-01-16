@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Efficiently Drawing Multiple Instances of Geometry (Direct3D 9)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Given a scene that contains many objects that use the same geometry, you can draw many instances of that geometry at different orientations, sizes, colors, and so on with dramatically better performance by reducing the amount of data you need to supply to the renderer.
+ms.assetid: d8d9b0c8-b1c4-406d-bf2a-9716d725aec7
+title: Efficiently Drawing Multiple Instances of Geometry (Direct3D 9)
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Efficiently Drawing Multiple Instances of Geometry (Direct3D 9)</h1>
+<p>Given a scene that contains many objects that use the same geometry, you can draw many instances of that geometry at different orientations, sizes, colors, and so on with dramatically better performance by reducing the amount of data you need to supply to the renderer.</p>
+<p>This can be accomplished through the use of two techniques: the first for drawing indexed geometry and the second for non-indexed geometry. Both techniques use two vertex buffers: one to supply geometry data and one to supply per-object instance data. The instance data can be a wide variety of information such as a transform, color data, or lighting data - basically anything that you can describe in a vertex declaration. Drawing many instances of geometry with these techniques can dramatically reduce the amount of data sent to the renderer.</p>
+<ul>
+<li><a href="#drawing-indexed-geometry">Drawing Indexed Geometry</a>
+<ul>
+<li><a href="#indexed-geometry-performance-comparison">Indexed Geometry Performance Comparison</a></li>
+</ul>
+</li>
+<li><a href="#drawing-non-indexed-geometry">Drawing Non-Indexed Geometry</a>
+<ul>
+<li><a href="#non-indexed-geometry-performance-comparison">Non-Indexed Geometry Performance Comparison</a></li>
+</ul>
+</li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Drawing Indexed Geometry</h2>
+<p>The vertex buffer contains per-vertex data that is defined by a vertex declaration. Suppose that part of each vertex contains geometry data, and part of each vertex contains per-object instance data, as shown in the following diagram.</p>
+<p><img src="images/drawingmultipleinstances.png" alt="diagram of a vertex buffer for indexed geometry" /></p>
+<p>This technique requires a device that supports the 3_0 vertex shader model. This technique works with any programmable shader but not with the fixed function pipeline.</p>
+<p>For the vertex buffers shown above, here are the corresponding vertex buffer declarations:</p>
+<pre><code>const D3DVERTEXELEMENT9 g_VBDecl_Geometry[] =
+{
+{0,  0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+{0, 12, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_NORMAL,   0},
+{0, 24, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TANGENT,  0},
+{0, 36, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_BINORMAL, 0},
+{0, 48, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
+D3DDECL_END()
+};
+
+const D3DVERTEXELEMENT9 g_VBDecl_InstanceData[] =
+{
+{1, 0,  D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
+{1, 16, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 2},
+{1, 32, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 3},
+{1, 48, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 4},
+{1, 64, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR,    0},
+D3DDECL_END()
+};
+</code></pre>
+<p>These declarations define two vertex buffers. The first declaration (for stream 0, indicated by the zeros in column 1) defines the geometry data which consists of: position, normal, tangent, binormal, and texture coordinate data.</p>
+<p>The second declaration (for stream 1, indicated by the ones in column 1) defines the per-object instance data. Each instance is defined by four four-component floating point numbers, and a four-component color. The first four values could be used to initialize a 4x4 matrix, which means that this data will uniquely size, position, and rotate each instance of the geometry. The first four components use a texture coordinate semantic which, in this case, means &quot;this is a general four-component number.&quot; When you use arbitrary data in a vertex declaration, use a texture coordinate semantic to mark it. The last element in the stream is used for color data. This could be applied in the vertex shader to give each instance a unique color.</p>
+<p>Before rendering, you need to call <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-setstreamsourcefreq"><strong>SetStreamSourceFreq</strong></a> to bind the vertex buffer streams to the device. Here is an example that binds both vertex buffers:</p>
+<pre><code>// Set up the geometry data stream
+pd3dDevice-&gt;SetStreamSourceFreq(0,
+    (D3DSTREAMSOURCE_INDEXEDDATA | g_numInstancesToDraw));
+pd3dDevice-&gt;SetStreamSource(0, g_VB_Geometry, 0,
+    D3DXGetDeclVertexSize( g_VBDecl_Geometry, 0 ));
+
+// Set up the instance data stream
+pd3dDevice-&gt;SetStreamSourceFreq(1,
+    (D3DSTREAMSOURCE_INSTANCEDATA | 1));
+pd3dDevice-&gt;SetStreamSource(1, g_VB_InstanceData, 0, 
+    D3DXGetDeclVertexSize( g_VBDecl_InstanceData, 1 ));
+</code></pre>
+<p><a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-setstreamsourcefreq"><strong>SetStreamSourceFreq</strong></a> uses <a href="other-direct3d-constants.html">D3DSTREAMSOURCE_INDEXEDDATA</a> to identify the indexed geometry data. In this case, stream 0 contains the indexed data that describes the object geometry. This value is logically combined with the number of instances of the geometry to draw.</p>
+<p>Note that D3DSTREAMSOURCE_INDEXEDDATA and the number of instances to draw must always be set in stream zero.</p>
+<p>In the second call, <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-setstreamsourcefreq"><strong>SetStreamSourceFreq</strong></a> uses <a href="other-direct3d-constants.html">D3DSTREAMSOURCE_INSTANCEDATA</a> to identify the stream containing the instance data. This value is logically combined with 1 since each vertex contains one set of instance data.</p>
+<p>The last two calls to <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-setstreamsource"><strong>SetStreamSource</strong></a> bind the vertex buffer pointers to the device.</p>
+<p>When you are finished rendering the instance data, be sure to reset the vertex stream frequency back to its default state (which does not use instancing). Because this example used two streams, set both streams as shown below:</p>
+<pre><code>pd3dDevice-&gt;SetStreamSourceFreq(0,1);
+pd3dDevice-&gt;SetStreamSourceFreq(1,1);
+</code></pre>
+<h3>Indexed Geometry Performance Comparison</h3>
+<p>While it is not possible to make a single conclusion about how much this technique could reduce the render time in every application, consider the difference in the amount of data streamed into the runtime and the number of state changes that will be reduced if you use the instancing technique. This render sequence takes advantage of drawing multiple instances of the same geometry:</p>
+<pre><code>if( SUCCEEDED( pd3dDevice-&gt;BeginScene() ) )
+{
+    // Set up the geometry data stream
+    pd3dDevice-&gt;SetStreamSourceFreq(0,
+                (D3DSTREAMSOURCE_INDEXEDDATA | g_numInstancesToDraw));
+    pd3dDevice-&gt;SetStreamSource(0, g_VB_Geometry, 0,
+                D3DXGetDeclVertexSize( g_VBDecl_Geometry, 0 ));
+
+    // Set up the instance data stream
+    pd3dDevice-&gt;SetStreamSourceFreq(1,
+                (D3DSTREAMSOURCE_INSTANCEDATA | 1));
+    pd3dDevice-&gt;SetStreamSource(1, g_VB_InstanceData, 0, 
+                D3DXGetDeclVertexSize( g_VBDecl_InstanceData, 1 ));
+
+    pd3dDevice-&gt;SetVertexDeclaration( ... );
+    pd3dDevice-&gt;SetVertexShader( ... );
+    pd3dDevice-&gt;SetIndices( ... );
+
+    pd3dDevice-&gt;DrawIndexedPrimitive( D3DPT_TRIANGLELIST, 0, 0, 
+                g_dwNumVertices, 0, g_dwNumIndices/3 );
+    
+    pd3dDevice-&gt;EndScene();
+}
+</code></pre>
+<p>Notice that the render loop is called once, the geometry data is streamed once, and n instances are streamed once. This next render sequence is identical in functionality, but does not take advantage of instancing:</p>
+<pre><code>if( SUCCEEDED( pd3dDevice-&gt;BeginScene() ) )
+{
+    for(int i=0; i &lt; g_numObjects; i++)
+    {
+        pd3dDevice-&gt;SetStreamSource(0, g_VB_Geometry, 0,
+                D3DXGetDeclVertexSize( g_VBDecl_Geometry, 0 ));
+
+
+        pd3dDevice-&gt;SetVertexDeclaration( ... );
+        pd3dDevice-&gt;SetVertexShader( ... );
+        pd3dDevice-&gt;SetIndices( ... );
+
+        pd3dDevice-&gt;DrawIndexedPrimitive( D3DPT_TRIANGLELIST, 0, 0, 
+                g_dwNumVertices, 0, g_dwNumIndices/3 );
+    }                             
+    
+    pd3dDevice-&gt;EndScene();
+}
+</code></pre>
+<p>Notice that the entire render loop is wrapped by a second loop to draw each object. Now the geometry data is streamed into the renderer n times (instead of once) and any pipeline states may also be set redundantly for each object drawn. This render sequence is very likely to be significantly slower. Notice also that the parameters to <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-drawindexedprimitive"><strong>DrawIndexedPrimitive</strong></a> have not changed between the two render loops.</p>
+<h2>Drawing Non-Indexed Geometry</h2>
+<p>In <a href="#drawing-indexed-geometry">Drawing Indexed Geometry</a>, vertex buffers were configured to draw multiple instances of indexed geometry with greater efficiency. You can also use <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-setstreamsourcefreq"><strong>SetStreamSourceFreq</strong></a> to draw non-indexed geometry. This requires a different vertex buffer layout and has different constraints. To draw non-indexed geometry, prepare your vertex buffers like the following diagram.</p>
+<p><img src="images/olderstyleinstancing.png" alt="diagram of a vertex buffer for non-indexed geometry" /></p>
+<p>This technique is not supported by hardware acceleration on any device. It is only supported by software vertex processing and will work only with <a href="../direct3dhlsl/dx9-graphics-reference-asm-vs-3-0.html">vs_3_0</a> shaders.</p>
+<p>Because this technique works with non-indexed geometry, there is no index buffer. As the diagram shows, the vertex buffer that contains geometry contains n copies of the geometry data. For each instance drawn, the geometry data is read from the first vertex buffer and the instance data is read from the second vertex buffer.</p>
+<p>Here are the corresponding vertex buffer declarations:</p>
+<pre><code>const D3DVERTEXELEMENT9 g_VBDecl_Geometry[] =
+{
+{0,  0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+{0, 12, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_NORMAL,   0},
+{0, 24, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TANGENT,  0},
+{0, 36, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_BINORMAL, 0},
+{0, 48, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
+D3DDECL_END()
+};
+
+const D3DVERTEXELEMENT9 g_VBDecl_InstanceData[] =
+{
+{1, 0,  D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
+{1, 16, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 2},
+{1, 32, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 3},
+{1, 48, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 4},
+{1, 64, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR,    0},
+D3DDECL_END()
+};
+</code></pre>
+<p>These declarations are identical to the declarations made in the indexed geometry example. Once again, the first declaration (for stream 0) defines the geometry data and the second declaration (for stream 1) defines the per-object instance data. When you create the first vertex buffer, be sure to load it with the number of instances of the geometry data that you will be drawing.</p>
+<p>Before rendering, you need to set up the divider which tells the runtime how to divide up the first vertex buffer into n instances. Then set the divider using <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-setstreamsourcefreq"><strong>SetStreamSourceFreq</strong></a> like this:</p>
+<pre><code>// Set the divider
+pd3dDevice-&gt;SetStreamSourceFreq(0, 1);
+// Bind the stream to the vertex buffer
+pd3dDevice-&gt;SetStreamSource(0, g_VB_Geometry, 0,
+        D3DXGetDeclVertexSize( g_VBDecl_Geometry, 0 ));
+
+// Set up the instance data stream
+pd3dDevice-&gt;SetStreamSourceFreq(1, verticesPerInstance);
+pd3dDevice-&gt;SetStreamSource(1, g_VB_InstanceData, 0, 
+        D3DXGetDeclVertexSize( g_VBDecl_InstanceData, 1 ));
+</code></pre>
+<p>The first call to <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-setstreamsourcefreq"><strong>SetStreamSourceFreq</strong></a> says that stream 0 contains n instances of m vertices. <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-setstreamsource"><strong>SetStreamSource</strong></a> then binds stream 0 to the geometry vertex buffer.</p>
+<p>In the second call, <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-setstreamsourcefreq"><strong>SetStreamSourceFreq</strong></a> identifies stream 1 as the source of the instance data. The second parameter is the number of vertices in each object (m). Remember that the instance data stream must always be declared as the second stream. <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-setstreamsource"><strong>SetStreamSource</strong></a> then binds stream 1 to the vertex buffer that contains the instance data.</p>
+<p>When you are finished rendering the instance data, be sure to reset the vertex stream frequency back to its default state. Because this example used two streams, set both streams as shown below:</p>
+<pre><code>pd3dDevice-&gt;SetStreamSourceFreq(0,1);
+pd3dDevice-&gt;SetStreamSourceFreq(1,1);
+</code></pre>
+<h3>Non-Indexed Geometry Performance Comparison</h3>
+<p>The major advantage of this instancing style is that it can be used on non-indexed geometry. While it is not possible to make a single conclusion about how much this technique could reduce the render time in every application, consider the difference in the amount of data streamed into the runtime, and the number of state changes that will be reduced for the following render sequence:</p>
+<pre><code>if( SUCCEEDED( pd3dDevice-&gt;BeginScene() ) )
+{
+    // Set the divider
+    pd3dDevice-&gt;SetStreamSourceFreq(0, 1);
+    pd3dDevice-&gt;SetStreamSource(0, g_VB_Geometry, 0,
+                D3DXGetDeclVertexSize( g_VBDecl_Geometry, 0 ));
+
+    // Set up the instance data stream
+    pd3dDevice-&gt;SetStreamSourceFreq(1, verticesPerInstance));
+    pd3dDevice-&gt;SetStreamSource(1, g_VB_InstanceData, 0, 
+                D3DXGetDeclVertexSize( g_VBDecl_InstanceData, 1 ));
+
+    pd3dDevice-&gt;SetVertexDeclaration( ... );
+    pd3dDevice-&gt;SetVertexShader( ... );
+    pd3dDevice-&gt;SetIndices( ... );
+
+    pd3dDevice-&gt;DrawIndexedPrimitive( D3DPT_TRIANGLELIST, 0, 0, 
+                g_dwNumVertices, 0, g_dwNumIndices/3 );
+    
+    pd3dDevice-&gt;EndScene();
+}
+</code></pre>
+<p>Notice that the render loop is called once. The geometry data is streamed once although there are n instances of the geometry being streamed. The data from the instance vertex buffer is streamed once. This next render sequence is identical in functionality, but does not take advantage of instancing:</p>
+<pre><code>if( SUCCEEDED( pd3dDevice-&gt;BeginScene() ) )
+{
+    for(int i=0; i &lt; g_numObjects; i++)
+    {
+        pd3dDevice-&gt;SetStreamSource(0, g_VB_Geometry, 0,
+                D3DXGetDeclVertexSize( g_VBDecl_Geometry, 0 ));
+
+        pd3dDevice-&gt;SetVertexDeclaration( ... );
+        pd3dDevice-&gt;SetVertexShader( ... );
+        pd3dDevice-&gt;SetIndices( ... );
+
+        pd3dDevice-&gt;DrawIndexedPrimitive( D3DPT_TRIANGLELIST, 0, 0, 
+                g_dwNumVertices, 0, g_dwNumIndices/3 );
+    }
+    
+    pd3dDevice-&gt;EndScene();
+}
+</code></pre>
+<p>Without instancing, the render loop needs to be wrapped by a second loop to draw each object. By eliminating the second render loop, you should expect better performance due to fewer render state changes that are called inside the loop.</p>
+<p>Overall, it is reasonable to expect the indexed technique (<a href="#drawing-indexed-geometry">Drawing Indexed Geometry</a>) to perform better than the non-indexed technique (<a href="#drawing-non-indexed-geometry">Drawing Non-Indexed Geometry</a>) because the indexed technique only streams one copy of the geometry data. Notice that the parameters to <a href="/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-drawindexedprimitive"><strong>DrawIndexedPrimitive</strong></a> have not changed for any of the render sequences.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="advanced-topics.html">Advanced Topics</a></p>
+<!-- raw HTML omitted -->
+<p><a href="https://msdn.microsoft.com/library/Ee418269(v=VS.85).aspx">Instancing Sample</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

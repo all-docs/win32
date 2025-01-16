@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Taking a snapshot, viewing processes</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Taking a snapshot, viewing processes
+description: This code example retrieves a list of running processes.
+ms.assetid: 318d166f-858f-4f33-9422-977e0c4beb3f
+ms.topic: article
+ms.date: 12/19/2023</h2>
+<h1>Taking a snapshot, viewing processes</h1>
+<p>This code example retrieves a list of running processes. First, the <strong>GetProcessList</strong> function takes a snapshot of currently executing processes in the system. To do that, it uses the <a href="/windows/win32/api/TlHelp32/nf-tlhelp32-createtoolhelp32snapshot"><strong>CreateToolhelp32Snapshot</strong></a> function, and then it walks through the list recorded in the snapshot by using <a href="/windows/win32/api/TlHelp32/nf-tlhelp32-process32first"><strong>Process32First</strong></a> and <a href="/windows/win32/api/TlHelp32/nf-tlhelp32-process32next"><strong>Process32Next</strong></a>. For each process in turn, <strong>GetProcessList</strong> calls the <strong>ListProcessModules</strong> function, which is described in <a href="traversing-the-module-list.html">Traversing the module list</a>, and the <strong>ListProcessThreads</strong> function, which is described in <a href="traversing-the-thread-list.html">Traversing the thread list</a>.</p>
+<p>A simple error-reporting function, <strong>printError</strong>, displays the reason for any failures (which typically result from security restrictions). For example, <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess"><strong>OpenProcess</strong></a> fails for the Idle and CSRSS processes because their access restrictions prevent user-level code from opening them.</p>
+<p>To follow along with the code example, use Visual Studio to create a new project from the C++ <strong>Console App</strong> project template, and add the code below to it.</p>
+<pre lang="cpp"><code>#include &lt;windows.h&gt;
+#include &lt;tlhelp32.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;stdio.h&gt;
+
+//  Forward declarations:
+BOOL GetProcessList( );
+BOOL ListProcessModules( DWORD dwPID );
+BOOL ListProcessThreads( DWORD dwOwnerPID );
+void printError( TCHAR const* msg );
+
+int main( void )
+{
+  GetProcessList( );
+  return 0;
+}
+
+BOOL GetProcessList( )
+{
+  HANDLE hProcessSnap;
+  HANDLE hProcess;
+  PROCESSENTRY32 pe32;
+  DWORD dwPriorityClass;
+
+  // Take a snapshot of all processes in the system.
+  hProcessSnap = CreateToolhelp32Snapshot( TH32CS_SNAPPROCESS, 0 );
+  if( hProcessSnap == INVALID_HANDLE_VALUE )
+  {
+    printError( TEXT(&quot;CreateToolhelp32Snapshot (of processes)&quot;) );
+    return( FALSE );
+  }
+
+  // Set the size of the structure before using it.
+  pe32.dwSize = sizeof( PROCESSENTRY32 );
+
+  // Retrieve information about the first process,
+  // and exit if unsuccessful
+  if( !Process32First( hProcessSnap, &amp;pe32 ) )
+  {
+    printError( TEXT(&quot;Process32First&quot;) ); // show cause of failure
+    CloseHandle( hProcessSnap );          // clean the snapshot object
+    return( FALSE );
+  }
+
+  // Now walk the snapshot of processes, and
+  // display information about each process in turn
+  do
+  {
+    _tprintf( TEXT(&quot;\n\n=====================================================&quot; ));
+    _tprintf( TEXT(&quot;\nPROCESS NAME:  %s&quot;), pe32.szExeFile );
+    _tprintf( TEXT(&quot;\n-------------------------------------------------------&quot; ));
+
+    // Retrieve the priority class.
+    dwPriorityClass = 0;
+    hProcess = OpenProcess( PROCESS_ALL_ACCESS, FALSE, pe32.th32ProcessID );
+    if( hProcess == NULL )
+      printError( TEXT(&quot;OpenProcess&quot;) );
+    else
+    {
+      dwPriorityClass = GetPriorityClass( hProcess );
+      if( !dwPriorityClass )
+        printError( TEXT(&quot;GetPriorityClass&quot;) );
+      CloseHandle( hProcess );
+    }
+
+    _tprintf( TEXT(&quot;\n  Process ID        = 0x%08X&quot;), pe32.th32ProcessID );
+    _tprintf( TEXT(&quot;\n  Thread count      = %d&quot;),   pe32.cntThreads );
+    _tprintf( TEXT(&quot;\n  Parent process ID = 0x%08X&quot;), pe32.th32ParentProcessID );
+    _tprintf( TEXT(&quot;\n  Priority base     = %d&quot;), pe32.pcPriClassBase );
+    if( dwPriorityClass )
+      _tprintf( TEXT(&quot;\n  Priority class    = %d&quot;), dwPriorityClass );
+
+    // List the modules and threads associated with this process
+    ListProcessModules( pe32.th32ProcessID );
+    ListProcessThreads( pe32.th32ProcessID );
+
+  } while( Process32Next( hProcessSnap, &amp;pe32 ) );
+
+  CloseHandle( hProcessSnap );
+  return( TRUE );
+}
+
+
+BOOL ListProcessModules( DWORD dwPID )
+{
+  HANDLE hModuleSnap = INVALID_HANDLE_VALUE;
+  MODULEENTRY32 me32;
+
+  // Take a snapshot of all modules in the specified process.
+  hModuleSnap = CreateToolhelp32Snapshot( TH32CS_SNAPMODULE, dwPID );
+  if( hModuleSnap == INVALID_HANDLE_VALUE )
+  {
+    printError( TEXT(&quot;CreateToolhelp32Snapshot (of modules)&quot;) );
+    return( FALSE );
+  }
+
+  // Set the size of the structure before using it.
+  me32.dwSize = sizeof( MODULEENTRY32 );
+
+  // Retrieve information about the first module,
+  // and exit if unsuccessful
+  if( !Module32First( hModuleSnap, &amp;me32 ) )
+  {
+    printError( TEXT(&quot;Module32First&quot;) );  // show cause of failure
+    CloseHandle( hModuleSnap );           // clean the snapshot object
+    return( FALSE );
+  }
+
+  // Now walk the module list of the process,
+  // and display information about each module
+  do
+  {
+    _tprintf( TEXT(&quot;\n\n     MODULE NAME:     %s&quot;),   me32.szModule );
+    _tprintf( TEXT(&quot;\n     Executable     = %s&quot;),     me32.szExePath );
+    _tprintf( TEXT(&quot;\n     Process ID     = 0x%08X&quot;),         me32.th32ProcessID );
+    _tprintf( TEXT(&quot;\n     Ref count (g)  = 0x%04X&quot;),     me32.GlblcntUsage );
+    _tprintf( TEXT(&quot;\n     Ref count (p)  = 0x%04X&quot;),     me32.ProccntUsage );
+    _tprintf( TEXT(&quot;\n     Base address   = 0x%08X&quot;), (DWORD) me32.modBaseAddr );
+    _tprintf( TEXT(&quot;\n     Base size      = %d&quot;),             me32.modBaseSize );
+
+  } while( Module32Next( hModuleSnap, &amp;me32 ) );
+
+  CloseHandle( hModuleSnap );
+  return( TRUE );
+}
+
+BOOL ListProcessThreads( DWORD dwOwnerPID ) 
+{ 
+  HANDLE hThreadSnap = INVALID_HANDLE_VALUE; 
+  THREADENTRY32 te32; 
+ 
+  // Take a snapshot of all running threads  
+  hThreadSnap = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 ); 
+  if( hThreadSnap == INVALID_HANDLE_VALUE ) 
+    return( FALSE ); 
+ 
+  // Fill in the size of the structure before using it. 
+  te32.dwSize = sizeof(THREADENTRY32); 
+ 
+  // Retrieve information about the first thread,
+  // and exit if unsuccessful
+  if( !Thread32First( hThreadSnap, &amp;te32 ) ) 
+  {
+    printError( TEXT(&quot;Thread32First&quot;) ); // show cause of failure
+    CloseHandle( hThreadSnap );          // clean the snapshot object
+    return( FALSE );
+  }
+
+  // Now walk the thread list of the system,
+  // and display information about each thread
+  // associated with the specified process
+  do 
+  { 
+    if( te32.th32OwnerProcessID == dwOwnerPID )
+    {
+      _tprintf( TEXT(&quot;\n\n     THREAD ID      = 0x%08X&quot;), te32.th32ThreadID ); 
+      _tprintf( TEXT(&quot;\n     Base priority  = %d&quot;), te32.tpBasePri ); 
+      _tprintf( TEXT(&quot;\n     Delta priority = %d&quot;), te32.tpDeltaPri ); 
+      _tprintf( TEXT(&quot;\n&quot;));
+    }
+  } while( Thread32Next(hThreadSnap, &amp;te32 ) ); 
+
+  CloseHandle( hThreadSnap );
+  return( TRUE );
+}
+
+void printError( TCHAR const* msg )
+{
+  DWORD eNum;
+  TCHAR sysMsg[256];
+  TCHAR* p;
+
+  eNum = GetLastError( );
+  FormatMessage( FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+         NULL, eNum,
+         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
+         sysMsg, 256, NULL );
+
+  // Trim the end of the line and terminate it with a null
+  p = sysMsg;
+  while( ( *p &gt; 31 ) || ( *p == 9 ) )
+    ++p;
+  do { *p-- = 0; } while( ( p &gt;= sysMsg ) &amp;&amp;
+                          ( ( *p == '.' ) || ( *p &lt; 33 ) ) );
+
+  // Display the message
+  _tprintf( TEXT(&quot;\n  WARNING: %s failed with error %d (%s)&quot;), msg, eNum, sysMsg );
+}
+</code></pre>
+<h2>Related topics</h2>
+<ul>
+<li><a href="snapshots-of-the-system.html">Snapshots of the system</a></li>
+</ul>
+</body>

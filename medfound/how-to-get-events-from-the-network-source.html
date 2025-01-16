@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Get Events from the Network Source</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: How to Get Events from the Network Source
+ms.assetid: 46869f52-323c-41ec-95f7-e7e5d177b782
+title: How to Get Events from the Network Source
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to Get Events from the Network Source</h1>
+<p>The source resolver enables an application to create a network source and open a connection to a specific URL. The network source raises events to mark the beginning and the end of the asynchronous operation of opening a connection. An application can register for these events by using the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfsourceopenmonitor"><strong>IMFSourceOpenMonitor</strong></a> interface.</p>
+<p>This interface exposes the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsourceopenmonitor-onsourceevent"><strong>IMFSourceOpenMonitor::OnSourceEvent</strong></a> method that the network source calls directly when it opens the URL asynchronously. The network source notifies the application when it starts opening the URL by raising the <a href="meconnectstart.html">MEConnectStart</a> event. The network source then raises the <a href="meconnectend.html">MEConnectEnd</a> event when it completes the open operation.</p>
+<blockquote>
+<p>[!Note]<br />
+To send these events to the application, the network source does not use the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a> interface because these events are raised before the network source is created. The application can get all other network source events by using the Media Session's <strong>IMFMediaEventGenerator</strong> interface.</p>
+</blockquote>
+<p>Â </p>
+<h2>To get events from the network source</h2>
+<ol>
+<li>Implement the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfsourceopenmonitor"><strong>IMFSourceOpenMonitor</strong></a> interface. In your implementation of <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsourceopenmonitor-onsourceevent"><strong>IMFSourceOpenMonitor::OnSourceEvent</strong></a> method, do the following:
+<ol>
+<li>Get the event status by calling <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaevent-getstatus"><strong>IMFMediaEvent::GetStatus</strong></a>. This method indicates whether the operation that triggered the event, such as a source resolver method call, succeeded. If the operation is not successful, the status is a failure code.</li>
+<li>Process the event based on the event type: <a href="meconnectstart.html">MEConnectStart</a> or <a href="meconnectend.html">MEConnectEnd</a>, which the application can get by calling <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaevent-gettype"><strong>IMFMediaEvent::GetType</strong></a>.</li>
+</ol>
+</li>
+<li>Configure a key-value pair in a property store object to store a pointer to the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfsourceopenmonitor"><strong>IMFSourceOpenMonitor</strong></a> implementation described in step 1.
+<ol>
+<li>Create a property store object by calling the <strong>PSCreateMemoryPropertyStore</strong> function.</li>
+<li>Set the <a href="mfpkey-sourceopenmonitor-property.html"><strong>MFPKEY_SourceOpenMonitor</strong></a> property in a <strong>PROPERTYKEY</strong> structure.</li>
+<li>Provide the VT_UNKNOWN type data value in a <strong>PROPVARIANT</strong> structure by setting the <strong>IUnknown</strong> pointer to the application's implementation of the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfsourceopenmonitor"><strong>IMFSourceOpenMonitor</strong></a> interface.</li>
+<li>Set the key-value pair in the property store by calling <strong>IPropertyStore::SetValue</strong>.</li>
+</ol>
+</li>
+<li>Pass the property store pointer to the source resolver methods that the application is using to create the network source, such as <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsourceresolver-createobjectfromurl"><strong>IMFSourceResolver::CreateObjectFromURL</strong></a> and others.</li>
+</ol>
+<h2>Example</h2>
+<p>The following example shows how to implement the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfsourceopenmonitor"><strong>IMFSourceOpenMonitor</strong></a> interface to get events from the network source.</p>
+<pre lang="C++"><code>class CSourceOpenMonitor : public IMFSourceOpenMonitor
+{
+public:
+    CSourceOpenMonitor () : m_cRef(1) { }
+
+    STDMETHODIMP QueryInterface(REFIID riid, void** ppv)
+    {
+        static const QITAB qit[] = 
+        {
+            QITABENT(CSourceOpenMonitor, IMFSourceOpenMonitor),
+            { 0 }
+        };
+        return QISearch(this, qit, riid, ppv);
+    }
+
+    STDMETHODIMP_(ULONG) AddRef()
+    {
+        return InterlockedIncrement(&amp;m_cRef);
+    }
+
+    STDMETHODIMP_(ULONG) Release()
+    {
+        LONG cRef = InterlockedDecrement(&amp;m_cRef);
+        if (cRef == 0)
+        {
+            delete this;
+        }
+        // For thread safety, return a temporary variable.
+        return cRef;
+    }
+
+
+    STDMETHODIMP OnSourceEvent(IMFMediaEvent* pEvent)
+    {
+        MediaEventType eventType = MEUnknown;   // Event type
+        HRESULT hrStatus = S_OK;                // Event status
+
+        // Get the event type.
+        HRESULT hr = pEvent-&gt;GetType(&amp;eventType);
+
+        // Get the event status. If the operation that triggered the event
+        // did not succeed, the status is a failure code.
+        if (SUCCEEDED(hr))
+        {
+            hr = pEvent-&gt;GetStatus(&amp;hrStatus);
+        }
+
+        if (FAILED(hrStatus))
+        {
+            hr = hrStatus;
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            // Switch on the event type.
+            switch(eventType)
+            {
+                case MEConnectStart:
+                    // The application does something. (Not shown.)
+                    OutputDebugString(L&quot;Connecting...\n&quot;);
+                    break;
+
+                case MEConnectEnd:
+                    // The application does something. (Not shown.)
+                    OutputDebugString(L&quot;Connect End.\n&quot;);
+                    break;
+            }
+        }
+        else
+        {
+            // Event failed.
+            // The application handled a failure. (Not shown.)
+        }
+        return S_OK;
+    }
+private:
+    long    m_cRef;
+};
+</code></pre>
+<p>The following example shows how to set the <a href="mfpkey-sourceopenmonitor-property.html"><strong>MFPKEY_SourceOpenMonitor</strong></a> property on the network source when you open the URL:</p>
+<pre lang="C++"><code>HRESULT CreateMediaSourceWithSourceOpenMonitor(
+    PCWSTR pszURL, 
+    IMFMediaSource **ppSource
+    )
+{
+    IPropertyStore *pConfig = NULL;
+
+    CSourceOpenMonitor *pMonitor = new (std::nothrow) CSourceOpenMonitor();
+
+    if (pMonitor == NULL)
+    {
+        return E_OUTOFMEMORY;
+    }
+
+    // Configure the property store.
+    HRESULT hr = PSCreateMemoryPropertyStore(IID_PPV_ARGS(&amp;pConfig));
+
+    if (SUCCEEDED(hr))
+    {
+        PROPVARIANT var;
+        var.vt = VT_UNKNOWN;
+        pMonitor-&gt;QueryInterface(IID_PPV_ARGS(&amp;var.punkVal));
+
+        hr = pConfig-&gt;SetValue(MFPKEY_SourceOpenMonitor, var);
+
+        PropVariantClear(&amp;var);
+    }
+
+    // Create the source media source.
+    if (SUCCEEDED(hr))
+    {
+        hr = CreateMediaSource(pszURL, pConfig, ppSource);
+    }
+
+    SafeRelease(&amp;pConfig);
+    SafeRelease(&amp;pMonitor);
+
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="networking-in-media-foundation.html">Networking in Media Foundation</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

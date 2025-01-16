@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direct3D video motion estimation</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This article contains guidance for motion vector estimation with Direct3D 12 video APIs.
+ms.assetid:
+title: Direct3D video motion estimation
+ms.topic: article
+ms.date: 08/19/2019</h2>
+<h1>Direct3D video motion estimation</h1>
+<p>This article contains guidance for motion vector estimation with Direct3D 12 video APIs. This feature was introduced in Windows 10, version 2004 (10.0; Build 19041). Motion estimation is the process of determining motion vectors that describe the transformation from one 2D image to another. Motion estimation is an essential part of video encoding and can be used in frame rate conversion algorithms.</p>
+<p>While motion estimation can be implemented with shaders, the purpose of the D3D12 Motion Estimation feature is to expose fixed function acceleration for motion searching to offload this part of the work from 3D. Often this comes in the form of exposing the GPU video encoder motion estimator. The goal of D3D12 Motion estimation is optical flow, but it should be noted that encoder motion estimators may be optimized for improving compression.</p>
+<h2>Checking for Support</h2>
+<p>Determine support for all D3D video features by calling <a href="/windows/win32/api/d3d12video/nf-d3d12video-id3d12videodevice-checkfeaturesupport">ID3D12VideoDevice::CheckFeatureSupport</a> and passing in a value from the <a href="/windows/win32/api/d3d12video/ne-d3d12video-d3d12_feature_video">D3D12_FEATURE_VIDEO</a> enumeration to specify the feature for which support is being queried. To query the supported block size and resolutions for a given format, use the <strong>D3D12_FEATURE_VIDEO_MOTION_ESTIMATOR</strong> value and supply a <a href="/windows/win32/api/d3d12video/ns-d3d12video-d3d12_feature_data_video_motion_estimator">D3D12_FEATURE_DATA_VIDEO_MOTION_ESTIMATOR</a> structure for the <em>pFeatureSupportData</em> as shown in the example below. In the current release, only <strong>DXGI_FORMAT_NV12</strong> is supported, so content in other formats may need to be color converted and downsampled to use motion estimation.</p>
+<pre lang="C++"><code>D3D12_FEATURE_DATA_VIDEO_MOTION_ESTIMATOR MotionEstimatorSupport = {0u, DXGI_FORMAT_NV12};
+VERIFY(spVideoDevice-&gt;CheckFeatureSupport(D3D12_FEATURE_VIDEO_MOTION_ESTIMATOR, &amp;MotionEstimatorSupport, sizeof(MotionEstimatorSupport)));
+</code></pre>
+<h2>The motion estimator context object</h2>
+<p>The <a href="/windows/win32/api/d3d12video/nn-d3d12video-id3d12videomotionestimator">ID3D12VideoMotionEstimator</a> object maintains context for video motion estimation operations. Create a new instance of this interface by calling <a href="/windows/win32/api/d3d12video/nf-d3d12video-id3d12videodevice1-createvideomotionestimator">ID3D12VideoDevice1::CreateVideoMotionEstimator</a>.</p>
+<p>The selected block size, precision, and supported size range would depend on values supported by hardware returned from the <strong>D3D12_FEATURE_VIDEO_MOTION_ESTIMATOR</strong> feature check. You can select a smaller size range than the driver supports. Size range informs internal allocation sizes.</p>
+<pre lang="c++"><code>D3D12_VIDEO_MOTION_ESTIMATOR_DESC motionEstimatorDesc = { 
+    0, //NodeIndex
+    DXGI_FORMAT_NV12, 
+    D3D12_VIDEO_MOTION_ESTIMATOR_SEARCH_BLOCK_SIZE_16X16,
+    D3D12_VIDEO_MOTION_ESTIMATOR_VECTOR_PRECISION_QUARTER_PEL, 
+    {1920, 1080, 1280, 720} // D3D12_VIDEO_SIZE_RANGE
+    }; 
+
+CComPtr&lt;ID3D12VideoMotionEstimator&gt; spVideoMotionEstimator;
+VERIFY_SUCCEEDED(spVideoDevice-&gt;CreateVideoMotionEstimator(
+    &amp;motionEstimatorDesc, 
+    nullptr,
+    IID_PPV_ARGS(&amp;spVideoMotionEstimator)));
+</code></pre>
+<h2>Storage of motion vectors</h2>
+<p>The <a href="/windows/win32/api/d3d12video/nn-d3d12video-id3d12videomotionvectorheap">ID3D12VideoMotionVectorHeap</a> stores motion vectors. This interface is used by the <a href="/windows/win32/api/d3d12video/ns-d3d12video-d3d12_video_motion_estimator_output">D3D12_VIDEO_MOTION_ESTIMATOR_OUTPUT</a> structure returned from <a href="/windows/win32/api/d3d12video/nf-d3d12video-id3d12videoencodecommandlist-estimatemotion">ID3D12VideoEncodeCommandList::EstimateMotion</a>. The resolved output 2D texture is a <a href="/windows/win32/api/dxgiformat/ne-dxgiformat-dxgi_format">DXGI_FORMAT_R16G16_SINT</a> texture where R holds the horizontal component and G holds the vertical component of the motion vector. This texture is sized to hold one pair of components per block. Call <a href="/windows/win32/api/d3d12video/nf-d3d12video-id3d12videoencodecommandlist-resolvemotionvectorheap">ID3D12VideoEncodeCommandList::ResolveMotionVectorHeap</a> to translates the motion vector output of <strong>EstimateMotion</strong> from hardware-dependent formats into a consistent format defined by the video motion estimation APIs.</p>
+<pre lang="c++"><code>D3D12_VIDEO_MOTION_VECTOR_HEAP_DESC MotionVectorHeapDesc = { 
+    0, // NodeIndex 
+    DXGI_FORMAT_NV12, 
+    D3D12_VIDEO_MOTION_ESTIMATOR_SEARCH_BLOCK_SIZE_16X16,
+    D3D12_VIDEO_MOTION_ESTIMATOR_VECTOR_PRECISION_QUARTER_PEL, 
+    {1920, 1080, 1280, 720} // D3D12_VIDEO_SIZE_RANGE
+    }; 
+
+CComPtr&lt;ID3D12VideoMotionVectorHeap&gt; spVideoMotionVectorHeap;
+VERIFY_SUCCEEDED(spVideoDevice-&gt;CreateVideoMotionVectorHeap(
+    &amp;MotionVectorHeapDesc, 
+    nullptr, 
+    IID_PPV_ARGS(&amp;spVideoMotionVectorHeap)));
+</code></pre>
+<pre lang="cpp"><code>    CD3DX12_RESOURCE_DESC::Tex2D(
+        DXGI_FORMAT_R16G16_SINT, 
+        Align(1920, 16) / 16, // This example uses a 16x16 block size. Pixel width and height
+        Align(1080, 16) / 16, // are adjusted to store the vectors for those blocks.
+        1, // ArraySize
+        1  // MipLevels
+        );
+
+    ATL::CComPtr&lt; ID3D12Resource &gt; spResolvedMotionVectors;
+    VERIFY_SUCCEEDED(pDevice-&gt;CreateCommittedResource(
+        &amp;Properties,
+        D3D12_HEAP_FLAG_NONE,
+        &amp;resolvedMotionVectorDesc,
+        D3D12_RESOURCE_STATE_COMMON,
+        nullptr,
+        IID_PPV_ARGS(&amp;spResolvedMotionVectors)));
+</code></pre>
+<p><strong>ID3D12VideoMotionVectorHeap</strong> is also used to supply hint vectors in the <a href="/windows/win32/api/d3d12video/ns-d3d12video-d3d12_video_motion_estimator_input">D3D12_VIDEO_MOTION_ESTIMATOR_INPUT</a> structure.</p>
+<h2>Estimate motion in a command list</h2>
+<p>Call the <a href="/windows/win32/api/d3d12video/nf-d3d12video-id3d12videoencodecommandlist-estimatemotion">EstimateMotion</a> from a <a href="/windows/win32/api/d3d12video/nn-d3d12video-id3d12videoencodecommandlist">ID3D12VideoEncodeCommandList</a> to invoke the motion estimation operation.</p>
+<p>The example below executes the motion search and resolves the motion vectors to the 2D texture with <a href="/windows/win32/api/d3d12/ne-d3d12-d3d12_command_list_type">D3D12_COMMAND_LIST_TYPE_VIDEO_ENCODE</a>.  D3D12 Resources used as input to <strong>EstimateMotion</strong> must be in the <a href="/windows/win32/api/d3d12/ne-d3d12-d3d12_resource_states">D3D12_RESOURCE_STATE_VIDEO_ENCODE_READ</a> state and the resource written to by <strong>ResolveMotionVectorHeap</strong> must be in the <a href="/windows/win32/api/d3d12/ne-d3d12-d3d12_resource_states">D3D12_RESOURCE_STATE_VIDEO_ENCODE_WRITE</a> state.</p>
+<pre lang="cpp"><code>const D3D12_VIDEO_MOTION_ESTIMATOR_OUTPUT outputArgs = {spVideoMotionVectorHeap};
+
+const D3D12_VIDEO_MOTION_ESTIMATOR_INPUT inputArgs = {
+    spCurrentResource,
+    0,
+    spReferenceResource,
+    0,
+    nullptr // pHintMotionVectorHeap
+    };
+
+spCommandList-&gt;EstimateMotion(spVideoMotionEstimator, &amp;outputArgs, &amp;inputArgs);
+
+const D3D12_RESOLVE_VIDEO_MOTION_VECTOR_HEAP_OUTPUT outputArgs = { 
+    spResolvedMotionVectors,
+    {}};
+
+const D3D12_RESOLVE_VIDEO_MOTION_VECTOR_HEAP_INPUT inputArgs = {
+    spVideoMotionVectorHeap,
+    1920,
+    1080
+    };
+
+spCommandList-&gt;ResolveMotionVectorHeap(&amp;outputArgs, &amp;inputArgs);
+        
+VERIFY(spCommandList-&gt;Close());
+
+// Execute Commandlist.
+ID3D12CommandList *ppCommandLists[1] = { spCommandList.p };
+spCommandQueue-&gt;ExecuteCommandLists(1, ppCommandLists);
+</code></pre>
+<h2>Protected resources</h2>
+<p>Direct3D 12 motion vector estimation supports reading from and writing to hardware DRM protected resources when supported by the driver. If the input resources are hardware DRM protected, the output is also a hardware DRM protected resource.The methods used to create the motion estimation context object and the motion vector heap,  <a href="/windows/win32/api/d3d12video/nf-d3d12video-id3d12videodevice1-createvideomotionestimator">ID3D12VideoDevice1::CreateVideoMotionEstimator</a> and <a href="/windows/win32/api/d3d12video/nf-d3d12video-id3d12videodevice1-createvideomotionvectorheap">ID3D12VideoDevice1::CreateVideoMotionVectorHeap</a>, both accept a <a href="/windows/win32/api/d3d12/nn-d3d12-id3d12protectedresourcesession">ID3D12ProtectedResourceSession</a> that is used to manage access to protected resources.</p>
+<p>Use <a href="/windows/win32/api/d3d12video/nf-d3d12video-id3d12videomotionestimator-getprotectedresourcesession">ID3D12VideoMotionEstimator::GetProtectedResourceSession</a> and <a href="/windows/win32/api/d3d12video/nf-d3d12video-id3d12videomotionvectorheap-getprotectedresourcesession">ID3D12VideoMotionVectorHeap::GetProtectedResourceSession</a> to retrieve the <strong>ID3D12ProtectedResourceSession</strong> objects provided when the objects were created.</p>
+<h2>Related topics</h2>
+<ul>
+<li><a href="direct3d-12-video-apis.html">Direct3D 12 Video APIs</a></li>
+<li><a href="media-foundation-programming-guide.html">Media Foundation Programming Guide</a></li>
+</ul>
+</body>

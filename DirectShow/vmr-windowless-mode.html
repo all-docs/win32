@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VMR Windowless Mode</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: VMR Windowless Mode
+ms.assetid: 0dc871d2-79c4-4bf8-96ef-13c4d1ab4497
+title: VMR Windowless Mode
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>VMR Windowless Mode</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>Windowless mode is the preferred way for applications to render video inside an application window. In windowless mode, the Video Mixing Renderer does not load its Window Manager component, and therefore does not support the <a href="/windows/desktop/api/Control/nn-control-ibasicvideo"><strong>IBasicVideo</strong></a> or <a href="/windows/desktop/api/Control/nn-control-ivideowindow"><strong>IVideoWindow</strong></a> interfaces. Instead, the application provides the playback window and sets a destination rectangle in the client area for the VMR to draw the video. The VMR uses a DirectDraw clipper object to ensure that the video is clipped to the application's window and does not appear on any other windows. The VMR does not subclass the application's window or install any system/process hooks.</p>
+<p>In windowless mode, the sequence of events during connection and transition to the run state is as follows:</p>
+<ul>
+<li>The upstream filter proposes a media type, which the VMR either accepts or rejects.</li>
+<li>If the media type is accepted, the VMR calls the allocator-presenter to obtain a DirectDraw surface. If the surface is created successfully, the pins connect and the VMR is ready to transition into the run state.</li>
+<li>When the filter graph runs, the decoder calls <strong>GetBuffer</strong> to get a media sample from the allocator. The VMR queries the allocator-presenter to ensure that the pixel depth, rectangle size, and other parameters on its DirectDraw surface are compatible with the incoming video. If they are compatible, the VMR returns the DirectDraw surface to the decoder. After the decoder has decoded into the surface, the VMR's Core Synchronization Unit validates the time stamps. This unit blocks the <strong>Receive</strong> call until the presentation time arrives. At that point, the VMR calls <strong>PresentImage</strong> on the allocator-presenter, which presents the surface to the graphics card.</li>
+</ul>
+<p>The following illustration shows the VMR in windowless mode with multiple input streams.</p>
+<p><img src="images/vmr-windowless-mult-streams.png" alt="vmr in windowless mode" /></p>
+<p><strong>Configuring the VMR-7 for Windowless Mode</strong></p>
+<p>To configure the VMR-7 for windowless mode, perform all of the following steps before connecting any of the VMR's input pins:</p>
+<ol>
+<li>
+<p>Create the filter and add it to the graph.</p>
+</li>
+<li>
+<p>Call the <a href="/windows/desktop/api/Strmif/nf-strmif-ivmrfilterconfig-setrenderingmode"><strong>IVMRFilterConfig::SetRenderingMode</strong></a> method with the VMRMode_Windowless flag.</p>
+</li>
+<li>
+<p>Optionally, configure the VMR for multiple input streams by calling <a href="/windows/desktop/api/Strmif/nf-strmif-ivmrfilterconfig-setnumberofstreams"><strong>IVMRFilterConfig::SetNumberOfStreams</strong></a>. The VMR creates an input pin for each stream. Use the <a href="/windows/desktop/api/Strmif/nn-strmif-ivmrmixercontrol"><strong>IVMRMixerControl</strong></a> interface to set the Z-order and other parameters for the stream. For more information, see <a href="vmr-with-multiple-streams--mixing-mode.html">VMR with Multiple Streams (Mixing Mode)</a>.</p>
+<p>If you do not call <strong>SetNumberOfStreams</strong>, the VMR-7 defaults to one input pin. After the input pins are connected, the number of pins cannot be changed.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/Strmif/nf-strmif-ivmrwindowlesscontrol-setvideoclippingwindow"><strong>IVMRWindowlessControl::SetVideoClippingWindow</strong></a> to specify the window in which the rendered video will appear.</p>
+</li>
+</ol>
+<p>Once these steps are completed, you can connect the VMR filter's input pins. There are various ways to build the graph, such as connecting pins directly, using Intelligent Connect methods such as <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-renderfile"><strong>IGraphBuilder::RenderFile</strong></a>, or using the Capture Graph Builder's <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>ICaptureGraphBuilder2::RenderStream</strong></a> method. For more information, see <a href="general-graph-building-techniques.html">General Graph-Building Techniques</a>.</p>
+<p>To set the position of the video within the application window, call the <a href="/windows/desktop/api/Strmif/nf-strmif-ivmrwindowlesscontrol-setvideoposition"><strong>IVMRWindowlessControl::SetVideoPosition</strong></a> method. The <a href="/windows/desktop/api/Strmif/nf-strmif-ivmrwindowlesscontrol-getnativevideosize"><strong>IVMRWindowlessControl::GetNativeVideoSize</strong></a> method returns the native video size. During playback, the application should notify the VMR of the following Windows messages:</p>
+<ul>
+<li>WM_PAINT: Call <a href="/windows/desktop/api/Strmif/nf-strmif-ivmrwindowlesscontrol-repaintvideo"><strong>IVMRWindowlessControl::RepaintVideo</strong></a> to repaint the image.</li>
+<li>WM_DISPLAYCHANGE: Call <a href="/windows/desktop/api/Strmif/nf-strmif-ivmrwindowlesscontrol-displaymodechanged"><strong>IVMRWindowlessControl::DisplayModeChanged</strong></a>. The VMR takes any actions that are needed to display the video at the new resolution or color depth.</li>
+<li>WM_SIZE: Recalculate the position of the video and call <a href="/windows/desktop/api/Strmif/nf-strmif-ivmrwindowlesscontrol-setvideoposition"><strong>SetVideoPosition</strong></a> again if necessary.</li>
+</ul>
+<blockquote>
+<p>[!Note]<br />
+MFC applications must define an empty WM_ERASEBKGND message handler, or the video display area will not repaint correctly.</p>
+</blockquote>
+<p>Â </p>
+<p><strong>Configuring the VMR-9 for Windowless Mode</strong></p>
+<p>To configure the VMR-9 for windowless mode, use the steps described for the VMR-7 for Windowless mode, but use the <a href="/previous-versions/windows/desktop/api/Vmr9/nn-vmr9-ivmrfilterconfig9"><strong>IVMRFilterConfig9</strong></a> and <a href="/previous-versions/windows/desktop/api/Vmr9/nn-vmr9-ivmrwindowlesscontrol9"><strong>IVMRWindowlessControl9</strong></a> interfaces. The only significant difference is that the VMR-9 creates four input pins by default, rather than one input pin. Therefore, you only need to call <strong>SetNumberOfStreams</strong> if you are mixing more than four video streams.</p>
+<p><strong>Example Code</strong></p>
+<p>The following code shows how to create a VMR-7 filter, add it to the DirectShow filter graph, and then put the VMR into windowless mode. For the VMR-9, use CLSID_VideoMixingRenderer9 in <strong>CoCreateInstance</strong> and the corresponding VMR-9 interfaces.</p>
+<pre lang="C++"><code>HRESULT InitializeWindowlessVMR(
+    HWND hwndApp,         // Application window.
+    IFilterGraph* pFG,    // Pointer to the Filter Graph Manager.
+    IVMRWindowlessControl** ppWc,  // Receives the interface.
+    DWORD dwNumStreams,  // Number of streams to use.
+    BOOL fBlendAppImage  // Are we alpha-blending a bitmap?
+    )
+{
+    IBaseFilter* pVmr = NULL;
+    IVMRWindowlessControl* pWc = NULL;
+    *ppWc = NULL;
+
+    // Create the VMR and add it to the filter graph.
+    HRESULT hr = CoCreateInstance(CLSID_VideoMixingRenderer, NULL,
+       CLSCTX_INPROC, IID_IBaseFilter, (void**)&amp;pVmr);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    hr = pFG-&gt;AddFilter(pVmr, L&quot;Video Mixing Renderer&quot;);
+    if (FAILED(hr))
+    {
+        pVmr-&gt;Release();
+        return hr;
+    }
+
+    // Set the rendering mode and number of streams.  
+    IVMRFilterConfig* pConfig;
+    hr = pVmr-&gt;QueryInterface(IID_IVMRFilterConfig, (void**)&amp;pConfig);
+    if (SUCCEEDED(hr)) 
+    {
+        pConfig-&gt;SetRenderingMode(VMRMode_Windowless);
+
+        // Set the VMR-7 to mixing mode if you want more than one video
+        // stream, or you want to mix a static bitmap over the video.
+        // (The VMR-9 defaults to mixing mode with four inputs.)
+        if (dwNumStreams &gt; 1 || fBlendAppImage) 
+        {
+            pConfig-&gt;SetNumberOfStreams(dwNumStreams);
+        }
+        pConfig-&gt;Release();
+
+        hr = pVmr-&gt;QueryInterface(IID_IVMRWindowlessControl, (void**)&amp;pWc);
+        if (SUCCEEDED(hr)) 
+        {
+            pWc-&gt;SetVideoClippingWindow(hwndApp);
+            *ppWc = pWc;  // The caller must release this interface.
+        }
+    }
+    pVmr-&gt;Release();
+
+    // Now the VMR can be connected to other filters.
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-windowless-mode.html">Using Windowless Mode</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

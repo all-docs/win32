@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Weekly Trigger Example (C++)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Weekly Trigger Example (C++)
+description: This C++ example shows how to create a task that is scheduled to execute Notepad on a weekly basis.
+ms.assetid: 7c70b743-aff2-4ef5-b65b-ef0b5fdacade
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Weekly Trigger Example (C++)</h1>
+<p>This C++ example shows how to create a task that is scheduled to execute Notepad on a weekly basis. The task contains a weekly trigger that specifies a start boundary, a weeks interval, and a day of the week for the task to start on. The task also contains an action that specifies the task to execute Notepad.</p>
+<p>The following procedure describes how to schedule a task to start an executable on a weekly basis.</p>
+<p><strong>To schedule Notepad to start on a weekly basis</strong></p>
+<ol>
+<li>
+<p>Initialize COM and set general COM security.</p>
+</li>
+<li>
+<p>Create the <a href="/windows/desktop/api/taskschd/nn-taskschd-itaskservice"><strong>ITaskService</strong></a> object.</p>
+<p>This object allows you to create tasks in a specified folder.</p>
+</li>
+<li>
+<p>Get a task folder to create a task in.</p>
+<p>Use the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskservice-getfolder"><strong>ITaskService::GetFolder</strong></a> method to get the folder, and the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskservice-newtask"><strong>ITaskService::NewTask</strong></a> method to create the <a href="/windows/desktop/api/taskschd/nn-taskschd-itaskdefinition"><strong>ITaskDefinition</strong></a> object.</p>
+</li>
+<li>
+<p>Define information about the task using the <a href="/windows/desktop/api/taskschd/nn-taskschd-itaskdefinition"><strong>ITaskDefinition</strong></a> object, such as the registration information for the task.</p>
+<p>Use the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskdefinition-get_registrationinfo"><strong>RegistrationInfo property of ITaskDefinition</strong></a> and other properties of the <a href="/windows/desktop/api/taskschd/nn-taskschd-itaskdefinition"><strong>ITaskDefinition</strong></a> interface to define the task information.</p>
+</li>
+<li>
+<p>Create a weekly trigger using the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskdefinition-get_triggers"><strong>Triggers property of ITaskDefinition</strong></a> to access the <a href="/windows/desktop/api/taskschd/nn-taskschd-itriggercollection"><strong>ITriggerCollection</strong></a> interface for the task.</p>
+<p>Use the <a href="/windows/desktop/api/taskschd/nf-taskschd-itriggercollection-create"><strong>ITriggerCollection::Create</strong></a> method to specify that you want to create a weekly trigger. You can set the start boundary, the weeks interval, and the day of the week for the <a href="/windows/desktop/api/taskschd/nn-taskschd-iweeklytrigger"><strong>IWeeklyTrigger</strong></a> trigger so that the task's actions will be scheduled to execute at a specified time on a certain day of the week.</p>
+</li>
+<li>
+<p>Create an action for the task to execute by using the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskdefinition-get_actions"><strong>Actions property of ITaskDefinition</strong></a> to access the <a href="/windows/desktop/api/taskschd/nn-taskschd-iactioncollection"><strong>IActionCollection</strong></a> interface for the task.</p>
+<p>Use the <a href="/windows/desktop/api/taskschd/nf-taskschd-iactioncollection-create"><strong>IActionCollection::Create</strong></a> method to specify the type of action that you want to create. This example uses an <a href="/windows/desktop/api/taskschd/nn-taskschd-iexecaction"><strong>IExecAction</strong></a> object, which represents an action that executes a command-line operation.</p>
+</li>
+<li>
+<p>Register the task using the <a href="/windows/desktop/api/taskschd/nf-taskschd-itaskfolder-registertaskdefinition"><strong>ITaskFolder::RegisterTaskDefinition</strong></a> method.</p>
+</li>
+</ol>
+<p>The following C++ example shows how to schedule a task to execute Notepad on a weekly basis.</p>
+<pre lang="C++"><code>/********************************************************************
+ This sample schedules a task to start on a weekly basis. 
+********************************************************************/
+
+#define _WIN32_DCOM
+
+#include &lt;windows.h&gt;
+#include &lt;iostream&gt;
+#include &lt;stdio.h&gt;
+#include &lt;comdef.h&gt;
+#include &lt;wincred.h&gt;
+//  Include the task header file.
+#include &lt;taskschd.h&gt;
+#pragma comment(lib, &quot;taskschd.lib&quot;)
+#pragma comment(lib, &quot;comsupp.lib&quot;)
+#pragma comment(lib, &quot;credui.lib&quot;)
+
+using namespace std;
+
+
+void main(void)
+{
+    //  ------------------------------------------------------
+    //  Initialize COM.
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCoInitializeEx failed: %x&quot;, hr );
+        return;
+    }
+
+    //  Set general COM security levels.
+    hr = CoInitializeSecurity(
+        NULL,
+        -1,
+        NULL,
+        NULL,
+        RPC_C_AUTHN_LEVEL_PKT,
+        RPC_C_IMP_LEVEL_IMPERSONATE,
+        NULL,
+        0,
+        NULL);
+
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCoInitializeSecurity failed: %x&quot;, hr );
+        CoUninitialize();
+        return;
+    }
+
+    //  ------------------------------------------------------
+    //  Create a name for the task.
+    LPCWSTR wszTaskName = L&quot;Weekly Trigger Task&quot;;
+
+    //  Get the windows directory and set the path to notepad.exe.
+    wstring wstrExecutablePath = _wgetenv( L&quot;WINDIR&quot;);
+    wstrExecutablePath += L&quot;\\SYSTEM32\\NOTEPAD.EXE&quot;;
+
+
+    //  ------------------------------------------------------
+    //  Create an instance of the Task Service. 
+    ITaskService *pService = NULL;
+    hr = CoCreateInstance( CLSID_TaskScheduler,
+                           NULL,
+                           CLSCTX_INPROC_SERVER,
+                           IID_ITaskService,
+                           (void**)&amp;pService );  
+    if (FAILED(hr))
+    {
+          printf(&quot;Failed to create an instance of ITaskService: %x&quot;, hr);
+          CoUninitialize();
+          return;
+    }
+        
+    //  Connect to the task service.
+    hr = pService-&gt;Connect(_variant_t(), _variant_t(),
+        _variant_t(), _variant_t());
+    if( FAILED(hr) )
+    {
+        printf(&quot;ITaskService::Connect failed: %x&quot;, hr );
+        pService-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+
+    //  ------------------------------------------------------
+    //  Get the pointer to the root task folder.  
+    //  This folder will hold the new task that is registered.
+    ITaskFolder *pRootFolder = NULL;
+    hr = pService-&gt;GetFolder( _bstr_t( L&quot;\\&quot;) , &amp;pRootFolder );
+    if( FAILED(hr) )
+    {
+        printf(&quot;Cannot get Root Folder pointer: %x&quot;, hr );
+        pService-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+    
+    //  If the same task exists, remove it.
+    pRootFolder-&gt;DeleteTask( _bstr_t( wszTaskName), 0  );
+    
+    //  Create the task builder object to create the task.
+    ITaskDefinition *pTask = NULL;
+    hr = pService-&gt;NewTask( 0, &amp;pTask );
+    
+    pService-&gt;Release();  // COM clean up.  Pointer is no longer used.
+    if (FAILED(hr))
+    {
+          printf(&quot;Failed to create a task definition: %x&quot;, hr);
+          pRootFolder-&gt;Release();
+          CoUninitialize();
+          return;
+    }
+            
+    //  ------------------------------------------------------
+    //  Get the registration info for setting the identification.
+    IRegistrationInfo *pRegInfo= NULL;
+    hr = pTask-&gt;get_RegistrationInfo( &amp;pRegInfo );
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot get identification pointer: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+    
+    hr = pRegInfo-&gt;put_Author( L&quot;Author Name&quot; );
+    pRegInfo-&gt;Release();  // COM clean up.  Pointer is no longer used.
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot put identification info: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+    
+    //  ------------------------------------------------------
+    //  Get the trigger collection to insert the weekly trigger.
+    ITriggerCollection *pTriggerCollection = NULL;
+    hr = pTask-&gt;get_Triggers( &amp;pTriggerCollection );
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot get trigger collection: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+        
+    ITrigger *pTrigger = NULL;
+    hr = pTriggerCollection-&gt;Create( TASK_TRIGGER_WEEKLY, &amp;pTrigger );     
+    pTriggerCollection-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot create the trigger: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+
+    IWeeklyTrigger *pWeeklyTrigger = NULL;
+    hr = pTrigger-&gt;QueryInterface( 
+            IID_IWeeklyTrigger, (void**) &amp;pWeeklyTrigger );
+    pTrigger-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nQueryInterface call for IWeeklyTrigger failed: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+    
+    hr = pWeeklyTrigger-&gt;put_Id( _bstr_t( L&quot;Trigger1&quot; ) );
+    if( FAILED(hr) )
+        printf(&quot;\nCannot put trigger ID: %x&quot;, hr);
+
+    //  Set the task to start weekly at a certain time. The time 
+    //  format should be YYYY-MM-DDTHH:MM:SS(+-)(timezone).
+    //  For example, the start boundary below is January 1st 2005 at
+    //  12:05
+    hr = pWeeklyTrigger-&gt;put_StartBoundary( _bstr_t(L&quot;2005-01-01T12:05:00&quot;) );
+    if( FAILED(hr) )
+        printf(&quot;\nCannot put the start boundary: %x&quot;, hr);
+
+    //  Set the time when the trigger is deactivated.
+    hr = pWeeklyTrigger-&gt;put_EndBoundary( _bstr_t(L&quot;2007-01-01T12:05:00&quot;) );
+    if( FAILED(hr) )
+        printf(&quot;\nCannot put the end boundary: %x&quot;, hr);
+    
+    
+    //  Define the interval for the weekly trigger. 
+    //  An interval of 2 produces an
+    //  every other week schedule
+    hr = pWeeklyTrigger-&gt;put_WeeksInterval( (short)2 );
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot put weeks interval: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+    
+    hr = pWeeklyTrigger-&gt;put_DaysOfWeek( (short)2 );    // Runs on Monday
+    pWeeklyTrigger-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot put days of week interval: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+
+    //  ------------------------------------------------------
+    //  Add an Action to the task. This task will execute notepad.exe.     
+    IActionCollection *pActionCollection = NULL;
+
+    //  Get the task action collection pointer.
+    hr = pTask-&gt;get_Actions( &amp;pActionCollection );
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot get Task collection pointer: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+        
+    //  Create the action, specifying that it is an executable action.
+    IAction *pAction = NULL;
+    hr = pActionCollection-&gt;Create( TASK_ACTION_EXEC, &amp;pAction );
+    pActionCollection-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot create the action: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+
+    IExecAction *pExecAction = NULL;
+    //  QI for the executable task pointer.
+    hr = pAction-&gt;QueryInterface( 
+        IID_IExecAction, (void**) &amp;pExecAction );
+    pAction-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nQueryInterface call failed on IExecAction: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+
+    //  Set the path of the executable to notepad.exe.
+    hr = pExecAction-&gt;put_Path( _bstr_t( wstrExecutablePath.c_str() ) );
+    pExecAction-&gt;Release();
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nCannot add path for executable action: %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        CoUninitialize();
+        return;
+    }
+
+    //  ------------------------------------------------------
+    //  Securely get the user name and password. The task will
+    //  be created to run with the credentials from the supplied 
+    //  user name and password.
+    CREDUI_INFO cui;
+    TCHAR pszName[CREDUI_MAX_USERNAME_LENGTH] = &quot;&quot;;
+    TCHAR pszPwd[CREDUI_MAX_PASSWORD_LENGTH] = &quot;&quot;;
+    BOOL fSave;
+    DWORD dwErr;
+
+    cui.cbSize = sizeof(CREDUI_INFO);
+    cui.hwndParent = NULL;
+    //  Ensure that MessageText and CaptionText identify
+    //  what credentials to use and which application requires them.
+    cui.pszMessageText = TEXT(&quot;Account information for task registration:&quot;);
+    cui.pszCaptionText = TEXT(&quot;Enter Account Information for Task Registration&quot;);
+    cui.hbmBanner = NULL;
+    fSave = FALSE;
+
+    //  Create the UI asking for the credentials.
+    dwErr = CredUIPromptForCredentials(
+        &amp;cui,                             //  CREDUI_INFO structure
+        TEXT(&quot;&quot;),                         //  Target for credentials
+        NULL,                             //  Reserved
+        0,                                //  Reason
+        pszName,                          //  User name
+        CREDUI_MAX_USERNAME_LENGTH,       //  Max number for user name
+        pszPwd,                           //  Password
+        CREDUI_MAX_PASSWORD_LENGTH,       //  Max number for password
+        &amp;fSave,                           //  State of save check box
+        CREDUI_FLAGS_GENERIC_CREDENTIALS |  //  Flags
+        CREDUI_FLAGS_ALWAYS_SHOW_UI |
+        CREDUI_FLAGS_DO_NOT_PERSIST);  
+
+    if(dwErr)
+    {
+        cout &lt;&lt; &quot;Did not get credentials.&quot; &lt;&lt; endl;    
+        CoUninitialize();
+        return;      
+    }
+
+    
+    //  ------------------------------------------------------
+    //  Save the task in the root folder.
+    IRegisteredTask *pRegisteredTask = NULL;
+    hr = pRootFolder-&gt;RegisterTaskDefinition(
+            _bstr_t( wszTaskName ),
+            pTask,
+            TASK_CREATE_OR_UPDATE, 
+            _variant_t(_bstr_t(pszName)), 
+            _variant_t(_bstr_t(pszPwd)), 
+            TASK_LOGON_PASSWORD,
+            _variant_t(L&quot;&quot;),
+            &amp;pRegisteredTask);
+    if( FAILED(hr) )
+    {
+        printf(&quot;\nError saving the Task : %x&quot;, hr );
+        pRootFolder-&gt;Release();
+        pTask-&gt;Release();
+        SecureZeroMemory(pszName, sizeof(pszName));
+        SecureZeroMemory(pszPwd, sizeof(pszPwd));
+        CoUninitialize();
+        return;
+    }
+
+    printf(&quot;\n Success! Task succesfully registered. &quot; );
+
+    //  Clean up
+    pRootFolder-&gt;Release();
+    pTask-&gt;Release();
+    pRegisteredTask-&gt;Release();
+    SecureZeroMemory(pszName, sizeof(pszName));
+    SecureZeroMemory(pszPwd, sizeof(pszPwd));
+    CoUninitialize();
+    return;
+}
+
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-the-task-scheduler.html">Using the Task Scheduler</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

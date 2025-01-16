@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example Code for Locating the Partitions Container</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Example Code for Locating the Partitions Container
+description: This topic includes code examples that locate the partition container.
+ms.assetid: 7aa6ad5a-7baf-484a-9296-eafb61da5f4e
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Example Code for Locating the Partitions Container AD</li>
+<li>Application Directory Partitions AD , Example Code for Locating the Partitions Container
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Example Code for Locating the Partitions Container</h1>
+<p>This topic includes code examples that locate the partition container.</p>
+<p>The following C/C++ code example gets the distinguished name of the Partitions container by searching the configuration container for the <a href="/windows/desktop/ADSchema/c-crossrefcontainer"><strong>crossRefContainer</strong></a> object.</p>
+<pre lang="C++"><code>/***************************************************************************
+
+    GetPartitionsDNSearch()
+
+    Description: Gets the distinguished name of the Partitions container in 
+    the current enterprise forest.
+
+    Parameters:
+
+    ppwszPartitionsDN - Pointer to an LPWSTR that receives the distinguished 
+    name string. The caller must free this memory with 
+    FreeADsMem when it is no longer required.
+
+***************************************************************************/
+
+HRESULT GetPartitionsDNSearch(LPWSTR *ppwszPartitionsDN)
+{
+ 
+    *ppwszPartitionsDN = NULL;
+    
+    HRESULT hr;
+
+    IADs *padsRootDSE;
+
+    // Bind to the RootDSE to get the configurationNamingContext property.
+    hr = ADsOpenObject( L&quot;LDAP://RootDSE&quot;,
+                        NULL,
+                        NULL,
+                        ADS_SECURE_AUTHENTICATION,
+                        IID_IADs, 
+                        (LPVOID*)&amp;padsRootDSE);
+
+    if(SUCCEEDED(hr))
+    {
+        CComVariant svar;
+
+        // Get the configurationNamingContext property.
+        hr = padsRootDSE-&gt;Get(CComBSTR(&quot;configurationNamingContext&quot;), &amp;svar);
+        if(SUCCEEDED(hr))
+        {
+            IDirectorySearch *pConfigSearch;
+
+            // Bind to the Configuration container.
+            CComBSTR sbstrPath = &quot;LDAP://&quot;;
+            sbstrPath += svar.bstrVal;
+
+            hr = ADsOpenObject( sbstrPath,
+                                NULL,
+                                NULL,
+                                ADS_SECURE_AUTHENTICATION,
+                                IID_IDirectorySearch, 
+                                (LPVOID*)&amp;pConfigSearch);
+
+            if(SUCCEEDED(hr))
+            {
+                // Search for an object that is of type crossRefContainer.
+                ADS_SEARCHPREF_INFO SearchPref[1];
+
+                // Set the search scope.
+                SearchPref[0].dwSearchPref = ADS_SEARCHPREF_SEARCH_SCOPE;
+                SearchPref[0].vValue.dwType = ADSTYPE_INTEGER;
+                SearchPref[0].vValue.Integer = ADS_SCOPE_ONELEVEL;
+                
+                hr = pConfigSearch-&gt;SetSearchPreference(SearchPref, sizeof(SearchPref)/sizeof(ADS_SEARCHPREF_INFO));
+                if(SUCCEEDED(hr))
+                {
+                    ADS_SEARCH_HANDLE hSearch = NULL;
+                    LPWSTR pwszAttributes[1] = {L&quot;distinguishedName&quot;};
+                    LPWSTR pwszSearchFilter = L&quot;(&amp;(objectClass=crossRefContainer))&quot;;
+                    
+                    // Execute the search.
+                    hr = pConfigSearch-&gt;ExecuteSearch(pwszSearchFilter, 
+                        pwszAttributes, 
+                        sizeof(pwszAttributes)/sizeof(LPWSTR), 
+                        &amp;hSearch);
+                    if(SUCCEEDED(hr))
+                    {
+                        // Get the first result row. There should never be more than one match.
+                        hr = pConfigSearch-&gt;GetFirstRow(hSearch);
+                        if(S_OK == hr)
+                        {
+                            ADS_SEARCH_COLUMN col;
+
+                            // Get the search result. The distinguishedName attribute will be a string.
+                            hr = pConfigSearch-&gt;GetColumn(hSearch, pwszAttributes[0], &amp;col);
+                            if(SUCCEEDED(hr))
+                            {
+                                // col.pADsValues[0].DNString;
+                                DWORD dwChars = lstrlenW(col.pADsValues[0].DNString) + 1;
+                                
+                                *ppwszPartitionsDN = (LPWSTR)AllocADsMem(dwChars * sizeof(WCHAR));
+                                
+                                if(*ppwszPartitionsDN)
+                                {
+                                    wcsncpy_s(*ppwszPartitionsDN, col.pADsValues[0].DNString, dwChars);
+                                }
+                                else
+                                {
+                                    hr = E_OUTOFMEMORY;
+                                }
+
+                                pConfigSearch-&gt;FreeColumn(&amp;col);
+                            }
+                        }
+                        else
+                        {
+                            hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+                        }
+                        
+                        // Close the search handle to cleanup.
+                        pConfigSearch-&gt;CloseSearchHandle(hSearch);
+                    }
+                }
+
+                pConfigSearch-&gt;Release();
+            }
+        }
+        
+        padsRootDSE-&gt;Release();
+    }
+
+    return hr;
+}
+</code></pre>
+<p>The following Visual Basic Scripting Edition code example gets the distinguished name of the Partitions container by searching the configuration container for the <a href="/windows/desktop/ADSchema/c-crossrefcontainer"><strong>crossRefContainer</strong></a> object.</p>
+<pre lang="VB"><code>Const ADS_SECURE_AUTHENTICATION = 1
+
+'
+'   GetPartitionsDNSearch
+'
+'   Description: Gets the distinguished name of the Partitions container in
+'   the current enterprise forest.
+'
+Function GetPartitionsDNSearch()
+    ' Bind to RootDSE.
+    Set oRootDSE = GetObject(&quot;LDAP://RootDSE&quot;)
+    
+    Set oConn = CreateObject(&quot;ADODB.Connection&quot;)
+    Set oComm = CreateObject(&quot;ADODB.Command&quot;)
+     
+    oConn.Provider = &quot;ADsDSOObject&quot;
+
+    ' Set the binding options for the search.
+    oConn.Properties(&quot;ADSI Flag&quot;) = ADS_SECURE_AUTHENTICATION
+    
+    oConn.Open
+    oComm.ActiveConnection = oConn
+    
+    oComm.CommandText = &quot;&lt;LDAP://&quot; + oRootDSE.Get(&quot;configurationNamingContext&quot;) + &quot;&gt;;(&amp;(objectClass=crossRefContainer));distinguishedName;onelevel&quot;
+    
+    ' WScript.Echo oComm.CommandText
+    
+    ' Execute the query.
+    Set oResults = oComm.Execute
+    
+    ' Get the first result. This should be the only result.
+    Set oField = oResults(0)
+    
+    GetPartitionsDNSearch = oField.Value
+End Function
+</code></pre>
+<p>The following C/C++ code example gets the distinguished name of the Partitions container by manually building the distinguished name.</p>
+<pre lang="C++"><code>/***************************************************************************
+
+    GetPartitionsDNManual()
+
+    Description: Gets the distinguished name of the Partitions container in 
+    the current enterprise forest.
+
+    Parameters:
+
+    ppwszPartitionsDN - Pointer to an LPWSTR that receives the distinguished 
+    name string. The caller must free this memory with 
+    FreeADsMem when it is no longer required.
+
+***************************************************************************/
+
+HRESULT GetPartitionsDNManual(LPWSTR *ppwszPartitionsDN)
+{
+
+    *ppwszPartitionsDN = NULL;
+
+    HRESULT hr;
+
+    IADs *padsRootDSE;
+
+    // Bind to the RootDSE to get the configurationNamingContext property.
+    hr = ADsOpenObject( L&quot;LDAP://RootDSE&quot;,
+                        NULL,
+                        NULL,
+                        ADS_SECURE_AUTHENTICATION,
+                        IID_IADs, 
+                        (LPVOID*)&amp;padsRootDSE);
+
+    if(SUCCEEDED(hr))
+    {
+        CComVariant svar;
+
+        // Get the configurationNamingContext property.
+        hr = padsRootDSE-&gt;Get(CComBSTR(&quot;configurationNamingContext&quot;), &amp;svar);
+        if(SUCCEEDED(hr))
+        {
+            CComBSTR sbstrDN = &quot;CN=Partitions,&quot;;
+            sbstrDN += svar.bstrVal;
+            DWORD dwChars = sbstrDN.Length() + 1;
+
+            *ppwszPartitionsDN = (LPWSTR)AllocADsMem(dwChars * sizeof(WCHAR));
+            
+            if(*ppwszPartitionsDN)
+            {
+                wcsncpy_s(*ppwszPartitionsDN, sbstrDN.m_str, dwChars);
+            }
+            else
+            {
+                hr = E_OUTOFMEMORY;
+            }
+        }
+        
+        padsRootDSE-&gt;Release();
+    }
+
+    return hr;
+}
+</code></pre>
+<p>The following Visual Basic code example gets the distinguished name of the Partitions container by manually building the distinguished name.</p>
+<pre lang="VB"><code>'
+'   GetPartitionsDNManual
+'
+'   Description: Gets the distinguished name of the Partitions container in
+'   the current enterprise forest.
+'
+Function GetPartitionsDNManual()
+    ' Bind to RootDSE.
+    Set oRootDSE = GetObject(&quot;LDAP://RootDSE&quot;)
+    
+    ' Get the configurationNamingContext property.
+    GetPartitionsDNManual = &quot;CN=Partitions,&quot; + oRootDSE.Get(&quot;configurationNamingContext&quot;)
+End Function
+</code></pre>
+<p>The following C# code example gets the distinguished name of the Partitions container by searching the configuration container for the <a href="/windows/desktop/ADSchema/c-crossrefcontainer"><strong>crossRefContainer</strong></a> object. This example uses C# with System.DirectoryServices.</p>
+<pre lang="CSharp"><code>/***************************************************************************
+
+    GetPartitionsDN()
+
+    Description: Gets the distinguished name of the Partition container in 
+    the current enterprise forest.
+
+***************************************************************************/
+
+static string GetPartitionsDN()
+{
+    // Bind to the RootDSE to get the configurationNamingContext property.
+    DirectoryEntry RootDSE = new DirectoryEntry(&quot;LDAP://RootDSE&quot;);
+    DirectoryEntry ConfigContainer = new DirectoryEntry(&quot;LDAP://&quot; + 
+        RootDSE.Properties[&quot;configurationNamingContext&quot;].Value);
+
+    // Search for an object that is of type crossRefContainer.
+    DirectorySearcher ConfigSearcher = new DirectorySearcher(ConfigContainer);
+    ConfigSearcher.Filter = &quot;(&amp;(objectClass=crossRefContainer))&quot;;
+    ConfigSearcher.PropertiesToLoad.Add(&quot;distinguishedName&quot;);
+    ConfigSearcher.SearchScope = SearchScope.OneLevel;
+
+    SearchResult result = ConfigSearcher.FindOne();
+
+    return result.Properties[&quot;distinguishedName&quot;][0].ToString();
+}
+</code></pre>
+<p>The following Visual Basic .NET code example gets the distinguished name of the Partition container by searching the configuration container for the <a href="/windows/desktop/ADSchema/c-crossrefcontainer"><strong>crossRefContainer</strong></a> object. This example uses Visual Basic .NET with System.DirectoryServices.</p>
+<pre lang="VB"><code>'**************************************************************************
+'
+'   GetPartitionsDN()
+'
+'
+'   Description: Gets the distinguished name of the Partitions container in 
+'   the current enterprise forest.
+'
+'**************************************************************************
+
+Function GetPartitionsDN() As String
+    ' Bind to the RootDSE to get the configurationNamingContext property.
+    Dim RootDSE As New DirectoryEntry(&quot;LDAP://RootDSE&quot;)
+
+    ' Bind to the Configuraiton container.
+    Dim Path As String = &quot;LDAP://&quot; + RootDSE.Properties(&quot;configurationNamingContext&quot;).Value
+    Dim ConfigContainer As New DirectoryEntry(Path)
+
+    ' Search for an object that is of type crossRefContainer.
+    Dim ConfigSearcher As New DirectorySearcher(ConfigContainer)
+    ConfigSearcher.Filter = &quot;(&amp;(objectClass=crossRefContainer))&quot;
+    ConfigSearcher.SearchScope = SearchScope.OneLevel
+
+    Dim result As SearchResult = ConfigSearcher.FindOne()
+
+    Return result.Properties(&quot;distinguishedName&quot;)(0).ToString()
+End Function
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

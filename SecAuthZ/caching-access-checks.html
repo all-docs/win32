@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Caching Access Checks</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: When an application performs an access check by calling the AuthzAccessCheck function, the results of that access check can be cached.
+ms.assetid: d79a5683-6c67-487f-b9a6-4e80da38b827
+title: Caching Access Checks
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Caching Access Checks</h1>
+<p>When an application performs an access check by calling the <a href="/windows/desktop/api/Authz/nf-authz-authzaccesscheck"><strong>AuthzAccessCheck</strong></a> function, the results of that access check can be cached. When the <em>pAuthzHandle</em> parameter of the <a href="/windows/desktop/api/Authz/nf-authz-authzaccesscheck"><strong>AuthzAccessCheck</strong></a> function is not <strong>NULL</strong>, the function performs a separate access check, with a requested <a href="access-mask.html"><strong>ACCESS_MASK</strong></a> of <strong>MAXIMUM_ALLOWED</strong>, and caches the results of that check. A handle to the results of that check can then be passed as the <em>AuthzHandle</em> parameter to the <a href="/windows/desktop/api/Authz/nf-authz-authzcachedaccesscheck"><strong>AuthzCachedAccessCheck</strong></a> function. This allows faster access checking for a given client and <a href="/windows/desktop/SecGloss/s-gly"><em>security descriptors</em></a>.</p>
+<p>Only the static portion of an access check can be cached. Any callback <a href="/windows/desktop/SecGloss/a-gly"><em>access control entries</em></a> (ACEs) or ACEs that contain the <strong>PRINCIPAL_SELF</strong> SID must be evaluated for each access check.</p>
+<p>Attribute variables must be in the form of an expression when used with logical operators; otherwise, they are evaluated as unknown.</p>
+<h2>Example</h2>
+<p>The following example checks access against a cached result from a previous access check. The previous access check was performed in the example in <a href="checking-access-with-authz-api.html">Checking Access with Authz API</a>.</p>
+<pre lang="C++"><code>BOOL CheckCachedAccess(AUTHZ_CLIENT_CONTEXT_HANDLE hClientContext)
+{
+    #define MY_MAX 4096
+
+
+    PSECURITY_DESCRIPTOR                pSecurityDescriptor = NULL;
+    ULONG                                cbSecurityDescriptorSize = 0;
+    AUTHZ_ACCESS_REQUEST                Request;
+    CHAR                                ReplyBuffer[MY_MAX];
+    CHAR                                CachedReplyBuffer[MY_MAX];
+    PAUTHZ_ACCESS_REPLY                    pReply = (PAUTHZ_ACCESS_REPLY)ReplyBuffer;
+    PAUTHZ_ACCESS_REPLY                    pCachedReply = (PAUTHZ_ACCESS_REPLY)CachedReplyBuffer;
+    DWORD                                AuthzError =0;
+    AUTHZ_ACCESS_CHECK_RESULTS_HANDLE    hCached;
+
+    //Allocate memory for the access request structure.
+    RtlZeroMemory(&amp;Request, sizeof(AUTHZ_ACCESS_REQUEST));
+
+    //Set up the access request structure.
+    Request.DesiredAccess = READ_CONTROL;
+    
+    //Allocate memory for the initial access reply structure.
+    RtlZeroMemory(ReplyBuffer, MY_MAX);
+
+    //Set up the access reply structure.
+    pReply-&gt;ResultListLength = 1;
+    pReply-&gt;Error = (PDWORD) ((PCHAR) pReply + sizeof(AUTHZ_ACCESS_REPLY));
+    pReply-&gt;GrantedAccessMask = (PACCESS_MASK) (pReply-&gt;Error + pReply-&gt;ResultListLength);
+    pReply-&gt;SaclEvaluationResults = NULL;
+
+    //Allocate memory for the cached access reply structure.
+    RtlZeroMemory(ReplyBuffer, MY_MAX);
+
+    //Set up the cached access reply structure.
+    pCachedReply-&gt;ResultListLength = 1;
+    pCachedReply-&gt;Error = (PDWORD) ((PCHAR) pCachedReply + sizeof(AUTHZ_ACCESS_REPLY));
+    pCachedReply-&gt;GrantedAccessMask = (PACCESS_MASK) (pCachedReply-&gt;Error + pCachedReply-&gt;ResultListLength);
+    pCachedReply-&gt;SaclEvaluationResults = NULL;
+
+    //Create security descriptor.
+    if(!ConvertStringSecurityDescriptorToSecurityDescriptor(
+        L&quot;O:LAG:BAD:(A;;RC;;;BA)&quot;,
+        SDDL_REVISION_1,
+        &amp;pSecurityDescriptor,
+        NULL))
+    {
+        printf_s(&quot;ConvertStringSecurityDescriptorToSecurityDescriptor failed with %d\n&quot;, GetLastError()); 
+        return FALSE;
+    }
+
+    //Call AuthzAccessCheck and cache results.
+    if(!AuthzAccessCheck(
+        0,
+        hClientContext,
+        &amp;Request,
+        NULL,
+        pSecurityDescriptor,
+        NULL,
+        0,
+        pReply,
+        &amp;hCached))
+    {
+        printf_s(&quot;AuthzAccessCheck failed with %d\n&quot;, GetLastError());
+        
+    LocalFree(pSecurityDescriptor);
+        
+        return FALSE;
+    }
+
+    //Call AuthzCachedAccessCheck with the cached result from the previous call.
+    if(!AuthzCachedAccessCheck(
+        0,
+        hCached,
+        &amp;Request,
+        NULL,
+        pCachedReply))
+    {
+        printf_s(&quot;AuthzCachedAccessCheck failed with %d\n&quot;, GetLastError());
+        
+        LocalFree(pSecurityDescriptor);
+    AuthzFreeHandle(hCached);
+    
+        return FALSE;
+    }
+
+    //Print results.
+    if(*pCachedReply-&gt;GrantedAccessMask &amp; READ_CONTROL)
+    {
+        printf_s(&quot;Access granted.\n&quot;);
+    }
+    else
+    {
+        printf_s(&quot;Access denied.\n&quot;);
+    }
+
+
+  LocalFree(pSecurityDescriptor);
+  AuthzFreeHandle(hCached);
+    return TRUE;
+
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="adding-sids-to-a-client-context.html">Adding SIDs to a Client Context</a></p>
+<!-- raw HTML omitted -->
+<p><a href="checking-access-with-authz-api.html">Checking Access with Authz API</a></p>
+<!-- raw HTML omitted -->
+<p><a href="initializing-a-client-context.html">Initializing a Client Context</a></p>
+<!-- raw HTML omitted -->
+<p><a href="querying-a-client-context.html">Querying a Client Context</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

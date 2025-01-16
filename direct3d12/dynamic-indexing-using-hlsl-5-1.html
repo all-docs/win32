@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dynamic Indexing using HLSL 5.1</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Dynamic Indexing using HLSL 5.1
+description: The D3D12DynamicIndexing sample demonstrates some of the new HLSL features available in Shader Model 5.1 - particularly dynamic indexing and unbounded arrays - to render the same mesh multiple times, each time rendering it with a dynamically selected material. With dynamic indexing, shaders can now index into an array without knowing the value of the index at compile time. When combined with unbounded arrays, this adds another level of indirection and flexibility for shader authors and art pipelines.
+ms.assetid: 9821AEDF-E83D-4034-863A-2B820D9B7455
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Dynamic Indexing using HLSL 5.1</h1>
+<p>The <strong>D3D12DynamicIndexing</strong> sample demonstrates some of the new HLSL features available in Shader Model 5.1 - particularly dynamic indexing and unbounded arrays - to render the same mesh multiple times, each time rendering it with a dynamically selected material. With dynamic indexing, shaders can now index into an array without knowing the value of the index at compile time. When combined with unbounded arrays, this adds another level of indirection and flexibility for shader authors and art pipelines.</p>
+<ul>
+<li><a href="#set-up-the-pixel-shader">Set up the pixel shader</a></li>
+<li><a href="#set-up-the-root-signature">Set up the root signature</a></li>
+<li><a href="#create-the-textures">Create the textures</a></li>
+<li><a href="#upload-the-texture-data">Upload the texture data</a></li>
+<li><a href="#load-the-diffuse-texture">Load the diffuse texture</a></li>
+<li><a href="#create-a-sampler">Create a sampler</a></li>
+<li><a href="#dynamically-change-the-root-parameter-index">Dynamically change the root parameter index</a></li>
+<li><a href="#run-the-sample">Run the sample</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Set up the pixel shader</h2>
+<p>Let's first look at the shader itself, which for this sample is a pixel shader.</p>
+<pre lang="syntax"><code>Texture2D        g_txDiffuse : register(t0);
+Texture2D        g_txMats[]  : register(t1);
+SamplerState     g_sampler   : register(s0);
+
+struct PSSceneIn
+{
+    float4 pos : SV_Position;
+    float2 tex : TEXCOORD0;
+};
+
+struct MaterialConstants
+{
+    uint matIndex;  // Dynamically set index for looking up from g_txMats[].
+};
+ConstantBuffer&lt;MaterialConstants&gt; materialConstants : register(b0, space0);
+
+float4 PSSceneMain(PSSceneIn input) : SV_Target
+{
+    float3 diffuse = g_txDiffuse.Sample(g_sampler, input.tex).rgb;
+    float3 mat = g_txMats[materialConstants.matIndex].Sample(g_sampler, input.tex).rgb;
+    return float4(diffuse * mat, 1.0f);
+}
+</code></pre>
+<p>The unbounded array feature is illustrated by the <code>g_txMats[]</code> array as it does not specify an array size. Dynamic indexing is used to index into <code>g_txMats[]</code> with <code>matIndex</code>, which is defined as a root constant. The shader has no knowledge of the size or the array or the value of the index at compile-time. Both attributes are defined in the root signature of the pipeline state object used with the shader.</p>
+<p>To take advantage of the dynamic indexing features in HLSL requires that the shader be compiled with SM 5.1. Additionally, to make use of unbounded arrays, the <strong>/enable_unbounded_descriptor_tables</strong> flag must also be used. The following command line options are used to compile this shader with the <a href="/windows/desktop/direct3dtools/fxc">Effect-Compiler Tool</a> (FXC):</p>
+<pre lang="syntax"><code>fxc /Zi /E&quot;PSSceneMain&quot; /Od /Fo&quot;dynamic_indexing_pixel.cso&quot; /ps&quot;_5_1&quot; /nologo /enable_unbounded_descriptor_tables
+</code></pre>
+<h2>Set up the root signature</h2>
+<p>Now, let's look at the root signature definition, particularly, how we define the size of the unbounded array and link a root constant to <code>matIndex</code>. For the pixel shader, we define three things: a descriptor table for SRVs (our Texture2Ds), a descriptor table for Samplers and a single root constant. The descriptor table for our SRVs contains <code>CityMaterialCount + 1</code> entries. <code>CityMaterialCount</code> is a constant that defines the length of <code>g_txMats[]</code> and the + 1 is for <code>g_txDiffuse</code>. The descriptor table for our Samplers contains only one entry and we only define one 32-bit root constant value via <strong>InitAsConstants</strong>(â€¦)., in the <strong>LoadAssets</strong> method.</p>
+<pre lang="syntax"><code> // Create the root signature.
+    {
+        CD3DX12_DESCRIPTOR_RANGE ranges[3];
+        ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1 + CityMaterialCount, 0);  // Diffuse texture + array of materials.
+        ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 1, 0);
+        ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
+
+        CD3DX12_ROOT_PARAMETER rootParameters[4];
+        rootParameters[0].InitAsDescriptorTable(1, &amp;ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
+        rootParameters[1].InitAsDescriptorTable(1, &amp;ranges[1], D3D12_SHADER_VISIBILITY_PIXEL);
+        rootParameters[2].InitAsDescriptorTable(1, &amp;ranges[2], D3D12_SHADER_VISIBILITY_VERTEX);
+        rootParameters[3].InitAsConstants(1, 0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+
+        CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
+        rootSignatureDesc.Init(_countof(rootParameters), rootParameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+        ComPtr&lt;ID3DBlob&gt; signature;
+        ComPtr&lt;ID3DBlob&gt; error;
+        ThrowIfFailed(D3D12SerializeRootSignature(&amp;rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &amp;signature, &amp;error));
+        ThrowIfFailed(m_device-&gt;CreateRootSignature(0, signature-&gt;GetBufferPointer(), signature-&gt;GetBufferSize(), IID_PPV_ARGS(&amp;m_rootSignature)));
+    }
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Call flow</th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="cd3dx12-descriptor-range.html"><strong>CD3DX12_DESCRIPTOR_RANGE</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_descriptor_range_type"><strong>D3D12_DESCRIPTOR_RANGE_TYPE</strong></a></td>
+</tr>
+<tr>
+<td><a href="cd3dx12-root-parameter.html"><strong>CD3DX12_ROOT_PARAMETER</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shader_visibility"><strong>D3D12_SHADER_VISIBILITY</strong></a></td>
+</tr>
+<tr>
+<td><a href="cd3dx12-root-signature-desc.html"><strong>CD3DX12_ROOT_SIGNATURE_DESC</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_root_signature_flags"><strong>D3D12_ROOT_SIGNATURE_FLAGS</strong></a></td>
+</tr>
+<tr>
+<td><a href="/previous-versions/windows/desktop/legacy/ff728743(v=vs.85)"><strong>ID3DBlob</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-d3d12serializerootsignature"><strong>D3D12SerializeRootSignature</strong></a></td>
+<td><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d_root_signature_version"><strong>D3D_ROOT_SIGNATURE_VERSION</strong></a></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-createrootsignature"><strong>CreateRootSignature</strong></a></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Create the textures</h2>
+<p>The contents of <code>g_txMats[]</code> are procedurally generated textures created in <strong>LoadAssets</strong>. Each city rendered in the scene shares the same diffuse texture but each also has its own procedurally generated texture. The array of textures span the rainbow spectrum to easily visualize the indexing technique.</p>
+<pre lang="syntax"><code> // Create the textures and sampler.
+    {
+        // Procedurally generate an array of textures to use as city materials.
+        {
+            // All of these materials use the same texture desc.
+            D3D12_RESOURCE_DESC textureDesc = {};
+            textureDesc.MipLevels = 1;
+            textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            textureDesc.Width = CityMaterialTextureWidth;
+            textureDesc.Height = CityMaterialTextureHeight;
+            textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+            textureDesc.DepthOrArraySize = 1;
+            textureDesc.SampleDesc.Count = 1;
+            textureDesc.SampleDesc.Quality = 0;
+            textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+
+            // The textures evenly span the color rainbow so that each city gets
+            // a different material.
+            float materialGradStep = (1.0f / static_cast&lt;float&gt;(CityMaterialCount));
+
+            // Generate texture data.
+            vector&lt;vector&lt;unsigned char&gt;&gt; cityTextureData;
+            cityTextureData.resize(CityMaterialCount);
+            for (int i = 0; i &lt; CityMaterialCount; ++i)
+            {
+                CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_DEFAULT);
+                ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+                    &amp;heapProps,
+                    D3D12_HEAP_FLAG_NONE,
+                    &amp;textureDesc,
+                    D3D12_RESOURCE_STATE_COPY_DEST,
+                    nullptr,
+                    IID_PPV_ARGS(&amp;m_cityMaterialTextures[i])));
+
+                // Fill the texture.
+                float t = i * materialGradStep;
+                cityTextureData[i].resize(CityMaterialTextureWidth * CityMaterialTextureHeight * CityMaterialTextureChannelCount);
+                for (int x = 0; x &lt; CityMaterialTextureWidth; ++x)
+                {
+                    for (int y = 0; y &lt; CityMaterialTextureHeight; ++y)
+                    {
+                        // Compute the appropriate index into the buffer based on the x/y coordinates.
+                        int pixelIndex = (y * CityMaterialTextureChannelCount * CityMaterialTextureWidth) + (x * CityMaterialTextureChannelCount);
+
+                        // Determine this row's position along the rainbow gradient.
+                        float tPrime = t + ((static_cast&lt;float&gt;(y) / static_cast&lt;float&gt;(CityMaterialTextureHeight)) * materialGradStep);
+
+                        // Compute the RGB value for this position along the rainbow
+                        // and pack the pixel value.
+                        XMVECTOR hsl = XMVectorSet(tPrime, 0.5f, 0.5f, 1.0f);
+                        XMVECTOR rgb = XMColorHSLToRGB(hsl);
+                        cityTextureData[i][pixelIndex + 0] = static_cast&lt;unsigned char&gt;((255 * XMVectorGetX(rgb)));
+                        cityTextureData[i][pixelIndex + 1] = static_cast&lt;unsigned char&gt;((255 * XMVectorGetY(rgb)));
+                        cityTextureData[i][pixelIndex + 2] = static_cast&lt;unsigned char&gt;((255 * XMVectorGetZ(rgb)));
+                        cityTextureData[i][pixelIndex + 3] = 255;
+                    }
+                }
+            }
+        }
+</code></pre>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<h2>Upload the texture data</h2>
+<p>Texture data is uploaded to the GPU via an upload heap and SRVs are created for each and stored in an SRV descriptor heap.</p>
+<pre lang="syntax"><code>         // Upload texture data to the default heap resources.
+            {
+                const UINT subresourceCount = textureDesc.DepthOrArraySize * textureDesc.MipLevels;
+                const UINT64 uploadBufferStep = GetRequiredIntermediateSize(m_cityMaterialTextures[0].Get(), 0, subresourceCount); // All of our textures are the same size in this case.
+                const UINT64 uploadBufferSize = uploadBufferStep * CityMaterialCount;
+                CD3DX12_HEAP_PROPERTIES uploadHeap(D3D12_HEAP_TYPE_UPLOAD);
+                auto uploadDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize);
+                ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+                    &amp;uploadHeap,
+                    D3D12_HEAP_FLAG_NONE,
+                    &amp;uploadDesc,
+                    D3D12_RESOURCE_STATE_GENERIC_READ,
+                    nullptr,
+                    IID_PPV_ARGS(&amp;materialsUploadHeap)));
+
+                for (int i = 0; i &lt; CityMaterialCount; ++i)
+                {
+                    // Copy data to the intermediate upload heap and then schedule 
+                    // a copy from the upload heap to the appropriate texture.
+                    D3D12_SUBRESOURCE_DATA textureData = {};
+                    textureData.pData = &amp;cityTextureData[i][0];
+                    textureData.RowPitch = static_cast&lt;LONG_PTR&gt;((CityMaterialTextureChannelCount * textureDesc.Width));
+                    textureData.SlicePitch = textureData.RowPitch * textureDesc.Height;
+
+                    UpdateSubresources(m_commandList.Get(), m_cityMaterialTextures[i].Get(), materialsUploadHeap.Get(), i * uploadBufferStep, 0, subresourceCount, &amp;textureData);
+                    auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_cityMaterialTextures[i].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                    m_commandList-&gt;ResourceBarrier(1, &amp;barrier);
+                }
+            }
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<p>Â </p>
+<h2>Load the diffuse texture</h2>
+<p>The diffuse texture, g_<code>txDiffuse</code>, is uploaded in a similar manner and also gets its own SRV, but the texture data is already defined in occcity.bin.</p>
+<pre lang="syntax"><code>// Load the occcity diffuse texture with baked-in ambient lighting.
+        // This texture will be blended with a texture from the materials
+        // array in the pixel shader.
+        {
+            D3D12_RESOURCE_DESC textureDesc = {};
+            textureDesc.MipLevels = SampleAssets::Textures[0].MipLevels;
+            textureDesc.Format = SampleAssets::Textures[0].Format;
+            textureDesc.Width = SampleAssets::Textures[0].Width;
+            textureDesc.Height = SampleAssets::Textures[0].Height;
+            textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+            textureDesc.DepthOrArraySize = 1;
+            textureDesc.SampleDesc.Count = 1;
+            textureDesc.SampleDesc.Quality = 0;
+            textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+
+            CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_DEFAULT);
+            ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+                &amp;heapProps,
+                D3D12_HEAP_FLAG_NONE,
+                &amp;textureDesc,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                nullptr,
+                IID_PPV_ARGS(&amp;m_cityDiffuseTexture)));
+
+            const UINT subresourceCount = textureDesc.DepthOrArraySize * textureDesc.MipLevels;
+            const UINT64 uploadBufferSize = GetRequiredIntermediateSize(m_cityDiffuseTexture.Get(), 0, subresourceCount);
+            CD3DX12_HEAP_PROPERTIES uploadHeap(D3D12_HEAP_TYPE_UPLOAD);
+            auto uploadDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize);
+            ThrowIfFailed(m_device-&gt;CreateCommittedResource(
+                &amp;uploadHeap,
+                D3D12_HEAP_FLAG_NONE,
+                &amp;uploadDesc,
+                D3D12_RESOURCE_STATE_GENERIC_READ,
+                nullptr,
+                IID_PPV_ARGS(&amp;textureUploadHeap)));
+
+            // Copy data to the intermediate upload heap and then schedule 
+            // a copy from the upload heap to the diffuse texture.
+            D3D12_SUBRESOURCE_DATA textureData = {};
+            textureData.pData = pMeshData + SampleAssets::Textures[0].Data[0].Offset;
+            textureData.RowPitch = SampleAssets::Textures[0].Data[0].Pitch;
+            textureData.SlicePitch = SampleAssets::Textures[0].Data[0].Size;
+
+            UpdateSubresources(m_commandList.Get(), m_cityDiffuseTexture.Get(), textureUploadHeap.Get(), 0, 0, subresourceCount, &amp;textureData);
+            auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_cityDiffuseTexture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            m_commandList-&gt;ResourceBarrier(1, &amp;barrier);
+        }
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<p>Â </p>
+<h2>Create a sampler</h2>
+<p>Finally for <strong>LoadAssets</strong>, a single sampler is created to sample from either the diffuse texture or the texture array.</p>
+<pre lang="syntax"><code> // Describe and create a sampler.
+        D3D12_SAMPLER_DESC samplerDesc = {};
+        samplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        samplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        samplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        samplerDesc.MinLOD = 0;
+        samplerDesc.MaxLOD = D3D12_FLOAT32_MAX;
+        samplerDesc.MipLODBias = 0.0f;
+        samplerDesc.MaxAnisotropy = 1;
+        samplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        m_device-&gt;CreateSampler(&amp;samplerDesc, m_samplerHeap-&gt;GetCPUDescriptorHandleForHeapStart());
+
+        // Create SRV for the city's diffuse texture.
+        CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(m_cbvSrvHeap-&gt;GetCPUDescriptorHandleForHeapStart(), 0, m_cbvSrvDescriptorSize);
+        D3D12_SHADER_RESOURCE_VIEW_DESC diffuseSrvDesc = {};
+        diffuseSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        diffuseSrvDesc.Format = SampleAssets::Textures-&gt;Format;
+        diffuseSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        diffuseSrvDesc.Texture2D.MipLevels = 1;
+        m_device-&gt;CreateShaderResourceView(m_cityDiffuseTexture.Get(), &amp;diffuseSrvDesc, srvHandle);
+        srvHandle.Offset(m_cbvSrvDescriptorSize);
+
+        // Create SRVs for each city material.
+        for (int i = 0; i &lt; CityMaterialCount; ++i)
+        {
+            D3D12_SHADER_RESOURCE_VIEW_DESC materialSrvDesc = {};
+            materialSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            materialSrvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            materialSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            materialSrvDesc.Texture2D.MipLevels = 1;
+            m_device-&gt;CreateShaderResourceView(m_cityMaterialTextures[i].Get(), &amp;materialSrvDesc, srvHandle);
+
+            srvHandle.Offset(m_cbvSrvDescriptorSize);
+        }   
+</code></pre>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<p>Â </p>
+<h2>Dynamically change the root parameter index</h2>
+<p>If we were to render the scene now, all of the cities would appear the same, because we have not set the value of our root constant, <code>matIndex</code>. Each pixel shader would index into the 0th slot of <code>g_txMats</code> and the scene would look like this:</p>
+<p><img src="images/dynamicindexing-image1.png" alt="all cities appear the same color" /></p>
+<p>The value of the root constant is set in <strong>FrameResource::PopulateCommandLists</strong>. In the double <strong>for</strong> loop where a draw command is recorded for each city, we record a call to <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-setgraphicsroot32bitconstants"><strong>SetGraphicsRoot32BitConstants</strong></a> specifying our root parameter index in regards to the root signature â€“ in this case 3 â€“ the value of the dynamic index and an offset â€“ in this case 0. Since the length of <code>g_txMats</code> is equal to the number of cities we render, the value of the index is incrementally set for each city.</p>
+<pre lang="syntax"><code> for (UINT i = 0; i &lt; m_cityRowCount; i++)
+    {
+        for (UINT j = 0; j &lt; m_cityColumnCount; j++)
+        {
+            pCommandList-&gt;SetPipelineState(pPso);
+
+            // Set the city's root constant for dynamically indexing into the material array.
+            pCommandList-&gt;SetGraphicsRoot32BitConstant(3, (i * m_cityColumnCount) + j, 0);
+
+            // Set this city's CBV table and move to the next descriptor.
+            pCommandList-&gt;SetGraphicsRootDescriptorTable(2, cbvSrvHandle);
+            cbvSrvHandle.Offset(cbvSrvDescriptorSize);
+
+            pCommandList-&gt;DrawIndexedInstanced(numIndices, 1, 0, 0, 0);
+        }
+    }
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Call flow</th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-setpipelinestate"><strong>SetPipelineState</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-setgraphicsroot32bitconstant"><strong>SetGraphicsRoot32BitConstant</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-setgraphicsrootdescriptortable"><strong>SetGraphicsRootDescriptorTable</strong></a></td>
+<td></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-drawindexedinstanced"><strong>DrawIndexedInstanced</strong></a></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h2>Run the sample</h2>
+<p>Now when we render the scene, each city will have a different value for <code>matIndex</code> and will thus look up a different texture from <code>g_txMats[]</code> making the scene look like this:</p>
+<p><img src="images/dynamicindexing-image2.png" alt="all cities appear in different colors" /></p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="d3d12-code-walk-throughs.html">D3D12 Code Walk-Throughs</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/direct3dtools/fxc">Effect-Compiler Tool</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/direct3dhlsl/hlsl-shader-model-5-1-features-for-direct3d-12">HLSL Shader Model 5.1 Features for Direct3D 12</a></p>
+<!-- raw HTML omitted -->
+<p><a href="resource-binding-in-hlsl.html">Resource Binding in HLSL</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/direct3dhlsl/shader-model-5-1">Shader Model 5.1</a></p>
+<!-- raw HTML omitted -->
+<p><a href="specifying-root-signatures-in-hlsl.html">Specifying Root Signatures in HLSL</a></p>
+<!-- raw HTML omitted -->
+</body>

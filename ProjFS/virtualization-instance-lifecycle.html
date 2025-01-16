@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Virtualization Instance Lifecycle</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Virtualization Instance Lifecycle
+description: Overview of the lifecycle of a ProjFS virtualization instance.
+ms.assetid: <!-- raw HTML omitted -->
+ms.date: 09/17/2018
+ms.topic: article</h2>
+<h1>Virtualization Instance Lifecycle</h1>
+<p>The provider application maintains one or more virtualization instances.  Each virtualization instance goes through four stages in its lifecycle:</p>
+<ol>
+<li>Creation</li>
+<li>Startup</li>
+<li>Runtime</li>
+<li>Shutdown</li>
+</ol>
+<p>Note that after shutting down a virtualization instance the provider does not need to re-create it to reuse it.  It can simply start it up again.</p>
+<blockquote>
+<p><strong>Note</strong>: This section shows examples of ProjFS APIs.  Each example is meant to illustrate basic API usage.  For documentation of options unused in these examples please consult the <a href="/windows/desktop/api/_projfs">ProjFS API reference</a>.</p>
+</blockquote>
+<h2>Creating a virtualization root</h2>
+<p>Before a provider can start up the virtualization instance that will project items into the local file system, it must create the virtualization root.  The virtualization root is the directory under which the provider projects a tree of directories and files.</p>
+<p>To create a virtualization root the provider must:</p>
+<ol>
+<li>
+<p>Create a directory to serve as the virtualization root.</p>
+<p>The provider creates a directory to serve as the virtualization root using, for example <strong><a href="/windows/desktop/api/fileapi/nf-fileapi-createdirectoryw">CreateDirectory</a></strong>:</p>
+<pre lang="C++"><code>HRESULT hr;
+const wchar_t* rootName = LR&quot;(C:\virtRoot)&quot;;
+if (!CreateDirectoryW(rootName, nullptr))
+{
+    hr = HRESULT_FROM_WIN32(GetLastError());
+    wprintf(L&quot;Failed to create virtualization root (0x%08x)\n&quot;, hr);
+    return;
+}
+</code></pre>
+</li>
+<li>
+<p>Create a virtualization instance ID.</p>
+<p>Every virtualization instance has a unique ID called the <em>virtualization instance ID</em>.  The system uses this value to identify which virtualization instance its contents are associated to.</p>
+<pre lang="C++"><code>GUID instanceId;
+hr = CoCreateGuid(&amp;instanceId);
+if (FAILED(hr))
+{
+    wprintf(L&quot;Failed to create instance ID (0x%08x)\n&quot;, hr);
+    return;
+}
+</code></pre>
+</li>
+<li>
+<p>Mark the new directory as the virtualization root.</p>
+<p>The provider calls <strong><a href="/windows/desktop/api/projectedfslib/nf-projectedfslib-prjmarkdirectoryasplaceholder">PrjMarkDirectoryAsPlaceholder</a></strong> to mark the new directory as the virtualization root and assign it to the virtualization instance.</p>
+<pre lang="C++"><code>hr = PrjMarkDirectoryAsPlaceholder(rootName,
+                                   nullptr,
+                                   nullptr,
+                                   &amp;instanceId);
+if (FAILED(hr))
+{
+    wprintf(L&quot;Failed to mark virtualization root (0x%08x)\n&quot;, hr);
+    return;
+}
+</code></pre>
+</li>
+</ol>
+<p>The provider only needs to create the virtualization root once for each virtualization instance.  Once a root has been created, its associated instance can be repeatedly started and stopped without recreating the root.</p>
+<h2>Starting a virtualization instance</h2>
+<p>Once the virtualization root has been created the provider must start the virtualization instance.  This signals ProjFS that the provider is ready to receive callbacks and provide data.</p>
+<p>To start the virtualization instance the provider must:</p>
+<ol>
+<li>
+<p>Set up the callback table.</p>
+<p>ProjFS communicates with the provider by invoking callback routines implemented by the provider.  The provider populates a <a href="/windows/desktop/api/projectedfslib/ns-projectedfslib-prj_callbacks">PRJ_CALLBACKS</a> struct with pointers to its callback routines.</p>
+<pre lang="C++"><code>PRJ_CALLBACKS callbackTable;
+
+// Supply required callbacks.
+callbackTable.StartDirectoryEnumerationCallback = MyStartEnumCallback;
+callbackTable.EndDirectoryEnumerationCallback = MyEndEnumCallback;
+callbackTable.GetDirectoryEnumerationCallback = MyGetEnumCallback;
+callbackTable.GetPlaceholderInfoCallback = MyGetPlaceholderInfoCallback;
+callbackTable.GetFileDataCallback = MyGetFileDataCallback;
+
+// The rest of the callbacks are optional.
+callbackTable.QueryFileNameCallback = nullptr;
+callbackTable.NotificationCallback = nullptr;
+callbackTable.CancelCommandCallback = nullptr;
+</code></pre>
+</li>
+<li>
+<p>Start the instance.</p>
+<p>The provider calls <strong><a href="/windows/desktop/api/projectedfslib/nf-projectedfslib-prjstartvirtualizing">PrjStartVirtualizing</a></strong> to start the virtualization instance.</p>
+<pre lang="C++"><code>PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT instanceHandle;
+hr = PrjStartVirtualizing(rootName,
+                          &amp;callbackTable,
+                          nullptr,
+                          nullptr,
+                          &amp;instanceHandle);
+if (FAILED(hr))
+{
+    wprintf(L&quot;Failed to start the virtualization instance (0x%08x)\n&quot;, hr);
+    return;
+}
+</code></pre>
+<p><strong>PrjStartVirtualizing</strong>'s <em>instanceHandle</em> parameter returns a handle to the virtualization instance.  The provider uses this handle when calling other ProjFS APIs.</p>
+</li>
+</ol>
+<h2>Virtualization instance runtime</h2>
+<p>Once the call to <strong>PrjStartVirtualizing</strong> returns, ProjFS will invoke the provider's callback routines in response to file system operations in the virtualization instance.  For information on how the provider can handle various file system operations, refer to the following sections:</p>
+<ul>
+<li><a href="enumerating-files-and-directories.html">Enumerating Files and Directories</a></li>
+<li><a href="providing-file-data.html">Providing File Data</a></li>
+<li><a href="file-system-operation-notifications.html">File System Operation Notifications</a></li>
+<li><a href="handling-view-changes.html">Handling View Changes</a></li>
+</ul>
+<h2>Shutting down a virtualization instance</h2>
+<p>To signal ProjFS that the provider wants to stop receiving callbacks and providing data, the provider must stop the virtualization instance.  To do this the provider calls <strong><a href="/windows/desktop/api/projectedfslib/nf-projectedfslib-prjstopvirtualizing">PrjStopVirtualizing</a></strong>, passing it the handle to the virtualization instance that it received from the call to <strong>PrjStartVirtualizing</strong>.</p>
+<pre lang="C++"><code>PrjStopVirtualizing(instanceHandle);
+</code></pre>
+<p>Note that until this call returns, ProjFS may continue to invoke the provider's callback routines.</p>
+</body>

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Enumeration Helper Functions</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Enumeration Helper Functions
+description: There are three enumerator helper functions that can be used from C/C++ to aid in the navigation of Active Directory objects. They are ADsBuildEnumerator, ADsEnumerateNext, and ADsFreeEnumerator.
+ms.assetid: 019958c8-5bf5-45eb-871c-796ff3750cdc
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>ADsBuildEnumerator ADSI ,using</li>
+<li>ADsEnumerateNext ADSI ,using</li>
+<li>ADsFreeEnumerator ADSI ,using</li>
+<li>ADSI ADSI ,example code C/C++ ,using ADsBuildEnumerator ADsEnumerateNext and ADsFreeEnumerator
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Enumeration Helper Functions</h1>
+<p>There are three enumerator helper functions that can be used from C/C++ to aid in the navigation of Active Directory objects. They are <a href="/windows/desktop/api/Adshlp/nf-adshlp-adsbuildenumerator"><strong>ADsBuildEnumerator</strong></a>, <a href="/windows/desktop/api/Adshlp/nf-adshlp-adsenumeratenext"><strong>ADsEnumerateNext</strong></a>, and <a href="/windows/desktop/api/Adshlp/nf-adshlp-adsfreeenumerator"><strong>ADsFreeEnumerator</strong></a>.</p>
+<h2>ADsBuildEnumerator</h2>
+<p>The <a href="/windows/desktop/api/Adshlp/nf-adshlp-adsbuildenumerator"><strong>ADsBuildEnumerator</strong></a> helper function encapsulates the code required to create an enumerator object. It calls the <a href="/windows/desktop/api/Iads/nf-iads-iadscontainer-get__newenum"><strong>IADsContainer::get__NewEnum</strong></a> method to create an enumerator object and then calls the <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> method of <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> to get a pointer to the <a href="/windows/win32/api/oaidl/nn-oaidl-ienumvariant"><strong>IEnumVARIANT</strong></a> interface for that object. The enumeration object is the Automation mechanism to enumerate over containers. Use the <a href="/windows/desktop/api/Adshlp/nf-adshlp-adsfreeenumerator"><strong>ADsFreeEnumerator</strong></a> function to release this enumerator object.</p>
+<h2>ADsEnumerateNext</h2>
+<p>The <a href="/windows/desktop/api/Adshlp/nf-adshlp-adsenumeratenext"><strong>ADsEnumerateNext</strong></a> helper function populates a VARIANT array with elements fetched from an enumerator object. The number of elements retrieved can be smaller than the number requested.</p>
+<h2>ADsFreeEnumerator</h2>
+<p>Frees an enumerator object previously created through the <a href="/windows/desktop/api/Adshlp/nf-adshlp-adsbuildenumerator"><strong>ADsBuildEnumerator</strong></a> function.</p>
+<p>The following code example shows a function that uses enumerator helper functions in C++.</p>
+<pre lang="C++"><code>/*****************************************************************************
+  Function:    TestEnumObject
+  Arguments:   pszADsPath - ADsPath of the container to be enumerated (WCHAR*).
+  Return:      S_OK if successful, an error code otherwise.
+  Purpose:     Example using ADsBuildEnumerator, ADsEnumerateNext and
+               ADsFreeEnumerator.
+******************************************************************************/
+#define MAX_ENUM      100  
+ 
+HRESULT
+TestEnumObject( LPWSTR pszADsPath )
+{
+    ULONG cElementFetched = 0L;
+    IEnumVARIANT * pEnumVariant = NULL;
+    VARIANT VariantArray[MAX_ENUM];
+    HRESULT hr = S_OK;
+    IADsContainer * pADsContainer =  NULL;
+    DWORD dwObjects = 0, dwEnumCount = 0, i = 0;
+    BOOL  fContinue = TRUE;
+ 
+ 
+    hr = ADsGetObject(
+                pszADsPath,
+                IID_IADsContainer,
+                (void **)&amp;pADsContainer
+                );
+ 
+ 
+    if (FAILED(hr)) {
+ 
+        printf(&quot;\&quot;%S\&quot; is not a valid container object.\n&quot;, pszADsPath) ;
+        goto exitpoint ;
+    }
+ 
+    hr = ADsBuildEnumerator(
+            pADsContainer,
+            &amp;pEnumVariant
+            );
+ 
+    if( FAILED( hr ) )
+    {
+      printf(&quot;ADsBuildEnumerator failed with %lx\n&quot;, hr ) ;
+      goto exitpoint ;
+    }
+ 
+    fContinue  = TRUE;
+    while (fContinue) {
+ 
+        IADs *pObject ;
+ 
+        hr = ADsEnumerateNext(
+                    pEnumVariant,
+                    MAX_ENUM,
+                    VariantArray,
+                    &amp;cElementFetched
+                    );
+
+        if ( FAILED( hr ) )
+        {
+            printf(&quot;ADsEnumerateNext failed with %lx\n&quot;,hr);
+            goto exitpoint;
+        }
+ 
+        if (hr == S_FALSE) {
+            fContinue = FALSE;
+        }
+ 
+        dwEnumCount++;
+ 
+        for (i = 0; i &lt; cElementFetched; i++ ) {
+ 
+            IDispatch *pDispatch    = NULL;
+            BSTR        bstrADsPath = NULL;
+ 
+            pDispatch = VariantArray[i].pdispVal;
+ 
+            hr = V_DISPATCH( VariantArray + i )-&gt;QueryInterface(IID_IADs, (void **) &amp;pObject) ;
+ 
+            if( SUCCEEDED( hr ) )
+            {
+               pObject-&gt;get_ADsPath( &amp;bstrADsPath );
+               printf( &quot;%S\n&quot;, bstrADsPath );
+            }
+            pObject-&gt;Release();
+            VariantClear( VariantArray + i );
+            SysFreeString( bstrADsPath );
+        }
+ 
+        dwObjects += cElementFetched;
+    }
+ 
+    printf(&quot;Total Number of Objects enumerated is %d\n&quot;, dwObjects);
+ 
+exitpoint:
+    if (pEnumVariant) {
+        ADsFreeEnumerator( pEnumVariant );
+    }
+ 
+    if (pADsContainer) {
+        pADsContainer-&gt;Release();
+    }
+ 
+    return(hr);
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

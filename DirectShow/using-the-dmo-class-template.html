@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using the DMO Class Template</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Using the DMO Class Template
+ms.assetid: 5193ad08-aaee-47e3-93eb-a126a66d8f23
+title: Using the DMO Class Template
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Using the DMO Class Template</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>DirectShow includes a class template, <a href="imediaobjectimpl-class-template.html"><strong>IMediaObjectImpl</strong></a>, for implementing DMOs. The template handles many of the &quot;bookkeeping&quot; tasks, such as validating input parameters. By using the template, you can focus on the functionality that is specific to your DMO. In addition, the template helps to ensure that you create a robust implementation. The template is defined in the header file Dmoimpl.h, located in the Include directory of the SDK.</p>
+<p>The <strong>IMediaObjectImpl</strong> template inherits the <a href="/previous-versions/windows/desktop/api/Mediaobj/nn-mediaobj-imediaobject"><strong>IMediaObject</strong></a> interface. To create a DMO using the template, define a new class that derives from <strong>IMediaObjectImpl</strong>. The template implements all of the <strong>IMediaObject</strong> methods. In most cases, the template calls a corresponding private method on the derived class. The template provides the following features:</p>
+<ul>
+<li>Basic parameter checking. The template methods verify that required parameters are not <strong>NULL</strong>, that stream indexes are within range, and that flags are valid.</li>
+<li>Locking. The template methods call two internal methods, <strong>Lock</strong> and <strong>Unlock</strong>, to serialize operations on the DMO. This feature ensures that the DMO is thread-safe.</li>
+<li>Media types. The template stores the media types set by the client, and provides accessor methods for the media types.</li>
+<li>Streaming. The template prevents streaming until the client has set media types for all non-optional streams. It also ensures that the <a href="/previous-versions/windows/desktop/api/Mediaobj/nf-mediaobj-imediaobject-allocatestreamingresources"><strong>IMediaObject::AllocateStreamingResources</strong></a> method is called before streaming begins, which guarantees that resources are allocated.</li>
+</ul>
+<p>The derived class must implement the <strong>IUnknown</strong> interface; the template does not provide this interface. You can use the Active Template Library (ATL) to implement <strong>IUnknown</strong>, or you can provide some other implementation. The template also does not implement the locking mechanism. The derived class must implement the <strong>Lock</strong> and <strong>Unlock</strong> methods. If you create your class using ATL, you can use the default ATL implementations.</p>
+<p><strong>Declaring the Derived Class</strong></p>
+<p>The <strong>IMediaObjectImpl</strong> class template is declared as follows:</p>
+<pre lang="C++"><code>template &lt;class _DERIVED_, int NUMBEROFINPUTS, int NUMBEROFOUTPUTS&gt;
+class IMediaObjectImpl : public ImediaObject
+</code></pre>
+<p>The three template parameters are _DERIVED_, NUMBEROFINPUTS, and NUMBEROFOUTPUTS. Set _DERIVED_ equal to the name of your class. The other two parameters define the number of input streams and output streams on the DMO. For example, to create a DMO class named CMyDmo that supports one input stream and two output streams, use the following declaration:</p>
+<pre lang="C++"><code>class CMyDmo : public IMediaObjectImpl&lt;CMyDmo, 1, 2&gt;
+</code></pre>
+<p>The remainder of this section describes how the template implements the various methods in <strong>IMediaObject</strong>.</p>
+<p><strong>Methods for Setting Media Types</strong></p>
+<p>The following methods set or retrieve media types on the DMO:</p>
+<ul>
+<li><strong>GetInputType</strong>, <strong>GetOutputType</strong>. These methods return preferred media types, by stream number and type index. The template calls <strong>InternalGetInputType</strong> or <strong>InternalGetOutputType</strong> on the derived class.</li>
+<li><strong>SetInputType</strong>, <strong>SetOutputType</strong>. These methods set the media type on a stream, test a media type, or clear a media type. To validate the media type, the template calls <strong>InternalCheckInputType</strong> or <strong>InternalCheckOutputType</strong> on the derived class. The derived class returns S_OK to accept the type or DMO_E_INVALIDTYPE to reject the type. The template handles setting or clearing the media type.</li>
+<li><strong>GetInputCurrentType</strong>, <strong>GetOutputCurrentType</strong>. These methods return the current media type for a stream, or DMO_E_TYPE_NOT_SET if no type is set. The template completely implements these methods.</li>
+</ul>
+<p><strong>Informational Methods</strong></p>
+<p>The following methods provide information about the DMO.</p>
+<ul>
+<li><strong>GetInputMaxLatency</strong>, <strong>SetInputMaxLatency</strong>. These methods retrieve or set the maximum latency. The template calls <strong>InternalGetInputMaxLatency</strong> or <strong>InternalSetInputMaxLatency</strong> on the derived class.</li>
+<li><strong>GetInputSizeInfo</strong>, <strong>GetOutputSizeInfo</strong>. These methods return the DMO's buffer requirements for a specified stream. If no media type has been set on that stream, the template returns DMO_E_TYPE_NOT_SET. Otherwise, it calls <strong>InternalGetInputSizeInfo</strong> or <strong>InternalGetOutputSizeInfo</strong> on the derived class.</li>
+<li><strong>GetInputStreamInfo</strong>, <strong>GetOutputStreamInfo</strong>. These methods return various flags that indicate how the client should format the data. The template calls <strong>InternalGetInputStreamInfo</strong> or <strong>InternalGetOutputStreamInfo</strong> on the derived class.</li>
+<li><strong>GetStreamCount</strong>. This method returns the number of input and output streams. The template implements this method, using the template parameters.</li>
+</ul>
+<p><strong>Methods for Resource Allocation</strong></p>
+<ul>
+<li>The <strong>AllocateStreamingResources</strong> method allocates any resources the DMO needs before streaming begins. The <strong>FreeStreamingResources</strong> method releases the same resources. The template calls <strong>InternalAllocateStreamingResources</strong> and <strong>InternalFreeStreamingResources</strong>, respectively.</li>
+</ul>
+<p>The client of the DMO is not required to call these methods, but the template automatically calls <strong>AllocateStreamingResources</strong> before streaming starts. Therefore, the DMO can assume that resources are have been allocated correctly by the time <strong>ProcessInput</strong> is called. The DMO should call <strong>FreeStreamingResources</strong> in its destructor.</p>
+<p>Also, when the template calls <strong>InternalAllocateStreamingResources</strong>, it sets an internal flag, so that it does not call that method again until calling <strong>InternalFreeStreamingResources</strong>. This ensures that resources are not re-allocated accidentally, which could cause memory leaks.</p>
+<p><strong>Methods for Streaming</strong></p>
+<p>The following methods are used to stream data:</p>
+<ul>
+<li><strong>GetInputStatus</strong>. This method indicates whether the DMO can accept input at this time. The template calls <strong>InternalAcceptingInput</strong> on the derived class. If the DMO can accept input, the derived class returns S_OK and the template sets the DMO_INPUT_STATUSF_ACCEPT_DATA bit in the <em>dwFlags</em> parameter. Otherwise, the derived class returns S_FALSE and the template sets <em>dwFlags</em> to zero.</li>
+<li><strong>ProcessInput</strong>. This method processes an input buffer. The template calls <strong>AllocateStreamingResources</strong>, described previously. Then it calls <strong>InternalAcceptingInput</strong> on the derived class. If the DMO can accept new input, the template calls <strong>InternalProcessInput</strong>.</li>
+<li><strong>ProcessOutput</strong>. This method processes a set of output buffers, one buffer for each output stream. The template calls <strong>AllocateStreamingResources</strong> and then <strong>InternalProcessOutput</strong>.</li>
+<li><strong>Discontinuity</strong>. This method signals a discontinuity in an input stream. The template calls <strong>InternalAcceptingInput</strong> on the derived class. If that method returns S_OK, the template calls <strong>InternalDiscontinuity</strong> on the derived class.</li>
+<li><strong>Flush</strong>. This method flushes the DMO. The template calls <strong>InternalFlush</strong> on the derived class. The DMO should discard any input buffers that it still holds to be processed.</li>
+</ul>
+<p>The template does not provide any direct support for the <a href="/previous-versions/windows/desktop/api/mediaobj/nn-mediaobj-imediaobjectinplace"><strong>IMediaObjectInPlace</strong></a> interface.</p>
+<p><strong>Methods for Locking</strong></p>
+<p>Locking is used to protect the DMO's state in a multithreaded environment. In an ATL project, the <a href="/previous-versions/windows/desktop/api/Mediaobj/nf-mediaobj-imediaobject-lock"><strong>IMediaObject::Lock</strong></a> method causes a name conflict with the ATL <strong>Lock</strong> method. To resolve the conflict, the template renames the <strong>IMediaObject</strong> method to <strong>DMOLock</strong>. When you compile the derived class, define FIX_LOCK_NAME before including the header file Dmo.h:</p>
+<pre lang="C++"><code>#define FIX_LOCK_NAME
+#include &lt;dmo.h&gt;
+</code></pre>
+<p>This directive causes the preprocessor to substitute <strong>DMOLock</strong> for <strong>Lock</strong> in the declaration of the <strong>IMediaObject</strong> interface. Applications can still invoke the method using the name <strong>Lock</strong>, because the vtable order does not change. The <strong>DMOLock</strong> method calls <strong>Lock</strong> or <strong>Unlock</strong> on the derived class. If you are using ATL to implement the derived class, these methods are already defined by ATL, so no additional code is necessary. If you are not using ATL, you must provide <strong>Lock</strong> and <strong>Unlock</strong> methods in your derived class.</p>
+<p>The template automatically locks the DMO in each of the <strong>IMediaObject</strong> methods. The derived class might need to lock the DMO inside other public methods that it implements (for example, if it supports <strong>IMediaObjectInPlace</strong>). The class template also provides an internal helper class, <a href="imediaobjectimpl-lockit.html"><strong>IMediaObjectImpl::LockIt</strong></a>, which is useful for locking and unlocking the DMO.</p>
+<p><strong>Summary</strong></p>
+<p>For the following <strong>IMediaObject</strong> methods, the template calls a corresponding method with the same signature on the derived class. The derived class must implement each of the methods shown in the second column.</p>
+<table>
+<thead>
+<tr>
+<th>IMediaObject Method</th>
+<th>Derived Class Method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>AllocateStreamingResources</strong></td>
+<td><strong>InternalAllocateStreamingResources</strong></td>
+</tr>
+<tr>
+<td><strong>Discontinuity</strong></td>
+<td><strong>InternalDiscontinuity</strong></td>
+</tr>
+<tr>
+<td><strong>Flush</strong></td>
+<td><strong>InternalFlush</strong></td>
+</tr>
+<tr>
+<td><strong>FreeStreamingResources</strong></td>
+<td><strong>InternalFreeStreamingResources</strong></td>
+</tr>
+<tr>
+<td><strong>GetInputMaxLatency</strong></td>
+<td><strong>InternalGetInputMaxLatency</strong></td>
+</tr>
+<tr>
+<td><strong>GetInputSizeInfo</strong></td>
+<td><strong>InternalGetInputSizeInfo</strong></td>
+</tr>
+<tr>
+<td><strong>GetInputStreamInfo</strong></td>
+<td><strong>InternalGetInputStreamInfo</strong></td>
+</tr>
+<tr>
+<td><strong>GetInputType</strong></td>
+<td><strong>InternalGetInputType</strong></td>
+</tr>
+<tr>
+<td><strong>GetOutputSizeInfo</strong></td>
+<td><strong>InternalGetOutputSizeInfo</strong></td>
+</tr>
+<tr>
+<td><strong>GetOutputStreamInfo</strong></td>
+<td><strong>InternalGetOutputStreamInfo</strong></td>
+</tr>
+<tr>
+<td><strong>GetOutputType</strong></td>
+<td><strong>InternalGetOutputType</strong></td>
+</tr>
+<tr>
+<td><strong>ProcessInput</strong></td>
+<td><strong>InternalProcessInput</strong></td>
+</tr>
+<tr>
+<td><strong>ProcessOutput</strong></td>
+<td><strong>InternalProcessOutput</strong></td>
+</tr>
+<tr>
+<td><strong>SetInputMaxLatency</strong></td>
+<td><strong>InternalSetInputMaxLatency</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>For the remaining <strong>IMediaObject</strong> methods, there is not a one-to-one correspondence between template methods and derived-class methods. The following table summarizes which methods are fully implemented by the template, and which methods call other methods on the derived class.</p>
+<table>
+<thead>
+<tr>
+<th>IMediaObject Method</th>
+<th>Derived Class Method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>GetInputCurrentType</strong></td>
+<td>Fully implemented</td>
+</tr>
+<tr>
+<td><strong>GetOutputCurrentType</strong></td>
+<td>Fully implemented</td>
+</tr>
+<tr>
+<td><strong>GetStreamCount</strong></td>
+<td>Fully implemented</td>
+</tr>
+<tr>
+<td><strong>GetInputStatus</strong></td>
+<td><a href="/previous-versions/ms809095(v=msdn.10)"><strong>InternalAcceptingInput</strong></a></td>
+</tr>
+<tr>
+<td><strong>Lock</strong> (implemented as <strong>DMOLock</strong>)</td>
+<td><a href="/previous-versions/ms809100(v=msdn.10)"><strong>Lock</strong></a>, <a href="/previous-versions/ms809101(v=msdn.10)"><strong>Unlock</strong></a></td>
+</tr>
+<tr>
+<td><strong>SetInputType</strong></td>
+<td><a href="/previous-versions/ms809096(v=msdn.10)"><strong>InternalCheckInputType</strong></a></td>
+</tr>
+<tr>
+<td><strong>SetOutputType</strong></td>
+<td><a href="/previous-versions/ms809098(v=msdn.10)"><strong>InternalCheckOutputType</strong></a></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="imediaobjectimpl-class-template.html"><strong>IMediaObjectImpl Class Template</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="writing-a-dmo.html">Writing a DMO</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Channel Layer Overview</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Channel Layer Overview
+description: The Channel Layer provides an abstraction of the transport channel as well as messages sent out on the channel.
+ms.assetid: d7dddcc6-8eb0-4ee6-8cf5-7701a2be7a19
+keywords:</p>
+<ul>
+<li>Channel Layer Overview Web Services for Windows</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Channel Layer Overview</h1>
+<p>The Channel Layer provides an abstraction of the transport channel as well as messages sent out on the channel. It also includes functions for the serialization of C data types to and from SOAP structures. The Channel Layer enables full control of communications by means of <a href="message.html">messages</a> consisting of data sent or received and containing bodies and headers, and <a href="channel.html">channels</a> that abstract message exchange protocols and provide properties for customizing settings.</p>
+<h2>Message</h2>
+<p>A <a href="message.html">message</a> is an object that encapsulates network data â€” specifically, data that is transmitted or received over a network. The message structure is defined by SOAP, with a discrete set of headers and a message body. The headers are placed in a memory buffer, and the message body is read or written using a stream API.</p>
+<p><img src="images/messageenvelope.png" alt="Diagram showing the header and body of a message." /></p>
+<p>Although the data model of a message is always the XML data model, the actual wire format is flexible. Before a message is transmitted, it is encoded using a particular encoding (such as Text, Binary, or MTOM). See <a href="/windows/desktop/api/WebServices/ne-webservices-ws_encoding"><strong>WS_ENCODING</strong></a> for more information on encodings.</p>
+<p><img src="images/messageandencodings.png" alt="Diagram showing several message encoding formats." /></p>
+<h2>Channel</h2>
+<p>A <a href="channel.html">channel</a> is an object used to send and receive messages on a network between two or more endpoints.</p>
+<p>Channels have associated data that describes how to <a href="endpoint-address.html">address</a> the message when it is sent. Sending a message on a channel is like placing it in a chute â€” the channel includes the information where the message should go and how to get it there.</p>
+<p><img src="images/channelsaschute.png" alt="Diagram showing channels for messages." /></p>
+<p>Channels are categorized into <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_type"><strong>channel types</strong></a>. A channel type specifies which direction messages can flow. The channel type also identifies whether the channel is sessionful, or sessionless. A session is defined as an abstract way of correlating messages between two or more parties. An example of a sessionful channel is a TCP channel, which uses the TCP connection as the concrete session implementation. An example of a sessionless channel is UDP, which does not have an underlying session mechanism. Although HTTP does have underlying TCP connections, this fact is not directly exposed through this API and therefore HTTP is also considered a sessionless channel.</p>
+<p><img src="images/channeltypes.png" alt="Diagram showing sessionful and sessionless channel types." /></p>
+<p>Although channel types describe the direction and session information for a channel, they do not specify how the channel is implemented. What protocol should the channel use? How hard should the channel try to deliver the message? What kind of security is used? Is it singlecast or multicast? These settings are referred to as the &quot;binding&quot; of the channel. The binding consists of the following:</p>
+<ul>
+<li>A <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_CHANNEL_BINDING</strong></a>, which identifies the transfer protocol to use (TCP, UDP, HTTP, NAMEDPIPE).</li>
+<li>A <a href="/windows/desktop/api/WebServices/ns-webservices-ws_security_description"><strong>WS_SECURITY_DESCRIPTION</strong></a>, which specifies how to secure the channel.</li>
+<li>A set <a href="/windows/desktop/api/WebServices/ns-webservices-ws_channel_property"><strong>WS_CHANNEL_PROPERTY</strong></a>s, which specify additional optional settings. See <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_ID</strong></a> for the list of properties.</li>
+</ul>
+<p><img src="images/channelsandbindings.png" alt="Diagram showing a list of channel properties." /></p>
+<h2>Listener</h2>
+<p>To start communicating, the client creates a Channel object. But how does the service get its Channel object? It does so by creating a <a href="listener.html">Listener</a>. Creating a listener requires the same binding information that is necessary to create a channel. Once a Listener has been created, the application can Accept Channels from the Listener. Since the application may fall behind in accepting channels, listeners typically keep a queue of channels that are ready to accept (up to some quota).</p>
+<p><img src="images/channelaccept.png" alt="Diagram showing channels in the Listener queue." /></p>
+<h2>Initiating Communication (client)</h2>
+<p>To initiate communication on the client, use the following sequence.</p>
+<pre lang="syntax"><code>WsCreateChannel
+for each address being sent to
+{
+    WsOpenChannel           // open channel to address
+    // send and/or receive messages
+    WsCloseChannel          // close channel
+    WsResetChannel?         // reset if opening again
+}
+WsFreeChannel
+</code></pre>
+<h2>Accepting Communication (server)</h2>
+<p>To accept incoming communications on the server, use the following sequence.</p>
+<pre lang="syntax"><code>WsCreateListener
+WsOpenListener
+for each channel being accepted (can be done in parallel)
+{
+    WsCreateChannelForListener
+    for each accept
+    {
+        WsAcceptChannel     // accept the channel
+        // send and/or receive messages
+        WsCloseChannel      // close the channel
+        WsResetChannel?     // reset if accepting again
+    }
+    WsFreeChannel
+}
+WsCloseListener
+WsFreeListener
+</code></pre>
+<h2>Sending Messages (client or server)</h2>
+<p>To send messages, use the following sequence.</p>
+<pre lang="syntax"><code>WsCreateMessageForChannel
+for each message being sent
+{
+    WsSendMessage       // send message
+    WsResetMessage?     // reset if sending another message
+}
+WsFreeMessage
+</code></pre>
+<p>The <a href="/windows/desktop/api/WebServices/nf-webservices-wssendmessage"><strong>WsSendMessage</strong></a> function does not allow for streaming, and assumes that the body contains only one element. To avoid these constraints, use the following sequence instead of <strong>WsSendMessage</strong>.</p>
+<pre lang="syntax"><code>WsInitializeMessage     // initialize message to WS_BLANK_MESSAGE
+WsSetHeader             // serialize action header into header buffer
+WsAddressMessage?       // optionally address message
+for each application defined header
+{
+    WsAddCustomHeader   // serialize application-defined headers into header buffer
+}
+WsWriteMessageStart     // write out the headers of the message
+for each element of the body
+{
+    WsWriteBody         // serialize the element of the body
+    WsFlushBody?        // optionally flush the body
+}
+WsWriteMessageEnd       // write the end of the message
+</code></pre>
+<p>The <a href="/windows/desktop/api/WebServices/nf-webservices-wswritebody"><strong>WsWriteBody</strong></a> function uses serialization to write the body elements. To write the data directly to the XML Writer, use the following sequence instead of <strong>WsWriteBody</strong>.</p>
+<pre lang="syntax"><code>WS_MESSAGE_PROPERTY_BODY_WRITER     // get the writer used to write the body
+WsWriteStartElement
+// use the writer functions to write the body
+WsWriteEndElement
+// optionally flush the body
+WsFlushBody?        
+</code></pre>
+<p>The <a href="/windows/desktop/api/WebServices/nf-webservices-wsaddcustomheader"><strong>WsAddCustomHeader</strong></a> function uses serialization to set the headers to the header buffer of the message. To use the XML Writer to write a header, use the following sequence instead of <strong>WsAddCustomHeader</strong>.</p>
+<pre lang="syntax"><code>WS_MESSAGE_PROPERTY_HEADER_BUFFER   // get the header buffer 
+WsCreateWriter                      // create an xml writer
+WsSetOutputToBuffer                 // specify output of writer should go to buffer
+WsMoveWriter*                       // move to inside envelope header element
+WsWriteStartElement                 // write application header start element
+// use the writer functions to write the header 
+WsWriteEndElement                   // write application header end element
+</code></pre>
+<h2>Receiving Messages (client or server)</h2>
+<p>To receive messages, use the following sequence.</p>
+<pre lang="syntax"><code>WsCreateMessageForChannel
+for each message being received
+{
+    WsReceiveMessage            // receive a message
+    WsGetHeader*                // optionally access standard headers such as To or Action
+    WsResetMessage              // reset if reading another message
+}
+WsFreeMessage
+</code></pre>
+<p>The <a href="/windows/desktop/api/WebServices/nf-webservices-wsreceivemessage"><strong>WsReceiveMessage</strong></a> function does not allow for streaming, and assumes that the body contains only one element, and that the type of the message (action and schema of the body) is known up front. To avoid these constraints, use the following sequence instead of <strong>WsReceiveMessage</strong>.</p>
+<pre lang="syntax"><code>WsReadMessageStart              // read all headers into header buffer
+for each standard header
+{
+    WsGetHeader                 // deserialize standard header such as To or Action
+}
+for each application defined header
+{
+    WsGetCustomHeader           // deserialize application defined header
+}
+for each element of the body
+{
+    WsFillBody?                 // optionally fill the body
+    WsReadBody                  // deserialize element of body
+}
+WsReadMessageEnd                // read end of message
+</code></pre>
+<p>The <a href="/windows/desktop/api/WebServices/nf-webservices-wsreadbody"><strong>WsReadBody</strong></a> function uses serialization to read the body elements. To read the data directly from the <a href="xml-reader.html">XML Reader</a>, use the following sequence instead of <strong>WsReadBody</strong>.</p>
+<pre lang="syntax"><code>WS_MESSAGE_PROPERTY_BODY_READER     // get the reader used to read the body
+WsFillBody?                         // optionally fill the body
+WsReadToStartElement                // read up to the body element
+WsReadStartElement                  // consume the start of the body element
+// use the read functions to read the contents of the body element
+WsReadEndElement                    // consume the end of the body element
+</code></pre>
+<p>The <a href="/windows/desktop/api/WebServices/nf-webservices-wsgetcustomheader"><strong>WsGetCustomHeader</strong></a> functions use serialization to get the headers from the header buffer of the message. To use the <a href="xml-reader.html">XML Reader</a> to read a header, use the following sequence instead of <strong>WsGetCustomHeader</strong>.</p>
+<pre lang="syntax"><code>WS_MESSAGE_PROPERTY_HEADER_BUFFER   // get the header buffer 
+WsCreateReader                      // create an xml reader
+WsSetInputToBuffer                  // specify input of reader should be buffer
+WsMoveReader*                       // move to inside header element
+while looking for header to read
+{
+    WsReadToStartElement            // see if the header matches the application header
+    if header matched
+    {
+        WsGetHeaderAttributes?      // get the standard header attributes
+        WsReadStartElement          // consume the start of the header element
+        // use the read functions to read the contents of the header element
+        WsReadEndElement            // consume the end of the header element
+    }
+    else
+    {
+        WsSkipNode                  // skip the header element
+    }
+}                
+</code></pre>
+<h2>Request Reply (client)</h2>
+<p>Performing a request-reply on the client can be done with the following sequence.</p>
+<pre lang="syntax"><code>WsCreateMessageForChannel               // create request message 
+WsCreateMessageForChannel               // create reply message 
+for each request reply
+{
+    WsRequestReply                      // send request, receive reply
+    WsResetMessage?                     // reset request message (if repeating)
+    WsResetMessage?                     // reset reply message (if repeating)
+}
+WsFreeMessage                           // free request message
+WsFreeMessage                           // free reply message
+</code></pre>
+<p>The <a href="/windows/desktop/api/WebServices/nf-webservices-wsrequestreply"><strong>WsRequestReply</strong></a> function assumes a single element for the body of the request and reply messages, and that the type of the message (action and schema of the body) are known up front. To avoid these limitations, the request and reply message can be sent manually, as shown in the following sequence. This sequence matches the earlier sequence for sending and receiving a message, except where noted.</p>
+<pre lang="syntax"><code>WsInitializeMessage     // initialize message to WS_BLANK_MESSAGE
+WsSetHeader             // serialize action header into header buffer
+WsAddressMessage?       // optionally address message
+
+// the following block is specific to sending a request
+{
+    generate a unique MessageID for request
+    WsSetHeader         // set the message ID            
+}
+
+for each application defined header
+{
+    WsAddCustomHeader   // serialize application-defined headers into header buffer
+}
+WsWriteMessageStart     // write out the headers of the message
+for each element of the body
+{
+    WsWriteBody         // serialize the element of the body
+    WsFlushBody?        // optionally flush the body
+}
+WsWriteMessageEnd       // write the end of the message
+
+WsReadMessageStart      // read all headers into header buffer
+
+// the following is specific to receiving a reply
+{
+    WsGetHeader         // deserialize RelatesTo ID of reply
+    verify request MessageID is equal to RelatesTo ID
+}
+
+for each standard header
+{
+    WsGetHeader         // deserialize standard header such as To or Action
+}
+for each application defined header
+{
+    WsGetCustomHeader   // deserialize application defined header
+}
+for each element of the body
+{
+    WsFillBody?         // optionally fill the body
+    WsReadBody          // deserialize element of body
+}
+WsReadMessageEnd        // read end of message                
+</code></pre>
+<h2>Request Reply (server)</h2>
+<p>To receive a request message on the server, use the same sequence as outlined in the previous section on receiving messages.</p>
+<p>To send a reply or fault message, use the following sequence.</p>
+<pre lang="syntax"><code>WsCreateMessageForChannel
+for each reply being sent
+{
+    WsSendReplyMessage | WsSendFaultMessageForError  // send reply or fault message
+    WsResetMessage?     // reset if sending another message
+}
+WsFreeMessage
+</code></pre>
+<p>The <a href="/windows/desktop/api/WebServices/nf-webservices-wssendreplymessage"><strong>WsSendReplyMessage</strong></a> function assumes a single element in the body and does not allow for streaming. To avoid these limitations, use the following sequence. This is the same as the earlier sequence for sending a message, but uses <a href="/windows/desktop/api/WebServices/ne-webservices-ws_message_initialization"><strong>WS_REPLY_MESSAGE</strong></a> instead of <strong>WS_BLANK_MESSAGE</strong> when initializing.</p>
+<pre lang="syntax"><code>// the following block is specific to sending a reply
+{
+    WsInitializeMessage // initialize message to WS_REPLY_MESSAGE
+}
+WsSetHeader             // serialize action header into header buffer                                
+WsAddressMessage?       // optionally address message
+for each application defined header
+{
+    WsAddCustomHeader   // serialize application-defined headers into header buffer
+}
+WsWriteMessageStart     // write out the headers of the message
+for each element of the body
+{
+    WsWriteBody         // serialize the element of the body
+    WsFlushBody?        // optionally flush the body
+}
+WsWriteMessageEnd       // write the end of the message
+</code></pre>
+<h2>Message Exchange Patterns</h2>
+<p>The <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_type"><strong>WS_CHANNEL_TYPE</strong></a> dictates the message exchange pattern possible for a given channel. The type supported, varies according to the binding, as follows:</p>
+<ul>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_HTTP_CHANNEL_BINDING</strong></a> supports <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_type"><strong>WS_CHANNEL_TYPE_REQUEST</strong></a> on the client and <strong>WS_CHANNEL_TYPE_REPLY</strong> on the server.</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_TCP_CHANNEL_BINDING</strong></a> supports <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_type"><strong>WS_CHANNEL_TYPE_DUPLEX_SESSION</strong></a> on the client and <strong>WS_CHANNEL_TYPE_DUPLEX_SESSION</strong> on the server.</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_UDP_CHANNEL_BINDING</strong></a> supports <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_type"><strong>WS_CHANNEL_TYPE_DUPLEX</strong></a> on the client and <strong>WS_CHANNEL_TYPE_INPUT</strong> on the server.</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_NAMEDPIPE_CHANNEL_BINDING</strong></a> supports <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_type"><strong>WS_CHANNEL_TYPE_DUPLEX</strong></a> on the client and <strong>WS_CHANNEL_TYPE_INPUT</strong> on the server.</li>
+</ul>
+<h2>Message Loops</h2>
+<p>For each message exchange pattern, there is a specific &quot;loop&quot; that can be used to send or receive messages. The loop describes the legal order of operations necessary to send/receive multiple messages. The loops are describes below as grammar productions. The 'end' term is a receive where <strong>WS_S_END</strong> is returned (See <a href="windows-web-services-return-values.html">Windows Web Services Return Values</a>), indicating no more messages are available on the channel. The parallel production specifies that for parallel(x &amp; y) that operation x may be done concurrently with y.</p>
+<p>The following loops are used on the client:</p>
+<pre lang="syntax"><code>client-loop := client-request-loop | client-duplex-session-loop | client-duplex-loop
+client-request-loop := open (send (receive | end))* close // WS_CHANNEL_TYPE_REQUEST
+client-duplex-session-loop := open parallel(send* &amp; receive*) parallel(send? &amp; end*) close // WS_CHANNEL_TYPE_DUPLEX_SESSION
+client-duplex-loop := open parallel(send &amp; receive)* close // WS_CHANNEL_TYPE_DUPLEX
+</code></pre>
+<p>The following loops are used on the server:</p>
+<pre lang="syntax"><code>server-loop: server-reply-loop | server-duplex-session-loop | server-duplex-loop
+server-reply-loop := accept receive end* send? end* close // WS_CHANNEL_TYPE_REPLY
+server-duplex-session-loop := accept parallel(send* &amp; receive*) parallel(send* &amp; end*) close // WS_CHANNEL_TYPE_DUPLEX_SESSION
+server-input-loop := accept receive end* close // WS_CHANNEL_TYPE_INPUT
+</code></pre>
+<p>Using the <a href="/windows/desktop/api/WebServices/ns-webservices-ws_security_context_message_security_binding"><strong>WS_SECURITY_CONTEXT_MESSAGE_SECURITY_BINDING</strong></a> on the server requires a successful receive before sending is allowed even with a channel of type <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_type"><strong>WS_CHANNEL_TYPE_DUPLEX_SESSION</strong></a>. After the first receive. the regular loop applies.</p>
+<p>Note that channels of type <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_type"><strong>WS_CHANNEL_TYPE_REQUEST</strong></a> and <strong>WS_CHANNEL_TYPE_REPLY</strong> can be used to send and receive one-way messages (as well as the standard request-reply pattern). This is accomplished by closing the reply channel without sending a reply. In this case, there will be no reply received on the request channel. The return value <strong>WS_S_END</strong> Using the <a href="/windows/desktop/api/WebServices/ns-webservices-ws_security_context_message_security_binding"><strong>WS_SECURITY_CONTEXT_MESSAGE_SECURITY_BINDING</strong></a> on the server requires a successful receive before sending is allowed even with a channel of type <strong>WS_CHANNEL_TYPE_DUPLEX_SESSION</strong>. After the first receive the regular loop applies.</p>
+<p>will be returned, indicating no message available.</p>
+<p>Client or server loops may be done in parallel with each other by using multiple channel instances.</p>
+<pre lang="syntax"><code>parallel-client: parallel(client-loop(channel1) &amp; client-loop(channel2) &amp; ...)
+parallel-server: parallel(server-loop(channel1) &amp; server-loop(channel2) &amp; ...)
+</code></pre>
+<h2>Message Filtering</h2>
+<p>A server channel may filter received messages that are not intended for the application, such as messages that establish a <a href="security-context.html">security context</a>. In that case <strong>WS_S_END</strong> will be returned from <a href="/windows/desktop/api/WebServices/nf-webservices-wsreadmessagestart"><strong>WsReadMessageStart</strong></a> and no application messages will be available on that channel. However, this does not signal that the client intended to end communication with the server. More messages may be available on another channel. See <a href="/windows/desktop/api/WebServices/nf-webservices-wsshutdownsessionchannel"><strong>WsShutdownSessionChannel</strong></a>.</p>
+<h2>Cancellation</h2>
+<p>The <a href="/windows/desktop/api/WebServices/nf-webservices-wsabortchannel"><strong>WsAbortChannel</strong></a> function is used to cancel pending IO for a channel. This API will not wait for the IO operation(s) to complete. See the <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_state"><strong>WS_CHANNEL_STATE</strong></a> state diagram and documentation for <strong>WsAbortChannel</strong> for more information.</p>
+<p>The <a href="/windows/desktop/api/WebServices/nf-webservices-wsabortlistener"><strong>WsAbortListener</strong></a> API is used to cancel pending IO for a listener. This API will not wait for the IO operation(s) to complete. Aborting a listener will cause any pending accepts to be aborted as well. See the <a href="/windows/desktop/api/WebServices/ne-webservices-ws_listener_state"><strong>WS_LISTENER_STATE</strong></a> state diagram and <strong>WsAbortListener</strong> for more information.</p>
+<h2>TCP</h2>
+<p>The <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_TCP_CHANNEL_BINDING</strong></a> supports SOAP over TCP. The SOAP over TCP specification builds upon the .NET Framing mechanism.</p>
+<p>Port sharing is not supported in this version. Each listener that is opened must use a different port number.</p>
+<h2>UDP</h2>
+<p>The <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_UDP_CHANNEL_BINDING</strong></a> supports SOAP over UDP.</p>
+<p>There are a number of limitations with the UDP binding:</p>
+<ul>
+<li>There is no support for security.</li>
+<li>Messages may be lost or duplicated.</li>
+<li>Only one encoding is supported: <a href="/windows/desktop/api/WebServices/ne-webservices-ws_encoding"><strong>WS_ENCODING_XML_UTF8</strong></a>.</li>
+<li>Messages are fundamentally limited to 64k, and frequently have a greater chance being lost if the size exceeds the MTU of the network.</li>
+</ul>
+<h2>HTTP</h2>
+<p>The <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_HTTP_CHANNEL_BINDING</strong></a> supports SOAP over HTTP.</p>
+<p>To control HTTP specific headers on the client and server, see <a href="/windows/desktop/api/WebServices/ns-webservices-ws_http_message_mapping"><strong>WS_HTTP_MESSAGE_MAPPING</strong></a>.</p>
+<p>To send and receive non-SOAP messages on the server, use <a href="/windows/desktop/api/WebServices/ne-webservices-ws_encoding"><strong>WS_ENCODING_RAW</strong></a> for <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_ENCODING</strong></a>.</p>
+<h2>NAMEDPIPES</h2>
+<p>The <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_NAMEDPIPE_CHANNEL_BINDING</strong></a> supports SOAP over named pipes, allowing communication with the Windows Communication Foundation (WCF) service using NetNamedPipeBinding.</p>
+<h2>Correlating Request/Reply Messages</h2>
+<p>Request/Reply messages are correlated in one of two ways:</p>
+<ul>
+<li>Correlation is done using the channel as the correlation mechanism. For example, when using <a href="/windows/desktop/api/WebServices/ne-webservices-ws_addressing_version"><strong>WS_ADDRESSING_VERSION_TRANSPORT</strong></a> and <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_HTTP_CHANNEL_BINDING</strong></a> the reply for the request message is correlated to the request by the fact that is it is the entity body of the HTTP response.</li>
+<li>Correlation is done using the MessageID and RelatesTo headers. This mechanism is used with <a href="/windows/desktop/api/WebServices/ne-webservices-ws_addressing_version"><strong>WS_ADDRESSING_VERSION_1_0</strong></a> and <strong>WS_ADDRESSING_VERSION_0_9</strong> (even when using <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_HTTP_CHANNEL_BINDING</strong></a>). In this case, the request message includes the MessageID header. The response message includes a RelatesTo header that has the value of the request's MessageID header. The RelatesTo header allows the client to correlate a response with a request it sent.</li>
+</ul>
+<p>The following channel layer APIs automatically use the appropriate correlation mechanisms based on the <a href="/windows/desktop/api/WebServices/ne-webservices-ws_addressing_version"><strong>WS_ADDRESSING_VERSION</strong></a> of the channel.</p>
+<ul>
+<li><a href="/windows/desktop/api/WebServices/nf-webservices-wsrequestreply"><strong>WsRequestReply</strong></a></li>
+<li><a href="/windows/desktop/api/WebServices/nf-webservices-wssendreplymessage"><strong>WsSendReplyMessage</strong></a></li>
+<li><a href="/windows/desktop/api/WebServices/nf-webservices-wssendfaultmessageforerror"><strong>WsSendFaultMessageForError</strong></a></li>
+</ul>
+<p>If these APIs are not used, the headers can be manually added and accessed using <a href="/windows/desktop/api/WebServices/nf-webservices-wssetheader"><strong>WsSetHeader</strong></a> or <a href="/windows/desktop/api/WebServices/nf-webservices-wsgetheader"><strong>WsGetHeader</strong></a>.</p>
+<h2>Custom Channels and Listeners</h2>
+<p>If the predefined set of channel bindings do not meet the needs of the application, then a custom channel and listener implementation can be defined by specifying <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_CUSTOM_CHANNEL_BINDING</strong></a> when creating the channel or listener. The actual implementation of the channel/listener is specified as a set of callbacks via <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_CUSTOM_CHANNEL_CALLBACKS</strong></a> or <a href="/windows/desktop/api/WebServices/ne-webservices-ws_listener_property_id"><strong>WS_LISTENER_PROPERTY_CUSTOM_LISTENER_CALLBACKS</strong></a> properties. Once a custom channel or listener are created, the result is a <a href="ws-channel.html">WS_CHANNEL</a> or <a href="ws-listener.html">WS_LISTENER</a> object that can be used with existing APIs.</p>
+<p>A custom channel and listener can also be used with Service Proxy and <a href="service-host.html">Service Host</a> by specifying the <strong>WS_CUSTOM_CHANNEL_BINDING</strong> value in the <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_binding"><strong>WS_CHANNEL_BINDING</strong></a> enumeration and the <a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_CUSTOM_CHANNEL_CALLBACKS</strong></a> and <a href="/windows/desktop/api/WebServices/ne-webservices-ws_listener_property_id"><strong>WS_LISTENER_PROPERTY_CUSTOM_LISTENER_CALLBACKS</strong></a> properties when creating the Service Proxy or Service Host.</p>
+<h2>Security</h2>
+<p>The channel allows limiting the amount of memory used for various aspects of operations through properties such as:</p>
+<ul>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_MAX_BUFFERED_MESSAGE_SIZE</strong></a>,</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_MAX_STREAMED_MESSAGE_SIZE</strong></a>,</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_MAX_STREAMED_START_SIZE</strong></a>,</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_MAX_HTTP_REQUEST_HEADERS_BUFFER_SIZE</strong></a>,</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_MAX_SESSION_DICTIONARY_SIZE</strong></a>.</li>
+</ul>
+<p>These properties have default values which are conservative and secure for most scenarios. Default values and any modifications to them should be carefully evaluated against potential attack vectors which may cause denial of service by a remote user.</p>
+<p>The channel allows setting timeout values for various aspects of operations through properties such as:</p>
+<ul>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_CONNECT_TIMEOUT</strong></a>,</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_SEND_TIMEOUT</strong></a>,</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_RECEIVE_RESPONSE_TIMEOUT</strong></a>,</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_RECEIVE_TIMEOUT</strong></a>,</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_RESOLVE_TIMEOUT</strong></a>,</li>
+<li><a href="/windows/desktop/api/WebServices/ne-webservices-ws_channel_property_id"><strong>WS_CHANNEL_PROPERTY_CLOSE_TIMEOUT</strong></a>.</li>
+</ul>
+<p>These properties have default values which are conservative and secure for most scenarios. Increasing timeout values increases the amount of time that a remote party can hold a local resource alive, such as memory, sockets, and threads doing synchronous I/O. An application should evaluate the default values and use caution when increasing a timeout as it may open up potential attack vectors which may cause denial of service from a remote computer.</p>
+<p>Some of the other configuration options and application design considerations that should be carefully evaluated when using WWSAPI Channel API:</p>
+<ul>
+<li>When using the channel/listener layer, it is up to the application to create and accept channels on the server side. Similarly, it is up to the application to create and open channels on the client side. An application should put an upper bound on these operations because each channel consumes memory and other limited resources such as sockets. An application should be especially careful when create a channel in response to any action triggered by a remote party.</li>
+<li>It is up to the application to write the logic to create channels and accept them. Each channel consumes limited resources such as memory and sockets. An application should have an upper bound on the number of channels it is willing to accept, or a remote party could make many connections, leading to OOM and hence denial of service. It should also actively receive messages from those connections using a small timeout. If no messages are received, then the operation will time out and the connection should be released.</li>
+<li>It is up to an application to send a reply or fault by interpreting the ReplyTo or FaultTo SOAP headers. The secure practice is to only honor a ReplyTo or FaultTo header which is &quot;anonymous&quot;, meaning that the existing connection (TCP, HTTP) or source IP (UDP) should be used to send the SOAP reply. Applications should exercise extreme caution when creating resources (such as a channel) in order to reply to a different address, unless the message was signed by a party that can speak for the address that the reply is being sent to.</li>
+<li>The validation done in the channel layer is no replacement for data integrity achieved through security. An application must rely on security features of the WWSAPI to ensure that it is communicating with a trusted entity, and must also rely on security to ensure data integrity.</li>
+</ul>
+<p>Similarly, there are message configuration options and application design considerations that should be carefully evaluated when using WWSAPI Message API:</p>
+<ul>
+<li>The size of the heap used to store the headers of a message can be configured using the <a href="/windows/desktop/api/WebServices/ne-webservices-ws_message_property_id"><strong>WS_MESSAGE_PROPERTY_HEAP_PROPERTIES</strong></a> property. Increasing this value allows more memory to be consumed by the headers of the message, which can lead to OOM.</li>
+<li>The user of the message object must realize that the header access APIs are O(n) with respect to the number of headers in the message, since they check for duplicates. Designs which require many headers in a message may lead to excessive CPU usage.</li>
+<li>The maximum number of headers in a message can be configured using the <a href="/windows/desktop/api/WebServices/ne-webservices-ws_message_property_id"><strong>WS_MESSAGE_PROPERTY_MAX_PROCESSED_HEADERS</strong></a> property. There is also an implicit limit based on the size of the heap of the message. Increasing both of these values allows more headers to be present, which compounds the time necessary to find a header (when using the header access APIs).</li>
+</ul>
+<p>Â </p>
+<p>Â </p>
+</body>

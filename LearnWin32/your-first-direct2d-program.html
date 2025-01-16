@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Your First Direct2D Program</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Your First Direct2D Program
+description: Let's create our first Direct2D program. The program does not do anything fancy \ 8212; it just draws a circle that fills the client area of the window. But this program introduces many essential Direct2D concepts.
+ms.assetid: 940cc5e4-2952-4714-bf32-c611a965f819
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Your First Direct2D Program</h1>
+<p>Let's create our first Direct2D program. The program does not do anything fancy â€” it just draws a circle that fills the client area of the window. But this program introduces many essential Direct2D concepts.</p>
+<p><img src="images/graphics08.png" alt="a screen shot of the circle program." /></p>
+<p>Here is the code listing for the Circle program. The program re-uses the <code>BaseWindow</code> class that was defined in the topic <a href="managing-application-state-.html">Managing Application State</a>. Later topics will examine the code in detail.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;d2d1.h&gt;
+#pragma comment(lib, &quot;d2d1&quot;)
+
+#include &quot;basewin.h&quot;
+
+template &lt;class T&gt; void SafeRelease(T **ppT)
+{
+    if (*ppT)
+    {
+        (*ppT)-&gt;Release();
+        *ppT = NULL;
+    }
+}
+
+class MainWindow : public BaseWindow&lt;MainWindow&gt;
+{
+    ID2D1Factory            *pFactory;
+    ID2D1HwndRenderTarget   *pRenderTarget;
+    ID2D1SolidColorBrush    *pBrush;
+    D2D1_ELLIPSE            ellipse;
+
+    void    CalculateLayout();
+    HRESULT CreateGraphicsResources();
+    void    DiscardGraphicsResources();
+    void    OnPaint();
+    void    Resize();
+
+public:
+
+    MainWindow() : pFactory(NULL), pRenderTarget(NULL), pBrush(NULL)
+    {
+    }
+
+    PCWSTR  ClassName() const { return L&quot;Circle Window Class&quot;; }
+    LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam);
+};
+
+// Recalculate drawing layout when the size of the window changes.
+
+void MainWindow::CalculateLayout()
+{
+    if (pRenderTarget != NULL)
+    {
+        D2D1_SIZE_F size = pRenderTarget-&gt;GetSize();
+        const float x = size.width / 2;
+        const float y = size.height / 2;
+        const float radius = min(x, y);
+        ellipse = D2D1::Ellipse(D2D1::Point2F(x, y), radius, radius);
+    }
+}
+
+HRESULT MainWindow::CreateGraphicsResources()
+{
+    HRESULT hr = S_OK;
+    if (pRenderTarget == NULL)
+    {
+        RECT rc;
+        GetClientRect(m_hwnd, &amp;rc);
+
+        D2D1_SIZE_U size = D2D1::SizeU(rc.right, rc.bottom);
+
+        hr = pFactory-&gt;CreateHwndRenderTarget(
+            D2D1::RenderTargetProperties(),
+            D2D1::HwndRenderTargetProperties(m_hwnd, size),
+            &amp;pRenderTarget);
+
+        if (SUCCEEDED(hr))
+        {
+            const D2D1_COLOR_F color = D2D1::ColorF(1.0f, 1.0f, 0);
+            hr = pRenderTarget-&gt;CreateSolidColorBrush(color, &amp;pBrush);
+
+            if (SUCCEEDED(hr))
+            {
+                CalculateLayout();
+            }
+        }
+    }
+    return hr;
+}
+
+void MainWindow::DiscardGraphicsResources()
+{
+    SafeRelease(&amp;pRenderTarget);
+    SafeRelease(&amp;pBrush);
+}
+
+void MainWindow::OnPaint()
+{
+    HRESULT hr = CreateGraphicsResources();
+    if (SUCCEEDED(hr))
+    {
+        PAINTSTRUCT ps;
+        BeginPaint(m_hwnd, &amp;ps);
+     
+        pRenderTarget-&gt;BeginDraw();
+
+        pRenderTarget-&gt;Clear( D2D1::ColorF(D2D1::ColorF::SkyBlue) );
+        pRenderTarget-&gt;FillEllipse(ellipse, pBrush);
+
+        hr = pRenderTarget-&gt;EndDraw();
+        if (FAILED(hr) || hr == D2DERR_RECREATE_TARGET)
+        {
+            DiscardGraphicsResources();
+        }
+        EndPaint(m_hwnd, &amp;ps);
+    }
+}
+
+void MainWindow::Resize()
+{
+    if (pRenderTarget != NULL)
+    {
+        RECT rc;
+        GetClientRect(m_hwnd, &amp;rc);
+
+        D2D1_SIZE_U size = D2D1::SizeU(rc.right, rc.bottom);
+
+        pRenderTarget-&gt;Resize(size);
+        CalculateLayout();
+        InvalidateRect(m_hwnd, NULL, FALSE);
+    }
+}
+
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
+{
+    MainWindow win;
+
+    if (!win.Create(L&quot;Circle&quot;, WS_OVERLAPPEDWINDOW))
+    {
+        return 0;
+    }
+
+    ShowWindow(win.Window(), nCmdShow);
+
+    // Run the message loop.
+
+    MSG msg = { };
+    while (GetMessage(&amp;msg, NULL, 0, 0))
+    {
+        TranslateMessage(&amp;msg);
+        DispatchMessage(&amp;msg);
+    }
+
+    return 0;
+}
+
+LRESULT MainWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg)
+    {
+    case WM_CREATE:
+        if (FAILED(D2D1CreateFactory(
+                D2D1_FACTORY_TYPE_SINGLE_THREADED, &amp;pFactory)))
+        {
+            return -1;  // Fail CreateWindowEx.
+        }
+        return 0;
+
+    case WM_DESTROY:
+        DiscardGraphicsResources();
+        SafeRelease(&amp;pFactory);
+        PostQuitMessage(0);
+        return 0;
+
+    case WM_PAINT:
+        OnPaint();
+        return 0;
+
+
+
+    case WM_SIZE:
+        Resize();
+        return 0;
+    }
+    return DefWindowProc(m_hwnd, uMsg, wParam, lParam);
+}
+</code></pre>
+<p>You can download the complete Visual Studio project from <a href="direct2d-circle-sample.html">Direct2D Circle Sample</a>.</p>
+<h2>The D2D1 Namespace</h2>
+<p>The <strong>D2D1</strong> namespace contains helper functions and classes. These are not strictly part of the Direct2D API â€” you can program Direct2D without using them â€” but they help simplify your code. The <strong>D2D1</strong> namespace contains:</p>
+<ul>
+<li>A <a href="/windows/desktop/api/d2d1helper/nl-d2d1helper-colorf"><strong>ColorF</strong></a> class for constructing color values.</li>
+<li>A <a href="/windows/desktop/api/d2d1helper/nl-d2d1helper-matrix3x2f"><strong>Matrix3x2F</strong></a> for constructing transformation matrices.</li>
+<li>A set of functions to initialize Direct2D structures.</li>
+</ul>
+<p>You will see examples of the <strong>D2D1</strong> namespace throughout this module.</p>
+<h2>Next</h2>
+<p><a href="render-targets--devices--and-resources.html">Render Targets, Devices, and Resources</a></p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="direct2d-circle-sample.html">Direct2D Circle Sample</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

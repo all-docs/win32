@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Set the Playback Stop Time</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to set a stop time for playback when using the Media Session.
+ms.assetid: B8BA2154-2824-4573-AE71-853EB8AB911D
+title: How to Set the Playback Stop Time
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to Set the Playback Stop Time</h1>
+<p>This topic describes how to set a stop time for playback when using the <a href="media-session.html">Media Session</a>.</p>
+<h2>Setting the Stop Time Before Playback Begins</h2>
+<p>Before you queue a topology for playback, you can specify the stop time by using the <a href="mf-toponode-mediastop-attribute.html">MF_TOPONODE_MEDIASTOP</a> attribute. For each output node in the topology, set the value of the MF_TOPONODE_MEDIASTOP to the stop time in 100-nanosecond units.</p>
+<p>Note that setting this attribute after playback starts has no effect. Therefore, set the attribute before calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-start"><strong>IMFMediaSession::Start</strong></a>.</p>
+<p>The following code shows how to set the stop time on an existing topology.</p>
+<pre lang="C++"><code>template &lt;class Q&gt;
+HRESULT GetCollectionObject(IMFCollection *pCollection, DWORD dwIndex, Q **ppObject)
+{
+    *ppObject = NULL;   // zero output
+
+    IUnknown *pUnk = NULL;
+    HRESULT hr = pCollection-&gt;GetElement(dwIndex, &amp;pUnk);
+    if (SUCCEEDED(hr))
+    {
+        hr = pUnk-&gt;QueryInterface(IID_PPV_ARGS(ppObject));
+        pUnk-&gt;Release();
+    }
+    return hr;
+}
+
+HRESULT SetMediaStop(IMFTopology *pTopology, const LONGLONG&amp; stop)
+{
+    IMFCollection *pCol = NULL;
+    DWORD cNodes;
+
+    HRESULT hr = pTopology-&gt;GetSourceNodeCollection(&amp;pCol);
+    if (SUCCEEDED(hr))
+    {
+        hr = pCol-&gt;GetElementCount(&amp;cNodes);
+    }
+    if (SUCCEEDED(hr))
+    {
+        for (DWORD i = 0; i &lt; cNodes; i++)
+        {
+            IMFTopologyNode *pNode;
+            hr = GetCollectionObject(pCol, i, &amp;pNode);
+            if (SUCCEEDED(hr))
+            {
+                pNode-&gt;SetUINT64(MF_TOPONODE_MEDIASTOP, stop);
+            }
+            pNode-&gt;Release();
+        }
+    }
+    SafeRelease(&amp;pCol);
+    return hr;
+}
+</code></pre>
+<h2>Setting the Stop Time After Playback Has Started</h2>
+<p>There is a way to set the stop time after the <a href="media-session.html">Media Session</a> starts playback, by using the <a href="/windows/desktop/api/mfidl/nn-mfidl-imftopologynodeattributeeditor"><strong>IMFTopologyNodeAttributeEditor</strong></a> interface.</p>
+<blockquote>
+<p>[!IMPORTANT]
+This interface has a serious limitation, because the stop time is specified as a 32-bit value. That means the maximum stop time that you can set using this interface is 0xFFFFFFFF, or just over 7 minutes. This limitation is due to an incorrect structure definition.</p>
+</blockquote>
+<p>Â </p>
+<p>To set the stop time using the <a href="/windows/desktop/api/mfidl/nn-mfidl-imftopologynodeattributeeditor"><strong>IMFTopologyNodeAttributeEditor</strong></a> interface, perform the following steps.</p>
+<ol>
+<li>
+<p>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-mfgetservice"><strong>MFGetService</strong></a> to get the <a href="/windows/desktop/api/mfidl/nn-mfidl-imftopologynodeattributeeditor"><strong>IMFTopologyNodeAttributeEditor</strong></a> interface from the Media Session.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imftopology-gettopologyid"><strong>IMFTopology::GetTopologyID</strong></a> to get the ID of the playback topology.</p>
+</li>
+<li>
+<p>For each output node in the topology, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imftopologynodeattributeeditor-updatenodeattributes"><strong>IMFTopologyNodeAttributeEditor::UpdateNodeAttributes</strong></a>. This method takes the topology ID and a pointer to a <a href="/windows/desktop/api/mfidl/ns-mfidl-mftoponode_attribute_update"><strong>MFTOPONODE_ATTRIBUTE_UPDATE</strong></a> structure. Initialize the structure as follows.</p>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>NodeId</strong></td>
+<td>The node ID. To get the node ID, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imftopologynode-gettoponodeid"><strong>IMFTopologyNode::GetTopoNodeID</strong></a>.</td>
+</tr>
+<tr>
+<td><strong>guidAttributeKey</strong></td>
+<td><strong>MF_TOPONODE_MEDIASTOP</strong></td>
+</tr>
+<tr>
+<td><strong>attrType</strong></td>
+<td><strong>MF_ATTRIBUTE_UINT64</strong></td>
+</tr>
+<tr>
+<td><strong>u64</strong></td>
+<td>The stop time, in 100-nanosecond units.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+</li>
+</ol>
+<p>Be careful to set the value of <strong>attrType</strong> correctly. Although <strong>u64</strong> is a 32-bit type, the method requires that <strong>attrType</strong> be set to <strong>MF_ATTRIBUTE_UINT64</strong>.</p>
+<p>The following code shows these steps.</p>
+<pre lang="C++"><code>HRESULT SetMediaStopDynamic(IMFMediaSession *pSession, IMFTopology *pTopology, const LONGLONG&amp; stop)
+{
+    if (stop &gt; MAXUINT32)
+    {
+        return E_INVALIDARG;
+    }
+
+    IMFTopologyNodeAttributeEditor *pAttr = NULL;
+    IMFCollection *pCol = NULL;
+    IMFTopologyNode *pNode = NULL;
+
+    HRESULT hr = MFGetService(pSession, MF_TOPONODE_ATTRIBUTE_EDITOR_SERVICE, IID_PPV_ARGS(&amp;pAttr));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    TOPOID id;
+    hr = pTopology-&gt;GetTopologyID(&amp;id);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    DWORD cNodes;
+    hr = pTopology-&gt;GetSourceNodeCollection(&amp;pCol);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pCol-&gt;GetElementCount(&amp;cNodes);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    for (DWORD i = 0; i &lt; cNodes; i++)
+    {
+        IMFTopologyNode *pNode;
+        hr = GetCollectionObject(pCol, i, &amp;pNode);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        TOPOID nodeID;
+        hr = pNode-&gt;GetTopoNodeID(&amp;nodeID);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        MFTOPONODE_ATTRIBUTE_UPDATE update;
+        update.NodeId = nodeID;
+        update.guidAttributeKey = MF_TOPONODE_MEDIASTOP;
+        update.attrType = MF_ATTRIBUTE_UINT64;
+        update.u64 = (UINT32)stop;
+
+        hr = pAttr-&gt;UpdateNodeAttributes(id, 1, &amp;update);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+        SafeRelease(&amp;pNode);
+    }
+
+done:
+    SafeRelease(&amp;pNode);
+    SafeRelease(&amp;pCol);
+    SafeRelease(&amp;pAttr);
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="audio-video-playback.html">Audio/Video Playback</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

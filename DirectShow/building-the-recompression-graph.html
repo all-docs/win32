@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Building the Recompression Graph</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Building the Recompression Graph
+ms.assetid: 8f25c60e-30be-4cc4-b924-b8d6654604d3
+title: Building the Recompression Graph
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Building the Recompression Graph</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>A typical filter graph for AVI file recompression looks like the following:</p>
+<p><img src="images/avi2avi4.png" alt="avi recompression graph" /></p>
+<p>The <a href="avi-splitter-filter.html">AVI Splitter Filter</a> pulls data from the <a href="file-source--async--filter.html">File Source (Async) Filter</a> and parses it into video and audio streams. The video decompressor decodes the compressed video, where it is recompressed by the video compressor. The choice of decompressors depends on the source file; it will be handled automatically by <a href="intelligent-connect.html">Intelligent Connect</a>. The application must choose the compressor, typically by presenting a list to the user. (See <a href="choosing-a-compression-filter.html">Choosing a Compression Filter</a>.)</p>
+<p>The compressed video then goes to the <a href="avi-mux-filter.html">AVI Mux Filter</a>. The audio stream in this example is not compressed, so it goes directly from the AVI Splitter to the AVI Mux. The AVI Mux interleaves the two streams, and the <a href="file-writer-filter.html">File Writer Filter</a> writes the output to disk. Note that the AVI Mux is required even if the original file does not have an audio stream.</p>
+<p>The easiest way to build this filter graph is to use the <a href="capture-graph-builder.html">Capture Graph Builder</a>, which is a DirectShow component for building capture graphs and other custom filter graphs.</p>
+<p>Start by calling CoCreateInstance to create the Capture Graph Builder:</p>
+<pre lang="C++"><code>ICaptureGraphBuilder2 *pBuild = NULL;
+hr = CoCreateInstance(CLSID_CaptureGraphBuilder2, 
+                        NULL, CLSCTX_INPROC_SERVER,
+    IID_ICaptureGraphBuilder2, (void **)&amp;pBuild);
+</code></pre>
+<p>Then use the Capture Graph Builder to build the filter graph:</p>
+<ol>
+<li>Build the rendering section of the graph, which includes the AVI Mux filter and the <a href="file-writer-filter.html">File Writer</a>.</li>
+<li>Add the source filter and the compression filter to the graph.</li>
+<li>Connect the source filter to the MUX filter. The capture graph builder inserts whatever splitter and decoder filters are needed to parse the source file. It can also route the video and audio streams through compression filters.</li>
+</ol>
+<p>The following sections explain each of these steps.</p>
+<p>Build the Rendering Section</p>
+<p>To build the rendering section of the graph, call the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-setoutputfilename"><strong>ICaptureGraphBuilder2::SetOutputFileName</strong></a> method. This method takes input parameters that specify the media subtype for the output and the name of the output file. It returns pointers to the MUX filter and the file writer. The MUX filter is needed for the next stage of graph building. The pointer to the file writer is not needed for this example, so that parameter can be <strong>NULL</strong>:</p>
+<pre lang="C++"><code>IBaseFilter *pMux = NULL;
+hr = pBuild-&gt;SetOutputFileName(
+        &amp;MEDIASUBTYPE_Avi, // File type. 
+        wszOutputFile,     // File name, as a wide-character string.
+        &amp;pMux,             // Receives a pointer to the multiplexer.
+        NULL);             // Receives a pointer to the file writer. 
+</code></pre>
+<p>When the method returns, the MUX filter has an outstanding reference count, so be sure to release the pointer later.</p>
+<p>The following diagram shows the filter graph at this point.</p>
+<p><img src="images/avi2avi1.png" alt="rendering section of the filter graph" /></p>
+<p>The MUX filter exposes two interfaces for controlling the AVI format:</p>
+<ul>
+<li><a href="/windows/desktop/api/Strmif/nn-strmif-iconfiginterleaving"><strong>IConfigInterleaving Interface</strong></a>: Sets the interleaving mode.</li>
+<li><a href="/windows/desktop/api/Strmif/nn-strmif-iconfigavimux"><strong>IConfigAviMux Interface</strong></a>: Sets the master stream and the AVI compatibility index.</li>
+</ul>
+<p>Add the Source and Compression Filters</p>
+<p>The next step is to add the source and compression filters to the filter graph. The Capture Graph Builder automatically creates an instance of the Filter Graph Manager when you call SetOutputFileName. Get a pointer to it by calling the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-getfiltergraph"><strong>ICaptureGraphBuilder2::GetFiltergraph</strong></a> method:</p>
+<pre lang="C++"><code>IGraphBuilder *pGraph = NULL;
+hr = pBuild-&gt;GetFiltergraph(&amp;pGraph);
+</code></pre>
+<p>Now call the <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-addsourcefilter"><strong>IGraphBuilder::AddSourceFilter</strong></a> method to add the Async File Source filter, and the <a href="/windows/desktop/api/Strmif/nf-strmif-ifiltergraph-addfilter"><strong>IFilterGraph::AddFilter</strong></a> method to add the video compressor:</p>
+<pre lang="C++"><code>IBaseFilter *pSrc = NULL;
+hr = pGraph-&gt;AddSourceFilter(wszInputFile, L&quot;Source Filter&quot;, &amp;pSrc);
+hr = pGraph-&gt;AddFilter(pVComp, L&quot;Compressor&quot;);
+</code></pre>
+<p>At this point, the source filter and the compression filter are not connected to anything else in the graph, as shown in the following illustration:</p>
+<p><img src="images/avi2avi2.png" alt="filter graph with source and compression filters" /></p>
+<p>Connect the Source to the Mux</p>
+<p>The final step is to connect the source filter to the AVI Mux filter, through the video compressor. Use the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>ICaptureGraphBuilder2::RenderStream</strong></a> method, which connects an output pin on the source filter to a specified sink filter, optionally through a compression filter.</p>
+<p>The first two parameters specify which of the source filter's pins to connect, by designating a pin category and a media type. The Async File Source filter has only one output pin, so these parameters should be <strong>NULL</strong>. The next three parameters specify the source filter, the compression filter (if any), and the Mux filter.</p>
+<p>The following code example renders the video stream through the video compressor:</p>
+<pre lang="C++"><code>hr = pBuild-&gt;RenderStream(
+        NULL,       // Output pin category
+        NULL,       // Media type
+        pSrc,       // Source filter
+        pVComp,     // Compression filter
+        pMux);      // Sink filter (the AVI Mux)
+</code></pre>
+<p>The following diagram shows the filter graph so far.</p>
+<p><img src="images/avi2avi3.png" alt="rendered video stream" /></p>
+<p>Assuming that the source file has an audio stream, the <a href="avi-splitter-filter.html">AVI Splitter</a> filter has created an output pin for the audio. To connect this pin, call RenderStream again:</p>
+<pre lang="C++"><code>hr = pBuild-&gt;RenderStream(NULL, NULL, pSrc, NULL, pMux);
+</code></pre>
+<p>Here, no compression filter is specified. The source filter's output pin is already connected, so the RenderStream method searches for an unconnected output pin on the splitter filter. It finds the audio pin and connects it directly to the MUX filter. If the source file does not have an audio stream, the second call to RenderStream will fail. This is expected behavior. The graph is complete after the first call to RenderStream, so the failure in the second call is harmless.</p>
+<p>In this example, the order of the two RenderStream calls is important. Because the second call does not specify a compressor, it will connect any unconnected pin from the AVI Splitter. If you make this call before the other one, it might connect the video stream to the AVI Mux, without your video compressor. Therefore, the more specific call (with the compression filter) must happen first.</p>
+<p>The previous discussion has assumed that the source file is an AVI file. However, this technique also works with other file types, such as MPEG files. The resulting filter graph will be somewhat different.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="recompressing-an-avi-file.html">Recompressing an AVI File</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

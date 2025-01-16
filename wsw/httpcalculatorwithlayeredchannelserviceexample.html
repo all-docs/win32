@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HttpCalculatorWithLayeredChannelServiceExample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: HttpCalculatorWithLayeredChannelServiceExample
+description: Review a Windows Web Services API (WWSAPI) C++ example of an HTTP calculator with layered channel service.
+ms.assetid: c5bc37bc-f242-4eda-abc4-510793d301d8
+keywords:</p>
+<ul>
+<li>HttpCalculatorWithLayeredChannelServiceExample Native-Web-Services</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>HttpCalculatorWithLayeredChannelServiceExample</h1>
+<p>This example shows how to use service host for hosting a calculator service with a custom channel and listener implementation that layer on top of HTTP.</p>
+<ul>
+<li><a href="#httpcalculatorwithlayeredchannelservicecpp">HttpCalculatorWithLayeredChannelService.cpp</a></li>
+<li><a href="#layeredchannelh">LayeredChannel.h</a></li>
+<li><a href="#layeredchannelcpp">LayeredChannel.cpp</a></li>
+<li><a href="#layeredlistenerh">LayeredListener.h</a></li>
+<li><a href="#layeredlistenercpp">LayeredListener.cpp</a></li>
+<li><a href="#calculatorservicewsdl">CalculatorService.wsdl</a></li>
+<li><a href="#makefile">Makefile</a></li>
+</ul>
+<h2>HttpCalculatorWithLayeredChannelService.cpp</h2>
+<pre lang="C++"><code>//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;string.h&quot;
+#include &quot;CalculatorService.wsdl.h&quot;
+//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+// A structure containing parameters passed to the custom channel 
+// using WS_CHANNEL_PROPERTY_CUSTOM_CHANNEL_PARAMETERS.
+struct LayeredChannelParameters
+{
+    // The type of the underlying channel
+    WS_CHANNEL_BINDING channelBinding;
+
+    // Channel properties to pass to the underlying channel
+    WS_CHANNEL_PROPERTY* channelProperties;
+    ULONG channelPropertyCount;
+
+    // Security settings for the underlying channel
+    WS_SECURITY_DESCRIPTION* securityDescription;
+};
+
+// The structure containing instance state for the custom channel
+struct CustomChannel
+{
+    // Underlying channel handle
+    WS_CHANNEL* channel;
+    BOOL disabledTimeouts;
+};
+
+// The set of callbacks that make up the custom channel implementation.
+extern WS_CUSTOM_CHANNEL_CALLBACKS layeredChannelCallbacks;
+//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+// A structure containing parameters passed to the custom listener
+// using WS_LISTENER_PROPERTY_CUSTOM_LISTENER_PARAMETERS.
+struct LayeredListenerParameters
+{
+    // The type of the underlying channel
+    WS_CHANNEL_BINDING channelBinding;
+
+    // Listener properties to pass to the underlying listener
+    WS_LISTENER_PROPERTY* listenerProperties;
+    ULONG listenerPropertyCount;
+
+    // Security settings for the underlying listener
+    WS_SECURITY_DESCRIPTION* securityDescription;
+};
+
+// The structure containing instance state for the custom listener
+struct CustomListener
+{
+    // Underlying listener handle
+    WS_LISTENER* listener;
+};
+
+// The set of callbacks that make up the custom listener implementation.
+extern WS_CUSTOM_LISTENER_CALLBACKS layeredListenerCallbacks;
+
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+HANDLE closeServer = NULL;  
+
+
+HRESULT CALLBACK Add(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in int a, 
+    __in int b, 
+    __out int* result, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(context);
+    UNREFERENCED_PARAMETER(asyncContext);
+    UNREFERENCED_PARAMETER(error);
+
+    *result = a + b;
+    printf (&quot;%d + %d = %d\n&quot;, a, b, *result);
+    fflush(stdout);
+    return NOERROR;
+}
+
+HRESULT CALLBACK Subtract(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in int a, 
+    __in int b, 
+    __out int* result, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(context);
+    UNREFERENCED_PARAMETER(asyncContext);
+    UNREFERENCED_PARAMETER(error);
+
+    *result = a - b;
+    printf (&quot;%d - %d = %d\n&quot;, a, b, *result);
+    fflush(stdout);
+    return NOERROR;
+}
+
+HRESULT CALLBACK CloseChannelCallback(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext)
+{
+    UNREFERENCED_PARAMETER(context);
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    SetEvent(closeServer);
+    return NOERROR;
+}
+
+static const DefaultBinding_ICalculatorFunctionTable calculatorFunctions = {Add, Subtract};
+
+// Method contract for the service
+static const WS_SERVICE_CONTRACT calculatorContract = 
+{
+    &amp;CalculatorService_wsdl.contracts.DefaultBinding_ICalculator, // comes from the generated header.
+    NULL, // for not specifying the default contract
+    &amp;calculatorFunctions // specified by the user
+};
+
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_SERVICE_HOST* host = NULL;
+    WS_SERVICE_ENDPOINT serviceEndpoint = {};
+    const WS_SERVICE_ENDPOINT* serviceEndpoints[1];
+    serviceEndpoints[0] = &amp;serviceEndpoint;
+    
+    WS_ERROR* error = NULL;
+    
+    // In order to use the custom channel through Service Model,
+    // we need to configure it to disable all timeouts.
+    WS_CHANNEL_PROPERTY channelPropertyArray[1];
+    BOOL enableTimeouts = FALSE;
+    channelPropertyArray[0].id = WS_CHANNEL_PROPERTY_ENABLE_TIMEOUTS;
+    channelPropertyArray[0].value = &amp;enableTimeouts;
+    channelPropertyArray[0].valueSize = sizeof(enableTimeouts);
+    
+    // Set up channel properties for the custom channel
+    WS_CHANNEL_PROPERTY customChannelPropertyArray[2];
+    
+    // Set up channel property that specifies the callbacks that implement the custom channel
+    customChannelPropertyArray[0].id = WS_CHANNEL_PROPERTY_CUSTOM_CHANNEL_CALLBACKS;
+    customChannelPropertyArray[0].value = &amp;layeredChannelCallbacks;
+    customChannelPropertyArray[0].valueSize = sizeof(layeredChannelCallbacks);
+    
+    // Initialize parameters to pass to the layered channel.
+    // Note that the parameters structure and it's contents must 
+    // remain valid until the service host object has been freed.  In this 
+    // example, the parameters are declared on the stack for
+    // simplicity, but in other scenarios they may need to be
+    // allocated from the heap.
+    LayeredChannelParameters layeredChannelParameters;
+    layeredChannelParameters.channelBinding = WS_HTTP_CHANNEL_BINDING;
+    layeredChannelParameters.channelProperties = channelPropertyArray;
+    layeredChannelParameters.channelPropertyCount = WsCountOf(channelPropertyArray);
+    layeredChannelParameters.securityDescription = NULL;
+    
+    // Specify the channel parameters as a channel property
+    customChannelPropertyArray[1].id = WS_CHANNEL_PROPERTY_CUSTOM_CHANNEL_PARAMETERS;
+    customChannelPropertyArray[1].value = &amp;layeredChannelParameters;
+    customChannelPropertyArray[1].valueSize = sizeof(layeredChannelParameters);
+    
+    // Set up the channel properties value
+    WS_CHANNEL_PROPERTIES channelProperties;
+    channelProperties.properties = customChannelPropertyArray;
+    channelProperties.propertyCount = WsCountOf(customChannelPropertyArray);
+    
+    // Set up listener properties for the custom listener
+    WS_LISTENER_PROPERTY listenerPropertyArray[2];
+    
+    // Set up listener property that specifies the callbacks that implement the custom listener
+    listenerPropertyArray[0].id = WS_LISTENER_PROPERTY_CUSTOM_LISTENER_CALLBACKS;
+    listenerPropertyArray[0].value = &amp;layeredListenerCallbacks;
+    listenerPropertyArray[0].valueSize = sizeof(layeredListenerCallbacks);
+    
+    // Initialize parameters to pass to the layered listener.
+    // Note that the parameters structure and it's contents must 
+    // remain valid until the service host object has been freed.  In this 
+    // example, the parameters are declared on the stack for
+    // simplicity, but in other scenarios they may need to be
+    // allocated from the heap.
+    LayeredListenerParameters layeredListenerParameters;
+    layeredListenerParameters.channelBinding = WS_HTTP_CHANNEL_BINDING;
+    layeredListenerParameters.listenerProperties = NULL;
+    layeredListenerParameters.listenerPropertyCount = 0;
+    layeredListenerParameters.securityDescription = NULL;
+    
+    // Specify the listener parameters as a listener property
+    listenerPropertyArray[1].id = WS_LISTENER_PROPERTY_CUSTOM_LISTENER_PARAMETERS;
+    listenerPropertyArray[1].value = &amp;layeredListenerParameters;
+    listenerPropertyArray[1].valueSize = sizeof(layeredListenerParameters);
+    
+    // Set up the listener properties value
+    WS_LISTENER_PROPERTIES listenerProperties;
+    listenerProperties.properties = listenerPropertyArray;
+    listenerProperties.propertyCount = WsCountOf(listenerPropertyArray);
+    
+    // Set up service endpoint properties
+    WS_SERVICE_ENDPOINT_PROPERTY serviceEndpointProperties[2];
+    WS_SERVICE_PROPERTY_CLOSE_CALLBACK closeCallbackProperty = {CloseChannelCallback};
+    serviceEndpointProperties[0].id = WS_SERVICE_ENDPOINT_PROPERTY_CLOSE_CHANNEL_CALLBACK;
+    serviceEndpointProperties[0].value = &amp;closeCallbackProperty;
+    serviceEndpointProperties[0].valueSize = sizeof(closeCallbackProperty);
+    serviceEndpointProperties[1].id = WS_SERVICE_ENDPOINT_PROPERTY_LISTENER_PROPERTIES;
+    serviceEndpointProperties[1].value = &amp;listenerProperties;
+    serviceEndpointProperties[1].valueSize = sizeof(listenerProperties);
+    
+    
+    // Initialize service endpoint
+    serviceEndpoint.address.url.chars = L&quot;https://+:80/example&quot;; // address given as uri
+    serviceEndpoint.address.url.length = (ULONG)wcslen(serviceEndpoint.address.url.chars);
+    serviceEndpoint.channelBinding = WS_CUSTOM_CHANNEL_BINDING; // channel binding for the endpoint
+    serviceEndpoint.channelType = WS_CHANNEL_TYPE_REPLY; // the channel type
+    serviceEndpoint.securityDescription = NULL; // security description
+    serviceEndpoint.contract = &amp;calculatorContract;  // the contract
+    serviceEndpoint.properties = serviceEndpointProperties;
+    serviceEndpoint.propertyCount = WsCountOf(serviceEndpointProperties);
+    serviceEndpoint.channelProperties.properties = customChannelPropertyArray; // Channel properties
+    serviceEndpoint.channelProperties.propertyCount = WsCountOf(customChannelPropertyArray); // Channel property Count
+    
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // Create Event object for closing the server
+    closeServer = CreateEvent(
+        NULL, 
+        TRUE, 
+        FALSE, 
+        NULL);
+    if (closeServer == NULL)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto Exit;
+    }   
+    // Creating a service host
+    hr = WsCreateServiceHost(
+        serviceEndpoints, 
+        1, 
+        NULL, 
+        0, 
+        &amp;host, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // WsOpenServiceHost to start the listeners in the service host 
+    hr = WsOpenServiceHost(
+            host, 
+            NULL, 
+            error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    WaitForSingleObject(closeServer, INFINITE);
+    // Close the service host
+    hr = WsCloseServiceHost(host, NULL, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    if (host != NULL)
+    {
+        WsFreeServiceHost(host);
+    }
+    
+    
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    if (closeServer != NULL)
+    {
+        CloseHandle(closeServer);
+    }
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+
+
+
+</code></pre>
+<h2>LayeredChannel.h</h2>
+<pre lang="C++"><code>// A structure containing parameters passed to the custom channel 
+// using WS_CHANNEL_PROPERTY_CUSTOM_CHANNEL_PARAMETERS.
+struct LayeredChannelParameters
+{
+    // The type of the underlying channel
+    WS_CHANNEL_BINDING channelBinding;
+
+    // Channel properties to pass to the underlying channel
+    WS_CHANNEL_PROPERTY* channelProperties;
+    ULONG channelPropertyCount;
+
+    // Security settings for the underlying channel
+    WS_SECURITY_DESCRIPTION* securityDescription;
+};
+
+// The structure containing instance state for the custom channel
+struct CustomChannel
+{
+    // Underlying channel handle
+    WS_CHANNEL* channel;
+    BOOL disabledTimeouts;
+};
+
+// The set of callbacks that make up the custom channel implementation.
+extern WS_CUSTOM_CHANNEL_CALLBACKS layeredChannelCallbacks;
+</code></pre>
+<h2>LayeredChannel.cpp</h2>
+<pre lang="C++"><code>#ifndef UNICODE
+#define UNICODE
+#endif
+#include &lt;windows.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &lt;stdio.h&gt;
+#include &quot;string.h&quot;
+#include &quot;LayeredChannel.h&quot;
+
+HRESULT CustomCreateChannel(
+    __in WS_CHANNEL_TYPE channelType, 
+    __in_bcount(channelParametersSize) const void* channelParameters, 
+    __in ULONG channelParametersSize, 
+    __deref_out void** channelInstance, 
+    __in_opt WS_ERROR* error)
+{
+    HRESULT hr;
+    CustomChannel* customChannel = NULL;
+
+    // Get the parameters passed via WS_CHANNEL_PROPERTY_CUSTOM_CHANNEL_PARAMETERS
+    if (channelParametersSize != sizeof(LayeredChannelParameters))
+    {
+        return E_INVALIDARG;
+    }
+    LayeredChannelParameters* layeredChannelParameters = (LayeredChannelParameters*)channelParameters;
+
+    // Allocate the custom channel instance
+    customChannel = (CustomChannel*)HeapAlloc(GetProcessHeap(), 0, sizeof(CustomChannel));
+    if (customChannel == NULL)
+    {
+        hr = E_OUTOFMEMORY;
+        goto Exit;
+    }
+
+    // Create the underlying channel using the passed in parameters
+    hr = WsCreateChannel(
+        channelType,
+        layeredChannelParameters-&gt;channelBinding,
+        layeredChannelParameters-&gt;channelProperties,
+        layeredChannelParameters-&gt;channelPropertyCount,
+        layeredChannelParameters-&gt;securityDescription,
+        &amp;customChannel-&gt;channel,
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+
+    // we need to keep track of whether timeouts were disabled to be able to serve
+    // the WsGetChannelProperty calls later on.
+    for (ULONG i = 0; i &lt; layeredChannelParameters-&gt;channelPropertyCount; i ++)
+    {
+        if (WS_CHANNEL_PROPERTY_ENABLE_TIMEOUTS == layeredChannelParameters-&gt;channelProperties[i].id)
+        {
+            customChannel-&gt;disabledTimeouts = *(BOOL*)layeredChannelParameters-&gt;channelProperties[i].value;
+            break;
+        }
+    }
+
+    // Return the channel instance.  The instance
+    // will be freed by the CustomFreeChannel function.
+    *channelInstance = customChannel;
+    customChannel = NULL;
+    hr = NOERROR;
+
+Exit:
+    if (customChannel != NULL)
+    {
+        HeapFree(GetProcessHeap(), 0, customChannel);
+    }
+
+    return hr;  
+}
+
+void CustomFreeChannel(
+    __in void* channelInstance)
+{
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+
+    // Free the underlying channel
+    WsFreeChannel(customChannel-&gt;channel);
+
+    // Free the instance that was allocated by CustomCreateChannel
+    HeapFree(GetProcessHeap(), 0, channelInstance);
+}
+
+HRESULT CustomResetChannel(
+    __in void* channelInstance, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying channel
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsResetChannel(customChannel-&gt;channel, error);
+}
+
+HRESULT CustomAbortChannel(
+    __in void* channelInstance, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying channel
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsAbortChannel(customChannel-&gt;channel, error);
+}
+
+HRESULT CustomOpenChannel(
+    __in void* channelInstance, 
+    __in const WS_ENDPOINT_ADDRESS* endpointAddress, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying channel
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsOpenChannel(customChannel-&gt;channel, endpointAddress, asyncContext, error);
+}
+
+HRESULT CustomCloseChannel(
+    __in void* channelInstance, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying channel
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsCloseChannel(customChannel-&gt;channel, asyncContext, error);
+}
+
+HRESULT CustomSetChannelProperty(
+    __in void* channelInstance, 
+    __in WS_CHANNEL_PROPERTY_ID id, 
+    __in_bcount(valueSize) const void* value, 
+    __in ULONG valueSize, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying channel
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsSetChannelProperty(customChannel-&gt;channel, id, value, valueSize, error);
+}
+
+HRESULT CustomGetChannelProperty(
+    __in void* channelInstance, 
+    __in WS_CHANNEL_PROPERTY_ID id, 
+    __out_bcount(valueSize) void* value, 
+    __in ULONG valueSize, 
+    __in_opt WS_ERROR* error)
+{
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+
+    // Underlying channels do not support querying WS_CHANNEL_PROPERTY_ENABLE_TIMEOUTS.
+    // Custom channel keeps track of whether timeouts were disabled and returns here.
+    // Service Model queries this property to ensure the timeouts were disabled in the custom channel.
+    if (WS_CHANNEL_PROPERTY_ENABLE_TIMEOUTS == id)
+    {
+        if (sizeof(BOOL) != valueSize)
+        {
+            return E_INVALIDARG;
+        }
+
+        *(BOOL*)value = customChannel-&gt;disabledTimeouts;
+
+        return NOERROR;
+    }
+
+    // Delegate the rest of the property queries to the underlying channel
+    return WsGetChannelProperty(customChannel-&gt;channel, id, value, valueSize, error);
+}
+
+HRESULT CustomReadMessageStart(
+    __in void* channelInstance, 
+    __in WS_MESSAGE* message, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying channel
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsReadMessageStart(customChannel-&gt;channel, message, asyncContext, error);
+}
+
+HRESULT CustomReadMessageEnd(
+    __in void* channelInstance, 
+    __in WS_MESSAGE* message, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying channel
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsReadMessageEnd(customChannel-&gt;channel, message, asyncContext, error);
+}
+
+HRESULT CustomWriteMessageStart(
+    __in void* channelInstance, 
+    __in WS_MESSAGE* message, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying channel
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsWriteMessageStart(customChannel-&gt;channel, message, asyncContext, error);
+}
+
+HRESULT CustomWriteMessageEnd(
+    __in void* channelInstance, 
+    __in WS_MESSAGE* message, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying channel
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsWriteMessageEnd(customChannel-&gt;channel, message, asyncContext, error);
+}
+
+HRESULT CustomAbandonMessage(
+    __in void* channelInstance, 
+    __in WS_MESSAGE* message, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying channel
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsAbandonMessage(customChannel-&gt;channel, message, error);
+}
+
+HRESULT CustomShutdownSessionChannel(
+    __in void* channelInstance, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying channel
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsShutdownSessionChannel(customChannel-&gt;channel, asyncContext, error);
+}
+
+// Initialize the callbacks that will implement the custom channel
+WS_CUSTOM_CHANNEL_CALLBACKS layeredChannelCallbacks =
+{
+    (WS_CREATE_CHANNEL_CALLBACK)&amp;CustomCreateChannel, 
+    (WS_FREE_CHANNEL_CALLBACK)&amp;CustomFreeChannel, 
+    (WS_RESET_CHANNEL_CALLBACK)&amp;CustomResetChannel, 
+    (WS_OPEN_CHANNEL_CALLBACK)&amp;CustomOpenChannel, 
+    (WS_CLOSE_CHANNEL_CALLBACK)&amp;CustomCloseChannel, 
+    (WS_ABORT_CHANNEL_CALLBACK)&amp;CustomAbortChannel, 
+    (WS_GET_CHANNEL_PROPERTY_CALLBACK)&amp;CustomGetChannelProperty, 
+    (WS_SET_CHANNEL_PROPERTY_CALLBACK)&amp;CustomSetChannelProperty, 
+    (WS_WRITE_MESSAGE_START_CALLBACK)&amp;CustomWriteMessageStart, 
+    (WS_WRITE_MESSAGE_END_CALLBACK)&amp;CustomWriteMessageEnd, 
+    (WS_READ_MESSAGE_START_CALLBACK)&amp;CustomReadMessageStart, 
+    (WS_READ_MESSAGE_END_CALLBACK)&amp;CustomReadMessageEnd, 
+    (WS_ABANDON_MESSAGE_CALLBACK)&amp;CustomAbandonMessage, 
+    (WS_SHUTDOWN_SESSION_CHANNEL_CALLBACK)&amp;CustomShutdownSessionChannel,
+};
+</code></pre>
+<h2>LayeredListener.h</h2>
+<pre lang="C++"><code>// A structure containing parameters passed to the custom listener
+// using WS_LISTENER_PROPERTY_CUSTOM_LISTENER_PARAMETERS.
+struct LayeredListenerParameters
+{
+    // The type of the underlying channel
+    WS_CHANNEL_BINDING channelBinding;
+
+    // Listener properties to pass to the underlying listener
+    WS_LISTENER_PROPERTY* listenerProperties;
+    ULONG listenerPropertyCount;
+
+    // Security settings for the underlying listener
+    WS_SECURITY_DESCRIPTION* securityDescription;
+};
+
+// The structure containing instance state for the custom listener
+struct CustomListener
+{
+    // Underlying listener handle
+    WS_LISTENER* listener;
+};
+
+// The set of callbacks that make up the custom listener implementation.
+extern WS_CUSTOM_LISTENER_CALLBACKS layeredListenerCallbacks;
+</code></pre>
+<h2>LayeredListener.cpp</h2>
+<pre lang="C++"><code>#ifndef UNICODE
+#define UNICODE
+#endif
+#include &lt;windows.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;stdio.h&quot;
+#include &quot;string.h&quot;
+#include &quot;LayeredChannel.h&quot;
+#include &quot;LayeredListener.h&quot;
+
+HRESULT CustomCreateListener(
+    __in WS_CHANNEL_TYPE channelType, 
+    __in_bcount(listenerParametersSize) const void* listenerParameters, 
+    __in ULONG listenerParametersSize, 
+    __deref_out void** listenerInstance, 
+    __in_opt WS_ERROR* error)
+{
+    HRESULT hr;
+    CustomListener* customListener = NULL;
+
+    // Get the parameters passed via WS_LISTENER_PROPERTY_CUSTOM_CHANNEL_PARAMETERS
+    if (listenerParametersSize != sizeof(LayeredListenerParameters))
+    {
+        return E_INVALIDARG;
+    }
+    LayeredListenerParameters* layeredListenerParameters = (LayeredListenerParameters*)listenerParameters;
+
+    // Allocate the custom listener instance
+    customListener = (CustomListener*)HeapAlloc(GetProcessHeap(), 0, sizeof(CustomListener));
+    if (customListener == NULL)
+    {
+        hr = E_OUTOFMEMORY;
+        goto Exit;
+    }
+
+    // Create the underlying listener using the passed in parameters
+    hr = WsCreateListener(
+        channelType,
+        layeredListenerParameters-&gt;channelBinding,
+        layeredListenerParameters-&gt;listenerProperties,
+        layeredListenerParameters-&gt;listenerPropertyCount,
+        layeredListenerParameters-&gt;securityDescription,
+        &amp;customListener-&gt;listener,
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+
+    // Return the listener instance.  The instance
+    // will be freed by the CustomFreeListener function.
+    *listenerInstance = customListener;
+    customListener = NULL;
+    hr = NOERROR;
+
+Exit:
+    if (customListener != NULL)
+    {
+        HeapFree(GetProcessHeap(), 0, customListener);
+    }
+
+    return hr;  
+}
+
+void CustomFreeListener(
+    __in void* listenerInstance)
+{
+    CustomListener* customListener = (CustomListener*)listenerInstance;
+
+    // Free the underlying listener
+    WsFreeListener(customListener-&gt;listener);
+
+    // Free the instance that was allocated by CustomCreateListener
+    HeapFree(GetProcessHeap(), 0, listenerInstance);
+}
+
+HRESULT CustomResetListener(
+    __in void* listenerInstance, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying listener
+    CustomListener* customListener = (CustomListener*)listenerInstance;
+    return WsResetListener(customListener-&gt;listener, error);
+}
+
+HRESULT CustomOpenListener(
+    __in void* listenerInstance, 
+    __in const WS_STRING* url, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying listener
+    CustomListener* customListener = (CustomListener*)listenerInstance;
+    return WsOpenListener(customListener-&gt;listener, url, asyncContext, error);
+}
+
+HRESULT CustomCloseListener(
+    __in void* listenerInstance, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying listener
+    CustomListener* customListener = (CustomListener*)listenerInstance;
+    return WsCloseListener(customListener-&gt;listener, asyncContext, error);
+}
+
+HRESULT CustomAbortListener(
+    __in void* listenerInstance, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying listener
+    CustomListener* customListener = (CustomListener*)listenerInstance;
+    return WsAbortListener(customListener-&gt;listener, error);
+}
+
+HRESULT CustomGetListenerProperty(
+    __in void* listenerInstance, 
+    __in WS_LISTENER_PROPERTY_ID id, 
+    __out_bcount(valueSize) void* value, 
+    __in ULONG valueSize, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying listener
+    CustomListener* customListener = (CustomListener*)listenerInstance;
+    return WsGetListenerProperty(customListener-&gt;listener, id, value, valueSize, error);
+}
+
+HRESULT CustomSetListenerProperty(
+    __in void* listenerInstance, 
+    __in WS_LISTENER_PROPERTY_ID id, 
+    __in_bcount(valueSize) const void* value, 
+    __in ULONG valueSize, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying listener
+    CustomListener* customListener = (CustomListener*)listenerInstance;
+    return WsSetListenerProperty(customListener-&gt;listener, id, value, valueSize, error);
+}
+
+HRESULT CustomAcceptChannel(
+    __in void* listenerInstance, 
+    __in void* channelInstance, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    // Delegate to the underlying listener
+    CustomListener* customListener = (CustomListener*)listenerInstance;
+    CustomChannel* customChannel = (CustomChannel*)channelInstance;
+    return WsAcceptChannel(customListener-&gt;listener, customChannel-&gt;channel, asyncContext, error);
+}
+
+HRESULT CustomCreateChannelForListener(
+    __in void* listenerInstance, 
+    __in_bcount(channelParametersSize) const void* channelParameters, 
+    __in ULONG channelParametersSize, 
+    __deref_out void** channelInstance, 
+    __in_opt WS_ERROR* error)
+{
+    HRESULT hr;
+    CustomChannel* customChannel = NULL;
+    CustomListener* customListener = (CustomListener*)listenerInstance;
+
+    // Get the parameters passed via WS_CHANNEL_PROPERTY_CUSTOM_CHANNEL_PARAMETERS
+    if (channelParametersSize != sizeof(LayeredChannelParameters))
+    {
+        return E_INVALIDARG;
+    }
+    LayeredChannelParameters* layeredChannelParameters = (LayeredChannelParameters*)channelParameters;
+
+    // Allocate the custom channel instance
+    customChannel = (CustomChannel*)HeapAlloc(GetProcessHeap(), 0, sizeof(CustomChannel));
+    if (customChannel == NULL)
+    {
+        hr = E_OUTOFMEMORY;
+        goto Exit;
+    }
+
+    // Create the underlying channel using the passed in parameters
+    hr = WsCreateChannelForListener(
+        customListener-&gt;listener,
+        layeredChannelParameters-&gt;channelProperties,
+        layeredChannelParameters-&gt;channelPropertyCount,
+        &amp;customChannel-&gt;channel,
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+
+    // we need to keep track of whether timeouts were disabled to be able to serve
+    // the WsGetChannelProperty calls later on.
+    for (ULONG i = 0; i &lt; layeredChannelParameters-&gt;channelPropertyCount; i ++)
+    {
+        if (WS_CHANNEL_PROPERTY_ENABLE_TIMEOUTS == layeredChannelParameters-&gt;channelProperties[i].id)
+        {
+            customChannel-&gt;disabledTimeouts = *(BOOL*)layeredChannelParameters-&gt;channelProperties[i].value;
+            break;
+        }
+    }
+
+    // Return the channel instance.  The instance
+    // will be freed by the CustomFreeChannel function.
+    *channelInstance = customChannel;
+    customChannel = NULL;
+    hr = NOERROR;
+
+Exit:
+    if (customChannel != NULL)
+    {
+        HeapFree(GetProcessHeap(), 0, customChannel);
+    }
+
+    return hr;  
+}
+
+// Initialize the callbacks that will implement the custom listener
+WS_CUSTOM_LISTENER_CALLBACKS layeredListenerCallbacks =
+{
+    (WS_CREATE_LISTENER_CALLBACK)&amp;CustomCreateListener, 
+    (WS_FREE_LISTENER_CALLBACK)&amp;CustomFreeListener, 
+    (WS_RESET_LISTENER_CALLBACK)&amp;CustomResetListener, 
+    (WS_OPEN_LISTENER_CALLBACK)&amp;CustomOpenListener, 
+    (WS_CLOSE_LISTENER_CALLBACK)&amp;CustomCloseListener, 
+    (WS_ABORT_LISTENER_CALLBACK)&amp;CustomAbortListener, 
+    (WS_GET_LISTENER_PROPERTY_CALLBACK)&amp;CustomGetListenerProperty, 
+    (WS_SET_LISTENER_PROPERTY_CALLBACK)&amp;CustomSetListenerProperty, 
+    (WS_CREATE_CHANNEL_FOR_LISTENER_CALLBACK)&amp;CustomCreateChannelForListener, 
+    (WS_ACCEPT_CHANNEL_CALLBACK)&amp;CustomAcceptChannel, 
+};
+</code></pre>
+<h2>CalculatorService.wsdl</h2>
+<pre lang="syntax"><code>&lt;wsdl:definitions 
+    xmlns:soap=&quot;https://schemas.xmlsoap.org/wsdl/soap/&quot; 
+    xmlns:tns=&quot;https://Example.org&quot; 
+    xmlns:xsd=&quot;https://www.w3.org/2001/XMLSchema&quot; 
+    xmlns:wsaw=&quot;https://www.w3.org/2006/05/addressing/wsdl&quot; 
+    xmlns:soap12=&quot;https://schemas.xmlsoap.org/wsdl/soap12/&quot; 
+    targetNamespace=&quot;https://Example.org&quot; 
+    xmlns:wsdl=&quot;https://schemas.xmlsoap.org/wsdl/&quot;&gt;
+    &lt;wsdl:types&gt;
+        &lt;xsd:schema targetNamespace=&quot;https://Example.org&quot; elementFormDefault=&quot;qualified&quot; &gt;
+            &lt;xsd:element name=&quot;Add&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;a&quot; type=&quot;xsd:int&quot; /&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;b&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;AddResponse&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;result&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;Subtract&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;a&quot; type=&quot;xsd:int&quot; /&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;b&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;SubtractResponse&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;result&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+        &lt;/xsd:schema&gt;
+    &lt;/wsdl:types&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Add_InputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:Add&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Add_OutputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:AddResponse&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Subtract_InputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:Subtract&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Subtract_OutputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:SubtractResponse&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:portType name=&quot;ICalculator&quot;&gt;
+        &lt;wsdl:operation name=&quot;Add&quot;&gt;
+            &lt;wsdl:input wsaw:Action=&quot;https://Example.org/ICalculator/Add&quot; message=&quot;tns:ICalculator_Add_InputMessage&quot; /&gt;
+            &lt;wsdl:output wsaw:Action=&quot;https://Example.org/ICalculator/AddResponse&quot; message=&quot;tns:ICalculator_Add_OutputMessage&quot; /&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;Subtract&quot;&gt;
+            &lt;wsdl:input wsaw:Action=&quot;https://Example.org/ICalculator/Subtract&quot; message=&quot;tns:ICalculator_Subtract_InputMessage&quot; /&gt;
+            &lt;wsdl:output wsaw:Action=&quot;https://Example.org/ICalculator/SubtractResponse&quot; message=&quot;tns:ICalculator_Subtract_OutputMessage&quot; /&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:portType&gt;
+    &lt;wsdl:binding name=&quot;DefaultBinding_ICalculator&quot; type=&quot;tns:ICalculator&quot;&gt;
+        &lt;soap:binding transport=&quot;https://schemas.xmlsoap.org/soap/http&quot; /&gt;
+        &lt;wsdl:operation name=&quot;Add&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://Example.org/ICalculator/Add&quot; style=&quot;document&quot; /&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;Subtract&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://Example.org/ICalculator/Subtract&quot; style=&quot;document&quot; /&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:binding&gt;
+    &lt;wsdl:service name=&quot;CalculatorService&quot;&gt;
+        &lt;wsdl:port name=&quot;ICalculator&quot; binding=&quot;tns:DefaultBinding_ICalculator&quot;&gt;
+            &lt;soap:address location=&quot;https://Example.org/ICalculator&quot; /&gt;
+        &lt;/wsdl:port&gt;
+    &lt;/wsdl:service&gt;
+
+&lt;/wsdl:definitions&gt;
+</code></pre>
+<h2>Makefile</h2>
+<pre lang="syntax"><code>!include &lt;Win32.Mak&gt;
+
+EXTRA_LIBS = WebServices.lib
+
+all: $(OUTDIR) $(OUTDIR)\WsHttpCalculatorWithLayeredChannelService.exe
+
+&quot;$(OUTDIR)&quot; :
+    if not exist &quot;$(OUTDIR)/$(NULL)&quot; mkdir &quot;$(OUTDIR)&quot;
+    
+$(OUTDIR)\CalculatorService.wsdl.c: CalculatorService.wsdl
+     Wsutil.exe /wsdl:CalculatorService.wsdl /string:WS_STRING /out:$(OUTDIR)
+    
+$(OUTDIR)\CalculatorService.wsdl.obj: $(OUTDIR)\CalculatorService.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; $(OUTDIR)\CalculatorService.wsdl.c
+
+$(OUTDIR)\HttpCalculatorWithLayeredChannelService.obj: HttpCalculatorWithLayeredChannelService.cpp $(OUTDIR)\CalculatorService.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; HttpCalculatorWithLayeredChannelService.cpp
+
+$(OUTDIR)\LayeredChannel.obj: LayeredChannel.cpp
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; LayeredChannel.cpp
+
+$(OUTDIR)\LayeredListener.obj: LayeredListener.cpp
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; LayeredListener.cpp
+    
+$(OUTDIR)\WsHttpCalculatorWithLayeredChannelService.exe: $(OUTDIR)\HttpCalculatorWithLayeredChannelService.obj $(OUTDIR)\CalculatorService.wsdl.obj $(OUTDIR)\LayeredChannel.obj $(OUTDIR)\LayeredListener.obj
+    $(link) $(ldebug) $(conlflags) $(conlibsmt) $(EXTRA_LIBS) -out:$(OUTDIR)\WsHttpCalculatorWithLayeredChannelService.exe $(OUTDIR)\HttpCalculatorWithLayeredChannelService.obj $(OUTDIR)\CalculatorService.wsdl.obj $(OUTDIR)\LayeredChannel.obj $(OUTDIR)\LayeredListener.obj /PDB:$(OUTDIR)\WsHttpCalculatorWithLayeredChannelService.PDB
+
+clean:
+    $(CLEANUP)
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

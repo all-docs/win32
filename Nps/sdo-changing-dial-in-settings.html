@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Changing Dial-In Settings</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Changing Dial-In Settings
+description: Changing Dial-In Settings
+ms.assetid: db9d6d1c-2317-40ed-832b-f72f8e9e81bb
+ms.tgt_platform: multiple
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Changing Dial-In Settings</h1>
+<p>The following VBScript code sets the dial-in bit and callback number for a user.</p>
+<pre lang="VB"><code>Set shell = wscript.createobject (&quot;WScript.Shell&quot;)
+Set environment = shell.environment (&quot;PROCESS&quot;)
+
+userdomain    = environment.Item (&quot;USERDOMAIN&quot;)
+logonserver   = environment.Item (&quot;LOGONSERVER&quot;)
+userdnsdomain = environment.Item (&quot;USERDNSDOMAIN&quot;)
+computername  = environment.Item (&quot;COMPUTERNAME&quot;)
+
+commands=wscript.arguments.count
+
+Dim user
+Dim machine
+
+server = &quot;&quot;
+number = &quot;&quot;
+name   = &quot;&quot;
+dialin = &quot;&quot;
+
+For Each command In wscript.arguments
+    lccommand=lcase(command)
+    If instr(lccommand,&quot;/server:&quot;) Then server = Mid(command,9)
+    If instr(lccommand,&quot;/user:&quot;)   Then name   = Mid(command,7)
+    If instr(lccommand,&quot;/dialin:&quot;) Then dialin = Mid(command,9)
+    If instr(lccommand,&quot;/number:&quot;) Then number = Mid(command,9)
+    If instr(lccommand,&quot;?&quot;) or instr(lccommand,&quot;/help&quot;) Then
+        showhelp=True
+    End If
+Next
+
+If (server = &quot;&quot;) Then server = computername
+If (name = &quot;&quot;) Then showhelp = True
+If (dialin = &quot;&quot;) AND (number = &quot;&quot;) Then showhelp = True
+If (number = &quot;NONE&quot;) Then number = &quot;&quot;
+
+If showhelp Then
+    wscript.echo &quot;SETDIALINCALLBACK&quot;
+    wscript.echo &quot;Set the Dialin value (Allow, Deny or RAS Policy) and callback number for a user&quot;
+    wscript.echo &quot;Setdialincallback /user:&lt;username&gt; /server:&lt;server&gt; /dialin:&lt;ALLOW|DENY|RAS&gt; /number:&lt;NONE|&quot;&quot;number&quot;&quot;&gt;&quot;
+    wscript.echo &quot;&quot;
+Else
+    Initialize server, name
+    If err &lt;&gt;0 Then 
+        Wscript.Echo &quot;Failed to Initialize.&quot; 
+            If hex(err) = &quot;800708AD&quot; Then
+                wscript.echo &quot;(&quot; &amp; hex(err) &amp; &quot;) &quot; &amp; &quot;The user name could not be found.&quot;
+            Else
+                wscript.echo &quot;(&quot; &amp; hex(err) &amp; &quot;) &quot; &amp; err.description
+                wscript.quit(err)
+            End If
+    End If
+
+    If (dialin &lt;&gt; &quot;&quot;) Then 
+        SetDialin dialin
+        If err &lt;&gt;0 Then 
+            Wscript.Echo &quot;Failed to Set the dialin.&quot; 
+            wscript.echo &quot;(&quot; &amp; hex(err) &amp; &quot;) &quot; &amp; err.description
+            wscript.quit(err)
+        End If
+    End If
+
+    SetCallback number
+    If err &lt;&gt;0 Then 
+        Wscript.Echo &quot;Failed to Set the callback.&quot; 
+        wscript.echo &quot;(&quot; &amp; hex(err) &amp; &quot;) &quot; &amp; err.description
+        wscript.quit(err)
+    End If
+
+    RasInfo server, name
+    If err &lt;&gt; 0 Then 
+        Wscript.Echo &quot;Failed to get the user options.&quot; 
+        If hex(err) = &quot;800708AD&quot; Then
+            wscript.echo &quot;(&quot; &amp; hex(err) &amp; &quot;) &quot; &amp; &quot;The user name could not be found.&quot;
+        Else
+            wscript.echo &quot;(&quot; &amp; hex(err) &amp; &quot;) &quot; &amp; err.description
+        End If
+        wscript.quit(err)
+    End If
+End If
+
+'
+' Subroutine Definitions
+'
+Sub Initialize(server, name)
+
+    Set machine = createobject(&quot;IAS.SDOMachine&quot;)
+    machine.attach(server)
+    Set user = machine.getusersdo(0,name) '0 for DATA_STORE_LOCAL
+
+End Sub
+
+
+Sub SetDialin(dialin)
+
+    Select Case dialin
+        case &quot;ALLOW&quot;                    ' &quot;Allow access.&quot;
+            user.putproperty 1032,true  
+
+        case &quot;DENY&quot;                     ' &quot;Deny access.&quot;
+            user.putproperty 1032,false  
+
+        case &quot;RAS&quot;                      ' &quot;Control access through Remote Access Policy.&quot;
+            user.putproperty 1032, Empty 
+    End Select
+
+    user.Apply
+
+End Sub
+
+
+Sub SetCallback(number)
+    
+    Dim lValue
+
+    If (number &lt;&gt; &quot;&quot;) Then
+        user.putproperty 1026,number    ' msRADIUSCallbackNumber
+        user.putproperty 1029,number    ' msRASSavedCallbackNumber 
+                                        ' 1033 callback policy NP_CONSTRAINT or PROPERTY_USER_SERVICE_TYPE
+        lValue = CLng(4)                ' 4 = always callback
+        user.putproperty 1033, lValue
+    Else
+        user.putproperty 1026,lValue    ' msRADIUSCallbackNumber
+        user.putproperty 1029,lValue    ' msRASSavedCallbackNumber 
+        user.putproperty 1033,lValue    ' no callback
+    End If
+
+    user.Apply
+
+End Sub
+
+
+Sub RasInfo(server,name)
+
+    Dim novalue
+    
+    Set t = createobject(&quot;IAS.SDOMachine&quot;)
+    t.attach(server)
+
+    cid = Array(cidnumber)
+
+    If cidnumber=&quot;NONE&quot; Then cid=novalue
+
+    Set mach1 = GetObject(&quot;WinNT://&quot; &amp; server &amp; &quot;,Computer&quot;)
+
+    Set g1 = mach1.GetObject(&quot;Group&quot;,&quot;Users&quot;)
+    Set g = g1.Members()
+
+    Set u = t.getusersdo(0,Name)
+
+    msg = &quot;Name: &quot; &amp; u.getproperty(2) &amp; vbcrlf
+    msg = msg &amp; &quot;--------------------------------------&quot; &amp; vbcrlf
+
+
+    '1032
+    dperm=u.getproperty(1032)
+    If dperm = True  Then dialin = &quot;Allow access.&quot;
+    If dperm = False Then dialin = &quot;Deny access.&quot;
+    If isempty (dperm) Then dialin = &quot;Control access through Remote Access Policy.&quot;
+    msg = msg &amp; dialin &amp; vbcrlf
+
+    a=1024                                  'callerid. 1025 is saved value
+    v=u.getproperty(a)
+    
+    If isarray(v) Then
+        For Each e In v
+            msg = msg &amp; &quot;VerIfy Caller-ID: &quot; &amp; e &amp; vbcrlf
+        next
+    Else
+        msg = msg &amp; &quot;VerIfy Caller-ID: &quot; &amp; vbcrlf
+    End If
+
+    a=1026                                  'callback. 1033 callback policy
+    cbmode = &quot;No Callback&quot;
+    If u.getproperty(1033) &gt; 0 Then
+        cbstring = u.getproperty(1026) &amp; &quot;&quot;
+        cbmode = &quot;Always call back to: &quot; &amp; cbstring
+        If  cbstring = &quot;&quot; Then cbmode = &quot;Set by caller.&quot;
+    End If
+    msg = msg &amp; cbmode
+    
+    wscript.echo msg
+
+    Set mach = GetObject(&quot;WinNT://&quot; &amp; server &amp; &quot;,Computer&quot;)
+    If IsEmpty (mach) Then
+        wscript.echo &quot;Can't get to computer &quot; &amp; machName &amp; &quot;.&quot; 
+        Exit Sub
+    End If
+
+    err.clear
+    Set usr = mach.GetObject (&quot;user&quot;,name)
+    flags = Clng(usr.Get(&quot;UserFlags&quot;))
+
+    ADS_UF_SCRIPT                           =  &amp;H0001&amp;
+    ADS_UF_ACCOUNTDISABLE                   =  &amp;H0002&amp;
+    ADS_UF_HOMEDIR_REQUIRED                 =  &amp;H0003&amp;
+    ADS_UF_LOCKOUT                          =  &amp;H0010&amp;
+    ADS_UF_PASSWD_NOTREQD                   =  &amp;H0020&amp;
+    ADS_UF_PASSWD_CANT_CHANGE               =  &amp;H0040&amp;
+    ADS_UF_TEMP_DUPLICATE_ACCOUNT           =  &amp;H0100&amp;
+    ADS_UF_NORMAL_ACCOUNT                   =  &amp;H0200&amp;
+    ADS_UF_INTERDOMAIN_TRUST_ACCOUNT        =  &amp;H0800&amp;
+    ADS_UF_WORKSTATION_TRUST_ACCOUNT        =  &amp;H1000&amp;
+    ADS_UF_SERVER_TRUST_ACCOUNT             =  &amp;H2000&amp;
+    ADS_UF_DONTEXPIREPASSWD                 =  &amp;H10000&amp;
+    ADS_UF_MNS_LOGON_ACCOUNT                =  &amp;H20000&amp;
+    ADS_UF_SMARTCARD_REQUIRED               =  &amp;H40000&amp;
+    ADS_UF_TRUSTED_FOR_DELEGATION           =  &amp;H80000&amp;
+    ADS_UF_NOT_DELEGATED                    =  &amp;H100000&amp;
+
+    expired = usr.Get (&quot;PasswordExpired&quot;)
+    
+    wscript.echo &quot;User must change password: &quot; &amp; CBOOL(expired)
+    wscript.echo &quot;User cannot change password: &quot; &amp; CBOOL(flags AND ADS_UF_PASSWD_CANT_CHANGE)
+    wscript.echo &quot;Password never expires: &quot; &amp; CBOOL(flags AND ADS_UF_DONT_EXPIRE_PASSWD)
+    wscript.echo &quot;Account disabled: &quot; &amp; CBOOL(flags AND ADS_UF_ACCOUNTDISABLE)
+    wscript.echo &quot;Account locked out: &quot; &amp; CBOOL(flags AND ADS_UF_LOCKOUT)
+    wscript.echo &quot;Password not required: &quot; &amp; CBOOL(flags AND ADS_UF_PASSWD_NOTREQD)
+
+End Sub
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/sdoias/ne-sdoias-clientproperties"><strong>CLIENTPROPERTIES</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/Nps/sdo-enumerating-objects-in-a-collection">Enumerating Objects in a Collection</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/sdoias/ne-sdoias-iasproperties"><strong>IASPROPERTIES</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/sdoias/nn-sdoias-isdo"><strong>ISdo</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/sdoias/nn-sdoias-isdomachine"><strong>ISdoMachine</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/sdoias/ne-sdoias-radiusproperties"><strong>RADIUSPROPERTIES</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

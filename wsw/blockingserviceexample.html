@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BlockingServiceExample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: BlockingServiceExample
+description: Example service application demonstrating server side call cancellation.
+ms.assetid: a0a862bc-521a-477a-854d-58642d497109
+keywords:</p>
+<ul>
+<li>BlockingServiceExample Native-Web-Services</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>BlockingServiceExample</h1>
+<p>Example service application demonstrating server side call cancellation.</p>
+<ul>
+<li><a href="#cancellingservicecpp">CancellingService.cpp</a></li>
+<li><a href="#blockunblockservicewsdl">BlockUnBlockService.wsdl</a></li>
+<li><a href="#makefile">Makefile</a></li>
+</ul>
+<h2>CancellingService.cpp</h2>
+<pre lang="C++"><code>//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;string.h&quot;
+HANDLE closeServer = NULL;  
+
+#include &quot;BlockUnBlockService.wsdl.h&quot;
+
+static void CALLBACK AbortNotification(
+    __in WS_SERVICE_CANCEL_REASON reason, 
+    __in_opt void* callbackState)
+{
+    wprintf(L&quot;Abort Reason is: %d\n&quot;, reason);
+    fflush(stdout);
+    HANDLE unblockMethod = (HANDLE) callbackState;
+    SetEvent(unblockMethod);
+}
+
+static void CALLBACK FreeState(
+    __in_opt void* callbackState)
+{
+    HANDLE unblockMethod = (HANDLE) callbackState;
+    CloseHandle(unblockMethod);
+}
+
+static HRESULT CALLBACK Block(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    HRESULT hr = NOERROR;
+    HANDLE unblockMethod = CreateEvent(NULL, FALSE, FALSE, NULL);
+    if (!unblockMethod)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto Exit;
+    }
+    hr = WsRegisterOperationForCancel(
+        context, 
+        AbortNotification, 
+        FreeState, 
+        unblockMethod, 
+        error);
+if (FAILED(hr))
+{
+    goto Exit;
+}
+    WaitForSingleObject(unblockMethod, INFINITE);
+Exit:
+    SetEvent(closeServer);
+    if (FAILED(hr))
+    {
+        CloseHandle(unblockMethod);
+    }
+    return hr;
+}
+
+static HRESULT CALLBACK UnBlock(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(context);
+    UNREFERENCED_PARAMETER(asyncContext);
+    UNREFERENCED_PARAMETER(error);
+
+    SetEvent(closeServer);
+    return NOERROR;
+}
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+
+static const BlockServiceBindingFunctionTable serviceFunctions = {Block, UnBlock};
+
+// Method contract for the service
+static const WS_SERVICE_CONTRACT blockServiceContract = 
+{
+    &amp;BlockUnBlockService_wsdl.contracts.BlockServiceBinding, // comes from the generated header.
+    NULL, // for not specifying the default contract
+    &amp;serviceFunctions // specified by the user
+};
+
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_SERVICE_HOST* host = NULL;
+    WS_SERVICE_ENDPOINT serviceEndpoint = {};
+    const WS_SERVICE_ENDPOINT* serviceEndpoints[1];
+    WS_ERROR* error = NULL;
+    WS_SERVICE_ENDPOINT_PROPERTY serviceProperties[1];
+    const ULONG maxConcurrency = 100;
+    serviceEndpoints[0] = &amp;serviceEndpoint;
+    serviceProperties[0].id = WS_SERVICE_ENDPOINT_PROPERTY_MAX_CONCURRENCY;
+    serviceProperties[0].value = (void*)&amp;maxConcurrency;
+    serviceProperties[0].valueSize = sizeof(maxConcurrency);
+    
+    // Create Event object for closing the server
+    closeServer = CreateEvent(
+        NULL, 
+        TRUE, 
+        FALSE, 
+        NULL);
+    if (closeServer == NULL)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto Exit;
+    }   
+    
+    // Initialize service endpoint
+    serviceEndpoint.address.url.chars = L&quot;net.tcp://+/example&quot;; // address given as uri
+    serviceEndpoint.address.url.length = (ULONG)wcslen(serviceEndpoint.address.url.chars);
+    serviceEndpoint.channelBinding = WS_TCP_CHANNEL_BINDING; // channel binding for the endpoint
+    serviceEndpoint.channelType = WS_CHANNEL_TYPE_DUPLEX_SESSION; // the channel type
+    serviceEndpoint.contract = &amp;blockServiceContract;  // the contract
+    serviceEndpoint.properties = serviceProperties;
+    serviceEndpoint.propertyCount = WsCountOf(serviceProperties);
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // Creating a service host
+    hr = WsCreateServiceHost(
+        serviceEndpoints, 
+        1, 
+        NULL, 
+        0, 
+        &amp;host, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // WsOpenServiceHost to start the listeners in the service host 
+    hr = WsOpenServiceHost(
+            host, 
+            NULL, 
+            error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    
+    WaitForSingleObject(closeServer, INFINITE);
+    // Aborts the service host so that the blocked method can complete.
+    WsAbortServiceHost(host, NULL);
+    // Close the service host
+    hr = WsCloseServiceHost(host, NULL, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    if (host != NULL)
+    {
+        WsFreeServiceHost(host);
+    }
+    
+    
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    if (closeServer != NULL)
+    {
+        CloseHandle(closeServer);
+    }
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+
+
+</code></pre>
+<h2>BlockUnBlockService.wsdl</h2>
+<pre lang="syntax"><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;wsdl:definitions 
+    xmlns:wsdl=&quot;https://schemas.xmlsoap.org/wsdl/&quot; 
+    xmlns:soap=&quot;https://schemas.xmlsoap.org/wsdl/soap/&quot; 
+    xmlns:http=&quot;https://schemas.xmlsoap.org/wsdl/http/&quot; 
+    xmlns:xs=&quot;https://www.w3.org/2001/XMLSchema&quot; 
+    xmlns:mime=&quot;https://schemas.xmlsoap.org/wsdl/mime/&quot; 
+    xmlns:tns=&quot;https://www.example.org&quot; 
+    xmlns:xsd=&quot;https://www.w3.org/2001/XMLSchema&quot; 
+    targetNamespace=&quot;https://www.example.org&quot; 
+    xmlns:wsaw=&quot;https://www.w3.org/2006/05/addressing/wsdl&quot;&gt;
+    &lt;wsdl:types&gt;
+        &lt;xs:schema targetNamespace=&quot;https://www.example.org&quot; elementFormDefault=&quot;qualified&quot;&gt;
+            &lt;xsd:element name=&quot;BlockServiceType&quot;&gt;
+                &lt;xsd:complexType/&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;BlockServiceResponseType&quot;&gt;
+                &lt;xsd:complexType/&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;UnBlockServiceType&quot;&gt;
+                &lt;xsd:complexType/&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;UnBlockServiceResponseType&quot;&gt;
+                &lt;xsd:complexType/&gt;
+            &lt;/xsd:element&gt;
+        &lt;/xs:schema&gt;
+    &lt;/wsdl:types&gt;
+    &lt;wsdl:message name=&quot;BlockServiceMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:BlockServiceType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;BlockServiceResponseMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:BlockServiceResponseType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;UnBlockServiceMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:UnBlockServiceType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;UnBlockServiceResponseMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:UnBlockServiceResponseType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:portType name=&quot;IBlockUnBlockService&quot;&gt;
+        &lt;wsdl:operation name=&quot;Block&quot;&gt;
+            &lt;wsdl:input message=&quot;tns:BlockServiceMessage&quot; wsaw:Action=&quot;https://www.example.org/Block&quot;/&gt;
+            &lt;wsdl:output message=&quot;tns:BlockServiceResponseMessage&quot; wsaw:Action=&quot;https://www.example.org/BlockResponse&quot;/&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;UnBlock&quot;&gt;
+            &lt;wsdl:input message=&quot;tns:UnBlockServiceMessage&quot; wsaw:Action=&quot;https://www.example.org/UnBlock&quot;/&gt;
+            &lt;wsdl:output message=&quot;tns:UnBlockServiceResponseMessage&quot; wsaw:Action=&quot;https://www.example.org/UnBlockResponse&quot;/&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:portType&gt;
+    &lt;wsdl:binding name=&quot;BlockServiceBinding&quot; type=&quot;tns:IBlockUnBlockService&quot;&gt;
+        &lt;soap:binding style=&quot;document&quot; transport=&quot;https://schemas.xmlsoap.org/soap/http&quot;/&gt;
+        &lt;wsdl:operation name=&quot;Block&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://www.example.org/Block&quot;/&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;UnBlock&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://www.example.org/UnBlock&quot;/&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:binding&gt;
+    &lt;wsdl:service name=&quot;BlockUnBlockService&quot;&gt;
+        &lt;wsdl:port name=&quot;BlockingService&quot; binding=&quot;tns:BlockServiceBinding&quot;&gt;
+            &lt;soap:address location=&quot;No Target Address&quot;/&gt;
+        &lt;/wsdl:port&gt;
+    &lt;/wsdl:service&gt;
+&lt;/wsdl:definitions&gt;
+</code></pre>
+<h2>Makefile</h2>
+<pre lang="syntax"><code>!include &lt;Win32.Mak&gt;
+
+EXTRA_LIBS = WebServices.lib rpcrt4.lib Iphlpapi.lib
+
+all: $(OUTDIR) $(OUTDIR)\WsCancellingService.exe
+
+&quot;$(OUTDIR)&quot; :
+    if not exist &quot;$(OUTDIR)/$(NULL)&quot; mkdir &quot;$(OUTDIR)&quot;
+    
+$(OUTDIR)\BlockUnBlockService.wsdl.c: BlockUnBlockService.wsdl
+     Wsutil.exe /wsdl:BlockUnBlockService.wsdl /string:WS_STRING /out:$(OUTDIR)
+    
+$(OUTDIR)\BlockUnBlockService.wsdl.obj: $(OUTDIR)\BlockUnBlockService.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; $(OUTDIR)\BlockUnBlockService.wsdl.c
+
+$(OUTDIR)\CancellingService.obj: CancellingService.cpp $(OUTDIR)\BlockUnBlockService.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; CancellingService.cpp
+
+$(OUTDIR)\WsCancellingService.exe: $(OUTDIR)\CancellingService.obj $(OUTDIR)\BlockUnBlockService.wsdl.obj
+    $(link) $(ldebug) $(conlflags) $(conlibsmt) $(EXTRA_LIBS) -out:$(OUTDIR)\WsCancellingService.exe $(OUTDIR)\CancellingService.obj $(OUTDIR)\BlockUnBlockService.wsdl.obj /PDB:$(OUTDIR)\WsCancellingService.PDB
+
+clean:
+    $(CLEANUP)
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

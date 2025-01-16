@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Add Inline Objects to a Text Layout</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: How to Add Inline Objects to a Text Layout
+description: Provides a short tutorial on adding inline objects to a DirectWrite application that displays text using the IDWriteTextLayout interface.
+ms.assetid: 6aa9d17c-ee30-497f-9c73-ec2fa079222b
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to Add Inline Objects to a Text Layout</h1>
+<p>Provides a short tutorial on adding inline objects to a <a href="direct-write-portal.html">DirectWrite</a> application that displays text using the <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextlayout"><strong>IDWriteTextLayout</strong></a> interface.</p>
+<p>The end product of this tutorial is an application that displays text with an inline image embedded in it, as shown in the following screen shot.</p>
+<p><img src="images/inlineobject.png" alt="screen shot of &quot;inline object example&quot; with an embedded image" /></p>
+<p>This tutorial contains the following parts:</p>
+<ul>
+<li><a href="#step-1-create-a-text-layout">Step 1: Create a Text Layout.</a></li>
+<li><a href="#step-2-define-a-class-derived-from-the-idwriteinlineobject-interface">Step 2: Define a class derived from the IDWriteInlineObject interface.</a></li>
+<li><a href="#step-3-implement-the-inline-object-class">Step 3: Implement the Inline Object Class.</a>
+<ul>
+<li><a href="#the-constructor">The Constructor.</a></li>
+<li><a href="#the-draw-method">The Draw Method.</a></li>
+<li><a href="#the-getmetrics-method">The GetMetrics Method.</a></li>
+<li><a href="#the-getoverhangmetrics-method">The GetOverhangMetrics Method.</a></li>
+<li><a href="#the-getbreakconditions-method">The GetBreakConditions Method.</a></li>
+</ul>
+</li>
+<li><a href="#step-4-create-an-instance-of-the-inlineimage-class-and-add-it-to-the-text-layout">Step 4: Create an Instance of the InlineImage Class and Add it to the Text Layout.</a></li>
+</ul>
+<h2>Step 1: Create a Text Layout.</h2>
+<p>To begin, you will need an application with an <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextlayout"><strong>IDWriteTextLayout</strong></a> object. If you already have an application that displays text with a text layout, skip to Step 2.</p>
+<p>To add a text layout you must do the following:</p>
+<ol>
+<li>
+<p>Declare a pointer to an <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextlayout"><strong>IDWriteTextLayout</strong></a> interface as a member of the class.</p>
+<pre lang="C++"><code>IDWriteTextLayout* pTextLayout_;
+
+</code></pre>
+</li>
+<li>
+<p>At the end of the CreateDeviceIndependentResources method, create an <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextlayout"><strong>IDWriteTextLayout</strong></a> interface object by calling the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritefactory-createtextlayout"><strong>CreateTextLayout</strong></a> method.</p>
+<pre lang="C++"><code>// Create a text layout using the text format.
+if (SUCCEEDED(hr))
+{
+    RECT rect;
+    GetClientRect(hwnd_, &amp;rect); 
+    float width  = rect.right  / dpiScaleX_;
+    float height = rect.bottom / dpiScaleY_;
+
+    hr = pDWriteFactory_-&gt;CreateTextLayout(
+        wszText_,      // The string to be laid out and formatted.
+        cTextLength_,  // The length of the string.
+        pTextFormat_,  // The text format to apply to the string (contains font information, etc).
+        width,         // The width of the layout box.
+        height,        // The height of the layout box.
+        &amp;pTextLayout_  // The IDWriteTextLayout interface pointer.
+        );
+}
+
+</code></pre>
+</li>
+<li>
+<p>Then, you must change the call to the <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-drawtext(constwchar_uint32_idwritetextformat_constd2d1_rect_f__id2d1brush_d2d1_draw_text_options_dwrite_measuring_mode)"><strong>ID2D1RenderTarget::DrawText</strong></a> method to <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-drawtextlayout"><strong>ID2D1RenderTarget::DrawTextLayout</strong></a>, as shown in the following code.</p>
+<pre lang="C++"><code>pRT_-&gt;DrawTextLayout(
+    origin,
+    pTextLayout_,
+    pBlackBrush_
+    );
+
+</code></pre>
+</li>
+</ol>
+<h2>Step 2: Define a class derived from the IDWriteInlineObject interface.</h2>
+<p>Support for inline objects in <a href="direct-write-portal.html">DirectWrite</a> is provided by the <a href="/windows/win32/api/dwrite/nn-dwrite-idwriteinlineobject"><strong>IDWriteInlineObject</strong></a> interface. To use inline objects, you must implement this interface. It handles the drawing of the inline object, as well as providing metrics and other information to the renderer.</p>
+<p>Create a new header file and declare an interface called InlineImage, derived from <a href="/windows/win32/api/dwrite/nn-dwrite-idwriteinlineobject"><strong>IDWriteInlineObject</strong></a>.</p>
+<p>In addition to QueryInterface, AddRef, and Release inherited from IUnknown, this class must have the following methods:</p>
+<ul>
+<li><a href="/windows/win32/api/dwrite/nf-dwrite-idwriteinlineobject-draw"><strong>Draw</strong></a></li>
+<li><a href="/windows/win32/api/dwrite/nf-dwrite-idwriteinlineobject-getmetrics"><strong>GetMetrics</strong></a></li>
+<li><a href="/windows/win32/api/dwrite/nf-dwrite-idwriteinlineobject-getoverhangmetrics"><strong>GetOverhangMetrics</strong></a></li>
+<li><a href="/windows/win32/api/dwrite/nf-dwrite-idwriteinlineobject-getbreakconditions"><strong>GetBreakConditions</strong></a></li>
+</ul>
+<h2>Step 3: Implement the Inline Object Class.</h2>
+<p>Create a new C++ file, named InlineImage.cpp, for the class implementation. In addition to the LoadBitmapFromFile method and the methods inherited from the IUnknown interface, the InlineImage class is made up of the following methods.</p>
+<h3>The Constructor.</h3>
+<pre lang="C++"><code>InlineImage::InlineImage(
+    ID2D1RenderTarget *pRenderTarget, 
+    IWICImagingFactory *pIWICFactory,
+    PCWSTR uri
+    )
+{
+    // Save the render target for later.
+    pRT_ = pRenderTarget;
+
+    pRT_-&gt;AddRef();
+
+    // Load the bitmap from a file.
+    LoadBitmapFromFile(
+        pRenderTarget,
+        pIWICFactory,
+        uri,
+        &amp;pBitmap_
+        );
+}
+</code></pre>
+<p>The first argument of the constructor is the ID2D1RenderTarget that the inline image will be rendered to. This is stored for use later when drawing.</p>
+<p>The render target, IWICImagingFactory, and the filename uri are all passed to the LoadBitmapFromFile method that loads the bitmap and stores the bitmap size (width and height) in the rect_ member variable.</p>
+<h3>The Draw Method.</h3>
+<p>The <a href="/windows/win32/api/dwrite/nf-dwrite-idwriteinlineobject-draw"><strong>Draw</strong></a> method is a callback that is called by the <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextrenderer"><strong>IDWriteTextRenderer</strong></a> object when the inline object needs to be drawn. The text layout does not call this method directly.</p>
+<pre lang="C++"><code>HRESULT STDMETHODCALLTYPE InlineImage::Draw(
+    __maybenull void* clientDrawingContext,
+    IDWriteTextRenderer* renderer,
+    FLOAT originX,
+    FLOAT originY,
+    BOOL isSideways,
+    BOOL isRightToLeft,
+    IUnknown* clientDrawingEffect
+    )
+{
+    float height    = rect_.bottom - rect_.top;
+    float width     = rect_.right  - rect_.left;
+    D2D1_RECT_F destRect  = {originX, originY, originX + width, originY + height};
+
+    pRT_-&gt;DrawBitmap(pBitmap_, destRect);
+
+    return S_OK;
+}
+</code></pre>
+<p>In this case, drawing the bitmap is done by using the <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-drawbitmap(id2d1bitmap_constd2d1_rect_f__float_d2d1_bitmap_interpolation_mode_constd2d1_rect_f_)"><strong>ID2D1RenderTarget::DrawBitmap</strong></a> method; however, any method for drawing can be used.</p>
+<h3>The GetMetrics Method.</h3>
+<pre lang="C++"><code>HRESULT STDMETHODCALLTYPE InlineImage::GetMetrics(
+    __out DWRITE_INLINE_OBJECT_METRICS* metrics
+    )
+{
+    DWRITE_INLINE_OBJECT_METRICS inlineMetrics = {};
+    inlineMetrics.width     = rect_.right  - rect_.left;
+    inlineMetrics.height    = rect_.bottom - rect_.top;
+    inlineMetrics.baseline  = baseline_;
+    *metrics = inlineMetrics;
+    return S_OK;
+}
+</code></pre>
+<p>For the <a href="/windows/win32/api/dwrite/nf-dwrite-idwriteinlineobject-getmetrics"><strong>GetMetrics</strong></a> method, store the width, height and baseline in an <a href="/windows/win32/api/dwrite/ns-dwrite-dwrite_inline_object_metrics"><strong>DWRITE_INLINE_OBJECT_METRICS</strong></a> structure. <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextlayout"><strong>IDWriteTextLayout</strong></a> calls this callback function to get the measurement of the inline object.</p>
+<h3>The GetOverhangMetrics Method.</h3>
+<pre lang="C++"><code>HRESULT STDMETHODCALLTYPE InlineImage::GetOverhangMetrics(
+    __out DWRITE_OVERHANG_METRICS* overhangs
+    )
+{
+    overhangs-&gt;left      = 0;
+    overhangs-&gt;top       = 0;
+    overhangs-&gt;right     = 0;
+    overhangs-&gt;bottom    = 0;
+    return S_OK;
+}
+</code></pre>
+<p>In this case, no overhang is necessary, so the <a href="/windows/win32/api/dwrite/nf-dwrite-idwriteinlineobject-getoverhangmetrics"><strong>GetOverhangMetrics</strong></a> method returns all zeros.</p>
+<h3>The GetBreakConditions Method.</h3>
+<pre lang="C++"><code>HRESULT STDMETHODCALLTYPE InlineImage::GetBreakConditions(
+    __out DWRITE_BREAK_CONDITION* breakConditionBefore,
+    __out DWRITE_BREAK_CONDITION* breakConditionAfter
+    )
+{
+    *breakConditionBefore = DWRITE_BREAK_CONDITION_NEUTRAL;
+    *breakConditionAfter  = DWRITE_BREAK_CONDITION_NEUTRAL;
+    return S_OK;
+}
+</code></pre>
+<h2>Step 4: Create an Instance of the InlineImage Class and Add it to the Text Layout.</h2>
+<p>Finally, in the CreateDeviceDependentResources method, create an instance of the InlineImage class and add it to the text layout. Because it holds a reference to the <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1rendertarget"><strong>ID2D1RenderTarget</strong></a>, which is a device dependent resource, and the <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1bitmap"><strong>ID2D1Bitmap</strong></a> is created by using the render target, the InlineImage is also device dependent and must be recreated if the render target is recreated.</p>
+<pre lang="C++"><code>// Create an InlineObject.
+pInlineImage_ = new InlineImage(pRT_, pWICFactory_, L&quot;img1.jpg&quot;);
+
+DWRITE_TEXT_RANGE textRange = {14, 1};
+
+pTextLayout_-&gt;SetInlineObject(pInlineImage_, textRange);
+</code></pre>
+<p>The <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextlayout-setinlineobject"><strong>IDWriteTextLayout::SetInlineObject</strong></a> method takes a text range structure. The object applies to the range specified here, and any text in the range will be suppressed. If the length of the text range is 0, the object will not be drawn.</p>
+<p>In this example, there is an asterisk (*) as a place holder in the position where the image will be displayed.</p>
+<pre lang="C++"><code>// The string to display.  The '*' character will be suppressed by our image.
+wszText_ = L&quot;Inline Object * Example&quot;;
+cTextLength_ = wcslen(wszText_);
+</code></pre>
+<p>Since the InlineImage class is dependent on the <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1rendertarget"><strong>ID2D1RenderTarget</strong></a>, you must release it when you release the render target.</p>
+<pre lang="C++"><code>SafeRelease(&amp;pInlineImage_);
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

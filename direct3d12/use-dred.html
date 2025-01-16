@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Use DRED to diagnose GPU faults</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Use DRED to diagnose GPU faults
+description: Device Removed Extended Data (DRED) is an evolving set of diagnostic features designed to help you to identify the cause of unexpected device removal errors.
+ms.custom: 19H1
+ms.topic: article
+ms.date: 04/19/2019</h2>
+<h1>Use DRED to diagnose GPU faults</h1>
+<p>DRED stands for Device Removed Extended Data. DRED is an evolving set of diagnostic features designed to help you to identify the cause of unexpected device removal errors. On hardware that supports the necessary features (as defined below), DRED delivers automatic breadcrumbs as well as GPU page fault reporting.</p>
+<h2>Auto-breadcrumbs</h2>
+<p>To set the scene for auto-breadcrumbs, let's first mention the manual variety. In anticipation of the eventuality of a <a href="/windows-hardware/drivers/display/timeout-detection-and-recovery">Timeout Detection and Recovery (TDR)</a>, you can use the <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist2-writebufferimmediate">ID3D12GraphicsCommandList2::WriteBufferImmediate method</a> to place <em>breadcrumbs</em> into the GPU command stream, in order to track GPU progress.</p>
+<p>This is a reasonable approach if you want to create a custom, low-overhead implementation. But it may lack some of the versatility of a standardized solution, such as debugger extensions, or reporting via <a href="/windows/desktop/wer/windows-error-reporting">Windows Error Reporting (WER)</a> (also known as Watson).</p>
+<p>So, DRED's auto-breadcrumbs call <strong>WriteBufferImmediate</strong> to place progress counters into the GPU command stream. DRED inserts a breadcrumb after each <em>render op</em>—which means every operation that results in GPU work (for example, <strong>Draw</strong>, <strong>Dispatch</strong>, <strong>Copy</strong>, <strong>Resolve</strong>, and others). If the device is removed in the middle of a GPU workload, then the DRED breadcrumb value is essentially a collection of the render ops that completed before the error.</p>
+<p>The breadcrumb history ring buffer retains up to 64KiB operations in a given command list. If there are more than 65536 operations in a command list, then only the last 64KiB operations are stored—overwriting the oldest operations first. However, the breadcrumb counter value continues to count up to <code>UINT_MAX</code>. Therefore, LastOpIndex = (BreadcrumbCount - 1) % 65536.</p>
+<p>DRED 1.0 was first available in Windows 10, version 1809 (Windows 10 October 2018 Update), and it exposed rudimentary auto-breadcrumbs. However, there were no APIs for it, and the only way to enable DRED 1.0 was to use <strong>Feedback Hub</strong> to capture a TDR reproduction (repro) for <strong>Apps &amp; Games</strong> &gt; <strong>Game Performance and Compatibility</strong>. The primary purpose for DRED 1.0 was to help to root-cause-analyze game crashes via customer feedback.</p>
+<h3>Caveats</h3>
+<ul>
+<li>Because a GPU is heavily pipelined, there's no guarantee that the breadcrumb counter indicates the exact operation that failed. In fact, on some tile-based deferred render devices, it's possible for the breadcrumb counter to be a full resource or unordered access view (UAV) barrier behind the actual GPU progress.</li>
+<li>A display driver can reorder commands, pre-fetch from resource memory well before executing a command, or flush cached memory well-after completion of a command. Any of these can produce a GPU error. In such cases, the auto-breadcrumb counters may be less helpful, or misleading.</li>
+</ul>
+<h3>Performance</h3>
+<p>Although auto-breadcrumbs are designed to be low-overhead, they are not free. Empirical measurements show 2-5% performance loss on a typical AAA Direct3D 12 graphics game engine. For this reason, auto-breadcrumbs are off by default.</p>
+<h3>Hardware requirements</h3>
+<p>Because the breadcrumb counter values must be preserved after device removal, the resource that contains breadcrumbs must exist in system memory, and it must persist in the event of device removal. This means that the display driver needs to support <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_feature"><strong>D3D12_FEATURE_EXISTING_HEAPS</strong></a>. Fortunately, this is the case for most Direct3D 12 display drivers on Windows 10, version 1903.</p>
+<h2>GPU page fault reporting</h2>
+<p>A feature that's new for DRED 1.1 is DRED GPU page fault reporting. A GPU page fault commonly occurs under one of these conditions.</p>
+<ol>
+<li>An application mistakenly executes work on the GPU that references a deleted object. This is one of the top reasons for an unexpected device removal.</li>
+<li>An application mistakenly executes work on the GPU that accesses an evicted resource, or a non-resident tile.</li>
+<li>A shader references an uninitialized or stale descriptor.</li>
+<li>A shader indexes beyond the end of a root binding.</li>
+</ol>
+<p>DRED attempts to address some of these scenarios by reporting the names and types of any existing or recently freed API objects that match the virtual address (VA) of the GPU-reported page fault.</p>
+<h3>Caveat</h3>
+<p>Not all GPUs support page faults (although, many do). Some GPUs respond to memory faults by: bit-bucket writes; reading simulated data (for example, zeros); or by simply hanging. Unfortunately, in cases where the GPU doesn't immediately hang, a <a href="/windows-hardware/drivers/display/timeout-detection-and-recovery">Timeout Detection and Recovery (TDR)</a> can happen later in the pipe, making it even harder to locate the root cause.</p>
+<h3>Performance</h3>
+<p>The Direct3D 12 runtime must actively curate a collection of existing and recently-deleted API objects indexable by virtual address (VA). This increases the system memory overhead, and introduces a small performance hit to object creation and destruction. For that reason, this behavior is off by default.</p>
+<h3>Hardware requirements</h3>
+<p>A GPU that doesn't support page faulting can still benefit from the auto-breadcrumbs feature.</p>
+<h2>Setting up DRED in code</h2>
+<p>DRED settings are global to the process, and you must configure them prior to creating a Direct3D 12 Device. To do so, call the <a href="/windows/desktop/api/d3d12/nf-d3d12-d3d12getdebuginterface"><strong>D3D12GetDebugInterface</strong></a> function to retrieve an <a href="/windows/desktop/api/d3d12/nn-d3d12-id3d12deviceremovedextendeddatasettings"><strong>ID3D12DeviceRemovedExtendedDataSettings</strong></a>.</p>
+<pre lang="cpp"><code>CComPtr&lt;ID3D12DeviceRemovedExtendedDataSettings&gt; pDredSettings;
+VERIFY_SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&amp;pDredSettings)));
+
+// Turn on auto-breadcrumbs and page fault reporting.
+pDredSettings-&gt;SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+pDredSettings-&gt;SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+</code></pre>
+<blockquote>
+<p>[!NOTE]
+Modifications to DRED settings have no effect on devices already created. But subsequent calls to <a href="/windows/desktop/api/d3d12/nf-d3d12-d3d12createdevice"><strong>D3D12CreateDevice</strong></a> use the most recent DRED settings.</p>
+</blockquote>
+<h2>Accessing DRED data in code</h2>
+<p>After device removal has been detected (for example, <strong>Present</strong> returns <a href="/windows/desktop/com/com-error-codes-10"><strong>DXGI_ERROR_DEVICE_REMOVED</strong></a>), use the methods of the <a href="/windows/desktop/api/d3d12/nn-d3d12-id3d12deviceremovedextendeddata"><strong>ID3D12DeviceRemovedExtendedData</strong></a> interface to access the DRED data for the removed device.</p>
+<p>To retrieve the <strong>ID3D12DeviceRemovedExtendedData</strong> interface, call <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-queryinterface(refiid_void)">QueryInterface</a> on an <a href="/windows/win32/api/d3d12/nn-d3d12-id3d12device">ID3D12Device</a> (or derived) interface, passing the interface identifier (IID) of <strong>ID3D12DeviceRemovedExtendedData</strong>.</p>
+<pre lang="cpp"><code>void MyDeviceRemovedHandler(ID3D12Device * pDevice)
+{
+    CComPtr&lt;ID3D12DeviceRemovedExtendedData&gt; pDred;
+    VERIFY_SUCCEEDED(pDevice-&gt;QueryInterface(IID_PPV_ARGS(&amp;pDred)));
+    D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT DredAutoBreadcrumbsOutput;
+    D3D12_DRED_PAGE_FAULT_OUTPUT DredPageFaultOutput;
+    VERIFY_SUCCEEDED(pDred-&gt;GetAutoBreadcrumbsOutput(&amp;DredAutoBreadcrumbsOutput));
+    VERIFY_SUCCEEDED(pDred-&gt;GetPageFaultAllocationOutput(&amp;DredPageFaultOutput));
+    // Custom processing of DRED data can be done here.
+    // Produce telemetry...
+    // Log information to console...
+    // break into a debugger...
+}
+</code></pre>
+<h2>Debugger access to DRED</h2>
+<p>Debuggers have access to the DRED data via the <strong>d3d12!D3D12DeviceRemovedExtendedData</strong> data export.</p>
+<p>For WinDbg users, see the <a href="https://github.com/microsoft/DirectX-Debugging-Tools">DirectX-Debugging-Tools</a> GitHub repository for a WinDBG extension that makes it much easier to debug Direct3D 12 DRED state.</p>
+<h2>DRED telemetry</h2>
+<p>Your application can use the DRED APIs to control DRED features, and to collect telemetry to help analyze problems. This gives you a much broader net for catching those hard-to-reproduce TDRs.</p>
+<p>As of Windows 10, version 1903, all user-mode device-removed events are reported to <a href="/windows/desktop/wer/windows-error-reporting">Windows Error Reporting (WER)</a>, also known as Watson. If a particular combination of application, GPU, and display driver generates a sufficient number of device-removed events, then it's possible that DRED will be temporarily enabled for customers launching the same application on a similar configuration.</p>
+<h2>More info about DRED</h2>
+<ul>
+<li>The <a href="https://github.com/microsoft/DirectX-Debugging-Tools">DirectX-Debugging-Tools</a> GitHub repository</li>
+<li><a href="https://devblogs.microsoft.com/directx/debugger-extension-for-dred/">Debugger extension for DRED</a> blog post</li>
+<li><a href="https://devblogs.microsoft.com/directx/dred-v1-2-supports-pix-marker-and-event-strings-in-auto-breadcrumbs/">DRED v1.2 supports PIX marker and event strings in Auto-Breadcrumbs</a> blog post</li>
+</ul>
+</body>

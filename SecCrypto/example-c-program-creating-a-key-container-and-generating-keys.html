@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Creating a Key Container and Generating Keys</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Creates a named key container and adds a signature key pair and an exchange key pair to the container.
+ms.assetid: b9d13024-0e53-4930-9962-a2a0d0cb88de
+title: 'Example C Program: Creating a Key Container and Generating Keys'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Creating a Key Container and Generating Keys</h1>
+<p>The following example creates a named <a href="../secgloss/k-gly.html"><em>key container</em></a> and adds a <a href="../secgloss/s-gly.html"><em>signature key pair</em></a> and an <a href="../secgloss/e-gly.html"><em>exchange key pair</em></a> to the container. This example can be run without problem even if the named key container and cryptographic keys already exist.</p>
+<blockquote>
+<p>[!Note]<br />
+An application should not use the default key container to store private keys. When multiple applications use the same container, one application may change or destroy the keys that another application needs to have available. It is recommended that applications use key containers that are linked to the application. Doing so reduces the risk of other applications tampering with keys that are necessary for an application to function properly.</p>
+</blockquote>
+<p>Â </p>
+<p>This example demonstrates the following tasks and CryptoAPI functions:</p>
+<ol>
+<li>It attempts to acquire the named key container. If the named key container does not already exist, it is created.</li>
+<li>If a signature key pair does not exist in the key container, it creates a signature key pair within the key container.</li>
+<li>If an exchange key pair does not exist in the key container, it creates an exchange key pair within the key container.</li>
+</ol>
+<p>These operations only need to be performed once for each user on each computer. If the named key container and key pairs have already been created, this sample performs no operations.</p>
+<p>This example uses the following CryptoAPI functions:</p>
+<ul>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptacquirecontexta"><strong>CryptAcquireContext</strong></a></li>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptdestroykey"><strong>CryptDestroyKey</strong></a></li>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptgenkey"><strong>CryptGenKey</strong></a></li>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptgetuserkey"><strong>CryptGetUserKey</strong></a></li>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptreleasecontext"><strong>CryptReleaseContext</strong></a></li>
+</ul>
+<p>This example uses the function <a href="myhandleerror.html"><strong>MyHandleError</strong></a>. The code for this function is included with the sample. Code for this and other auxiliary functions is also listed under <a href="general-purpose-functions.html">General Purpose Functions</a>.</p>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+#pragma comment(lib, &quot;crypt32.lib&quot;)
+
+#include &lt;stdio.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Wincrypt.h&gt;
+
+//-------------------------------------------------------------------
+// This example uses the function MyHandleError, a simple error
+// handling function to print an error message and exit 
+// the program. 
+// For most applications, replace this function with one 
+// that does more extensive error reporting.
+
+void MyHandleError(LPTSTR psz)
+{
+    _ftprintf(stderr, TEXT(&quot;An error occurred in the program. \n&quot;));
+    _ftprintf(stderr, TEXT(&quot;%s\n&quot;), psz);
+    _ftprintf(stderr, TEXT(&quot;Error number %x.\n&quot;), GetLastError());
+    _ftprintf(stderr, TEXT(&quot;Program terminating. \n&quot;));
+    exit(1);
+} // End of MyHandleError.
+
+void main(void) 
+{ 
+    // Handle for the cryptographic provider context.
+    HCRYPTPROV hCryptProv;        
+    
+    // The name of the container.
+    LPCTSTR pszContainerName = TEXT(&quot;My Sample Key Container&quot;);
+
+    //---------------------------------------------------------------
+    // Begin processing. Attempt to acquire a context by using the 
+    // specified key container.
+    if(CryptAcquireContext(
+        &amp;hCryptProv,
+        pszContainerName,
+        NULL,
+        PROV_RSA_FULL,
+        0))
+    {
+        _tprintf(
+            TEXT(&quot;A crypto context with the %s key container &quot;)
+            TEXT(&quot;has been acquired.\n&quot;), 
+            pszContainerName);
+    }
+    else
+    { 
+        //-----------------------------------------------------------
+        // Some sort of error occurred in acquiring the context. 
+        // This is most likely due to the specified container 
+        // not existing. Create a new key container.
+        if(GetLastError() == NTE_BAD_KEYSET)
+        {
+            if(CryptAcquireContext(
+                &amp;hCryptProv, 
+                pszContainerName, 
+                NULL, 
+                PROV_RSA_FULL, 
+                CRYPT_NEWKEYSET)) 
+            {
+                _tprintf(TEXT(&quot;A new key container has been &quot;)
+                    TEXT(&quot;created.\n&quot;));
+            }
+            else
+            {
+                MyHandleError(TEXT(&quot;Could not create a new key &quot;)
+                    TEXT(&quot;container.\n&quot;));
+            }
+        }
+        else
+        {
+            MyHandleError(TEXT(&quot;CryptAcquireContext failed.\n&quot;));
+        }
+    }
+
+    //---------------------------------------------------------------
+    // A context with a key container is available.
+    // Attempt to get the handle to the signature key. 
+
+    // Public/private key handle.
+    HCRYPTKEY hKey;               
+    
+    if(CryptGetUserKey(
+        hCryptProv,
+        AT_SIGNATURE,
+        &amp;hKey))
+    {
+        _tprintf(TEXT(&quot;A signature key is available.\n&quot;));
+    }
+    else
+    {
+        _tprintf(TEXT(&quot;No signature key is available.\n&quot;));
+        if(GetLastError() == NTE_NO_KEY) 
+        {
+            //-------------------------------------------------------
+            // The error was that there is a container but no key.
+
+            // Create a signature key pair. 
+            _tprintf(TEXT(&quot;The signature key does not exist.\n&quot;));
+            _tprintf(TEXT(&quot;Create a signature key pair.\n&quot;)); 
+            if(CryptGenKey(
+                hCryptProv,
+                AT_SIGNATURE,
+                0,
+                &amp;hKey)) 
+            {
+                _tprintf(TEXT(&quot;Created a signature key pair.\n&quot;));
+            }
+            else
+            {
+                MyHandleError(TEXT(&quot;Error occurred creating a &quot;)
+                    TEXT(&quot;signature key.\n&quot;)); 
+            }
+        }
+        else
+        {
+            MyHandleError(TEXT(&quot;An error other than NTE_NO_KEY &quot;)
+                TEXT(&quot;getting a signature key.\n&quot;));
+        }
+    } // End if.
+
+    _tprintf(TEXT(&quot;A signature key pair existed, or one was &quot;)
+        TEXT(&quot;created.\n\n&quot;));
+
+    // Destroy the signature key.
+    if(hKey)
+    {
+        if(!(CryptDestroyKey(hKey)))
+        {
+            MyHandleError(TEXT(&quot;Error during CryptDestroyKey.&quot;));
+        }
+
+        hKey = NULL;
+    } 
+
+    // Next, check the exchange key. 
+    if(CryptGetUserKey(
+        hCryptProv,
+        AT_KEYEXCHANGE,
+        &amp;hKey)) 
+    {
+        _tprintf(TEXT(&quot;An exchange key exists.\n&quot;));
+    }
+    else
+    {
+        _tprintf(TEXT(&quot;No exchange key is available.\n&quot;));
+
+        // Check to determine whether an exchange key 
+        // needs to be created.
+        if(GetLastError() == NTE_NO_KEY) 
+        { 
+            // Create a key exchange key pair.
+            _tprintf(TEXT(&quot;The exchange key does not exist.\n&quot;));
+            _tprintf(TEXT(&quot;Attempting to create an exchange key &quot;)
+                TEXT(&quot;pair.\n&quot;));
+            if(CryptGenKey(
+                hCryptProv,
+                AT_KEYEXCHANGE,
+                0,
+                &amp;hKey)) 
+            {
+                _tprintf(TEXT(&quot;Exchange key pair created.\n&quot;));
+            }
+            else
+            {
+                MyHandleError(TEXT(&quot;Error occurred attempting to &quot;)
+                    TEXT(&quot;create an exchange key.\n&quot;));
+            }
+        }
+        else
+        {
+            MyHandleError(TEXT(&quot;An error other than NTE_NO_KEY &quot;)
+                TEXT(&quot;occurred.\n&quot;));
+        }
+    }
+
+    // Destroy the exchange key.
+    if(hKey)
+    {
+        if(!(CryptDestroyKey(hKey)))
+        {
+            MyHandleError(TEXT(&quot;Error during CryptDestroyKey.&quot;));
+        }
+
+        hKey = NULL;
+    }
+
+    // Release the CSP.
+    if(hCryptProv)
+    {
+        if(!(CryptReleaseContext(hCryptProv, 0)))
+        {
+            MyHandleError(TEXT(&quot;Error during CryptReleaseContext.&quot;));
+        }
+    } 
+    
+    _tprintf(TEXT(&quot;Everything is okay. A signature key &quot;));
+    _tprintf(TEXT(&quot;pair and an exchange key exist in &quot;));
+    _tprintf(TEXT(&quot;the %s key container.\n&quot;), pszContainerName);  
+} // End main.
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

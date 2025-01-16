@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Qualifying Access with Business Logic in C++</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Using business rule scripts in C++ to provide run-time logic for checking access.
+ms.assetid: 058086ab-8ebd-4ff6-b552-8d3c19ae5d38
+title: Qualifying Access with Business Logic in C++
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Qualifying Access with Business Logic in C++</h1>
+<p>Use business rule scripts to provide run-time logic for checking access. For more information about business rules, see <a href="business-rules.html">Business Rules</a>.</p>
+<p>To assign a business rule to a task, first set the <a href="/windows/desktop/api/Azroles/nf-azroles-iaztask-get_bizrulelanguage"><strong>BizRuleLanguage</strong></a> property of the <a href="/windows/desktop/api/Azroles/nn-azroles-iaztask"><strong>IAzTask</strong></a> object that represents the task. The script must be in Visual Basic Scripting Edition or JScript. After you specify the script language, set the <a href="/windows/desktop/api/Azroles/nf-azroles-iaztask-get_bizrule"><strong>BizRule</strong></a> property of the <strong>IAzTask</strong> object with a string representation of the script.</p>
+<p>When checking access for an operation contained by a task that has an associated business rule, the application must create two arrays of the same size to be passed as the <em>varParameterNames</em> and <em>varParameterValues</em> parameters of the <a href="/windows/desktop/api/Azroles/nf-azroles-iazclientcontext-accesscheck"><strong>IAzClientContext::AccessCheck</strong></a> method. For information about creating a client context, see <a href="establishing-a-client-context-with-authorization-manager-in-c--.html">Establishing a Client Context with Authorization Manager in C++</a>.</p>
+<p>The <a href="/windows/desktop/api/Azroles/nf-azroles-iazclientcontext-accesscheck"><strong>IAzClientContext::AccessCheck</strong></a> method creates an <a href="/windows/desktop/api/Azroles/nn-azroles-iazbizrulecontext"><strong>AzBizRuleContext</strong></a> object that is passed to the business rule script. The script then sets the <a href="/windows/desktop/api/Azroles/nf-azroles-iazbizrulecontext-put_businessruleresult"><strong>BusinessRuleResult</strong></a> property of the <strong>AzBizRuleContext</strong> object. A value of <strong>TRUE</strong> indicates that access is granted, and a value of <strong>FALSE</strong> indicates that access is denied.</p>
+<p>A business rule script cannot be assigned to an <a href="/windows/desktop/api/Azroles/nn-azroles-iaztask"><strong>IAzTask</strong></a> object contained by a delegated <a href="/windows/desktop/api/Azroles/nn-azroles-iazscope"><strong>IAzScope</strong></a> object.</p>
+<p>The following example shows how to use a business rule script to check a client's access to an operation. The example assumes that there is an existing XML policy store named MyStore.xml in the root directory of drive C, that this store contains an application named Expense, a task named Submit Expense, and an operation named UseFormControl, and that the variable hToken contains a valid client token.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;azroles.h&gt;
+
+void CheckAccess(ULONGLONG hToken)
+//  Void CheckAccess().
+{
+    IAzAuthorizationStore* pStore = NULL;
+    IAzApplication* pApp = NULL;
+    IAzClientContext* pClientContext = NULL;
+    IAzOperation* pOperation = NULL;
+    IAzTask* pTask = NULL;
+    BSTR storeName = NULL;
+    BSTR appName = NULL;
+    BSTR operationName = NULL;
+    BSTR objectName = NULL;
+    BSTR taskName = NULL;
+    BSTR bizRule = NULL;
+    BSTR bizRuleLanguage = NULL;
+    LONG operationID;
+    HRESULT hr;
+    VARIANT varOperationIdArray;
+    VARIANT varOperationId;
+    VARIANT varResultsArray;
+    VARIANT varResult;
+    VARIANT varParamName;
+    VARIANT varParamValue;
+    VARIANT nameString;
+    VARIANT expenseAmount;
+    void MyHandleError(char *s);
+
+    VARIANT myVar;
+    VariantInit(&amp;myVar);
+
+    //  Initialize COM.
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize COM.&quot;);
+
+    //  Create the AzAuthorizationStore object.
+    hr = CoCreateInstance(
+   /*&quot;b2bcff59-a757-4b0b-a1bc-ea69981da69e&quot;*/
+         __uuidof(AzAuthorizationStore),
+         NULL,
+         CLSCTX_ALL,
+   /*&quot;edbd9ca9-9b82-4f6a-9e8b-98301e450f14&quot;*/
+         __uuidof(IAzAuthorizationStore),
+         (void**)&amp;pStore);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not create AzAuthorizationStore object.&quot;);
+
+    //  Allocate a string for the policy store.
+    if(!(storeName = SysAllocString(L&quot;msxml://c:\\MyStore.xml&quot;)))
+        MyHandleError(&quot;Could not allocate string.&quot;);
+    
+    //  Initialize the store.
+    hr = pStore-&gt;Initialize(0, storeName, myVar);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not initialize store.&quot;);
+
+    //  Create an application object.
+    if (!(appName = SysAllocString(L&quot;Expense&quot;)))
+        MyHandleError(&quot;Could not allocate application name string.&quot;);
+    hr = pStore-&gt;OpenApplication(appName, myVar, &amp;pApp);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not open application.&quot;);
+
+    //  Create a client context from a token handle.
+    hr = pApp-&gt;InitializeClientContextFromToken(hToken, myVar,
+          &amp;pClientContext);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not create client context.&quot;);
+
+    //  Create a business rule for the Submit Expense task.
+
+    //  Open the Submit Expense task.
+    if(!(taskName = SysAllocString(L&quot;Submit Expense&quot;)))
+        MyHandleError(&quot;Could not allocate task name string.&quot;);
+    hr = pApp-&gt;OpenTask(taskName, myVar, &amp;pTask);
+
+    //  Assign a business rule to the task.
+
+    //  Set the business rule language to VBScript.
+    if(!(bizRuleLanguage = SysAllocString(L&quot;VBScript&quot;)))
+        MyHandleError(&quot;Could not allocate business rule language string.&quot;);
+    hr = pTask-&gt;put_BizRuleLanguage(bizRuleLanguage);
+    if(!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not allocate business rule language string.&quot;);
+
+    //  Create a BSTR with the business rule code.
+    if(!(bizRule = SysAllocString(
+        L&quot;Dim Amount \n&quot;
+        L&quot;AzBizRuleContext.BusinessRuleResult = FALSE \n&quot;
+        L&quot;Amount = AzBizRuleContext.GetParameter(\&quot;ExpAmount\&quot;) \n&quot;
+        L&quot;if Amount &lt; 500 then AzBizRuleContext.BusinessRuleResult = TRUE&quot;
+        )))
+         MyHandleError(&quot;Could not allocate business rule string.&quot;);
+
+    
+    hr = pTask-&gt;put_BizRule(bizRule);
+    if(!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not assign business rule.&quot;);
+
+    //  Save the new task data to the store.
+    hr = pTask-&gt;Submit(0, myVar);
+    if(!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not save task data.&quot;);
+
+    //  Set up parameters for access check.
+
+    //  Set up the object name.
+    if (!(operationName = SysAllocString(L&quot;UseFormControl&quot;)))
+        MyHandleError(&quot;Could not allocate operation name string.&quot;);
+
+    //  Get the ID of the operation to check.
+    hr = pApp-&gt;OpenOperation(operationName, myVar, &amp;pOperation);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not open operation.&quot;);
+
+    hr = pOperation-&gt;get_OperationID(&amp;operationID);
+    if(!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not get operation ID.&quot;);
+
+    //  Create a SAFEARRAY for the operation ID.
+    varOperationIdArray.parray = SafeArrayCreateVector(VT_VARIANT, 0, 1);
+
+    //  Create an array of indexes.
+    LONG* index = new LONG[1];
+    index[0] = 0;
+
+    //  Populate a SAFEARRAY with the operation ID.
+    varOperationId.vt = VT_I4;
+    varOperationId.lVal = operationID;
+
+    hr = SafeArrayPutElement(varOperationIdArray.parray, index,
+          &amp;varOperationId);
+    if(!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not put operation ID in array.&quot;);
+    
+    //  Set SAFEARRAY type.
+    varOperationIdArray.vt = VT_ARRAY | VT_VARIANT;
+
+    //  Create business rule parameters.
+
+    //  Create array of business rule parameter names.
+    varParamName.parray = SafeArrayCreateVector(VT_VARIANT, 0, 1);
+    varParamName.vt = VT_ARRAY | VT_VARIANT;
+    nameString.vt = VT_BSTR;
+    nameString.bstrVal = SysAllocString(L&quot;ExpAmount&quot;);
+    SafeArrayPutElement(varParamName.parray, index, &amp;nameString);
+
+    //  Create array of business rule parameter values.
+    varParamValue.parray = SafeArrayCreateVector(VT_VARIANT, 0, 1);
+    varParamValue.vt = VT_ARRAY | VT_VARIANT;
+    expenseAmount.vt = VT_I4;
+    expenseAmount.lVal = 100;  // access denied if 500 or more
+    SafeArrayPutElement(varParamValue.parray, index, &amp;expenseAmount);
+
+    if(!(objectName = SysAllocString(L&quot;UseFormControl&quot;)))//used for audit
+        MyHandleError(&quot;Could not allocate object name string.&quot;);
+
+    //  Check access.
+    hr = pClientContext-&gt;AccessCheck(
+        objectName,
+        myVar,                  // use default application scope
+        varOperationIdArray,
+        varParamName,
+        varParamValue,
+        myVar,
+        myVar,
+        myVar,
+        &amp;varResultsArray);
+
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not complete access check.&quot;);
+
+    hr = SafeArrayGetElement(varResultsArray.parray, index, &amp;varResult);
+    if (!(SUCCEEDED(hr)))
+        MyHandleError(&quot;Could not get result from array.&quot;);
+
+    if (varResult.lVal == 0)
+        printf(&quot;Access granted.\n&quot;);
+    else
+        printf(&quot;Access denied.\n&quot;);
+    
+
+    //  Clean up resources.
+    pStore-&gt;Release();
+    pApp-&gt;Release();
+    pOperation-&gt;Release();
+    pClientContext-&gt;Release();
+    pTask-&gt;Release();
+    SysFreeString(storeName);
+    SysFreeString(appName);
+    SysFreeString(operationName);
+    SysFreeString(objectName);
+    SysFreeString(taskName);
+    SysFreeString(bizRule);
+    SysFreeString(bizRuleLanguage);
+    VariantClear(&amp;myVar);
+    VariantClear(&amp;varOperationIdArray);
+    VariantClear(&amp;varOperationId);
+    VariantClear(&amp;varResultsArray);
+    VariantClear(&amp;varResult);
+    VariantClear(&amp;varParamName);
+    VariantClear(&amp;varParamValue);
+    VariantClear(&amp;nameString);
+    VariantClear(&amp;expenseAmount);
+    CoUninitialize();
+}
+
+void MyHandleError(char *s)
+{
+    printf(&quot;An error occurred in running the program.\n&quot;);
+    printf(&quot;%s\n&quot;,s);
+    printf(&quot;Error number %x\n.&quot;,GetLastError());
+    printf(&quot;Program terminating.\n&quot;);
+    exit(1);
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

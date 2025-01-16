@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Listing System and Physical Stores</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Enumerates the system certificate store locations, the system certificate stores, and the physical stores associated with each system store.
+ms.assetid: bc4268ea-f657-4789-9d0a-6e5354508f86
+title: 'Example C Program: Listing System and Physical Stores'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Listing System and Physical Stores</h1>
+<p>The following example enumerates the system <a href="../secgloss/c-gly.html"><em>certificate store</em></a> locations, the system certificate stores, and the physical stores associated with each system store. This example demonstrates the creation of callback functions and callback functions that call other callback functions.</p>
+<p>This example illustrates the following <a href="../secgloss/c-gly.html"><em>CryptoAPI</em></a> functions:</p>
+<ul>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certenumsystemstorelocation"><strong>CertEnumSystemStoreLocation</strong></a></li>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certenumsystemstore"><strong>CertEnumSystemStore</strong></a></li>
+</ul>
+<p>This example also uses the function <a href="myhandleerror.html"><strong>MyHandleError</strong></a>. Code for this function is included with the sample. Code for this and other auxiliary functions is also listed under <a href="general-purpose-functions.html">General Purpose Functions</a>.</p>
+<pre lang="C++"><code>#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Wincrypt.h&gt;
+#define MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+void MyHandleError(char *s);
+#pragma comment(lib, &quot;crypt32.lib&quot;)
+
+typedef struct _ENUM_ARG {
+    BOOL        fAll;
+    BOOL        fVerbose;
+    DWORD       dwFlags;
+    const void  *pvStoreLocationPara;
+    HKEY        hKeyBase;
+} ENUM_ARG, *PENUM_ARG;
+
+//-------------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+// Declare callback functions. 
+// Definitions of these functions follow main.
+
+static BOOL WINAPI EnumPhyCallback(
+       const void *pvSystemStore,
+       DWORD dwFlags, 
+       LPCWSTR pwszStoreName, 
+       PCERT_PHYSICAL_STORE_INFO pStoreInfo,
+       void *pvReserved, 
+       void *pvArg);
+
+static BOOL WINAPI EnumSysCallback(
+       const void *pvSystemStore,
+       DWORD dwFlags,
+       PCERT_SYSTEM_STORE_INFO pStoreInfo,
+       void *pvReserved,
+       void *pvArg);
+
+static BOOL WINAPI EnumLocCallback(
+       LPCWSTR pwszStoreLocation,
+       DWORD dwFlags,
+       void *pvReserved,
+       void *pvArg);
+
+//-------------------------------------------------------------------
+// Begin main.
+
+void main(void) 
+{
+//-------------------------------------------------------------------
+// Declare and initialize variables.
+
+DWORD dwExpectedError = 0;
+DWORD dwLocationID = CERT_SYSTEM_STORE_CURRENT_USER_ID;
+DWORD dwFlags = 0;
+CERT_PHYSICAL_STORE_INFO PhyStoreInfo;
+ENUM_ARG EnumArg;
+LPSTR pszStoreParameters = NULL;          
+LPWSTR pwszStoreParameters = NULL;
+LPWSTR pwszSystemName = NULL;
+LPWSTR pwszPhysicalName = NULL;
+LPWSTR pwszStoreLocationPara = NULL;
+void *pvSystemName;                   
+void *pvStoreLocationPara;              
+DWORD dwNameCnt = 0;
+LPCSTR pszTestName;
+HKEY hKeyRelocate = HKEY_CURRENT_USER;
+LPSTR pszRelocate = NULL;               
+HKEY hKeyBase = NULL;
+
+//-------------------------------------------------------------------
+//  Initialize data structure variables.
+
+memset(&amp;PhyStoreInfo, 0, sizeof(PhyStoreInfo));
+PhyStoreInfo.cbSize = sizeof(PhyStoreInfo);
+PhyStoreInfo.pszOpenStoreProvider = sz_CERT_STORE_PROV_SYSTEM_W;
+pszTestName = &quot;Enum&quot;;  
+pvSystemName = pwszSystemName;
+pvStoreLocationPara = pwszStoreLocationPara;
+
+memset(&amp;EnumArg, 0, sizeof(EnumArg));
+EnumArg.dwFlags = dwFlags;
+EnumArg.hKeyBase = hKeyBase;
+
+EnumArg.pvStoreLocationPara = pvStoreLocationPara;
+EnumArg.fAll = TRUE;
+dwFlags &amp;= ~CERT_SYSTEM_STORE_LOCATION_MASK;
+dwFlags |= (dwLocationID &lt;&lt; CERT_SYSTEM_STORE_LOCATION_SHIFT) &amp;
+    CERT_SYSTEM_STORE_LOCATION_MASK;
+
+printf(&quot;Begin enumeration of store locations. \n&quot;);
+if(CertEnumSystemStoreLocation(
+    dwFlags,
+    &amp;EnumArg,
+    EnumLocCallback
+    ))
+{
+    printf(&quot;\nFinished enumerating locations. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Enumeration of locations failed.&quot;);
+}
+printf(&quot;\nBegin enumeration of system stores. \n&quot;);
+
+if(CertEnumSystemStore(
+    dwFlags,
+    pvStoreLocationPara,
+    &amp;EnumArg,
+    EnumSysCallback
+    ))
+{
+    printf(&quot;\nFinished enumerating system stores. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Enumeration of system stores failed.&quot;);
+}
+
+printf(&quot;\n\nEnumerate the physical stores &quot;
+    &quot;for the MY system store. \n&quot;);
+if(CertEnumPhysicalStore(
+    L&quot;MY&quot;,
+    dwFlags,
+    &amp;EnumArg,
+    EnumPhyCallback
+    ))
+{
+    printf(&quot;Finished enumeration of the physical stores. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Enumeration of physical stores failed.&quot;);
+}
+}    //   End of main
+
+//-------------------------------------------------------------------
+//   Define function GetSystemName.
+
+static BOOL GetSystemName( 
+    const void *pvSystemStore,
+    DWORD dwFlags, 
+    PENUM_ARG pEnumArg, 
+    LPCWSTR *ppwszSystemName )
+{
+//-------------------------------------------------------------------
+// Declare local variables.
+
+*ppwszSystemName = NULL;
+
+if (pEnumArg-&gt;hKeyBase &amp;&amp; 0 == (dwFlags &amp; 
+    CERT_SYSTEM_STORE_RELOCATE_FLAG)) 
+{
+  printf(&quot;Failed =&gt; RELOCATE_FLAG not set in callback. \n&quot;);
+  return FALSE;
+} 
+else 
+{
+  if (dwFlags &amp; CERT_SYSTEM_STORE_RELOCATE_FLAG) 
+  {
+     PCERT_SYSTEM_STORE_RELOCATE_PARA pRelocatePara;
+     if (!pEnumArg-&gt;hKeyBase) 
+     {
+        MyHandleError(&quot;Failed =&gt; RELOCATE_FLAG is set in callback&quot;);
+     }
+     pRelocatePara = (PCERT_SYSTEM_STORE_RELOCATE_PARA) 
+         pvSystemStore;
+     if (pRelocatePara-&gt;hKeyBase != pEnumArg-&gt;hKeyBase) 
+     {
+         MyHandleError(&quot;Wrong hKeyBase passed to callback&quot;);
+     }
+     *ppwszSystemName = pRelocatePara-&gt;pwszSystemStore;
+  } 
+  else
+  {
+    *ppwszSystemName = (LPCWSTR) pvSystemStore;
+  }
+}
+return TRUE;
+}
+
+//-------------------------------------------------------------------
+// Define the callback functions.
+
+static BOOL WINAPI EnumPhyCallback(
+      const void *pvSystemStore,
+      DWORD dwFlags, 
+      LPCWSTR pwszStoreName, 
+      PCERT_PHYSICAL_STORE_INFO pStoreInfo,
+      void *pvReserved, 
+      void *pvArg )
+{
+//-------------------------------------------------------------------
+//  Declare and initialize local variables.
+PENUM_ARG pEnumArg = (PENUM_ARG) pvArg;
+LPCWSTR pwszSystemStore;
+
+//-------------------------------------------------------------------
+//  Begin callback process.
+
+if (GetSystemName(
+       pvSystemStore, 
+       dwFlags, 
+       pEnumArg, 
+       &amp;pwszSystemStore))
+{
+printf(&quot;    %S&quot;, pwszStoreName);
+}
+else
+{
+   MyHandleError(&quot;GetSystemName failed.&quot;);
+}
+if (pEnumArg-&gt;fVerbose &amp;&amp;
+      (dwFlags &amp; CERT_PHYSICAL_STORE_PREDEFINED_ENUM_FLAG))
+      printf(&quot; (implicitly created)&quot;);
+printf(&quot;\n&quot;); 
+return TRUE;
+}
+
+static BOOL WINAPI EnumSysCallback(
+    const void *pvSystemStore,
+    DWORD dwFlags,
+    PCERT_SYSTEM_STORE_INFO pStoreInfo,
+    void *pvReserved,
+    void *pvArg)
+//-------------------------------------------------------------------
+//  Begin callback process.
+{
+//-------------------------------------------------------------------
+//  Declare and initialize local variables.
+
+PENUM_ARG pEnumArg = (PENUM_ARG) pvArg;
+LPCWSTR pwszSystemStore;
+static int line_counter=0;
+char x;
+
+//-------------------------------------------------------------------
+//  Begin processing.
+
+//-------------------------------------------------------------------
+//   Control break. If 5 or more lines have been printed,
+//   pause and reset the line counter.
+
+if(line_counter++ &gt; 5)
+{
+   printf(&quot;Enumeration of system store: Press Enter to continue.&quot;);
+   scanf_s(&quot;%c&quot;,&amp;x);
+   line_counter=0;
+}
+
+//-------------------------------------------------------------------
+//  Prepare and display the next detail line.
+
+if (GetSystemName(pvSystemStore, dwFlags, pEnumArg, &amp;pwszSystemStore))
+{
+     printf(&quot;  %S\n&quot;, pwszSystemStore);
+}
+else
+{
+     MyHandleError(&quot;GetSystemName failed.&quot;);
+}
+if (pEnumArg-&gt;fAll || pEnumArg-&gt;fVerbose) 
+{
+    dwFlags &amp;= CERT_SYSTEM_STORE_MASK;
+    dwFlags |= pEnumArg-&gt;dwFlags &amp; ~CERT_SYSTEM_STORE_MASK;
+    if (!CertEnumPhysicalStore(
+       pvSystemStore,
+       dwFlags,
+       pEnumArg,
+       EnumPhyCallback
+       )) 
+    {
+        DWORD dwErr = GetLastError();
+        if (!(ERROR_FILE_NOT_FOUND == dwErr ||
+            ERROR_NOT_SUPPORTED == dwErr))
+        {
+               printf(&quot;    CertEnumPhysicalStore&quot;);
+        }
+    }
+}
+return TRUE;
+}
+
+static BOOL WINAPI EnumLocCallback(
+    LPCWSTR pwszStoreLocation,
+    DWORD dwFlags,
+    void *pvReserved,
+    void *pvArg)
+
+{
+//-------------------------------------------------------------------
+//  Declare and initialize local variables.
+
+PENUM_ARG pEnumArg = (PENUM_ARG) pvArg;
+DWORD dwLocationID = (dwFlags &amp; CERT_SYSTEM_STORE_LOCATION_MASK) &gt;&gt;
+   CERT_SYSTEM_STORE_LOCATION_SHIFT;
+static int linecount=0;
+char x;
+
+//-------------------------------------------------------------------
+//  Begin processing.
+
+//-------------------------------------------------------------------
+// Break if more than 5 lines have been printed.
+
+if(linecount++ &gt; 5)
+{
+   printf(&quot;Enumeration of store locations: &quot;
+       &quot;Press Enter to continue.&quot;);
+   scanf_s(&quot;%c&quot;,&amp;x);
+   linecount=0;
+}
+
+//-------------------------------------------------------------------
+//  Prepare and display the next detail line.
+
+printf(&quot;======   %S   ======\n&quot;, pwszStoreLocation);
+if (pEnumArg-&gt;fAll) 
+{
+    dwFlags &amp;= CERT_SYSTEM_STORE_MASK;
+    dwFlags |= pEnumArg-&gt;dwFlags &amp; ~CERT_SYSTEM_STORE_LOCATION_MASK;
+    CertEnumSystemStore(
+         dwFlags,
+         (void *) pEnumArg-&gt;pvStoreLocationPara,
+         pEnumArg,
+         EnumSysCallback ); 
+}
+return TRUE;
+}
+
+//-------------------------------------------------------------------
+//  This example uses the function MyHandleError, a simple error
+//  handling function, to print an error message to  
+//  the standard error (stderr) file and exit the program. 
+//  For most applications, replace this function with one 
+//  that does more extensive error reporting.
+
+void MyHandleError(char *s)
+{
+    fprintf(stderr,&quot;An error occurred in running the program. \n&quot;);
+    fprintf(stderr,&quot;%s\n&quot;,s);
+    fprintf(stderr, &quot;Error number %x.\n&quot;, GetLastError());
+    fprintf(stderr, &quot;Program terminating. \n&quot;);
+    exit(1);
+} // End of MyHandleError
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

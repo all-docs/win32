@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Getting Ducking Events</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: A media application that wants to provide a customised ducking experience must listen for the event notifications when a communication stream is opened or closed in the system.
+ms.assetid: 709ad912-6b03-4ad3-bc47-ad8b6bd6de45
+title: Getting Ducking Events
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Getting Ducking Events</h1>
+<p>A media application that wants to provide a customised ducking experience must listen for the event notifications when a communication stream is opened or closed in the system. The custom implementation can be provided by using MediaFoundation, DirectShow, or DirectSound, which use the Core Audio APIs. A direct WASAPI client can also override the default handling if it knows when the communication session starts and ends.</p>
+<p>To provide a custom implementation, a media application needs to get notifications from the system when a communication application starts or ends a communication stream. The media application must implement the <a href="/windows/desktop/api/AudioPolicy/nn-audiopolicy-iaudiovolumeducknotification"><strong>IAudioVolumeDuckNotification</strong></a> interface and register the implementation with the audio system. Upon successful registration, the media application receives event notifications in the form of callbacks through the methods in the interface. For more information, see <a href="handling-audio-ducking-events-from-communication-devices.html">Implementation Considerations for Ducking Notifications</a>.</p>
+<p>To send ducking notifications, the audio system must know which audio session is listening for the ducking events. Each audio session is uniquely identified with a GUIDâ€”session instance identifier. The session manager allows an application to get information about the session such as title of audio session, the rendering state, and the session instance identifier. The identifier can be retrieved by using the policy control interface, <a href="/windows/desktop/api/audiopolicy/nn-audiopolicy-iaudiosessioncontrol2"><strong>IAudioSessionControl2</strong></a>.</p>
+<p>The following steps summarize the process of getting the session instance identifier of the media application:</p>
+<ol>
+<li>Instantiate the device enumerator and use it to get a reference to the endpoint of the device that the media application is using to render the non-communication stream.</li>
+<li>Activate the session manager from the device endpoint and get a reference to the <a href="/windows/desktop/api/audiopolicy/nn-audiopolicy-iaudiosessionmanager2"><strong>IAudioSessionManager2</strong></a> interface of the session manager.</li>
+<li>By using the <a href="/windows/desktop/api/audiopolicy/nn-audiopolicy-iaudiosessionmanager2"><strong>IAudioSessionManager2</strong></a> pointer, get a reference to the <a href="/windows/desktop/api/Audiopolicy/nn-audiopolicy-iaudiosessioncontrol"><strong>IAudioSessionControl</strong></a> interface of the session manager.</li>
+<li>Query for the <a href="/windows/desktop/api/audiopolicy/nn-audiopolicy-iaudiosessioncontrol2"><strong>IAudioSessionControl2</strong></a> from the <a href="/windows/desktop/api/Audiopolicy/nn-audiopolicy-iaudiosessioncontrol"><strong>IAudioSessionControl</strong></a> interface.</li>
+<li>Call <a href="/windows/desktop/api/audiopolicy/nf-audiopolicy-iaudiosessioncontrol2-getsessioninstanceidentifier"><strong>IAudioSessionControl2::GetSessionInstanceIdentifier</strong></a> and retrieve a string that contains the session identifier for the current audio session.</li>
+</ol>
+<p>To get ducking notifications about communication streams, the media application calls <a href="/windows/desktop/api/audiopolicy/nf-audiopolicy-iaudiosessionmanager2-registerducknotification"><strong>IAudioSessionManager2::RegisterDuckNotification</strong></a>. The media application supplies its session instance identifier to the audio system and a pointer to the <a href="/windows/desktop/api/AudioPolicy/nn-audiopolicy-iaudiovolumeducknotification"><strong>IAudioVolumeDuckNotification</strong></a> implementation. The application can now receive event notification when a stream opened on the communication device. To stop getting notification, the media application must call <a href="/windows/desktop/api/audiopolicy/nf-audiopolicy-iaudiosessionmanager2-unregisterducknotification"><strong>IAudioSessionManager2::UnregisterDuckNotification</strong></a>.</p>
+<p>The following code shows how an application can register to get ducking notifications. The CMediaPlayer class is defined in <a href="handling-audio-ducking-events-from-communication-devices.html">Implementation Considerations for Ducking Notifications</a>. The <a href="duckingmediaplayer.html">DuckingMediaPlayer</a> sample implements this functionality.</p>
+<pre lang="C++"><code>////////////////////////////////////////////////////////////////////
+//Description: Registers for duck notifications depending on the 
+//             the ducking options specified by the caller.
+//Parameters: 
+//    If DuckingOptOutChecked is TRUE, the client is registered for
+//    to receive ducking notifications; 
+//    FALSE, the client's registration is deleted.
+////////////////////////////////////////////////////////////////////
+
+HRESULT CMediaPlayer::DuckingOptOut(bool DuckingOptOutChecked)
+{
+    HRESULT hr = S_OK;
+
+    IMMDeviceEnumerator* pDeviceEnumerator NULL;
+    IMMDevice* pEndpoint = NULL;
+    IAudioSessionManager2* pSessionManager2 = NULL;
+    IAudioSessionControl* pSessionControl = NULL;
+    IAudioSessionControl2* pSessionControl2 = NULL;
+
+    LPWSTR sessionId = NULL;
+
+    //  Start with the default endpoint.
+
+    hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), 
+                          NULL, 
+                          CLSCTX_INPROC_SERVER, 
+                          IID_PPV_ARGS(&amp;pDeviceEnumerator));
+    
+    if (SUCCEEDED(hr))
+    {
+        hr = pDeviceEnumerator&gt;GetDefaultAudioEndpoint(
+              eRender, eConsole, &amp;pEndpoint);
+
+        pDeviceEnumerator&gt;Release();
+        pDeviceEnumerator = NULL;
+    }
+
+    // Activate the session manager.
+    if (SUCCEEDED(hr))
+    {
+        hr = pEndpoint-&gt;Activate(__uuidof(IAudioSessionManager2), 
+                                 CLSCTX_INPROC_SERVER,
+                                 NULL, 
+                                 reinterpret_cast&lt;void **&gt;
+                                 (&amp;pSessionManager2));
+        pEndpoint-&gt;Release();
+        pEndpoint = NULL;
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pSessionManager2-&gt;GetAudioSessionControl(
+                                  NULL, 0, &amp;pSessionControl);
+        
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pSessionControl-&gt;QueryInterface(
+                               IID_PPV_ARGS(&amp;pSessionControl2));
+                
+        pSessionControl-&gt;Release();
+        pSessionControl = NULL;
+    }
+
+    // Get the session instance identifier.
+    
+    if (SUCCEEDED(hr))
+    {
+        hr = pSessionControl2-&gt;GetSessionInstanceIdentifier(
+                                 sessionId);
+                
+        pSessionControl2-&gt;Release();
+        pSessionControl2 = NULL;
+    }
+
+    //  Register for ducking events depending on 
+    //  the specified preference.
+
+    if (SUCCEEDED(hr))
+    {
+        if (DuckingOptOutChecked)
+        {
+            hr = pSessionManager2-&gt;RegisterDuckNotification(
+                                    sessionId, this);
+        }
+        else
+        {
+            hr = pSessionManager2-&gt;UnregisterDuckNotification
+                                      (FALSE);
+        }
+        pSessionManager2-&gt;Release();
+        pSessionManager2 = NULL;
+    }
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-the-communication-device.html">Using a Communication Device</a></p>
+<!-- raw HTML omitted -->
+<p><a href="stream-attenuation.html">Default Ducking Experience</a></p>
+<!-- raw HTML omitted -->
+<p><a href="disabling-the-ducking-experience.html">Disabling the Default Ducking Experience</a></p>
+<!-- raw HTML omitted -->
+<p><a href="providing-a-custom-ducking-experience.html">Providing a Custom Ducking Behavior</a></p>
+<!-- raw HTML omitted -->
+<p><a href="handling-audio-ducking-events-from-communication-devices.html">Implementation Considerations for Ducking Notifications</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

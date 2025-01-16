@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Configure the Video Output Format</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Configure the Video Output Format
+ms.assetid: 1969072e-575e-49b4-88db-4c7e7a5a1c37
+title: Configure the Video Output Format
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Configure the Video Output Format</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<blockquote>
+<p>[!Note]<br />
+The functionality described in this topic is deprecated. To configure a capture device's output format, an application should use the <a href="/windows/win32/api/strmif/ns-strmif-am_media_type"><strong>AM_MEDIA_TYPE</strong></a> structure returned by <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-getformat"><strong>IAMStreamConfig::GetFormat</strong></a> in the <em>pmt</em> parameter.</p>
+</blockquote>
+<p>Â </p>
+<p>A capture device can support a range of output formats. For example, a device might support 16-bit RGB, 32-bit RGB, and YUYV. Within each of these formats, the device can support a range of frame sizes.</p>
+<p>In a WDM device, the <a href="/windows/desktop/api/Strmif/nn-strmif-iamstreamconfig"><strong>IAMStreamConfig</strong></a> interface is used to report which formats the device supports, and to set the format. (For legacy VFW devices, use the Video Format VFW dialog box, as described in <a href="display-vfw-capture-dialog-boxes.html">Display VFW Capture Dialog Boxes</a>.) The <strong>IAMStreamConfig</strong> interface is exposed on the capture filter's capture pin, preview pin, or both. Use the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findinterface"><strong>ICaptureGraphBuilder2::FindInterface</strong></a> method to get the interface pointer:</p>
+<pre lang="C++"><code>IAMStreamConfig *pConfig = NULL;
+hr = pBuild-&gt;FindInterface(
+    &amp;PIN_CATEGORY_PREVIEW, // Preview pin.
+    0,    // Any media type.
+    pCap, // Pointer to the capture filter.
+    IID_IAMStreamConfig, (void**)&amp;pConfig);
+</code></pre>
+<p>The device has a list of media types that it supports. For each media type, the device also provides a set of capabilities. These include the range of frame sizes that are available for that format, how well the device can stretch or shrink the image, and the range of frame rates.</p>
+<p>To get the number of media types, call the <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-getnumberofcapabilities"><strong>IAMStreamConfig::GetNumberOfCapabilities</strong></a> method. The method returns two values:</p>
+<ul>
+<li>The number of media types.</li>
+<li>The size of the structure that holds the capabilities information.</li>
+</ul>
+<p>The size value is necessary because the <a href="/windows/desktop/api/Strmif/nn-strmif-iamstreamconfig"><strong>IAMStreamConfig</strong></a> interface is used for both audio and video (and could be extended to other media types). For video, the capabilities are described using the <a href="/windows/win32/api/strmif/ns-strmif-video_stream_config_caps"><strong>VIDEO_STREAM_CONFIG_CAPS</strong></a> structure, while audio uses the <a href="/windows/win32/api/strmif/ns-strmif-audio_stream_config_caps"><strong>AUDIO_STREAM_CONFIG_CAPS</strong></a> structure.</p>
+<p>To enumerate the media types, call the <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-getstreamcaps"><strong>IAMStreamConfig::GetStreamCaps</strong></a> method with a zero-based index. The <strong>GetStreamCaps</strong> method returns a media type and the corresponding capability structure:</p>
+<pre lang="C++"><code>int iCount = 0, iSize = 0;
+hr = pConfig-&gt;GetNumberOfCapabilities(&amp;iCount, &amp;iSize);
+
+// Check the size to make sure we pass in the correct structure.
+if (iSize == sizeof(VIDEO_STREAM_CONFIG_CAPS))
+{
+    // Use the video capabilities structure.
+
+    for (int iFormat = 0; iFormat &lt; iCount; iFormat++)
+    {
+        VIDEO_STREAM_CONFIG_CAPS scc;
+        AM_MEDIA_TYPE *pmtConfig;
+        hr = pConfig-&gt;GetStreamCaps(iFormat, &amp;pmtConfig, (BYTE*)&amp;scc);
+        if (SUCCEEDED(hr))
+        {
+            /* Examine the format, and possibly use it. */
+
+            // Delete the media type when you are done.
+            DeleteMediaType(pmtConfig);
+        }
+}
+</code></pre>
+<p>Note how the structures are allocated for the <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-getstreamcaps"><strong>GetStreamCaps</strong></a> method. The method allocates the media type structure, whereas the caller allocates the capabilities structure. Coerce the capabilities structure to a byte array pointer. After you are done with the media type, delete the <a href="/windows/win32/api/strmif/ns-strmif-am_media_type"><strong>AM_MEDIA_TYPE</strong></a> structure, along with the media type's format block.</p>
+<p>You can configure the device to use a format returned in the <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-getstreamcaps"><strong>GetStreamCaps</strong></a> method. Simply call <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-setformat"><strong>IAMStreamConfig::SetFormat</strong></a> with the media type:</p>
+<pre lang="C++"><code>hr = pConfig-&gt;SetFormat(pmtConfig);
+</code></pre>
+<p>If the pin is not connected, it will attempt to use this format when it does connect. If the pin is already connected, it attempts to reconnect using the new format. In either case, it is possible that the downstream filter will reject the format.</p>
+<p>You can also modify the media type before passing it to the <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-setformat"><strong>SetFormat</strong></a> method. This is where the <a href="/windows/win32/api/strmif/ns-strmif-video_stream_config_caps"><strong>VIDEO_STREAM_CONFIG_CAPS</strong></a> structure comes in. It describes all of the valid ways to change the media type. To use this information, you must understand the details of that particular media type.</p>
+<p>For example, suppose that <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-getstreamcaps"><strong>GetStreamCaps</strong></a> returns a 24-bit RGB format, with a frame size of 320 x 240 pixels. You can get this information by examining the major type, subtype, and format block of the media type:</p>
+<pre lang="C++"><code>if ((pmtConfig.majortype == MEDIATYPE_Video) &amp;&amp;
+    (pmtConfig.subtype == MEDIASUBTYPE_RGB24) &amp;&amp;
+    (pmtConfig.formattype == FORMAT_VideoInfo) &amp;&amp;
+    (pmtConfig.cbFormat &gt;= sizeof (VIDEOINFOHEADER)) &amp;&amp;
+    (pmtConfig.pbFormat != NULL))
+{
+    VIDEOINFOHEADER *pVih = (VIDEOINFOHEADER*)pmtConfig.pbFormat;
+    // pVih contains the detailed format information.
+    LONG lWidth = pVih-&gt;bmiHeader.biWidth;
+    LONG lHeight = pVih-&gt;bmiHeader.biHeight;
+}
+</code></pre>
+<p>The <a href="/windows/win32/api/strmif/ns-strmif-video_stream_config_caps"><strong>VIDEO_STREAM_CONFIG_CAPS</strong></a> structure gives the minimum and maximum width and height that can be used for this media type. It also gives you the &quot;step&quot; size, which defines the increments by which you can adjust the width or height. For example, the device might return the following:</p>
+<ul>
+<li>MinOutputSize: 160 x 120</li>
+<li>MaxOutputSize: 320 x 240</li>
+<li>OutputGranularityX: 8 pixels (horizontal step size)</li>
+<li>OutputGranularityY: 8 pixels (vertical step size)</li>
+</ul>
+<p>Given these numbers, you could set the width to anything in the range (160, 168, 176, ... 304, 312, 320) and the height to anything in the range (120, 128, 136, ... 104, 112, 120). The following diagram illustrates this process.</p>
+<p><img src="images/strmcap3.png" alt="video format sizes" /></p>
+<p>To set a new frame size, directly modify the <a href="/windows/win32/api/strmif/ns-strmif-am_media_type"><strong>AM_MEDIA_TYPE</strong></a> structure returned in <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-getstreamcaps"><strong>GetStreamCaps</strong></a>:</p>
+<pre lang="C++"><code>pVih-&gt;bmiHeader.biWidth = 160;
+pVih-&gt;bmiHeader.biHeight = 120;
+pVih-&gt;bmiHeader.biSizeImage = DIBSIZE(pVih-&gt;bmiHeader);
+</code></pre>
+<p>Then pass the media type to the <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-setformat"><strong>SetFormat</strong></a> method, as described previously.</p>
+<p>The <strong>MinFrameInterval</strong> and <strong>MaxFrameInterval</strong> members of <a href="/windows/win32/api/strmif/ns-strmif-video_stream_config_caps"><strong>VIDEO_STREAM_CONFIG_CAPS</strong></a> are the minimum and maximum length of each video frame, which you can translate into frame rates as follows:</p>
+<p><code>frames per second = 10,000,000 / frame duration</code></p>
+<p>To request a particular frame rate, modify the value of <strong>AvgTimePerFrame</strong> in the <a href="/previous-versions/windows/desktop/api/amvideo/ns-amvideo-videoinfoheader"><strong>VIDEOINFOHEADER</strong></a> or <a href="/previous-versions/windows/desktop/api/dvdmedia/ns-dvdmedia-videoinfoheader2"><strong>VIDEOINFOHEADER2</strong></a> structure in the media type. The device may not support every possible value between the minimum and maximum, so the driver will use the closest value that it can. To see what value the driver actually used, call <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-getformat"><strong>IAMStreamConfig::GetFormat</strong></a> after you call <a href="/windows/desktop/api/Strmif/nf-strmif-iamstreamconfig-setformat"><strong>SetFormat</strong></a>.</p>
+<p>Some drivers may report <strong>MAXLONGLONG</strong> (0x7FFFFFFFFFFFFFFF) for the value of <strong>MaxFrameInterval</strong>, which in effect means there is no maximum duration. However, you might want to enforce a minimum frame rate in your application, such as 1 fps.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="about-media-types.html">About Media Types</a></p>
+<!-- raw HTML omitted -->
+<p><a href="configuring-a-video-capture-device.html">Configuring a Video Capture Device</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

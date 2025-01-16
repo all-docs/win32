@@ -1,0 +1,1483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using TdhGetProperty to Consume Event Data</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example shows how to consume event data using the TdhGetProperty function.
+ms.assetid: 16b36718-087f-4be9-9ca2-fc083358017b
+title: Using TdhGetProperty to Consume Event Data
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using TdhGetProperty to Consume Event Data</h1>
+<p>The following example shows how to consume event data using the <a href="/windows/win32/api/tdh/nf-tdh-tdhgetproperty"><strong>TdhGetProperty</strong></a> function.</p>
+<blockquote>
+<p>[!IMPORTANT]
+TdhGetProperty is not recommended for new code.</p>
+<ul>
+<li>For non-WPP events, extracting property values using TdhGetProperty is very inefficient, as it requires scanning the event's properties each time the TdhGetProperty API is called. Refer to <a href="./using-tdhformatproperty-to-consume-event-data.html">the TdhFormatProperty sample</a> for a more efficient pattern for reading property values.</li>
+<li>For WPP events, the TdhGetWppProperty and TdhGetWppMessage APIs are more flexible than TdhGetProperty. For example, the TdhGetWpp* APIs can load WPP decoding information from PDB files. Consider using TdhGetWppProperty or TdhGetWppMessage instead of TdhGetProperty when decoding WPP events.</li>
+</ul>
+</blockquote>
+<pre lang="C++"><code>/*
+Sample for decoding ETW events using TdhGetProperty.
+
+IMPORTANT: TdhGetProperty is not recommended for new code.
+
+- Extracting property values from non-WPP events using TdhGetProperty is very
+  inefficient, as it requires scanning the event's properties each time the
+  TdhGetProperty API is called. Refer to the TdhFormatProperty sample for a
+  more efficient pattern for reading property values.
+- The TdhGetWppProperty and TdhGetWppMessage APIs are more efficient and more
+  flexible than TdhGetProperty. For example, the TdhGetWpp* APIs can load WPP
+  decoding information from PDB files. Consider using TdhGetWppProperty or
+  TdhGetWppMessage instead of TdhGetProperty when decoding WPP events.
+
+This sample demonstrates the following:
+
+- How to process events from ETL files using OpenTrace and ProcessTrace.
+- How to get TRACE_EVENT_INFO data for an event using TdhGetEventInformation.
+- How to format a WPP message using TdhGetProperty.
+- How to extract property values from non-WPP events using TdhGetProperty.
+- How to format map (enum) values using the EVENT_MAP_INFO data returned by
+  TdhGetEventMapInformation.
+*/
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN 1 // Exclude rarely-used APIs from &lt;windows.h&gt;
+#endif
+
+#include &lt;windows.h&gt;
+
+#define INITGUID // Ensure that EventTraceGuid is defined.
+#include &lt;evntrace.h&gt;
+#undef INITGUID
+
+#include &lt;sddl.h&gt; // ConvertSidToStringSid
+#include &lt;tdh.h&gt;
+#include &lt;vector&gt;
+
+#include &lt;wchar.h&gt; // wprintf
+#include &lt;stdlib.h&gt; // _byteswap_ushort
+
+#pragma comment(lib, &quot;tdh.lib&quot;) // Link against TDH.dll
+
+// Support building this sample using older versions of the Windows SDK:
+#define EventNameOffset                       ActivityIDNameOffset
+#define EventAttributesOffset                 RelatedActivityIDNameOffset
+#define TDH_INTYPE_MANIFEST_COUNTEDSTRING     static_cast&lt;_TDH_IN_TYPE&gt;(22)
+#define TDH_INTYPE_MANIFEST_COUNTEDANSISTRING static_cast&lt;_TDH_IN_TYPE&gt;(23)
+#define TDH_INTYPE_MANIFEST_COUNTEDBINARY     static_cast&lt;_TDH_IN_TYPE&gt;(25)
+#define TDH_OUTTYPE_CODE_POINTER              static_cast&lt;_TDH_OUT_TYPE&gt;(37)
+
+/*
+Decodes event data using TdhGetEventInformation and TdhGetProperty. Prints the
+event information to stdout.
+
+We use a context object so we can reuse buffers instead of allocating new
+buffers and freeing them for each event.
+*/
+class DecoderContext
+{
+public:
+
+    /*
+    Initialize the decoder context.
+    Sets up the TDH_CONTEXT array that will be used for decoding.
+    */
+    explicit DecoderContext(
+        _In_opt_ LPCWSTR szTmfSearchPath)
+    {
+        TDH_CONTEXT* p = m_tdhContext;
+
+        if (szTmfSearchPath != nullptr)
+        {
+            p-&gt;ParameterValue = reinterpret_cast&lt;UINT_PTR&gt;(szTmfSearchPath);
+            p-&gt;ParameterType = TDH_CONTEXT_WPP_TMFSEARCHPATH;
+            p-&gt;ParameterSize = 0;
+            p += 1;
+        }
+
+        m_tdhContextCount = static_cast&lt;BYTE&gt;(p - m_tdhContext);
+    }
+
+    /*
+    Decode and print the data for an event.
+    Might throw an exception for out-of-memory conditions. Caller should catch
+    the exception before returning from the ProcessTrace callback.
+    */
+    void PrintEventRecord(
+        _In_ EVENT_RECORD* pEventRecord)
+    {
+        if (pEventRecord-&gt;EventHeader.EventDescriptor.Opcode == EVENT_TRACE_TYPE_INFO &amp;&amp;
+            pEventRecord-&gt;EventHeader.ProviderId == EventTraceGuid)
+        {
+            /*
+            The first event in every ETL file contains the data from the file header.
+            This is the same data as was returned in the EVENT_TRACE_LOGFILEW by
+            OpenTrace. Since we've already seen this information, we'll skip this
+            event.
+            */
+            return;
+        }
+
+        // Reset state to process a new event.
+        m_indentLevel = 1;
+        m_pEvent = pEventRecord;
+        m_pdd.clear();
+
+        // There is a lot of information available in the event even without decoding,
+        // including timestamp, PID, TID, provider ID, activity ID, and the raw data.
+
+        // Show the event timestamp.
+        PrintFileTime(reinterpret_cast&lt;FILETIME const&amp;&gt;(m_pEvent-&gt;EventHeader.TimeStamp));
+
+        if (IsWppEvent())
+        {
+            // The PrintEvent method works correctly for WPP events, but it
+            // generates fairly verbose output. Treat WPP events as a special
+            // case and generate more compact output for them.
+            PrintWppEvent();
+        }
+        else
+        {
+            PrintEvent();
+        }
+    }
+
+private:
+
+    /*
+    Print the primary properties for a WPP event.
+    */
+    void PrintWppEvent()
+    {
+        /*
+        TDH supports a set of known properties for WPP events:
+        - &quot;Version&quot;: UINT32 (usually 0)
+        - &quot;TraceGuid&quot;: GUID
+        - &quot;GuidName&quot;: UNICODESTRING (module name)
+        - &quot;GuidTypeName&quot;: UNICODESTRING (source file name and line number)
+        - &quot;ThreadId&quot;: UINT32
+        - &quot;SystemTime&quot;: SYSTEMTIME
+        - &quot;UserTime&quot;: UINT32
+        - &quot;KernelTime&quot;: UINT32
+        - &quot;SequenceNum&quot;: UINT32
+        - &quot;ProcessId&quot;: UINT32
+        - &quot;CpuNumber&quot;: UINT32
+        - &quot;Indent&quot;: UINT32
+        - &quot;FlagsName&quot;: UNICODESTRING
+        - &quot;LevelName&quot;: UNICODESTRING
+        - &quot;FunctionName&quot;: UNICODESTRING
+        - &quot;ComponentName&quot;: UNICODESTRING
+        - &quot;SubComponentName&quot;: UNICODESTRING
+        - &quot;FormattedString&quot;: UNICODESTRING
+        - &quot;RawSystemTime&quot;: FILETIME
+        - &quot;ProviderGuid&quot;: GUID (usually 0)
+        */
+
+        // Since WPP events always have the same properties, there is no need
+        // to query TdhGetEventInformation to find the list of properties.
+        // We'll just use TdhGetProperty to get the properties we need.
+        wprintf(L&quot; &quot;);
+        PrintWppStringProperty(L&quot;GuidName&quot;); // Module name (WPP's &quot;CurrentDir&quot; variable)
+        wprintf(L&quot; &quot;);
+        PrintWppStringProperty(L&quot;GuidTypeName&quot;); // Source code file name + line number
+        wprintf(L&quot; &quot;);
+        PrintWppStringProperty(L&quot;FunctionName&quot;);
+        wprintf(L&quot;\n&quot;);
+        PrintIndent();
+        PrintWppStringProperty(L&quot;FormattedString&quot;);
+        wprintf(L&quot;\n&quot;);
+    }
+
+    /*
+    Print the value of the given UNICODESTRING property.
+    */
+    void PrintWppStringProperty(_In_z_ LPCWSTR szPropertyName)
+    {
+        // Assume that the property name corresponds to a UNICODESTRING property.
+        // Assume that the PROPERTY_DATA_DESCRIPTOR stack is empty.
+
+        // Put the property name onto the stack.
+        PushPdd(szPropertyName);
+
+        // Call TdhGetProperty using the current PROPERTY_DATA_DESCRIPTOR
+        // stack (should have just one item on the stack right now). If
+        // successful, put the property data into m_propertyBuffer.
+        ULONG status = GetProperty();
+
+        // Clear the PROPERTY_DATA_DESCRIPTOR stack.
+        PopPdd();
+
+        if (status != ERROR_SUCCESS)
+        {
+            wprintf(L&quot;[TdhGetProperty(%ls) error %u]&quot;, szPropertyName, status);
+        }
+        else
+        {
+            // Print the FormattedString property data (nul-terminated
+            // wchar_t string).
+            wprintf(L&quot;%ls&quot;, reinterpret_cast&lt;LPCWSTR&gt;(m_propertyBuffer.data()));
+        }
+    }
+
+    /*
+    Use TdhGetEventInformation to obtain information about this event
+    (including the names and types of the event's properties). Print some
+    basic information about the event (provider name, event name), then print
+    each property (using TdhGetProperty to read each property value).
+    */
+    void PrintEvent()
+    {
+        ULONG status;
+        ULONG cb;
+
+        // Try to get event decoding information from TDH.
+        cb = static_cast&lt;ULONG&gt;(m_teiBuffer.size());
+        status = TdhGetEventInformation(
+            m_pEvent,
+            m_tdhContextCount,
+            m_tdhContextCount ? m_tdhContext : nullptr,
+            reinterpret_cast&lt;TRACE_EVENT_INFO*&gt;(m_teiBuffer.data()),
+            &amp;cb);
+        if (status == ERROR_INSUFFICIENT_BUFFER)
+        {
+            m_teiBuffer.resize(cb);
+            status = TdhGetEventInformation(
+                m_pEvent,
+                m_tdhContextCount,
+                m_tdhContextCount ? m_tdhContext : nullptr,
+                reinterpret_cast&lt;TRACE_EVENT_INFO*&gt;(m_teiBuffer.data()),
+                &amp;cb);
+        }
+
+        if (status != ERROR_SUCCESS)
+        {
+            // TdhGetEventInformation failed so there isn't a lot we can do.
+            // The provider ID might be helpful in tracking down the right
+            // manifest or TMF path.
+            wprintf(L&quot; &quot;);
+            PrintGuid(m_pEvent-&gt;EventHeader.ProviderId);
+            wprintf(L&quot;\n&quot;);
+        }
+        else
+        {
+            // TDH found decoding information. Print some basic info about the event,
+            // then format the event contents.
+
+            TRACE_EVENT_INFO const* const pTei =
+                reinterpret_cast&lt;TRACE_EVENT_INFO const*&gt;(m_teiBuffer.data());
+
+            if (pTei-&gt;ProviderNameOffset != 0)
+            {
+                // Event has a provider name -- show it.
+                wprintf(L&quot; %ls&quot;, TeiString(pTei-&gt;ProviderNameOffset));
+            }
+            else
+            {
+                // No provider name so print the provider ID.
+                wprintf(L&quot; &quot;);
+                PrintGuid(m_pEvent-&gt;EventHeader.ProviderId);
+            }
+
+            // Show core important event properties - try to show some kind of &quot;event name&quot;.
+            if (pTei-&gt;DecodingSource == DecodingSourceWbem ||
+                pTei-&gt;DecodingSource == DecodingSourceWPP)
+            {
+                // OpcodeName is usually the best &quot;event name&quot; property for WBEM/WPP events.
+                if (pTei-&gt;OpcodeNameOffset != 0)
+                {
+                    wprintf(L&quot; %ls&quot;, TeiString(pTei-&gt;OpcodeNameOffset));
+                }
+
+                wprintf(L&quot;\n&quot;);
+            }
+            else
+            {
+                if (pTei-&gt;EventNameOffset != 0)
+                {
+                    // Event has an EventName, so print it.
+                    wprintf(L&quot; %ls&quot;, TeiString(pTei-&gt;EventNameOffset));
+                }
+                else if (pTei-&gt;TaskNameOffset != 0)
+                {
+                    // EventName is a recent addition, so not all events have it.
+                    // Many events use TaskName as an event identifier, so print it if present.
+                    wprintf(L&quot; %ls&quot;, TeiString(pTei-&gt;TaskNameOffset));
+                }
+
+                wprintf(L&quot;\n&quot;);
+
+                // Show EventAttributes if available.
+                if (pTei-&gt;EventAttributesOffset != 0)
+                {
+                    PrintIndent();
+                    wprintf(L&quot;EventAttributes: %ls\n&quot;, TeiString(pTei-&gt;EventAttributesOffset));
+                }
+            }
+
+            if (IsStringEvent())
+            {
+                // The event was written using EventWriteString.
+                // We'll handle it later.
+            }
+            else
+            {
+                // The event is a MOF, manifest, or TraceLogging event.
+
+                // To help resolve PropertyParamCount and PropertyParamLength,
+                // we will record the values of all integer properties as we
+                // reach them. Before we start, clear out any old values and
+                // resize the vector with room for the new values.
+                m_integerValues.clear();
+                m_integerValues.resize(pTei-&gt;PropertyCount);
+
+                // Recursively print the event's properties.
+                PrintProperties(0, pTei-&gt;TopLevelPropertyCount);
+            }
+        }
+
+        if (IsStringEvent())
+        {
+            // The event was written using EventWriteString.
+            // We can print it whether or not we have decoding information.
+            LPCWSTR pchData = static_cast&lt;LPCWSTR&gt;(m_pEvent-&gt;UserData);
+            unsigned cchData = m_pEvent-&gt;UserDataLength / 2;
+            PrintIndent();
+
+            // It's probably nul-terminated, but just in case, limit to cchData chars.
+            wprintf(L&quot;%.*ls\n&quot;, cchData, pchData);
+        }
+    }
+
+    /*
+    Prints out the values of properties from begin..end.
+    Called by PrintEventRecord for the top-level properties.
+    If there are structures, this will be called recursively for the child
+    properties.
+    */
+    void PrintProperties(unsigned propBegin, unsigned propEnd)
+    {
+        TRACE_EVENT_INFO const* const pTei =
+            reinterpret_cast&lt;TRACE_EVENT_INFO const*&gt;(m_teiBuffer.data());
+
+        for (unsigned propIndex = propBegin; propIndex != propEnd; propIndex += 1)
+        {
+            EVENT_PROPERTY_INFO const&amp; epi = pTei-&gt;EventPropertyInfoArray[propIndex];
+
+            PrintIndent();
+
+            // Print the property's name.
+            wprintf(L&quot;%ls:&quot;, epi.NameOffset ? TeiString(epi.NameOffset) : L&quot;(noname)&quot;);
+
+            // The array of PROPERTY_DATA_DESCRIPTORs that we pass to
+            // TdhGetProperty makes a path that describes the property
+            // we want to access. If the property is a top-level property,
+            // we only need one PROPERTY_DATA_DESCRIPTOR to identify it.
+            // If we want to access a child property (nested within a
+            // structure), we need to provide a full path from the top-
+            // level property to the child property, with one
+            // PROPERTY_DATA_DESCRIPTOR for each level of nesting.
+            // To create this path, we have a stack of
+            // PROPERTY_DATA_DESCRIPTORs.
+
+            // Add the property to the stack of PROPERTY_DATA_DESCRIPTORs
+            // that will be used when we call TdhGetProperty. For top-level
+            // properties, there will be only one PROPERTY_DATA_DESCRIPTOR in
+            // the stack, but for child properties there may be two or more.
+            unsigned const pddIndex = PushPdd(epi.NameOffset ? TeiString(epi.NameOffset) : L&quot;&quot;);
+            m_indentLevel += 1;
+
+            // We recorded the values of all previous integer properties just
+            // in case we need to determine the array count for a variable-size
+            // array (PropertyParamCount).
+            USHORT const arrayCount =
+                (epi.Flags &amp; PropertyParamCount)
+                ? m_integerValues[epi.countPropertyIndex] // Look up the value of a previous property
+                : epi.count;
+
+            // Note that PropertyParamFixedCount is a new flag and is ignored
+            // by many decoders. Without the PropertyParamFixedCount flag,
+            // decoders will assume that a property is an array if it has
+            // either a count parameter or a fixed count other than 1. The
+            // PropertyParamFixedCount flag allows for fixed-count arrays with
+            // one element to be propertly decoded as arrays.
+            bool isArray =
+                1 != arrayCount ||
+                0 != (epi.Flags &amp; (PropertyParamCount | PropertyParamFixedCount));
+            if (isArray)
+            {
+                wprintf(L&quot; Array[%u]\n&quot;, arrayCount);
+            }
+
+            // Treat non-array properties as arrays with one element.
+            for (unsigned arrayIndex = 0; arrayIndex != arrayCount; arrayIndex += 1)
+            {
+                m_pdd[pddIndex].ArrayIndex = arrayIndex;
+
+                if (isArray)
+                {
+                    // Print a name for the array element.
+                    PrintIndent();
+                    wprintf(L&quot;%ls[%lu]:&quot;,
+                        epi.NameOffset ? TeiString(epi.NameOffset) : L&quot;(noname)&quot;,
+                        arrayIndex);
+                }
+
+                if (epi.Flags &amp; PropertyStruct)
+                {
+                    // If this property is a struct, recurse and print the child
+                    // properties.
+                    wprintf(L&quot;\n&quot;);
+                    PrintProperties(
+                        epi.structType.StructStartIndex,
+                        epi.structType.StructStartIndex + epi.structType.NumOfStructMembers);
+                    continue;
+                }
+
+                // Call TdhGetProperty using the PROPERTY_DATA_DESCRIPTORs that are
+                // currently on our PROPERTY_DATA_DESCRIPTOR stack. If successful,
+                // put the property data into m_propertyBuffer.
+                ULONG status = GetProperty();
+                if (status != ERROR_SUCCESS)
+                {
+                    wprintf(L&quot; TdhGetProperty error %u\n&quot;, status);
+                    continue;
+                }
+
+                if (!isArray)
+                {
+                    // If the property is an integer, save it in case we need it later
+                    // to resolve a PropertyParamCount reference.
+                    USHORT&amp; integerValue = m_integerValues[propIndex];
+                    void const* pData = m_propertyBuffer.data();
+                    switch (epi.nonStructType.InType)
+                    {
+                    case TDH_INTYPE_UINT8:
+                    case TDH_INTYPE_INT8:
+                        integerValue = *static_cast&lt;UINT8 const*&gt;(pData);
+                        break;
+                    case TDH_INTYPE_INT16:
+                    case TDH_INTYPE_UINT16:
+                    case TDH_INTYPE_INT32:
+                    case TDH_INTYPE_UINT32:
+                    case TDH_INTYPE_HEXINT32:
+                        integerValue = *static_cast&lt;UINT16 const*&gt;(pData);
+                        break;
+                    }
+                }
+
+                wprintf(L&quot; &quot;);
+
+                // Print the data in m_propertyBuffer.
+                PrintPropertyValue(
+                    epi.nonStructType.InType,
+                    epi.nonStructType.OutType,
+                    epi.nonStructType.MapNameOffset);
+                wprintf(L&quot;\n&quot;);
+            }
+
+            PopPdd();
+            m_indentLevel -= 1;
+        }
+    }
+
+    /*
+    Prints the data in m_propertyBuffer.
+
+    For details on valid intype and outtype values, refer to winmeta.xml and
+    tdh.h.
+
+    This function assumes that m_propertyBuffer is correctly-sized for the
+    data type. For example, it assumes that when inType is UINT32,
+    m_propertyBuffer.size() == 4.
+    */
+    void PrintPropertyValue(USHORT inType, USHORT outType, unsigned mapNameOffset)
+    {
+        void* const pData = m_propertyBuffer.data();
+        unsigned const cData = static_cast&lt;unsigned&gt;(m_propertyBuffer.size());
+
+        switch (inType)
+        {
+        case TDH_INTYPE_UNICODESTRING:
+        case TDH_INTYPE_NONNULLTERMINATEDSTRING: // WBEM, deprecated
+
+            /*
+            Note that the UNICODESTRING type may or may not be nul-terminated.
+            If the property has a non-zero length, has a PropertyParamLength
+            flag, or has a PropertyParamFixedLength flag, then the length is
+            the length of the string (in characters). Otherwise, the string is
+            nul-terminated. This sample does not distinguish between these
+            cases and prints to the end of the buffer or the nul, whichever
+            comes first. (This behavior also works well for the
+            NONNULLTERMINATEDSTRING type.)
+            */
+
+            // Valid outtypes: string, xml, json
+            wprintf(L&quot;%.*ls&quot;, cData / 2, static_cast&lt;LPCWSTR&gt;(pData));
+            break;
+
+        case TDH_INTYPE_ANSISTRING:
+        case TDH_INTYPE_NONNULLTERMINATEDANSISTRING: // WBEM, deprecated
+
+            /*
+            Like UNICODESTRING, the ANSISTRING type may or may not be
+            nul-terminated based on the flags and length.
+
+            This sample does not distinguish between the possible encodings
+            used by the ANSISTRING data types. In particular, data using the
+            xml, json, or utf8 outtype should be treated as utf-8, while data
+            using the string or default outtype is treated as using an
+            unspecified code page (typically the decoding machine's default
+            code page is used).
+            */
+
+            // Valid outtypes: string, xml, json, utf8
+            wprintf(L&quot;%.*hs&quot;, cData, static_cast&lt;LPCSTR&gt;(pData));
+            break;
+
+        case TDH_INTYPE_INT8:
+
+            // Valid outtypes: byte, string
+            switch (outType)
+            {
+            default:
+                wprintf(L&quot;%i&quot;, *static_cast&lt;signed char*&gt;(pData));
+                break;
+            case TDH_OUTTYPE_STRING:
+                wprintf(L&quot;%c&quot;, *static_cast&lt;unsigned char*&gt;(pData));
+                break;
+            }
+            break;
+
+        case TDH_INTYPE_UINT8:
+
+            // UINT8 properties might have an associated map.
+            if (mapNameOffset != 0 &amp;&amp;
+                PrintMapString(mapNameOffset, *static_cast&lt;unsigned char*&gt;(pData)))
+            {
+                break;
+            }
+
+            // Valid outtypes: unsignedByte, HexInt8, boolean, string
+            switch (outType)
+            {
+            default: // treat boolean as integer
+                wprintf(L&quot;%u&quot;, *static_cast&lt;unsigned char*&gt;(pData));
+                break;
+            case TDH_OUTTYPE_HEXINT8:
+                wprintf(L&quot;0x%x&quot;, *static_cast&lt;unsigned char*&gt;(pData));
+                break;
+            case TDH_OUTTYPE_STRING:
+                wprintf(L&quot;%hc&quot;, *static_cast&lt;unsigned char*&gt;(pData));
+                break;
+            }
+            break;
+
+        case TDH_INTYPE_INT16:
+
+            // Valid outtypes: short
+            wprintf(L&quot;%i&quot;, *static_cast&lt;short*&gt;(pData));
+            break;
+
+        case TDH_INTYPE_UINT16:
+
+            // UINT16 properties might have an associated map.
+            if (mapNameOffset != 0 &amp;&amp;
+                PrintMapString(mapNameOffset, *static_cast&lt;unsigned short*&gt;(pData)))
+            {
+                break;
+            }
+
+            // Valid outtypes: unsignedShort, port, HexInt16, string
+            switch (outType)
+            {
+            default:
+                wprintf(L&quot;%u&quot;, *static_cast&lt;unsigned short*&gt;(pData));
+                break;
+            case TDH_OUTTYPE_PORT:
+                wprintf(L&quot;%u&quot;, _byteswap_ushort(*static_cast&lt;unsigned short*&gt;(pData)));
+                break;
+            case TDH_OUTTYPE_HEXINT16:
+                wprintf(L&quot;0x%x&quot;, *static_cast&lt;unsigned short*&gt;(pData));
+                break;
+            case TDH_OUTTYPE_STRING:
+                wprintf(L&quot;%lc&quot;, *static_cast&lt;unsigned short*&gt;(pData));
+                break;
+            }
+            break;
+
+        case TDH_INTYPE_INT32:
+
+            // Valid outtypes: int, hresult
+            switch (outType)
+            {
+            default:
+                wprintf(L&quot;%i&quot;, *static_cast&lt;int*&gt;(pData));
+                break;
+            case TDH_OUTTYPE_HRESULT:
+                wprintf(L&quot;0x%x&quot;, *reinterpret_cast&lt;unsigned*&gt;(m_propertyBuffer.data()));
+                break;
+            }
+            break;
+
+        case TDH_INTYPE_UINT32:
+
+            // UINT32 properties might have an associated map.
+            if (mapNameOffset != 0 &amp;&amp;
+                PrintMapString(mapNameOffset, *static_cast&lt;unsigned*&gt;(pData)))
+            {
+                break;
+            }
+
+            // Valid outtypes: unsignedInt, PID, TID, IPv4, ETWTIME, ErrorCode, Win32Error,
+            // NTSTATUS, HexInt32, CodePointer
+            switch (outType)
+            {
+            default:
+                wprintf(L&quot;%u&quot;, *static_cast&lt;unsigned*&gt;(pData));
+                break;
+            case TDH_OUTTYPE_HEXINT32:
+            case TDH_OUTTYPE_ERRORCODE:
+            case TDH_OUTTYPE_HRESULT:
+            case TDH_OUTTYPE_NTSTATUS:
+            case TDH_OUTTYPE_CODE_POINTER:
+                wprintf(L&quot;0x%x&quot;, *static_cast&lt;unsigned*&gt;(pData));
+                break;
+            case TDH_OUTTYPE_IPV4:
+                wprintf(L&quot;%u.%u.%u.%u&quot;,
+                    static_cast&lt;BYTE*&gt;(pData)[0],
+                    static_cast&lt;BYTE*&gt;(pData)[1],
+                    static_cast&lt;BYTE*&gt;(pData)[2],
+                    static_cast&lt;BYTE*&gt;(pData)[3]);
+                break;
+            }
+            break;
+
+        case TDH_INTYPE_INT64:
+
+            // Valid outtypes: long
+            wprintf(L&quot;%lli&quot;, *static_cast&lt;__int64*&gt;(pData));
+            break;
+
+        case TDH_INTYPE_UINT64:
+
+            // Valid outtypes: unsignedLong, ETWTIME, HexInt64, CodePointer
+            switch (outType)
+            {
+            default:
+                wprintf(L&quot;%llu&quot;, *static_cast&lt;unsigned __int64*&gt;(pData));
+                break;
+            case TDH_OUTTYPE_HEXINT64:
+            case TDH_OUTTYPE_CODE_POINTER:
+                wprintf(L&quot;0x%llx&quot;, *static_cast&lt;unsigned __int64*&gt;(pData));
+                break;
+            }
+            break;
+
+        case TDH_INTYPE_FLOAT:
+
+            // Valid outtypes: float
+            wprintf(L&quot;%f&quot;, *static_cast&lt;float*&gt;(pData));
+            break;
+
+        case TDH_INTYPE_DOUBLE:
+
+            // Valid outtypes: double
+            wprintf(L&quot;%f&quot;, *static_cast&lt;double*&gt;(pData));
+            break;
+
+        case TDH_INTYPE_BOOLEAN:
+
+            // Valid outtypes: boolean
+            wprintf(L&quot;%u&quot;, *static_cast&lt;unsigned*&gt;(pData)); // 4-byte BOOL type
+            break;
+
+        case TDH_INTYPE_BINARY:
+
+            // Valid outtypes: hexBinary, IPv6, SocketAddress, Pkcs7WithTypeInfo
+            switch (outType)
+            {
+            default:
+                PrintHexBinary(pData, cData);
+                break;
+            case TDH_OUTTYPE_IPV6:
+                PrintIPv6(pData, cData);
+                break;
+            }
+            break;
+
+        case TDH_INTYPE_GUID:
+
+            // Valid outtypes: guid
+            PrintGuid(*static_cast&lt;GUID*&gt;(pData));
+            break;
+
+        case TDH_INTYPE_POINTER:
+
+            // Valid outtypes: HexInt64, CodePointer, long, unsignedLong
+            // Assume that TdhGetProperty has correctly determined size.
+            switch (outType)
+            {
+            default:
+                if (cData == 8)
+                {
+                    wprintf(L&quot;0x%llx&quot;, *static_cast&lt;unsigned __int64*&gt;(pData));
+                }
+                else
+                {
+                    wprintf(L&quot;0x%x&quot;, *static_cast&lt;unsigned*&gt;(pData));
+                }
+                break;
+            case TDH_OUTTYPE_LONG:
+                if (cData == 8)
+                {
+                    wprintf(L&quot;%lli&quot;, *static_cast&lt;__int64*&gt;(pData));
+                }
+                else
+                {
+                    wprintf(L&quot;%i&quot;, *static_cast&lt;int*&gt;(pData));
+                }
+                break;
+            case TDH_OUTTYPE_UNSIGNEDLONG:
+                if (cData == 8)
+                {
+                    wprintf(L&quot;%llu&quot;, *static_cast&lt;unsigned __int64*&gt;(pData));
+                }
+                else
+                {
+                    wprintf(L&quot;%u&quot;, *static_cast&lt;unsigned*&gt;(pData));
+                }
+                break;
+            }
+            break;
+
+        case TDH_INTYPE_FILETIME:
+
+            // Valid outtypes: dateTime, DateTimeCultureInsensitive
+            PrintFileTime(*static_cast&lt;FILETIME*&gt;(pData));
+            break;
+
+        case TDH_INTYPE_SYSTEMTIME:
+
+            // Valid outtypes: dateTime, DateTimeCultureInsensitive
+            PrintSystemTime(*static_cast&lt;SYSTEMTIME*&gt;(pData));
+            break;
+
+        case TDH_INTYPE_SID:
+
+            // Valid outtypes: string
+            PrintSid(pData, cData);
+            break;
+
+        case TDH_INTYPE_HEXINT32:
+
+            // HEXINT32 properties might have an associated map.
+            if (mapNameOffset != 0 &amp;&amp;
+                PrintMapString(mapNameOffset, *static_cast&lt;unsigned*&gt;(pData)))
+            {
+                break;
+            }
+
+            // Valid outtypes: HexInt32, ErrorCode, Win32Error, NTSTATUS, CodePointer
+            wprintf(L&quot;0x%x&quot;, *static_cast&lt;unsigned*&gt;(pData));
+            break;
+
+        case TDH_INTYPE_HEXINT64:
+
+            // Valid outtypes: HexInt64, CodePointer
+            wprintf(L&quot;0x%llx&quot;, *static_cast&lt;unsigned __int64*&gt;(pData));
+            break;
+
+        case TDH_INTYPE_MANIFEST_COUNTEDSTRING: // Added in Windows 10 2018 Fall update
+        case TDH_INTYPE_COUNTEDSTRING: // WBEM
+        case TDH_INTYPE_REVERSEDCOUNTEDSTRING: // WBEM, deprecated
+
+            // Valid outtypes: string, xml, json
+            if (cData &gt;= 2) // Assume first 2 bytes are bytecount.
+            {
+                wprintf(L&quot;%.*ls&quot;, (cData / 2) - 1, static_cast&lt;LPCWSTR&gt;(pData) + 1);
+            }
+            break;
+
+        case TDH_INTYPE_MANIFEST_COUNTEDANSISTRING: // Added in Windows 10 2018 Fall update
+        case TDH_INTYPE_COUNTEDANSISTRING: // WBEM
+        case TDH_INTYPE_REVERSEDCOUNTEDANSISTRING: // WBEM, deprecated
+
+            // Valid outtypes: string, xml, json, utf8
+            if (cData &gt;= 2) // Assume first 2 bytes are bytecount.
+            {
+                wprintf(L&quot;%.*hs&quot;, cData - 2, static_cast&lt;LPCSTR&gt;(pData) + 2);
+            }
+            break;
+
+        case TDH_INTYPE_MANIFEST_COUNTEDBINARY: // Added in Windows 10 2018 Fall update
+
+            // Valid outtypes: hexBinary, IPv6, SocketAddress, Pkcs7WithTypeInfo
+            if (cData &gt;= 2) // Assume first 2 bytes are bytecount.
+            {
+                switch (outType)
+                {
+                default:
+                    PrintHexBinary(static_cast&lt;BYTE*&gt;(pData) + 2, cData - 2);
+                    break;
+                case TDH_OUTTYPE_IPV6:
+                    PrintIPv6(static_cast&lt;BYTE*&gt;(pData) + 2, cData - 2);
+                    break;
+                }
+            }
+            break;
+
+        case TDH_INTYPE_UNICODECHAR: // WBEM
+
+            wprintf(L&quot;%lc&quot;, *static_cast&lt;unsigned short*&gt;(pData));
+            break;
+
+        case TDH_INTYPE_ANSICHAR: // WBEM
+
+            wprintf(L&quot;%hc&quot;, *static_cast&lt;unsigned char*&gt;(pData));
+            break;
+
+        case TDH_INTYPE_SIZET: // WBEM
+
+            if (cData == 8)
+            {
+                wprintf(L&quot;%llu&quot;, *static_cast&lt;unsigned __int64*&gt;(pData));
+            }
+            else
+            {
+                wprintf(L&quot;%u&quot;, *static_cast&lt;unsigned*&gt;(pData));
+            }
+            break;
+
+        case TDH_INTYPE_HEXDUMP: // WBEM, deprecated
+
+            if (cData &gt;= 4) // Assume first 4 bytes are bytecount.
+            {
+                PrintHexBinary(static_cast&lt;BYTE*&gt;(pData) + 4, cData - 4);
+            }
+            break;
+
+        case TDH_INTYPE_WBEMSID: // WBEM, deprecated
+        {
+            // A WBEM SID is actually a TOKEN_USER structure followed
+            // by the SID. The TOKEN_USER structure is 2 * pointerSize.
+            unsigned const cbTokenUser =
+                m_pEvent-&gt;EventHeader.Flags &amp; EVENT_HEADER_FLAG_32_BIT_HEADER
+                ? 2 * 4
+                : m_pEvent-&gt;EventHeader.Flags &amp; EVENT_HEADER_FLAG_64_BIT_HEADER
+                ? 2 * 8
+                : 2 * sizeof(void*);
+            if (cData &gt; cbTokenUser)
+            {
+                // Skip the TOKEN_USER.
+                PrintSid(static_cast&lt;BYTE*&gt;(pData) + cbTokenUser, cData - cbTokenUser);
+            }
+            else
+            {
+                PrintHexBinary(pData, cData);
+            }
+            break;
+        }
+        default:
+
+            // Unknown intype. Treat as binary.
+            wprintf(L&quot;InType=%u &quot;, inType);
+            PrintHexBinary(pData, cData);
+            break;
+        }
+    }
+
+    bool PrintMapString(ULONG mapNameOffset, ULONG value)
+    {
+        bool matched = false;
+
+        ULONG cb = static_cast&lt;ULONG&gt;(m_mapBuffer.size());
+        ULONG status = TdhGetEventMapInformation(
+            m_pEvent,
+            const_cast&lt;LPWSTR&gt;(TeiString(mapNameOffset)),
+            reinterpret_cast&lt;EVENT_MAP_INFO*&gt;(m_mapBuffer.data()),
+            &amp;cb);
+        if (status == ERROR_INSUFFICIENT_BUFFER)
+        {
+            m_mapBuffer.reserve(cb);
+            m_mapBuffer.resize(m_mapBuffer.capacity());
+            status = TdhGetEventMapInformation(
+                m_pEvent,
+                const_cast&lt;LPWSTR&gt;(TeiString(mapNameOffset)),
+                reinterpret_cast&lt;EVENT_MAP_INFO*&gt;(m_mapBuffer.data()),
+                &amp;cb);
+        }
+
+        if (status == ERROR_SUCCESS)
+        {
+            EVENT_MAP_INFO const* pMapInfo = reinterpret_cast&lt;EVENT_MAP_INFO*&gt;(m_mapBuffer.data());
+
+            if ((pMapInfo-&gt;Flag &amp; EVENTMAP_INFO_FLAG_MANIFEST_VALUEMAP) != 0 ||
+                ((pMapInfo-&gt;Flag &amp; EVENTMAP_INFO_FLAG_WBEM_VALUEMAP) != 0 &amp;&amp;
+                (pMapInfo-&gt;Flag &amp; ~EVENTMAP_INFO_FLAG_WBEM_VALUEMAP) != EVENTMAP_INFO_FLAG_WBEM_FLAG))
+            {
+                if ((pMapInfo-&gt;Flag &amp; EVENTMAP_INFO_FLAG_WBEM_NO_MAP) == 0)
+                {
+                    for (ULONG i = 0; i != pMapInfo-&gt;EntryCount; i += 1)
+                    {
+                        if (pMapInfo-&gt;MapEntryArray[i].Value == value)
+                        {
+                            wprintf(L&quot;%ls&quot;, MapString(pMapInfo, i));
+                            matched = true;
+                            break;
+                        }
+                    }
+                }
+                else if (value &lt; pMapInfo-&gt;EntryCount)
+                {
+                    wprintf(L&quot;%ls&quot;, MapString(pMapInfo, value));
+                    matched = true;
+                }
+            }
+            else if (
+                (pMapInfo-&gt;Flag &amp; EVENTMAP_INFO_FLAG_MANIFEST_BITMAP) != 0 ||
+                (pMapInfo-&gt;Flag &amp; EVENTMAP_INFO_FLAG_WBEM_BITMAP) != 0 ||
+                ((pMapInfo-&gt;Flag &amp; EVENTMAP_INFO_FLAG_WBEM_VALUEMAP) != 0 &amp;&amp;
+                (pMapInfo-&gt;Flag &amp; ~EVENTMAP_INFO_FLAG_WBEM_VALUEMAP) == EVENTMAP_INFO_FLAG_WBEM_FLAG))
+            {
+                ULONG matchedBits = 0;
+                if ((pMapInfo-&gt;Flag &amp; EVENTMAP_INFO_FLAG_WBEM_NO_MAP) == 0)
+                {
+                    for (ULONG i = 0; i != pMapInfo-&gt;EntryCount; i += 1)
+                    {
+                        ULONG const mask = pMapInfo-&gt;MapEntryArray[i].Value;
+                        if ((value &amp; mask) == mask)
+                        {
+                            if (mask != 0 || value == 0)
+                            {
+                                wprintf(L&quot;%hs%ls&quot;, matched ? &quot;| &quot; : &quot;&quot;, MapString(pMapInfo, i));
+                                matched = true;
+                                matchedBits |= mask;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    for (ULONG i = 0; i != pMapInfo-&gt;EntryCount; i += 1)
+                    {
+                        ULONG const mask = 1 &lt;&lt; i;
+                        if (value &amp; mask)
+                        {
+                            wprintf(L&quot;%ls%ls&quot;, matched ? L&quot;| &quot; : L&quot;&quot;, MapString(pMapInfo, i));
+                            matched = true;
+                            matchedBits |= mask;
+                        }
+                    }
+                }
+
+                // Print any unused bits.
+                if (matched &amp;&amp; matchedBits != value)
+                {
+                    wprintf(L&quot;| 0x%x&quot;, value ^ matchedBits);
+                }
+            }
+        }
+
+        return matched;
+    }
+
+    void PrintGuid(GUID const&amp; g)
+    {
+        wprintf(L&quot;{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}&quot;,
+            g.Data1, g.Data2, g.Data3, g.Data4[0], g.Data4[1], g.Data4[2],
+            g.Data4[3], g.Data4[4], g.Data4[5], g.Data4[6], g.Data4[7]);
+    }
+
+    void PrintFileTime(FILETIME const&amp; ft)
+    {
+        SYSTEMTIME st = {};
+        FileTimeToSystemTime(&amp;ft, &amp;st);
+        PrintSystemTime(st);
+    }
+
+    void PrintSystemTime(SYSTEMTIME const&amp; st)
+    {
+        wprintf(L&quot;%04u-%02u-%02uT%02u:%02u:%02u.%03uZ&quot;,
+            st.wYear,
+            st.wMonth,
+            st.wDay,
+            st.wHour,
+            st.wMinute,
+            st.wSecond,
+            st.wMilliseconds);
+    }
+
+    void PrintIPv6(_In_bytecount_(cb) void const* p, unsigned cb)
+    {
+        if (cb == 16)
+        {
+            // Simple (greedy, non-canonical) formatting for IPv6 addresses.
+
+            UINT16 const* const pw = static_cast&lt;UINT16 const*&gt;(p);
+            unsigned i;
+
+            // Initial state: we haven't seen a 0:0 yet.
+
+            for (i = 0;; i += 1)
+            {
+                if (i == 7)
+                {
+                    // No 0:0 in the address.
+                    wprintf(L&quot;%x&quot;, _byteswap_ushort(pw[i]));
+                    return;
+                }
+
+                if (pw[i] == 0 &amp;&amp; pw[i + 1] == 0)
+                {
+                    // Found a 0:0
+                    if (i == 0)
+                    {
+                        wprintf(L&quot;:&quot;);
+                    }
+
+                    i += 2;
+                    break;
+                }
+
+                wprintf(L&quot;%x:&quot;, _byteswap_ushort(pw[i]));
+            }
+
+            // We've seen 0:0 and are omitting groups. Scan for a non-zero.
+
+            for (;;)
+            {
+                if (i == 8)
+                {
+                    // Address ends with 0:0
+                    wprintf(L&quot;:&quot;);
+                    return;
+                }
+
+                if (pw[i] != 0)
+                {
+                    break;
+                }
+
+                i += 1;
+            }
+
+            for (; i != 8; i += 1)
+            {
+                wprintf(L&quot;:%x&quot;, _byteswap_ushort(pw[i]));
+            }
+        }
+        else
+        {
+            PrintHexBinary(p, cb);
+        }
+    }
+
+    void PrintHexBinary(_In_bytecount_(cb) void const* p, unsigned cb)
+    {
+        BYTE const* pb = static_cast&lt;BYTE const*&gt;(p);
+        wprintf(L&quot;0x&quot;);
+        for (unsigned i = 0; i != cb; i += 1)
+        {
+            wprintf(L&quot;%02x&quot;, pb[i]);
+        }
+    }
+
+    void PrintSid(_In_bytecount_(cb) PSID pSid, unsigned cb)
+    {
+        LPWSTR szSid = nullptr;
+        if (cb &lt; 8u || // Minimum SID size is 8.
+            cb &lt; (8u + static_cast&lt;BYTE*&gt;(pSid)[1] * 4u) || // SID size = 8 + (4 * SubAuthorityCount)
+            !ConvertSidToStringSidW(pSid, &amp;szSid))
+        {
+            PrintHexBinary(pSid, cb);
+        }
+        else
+        {
+            wprintf(L&quot;%ls&quot;, szSid);
+            LocalFree(szSid);
+        }
+    }
+
+    void PrintIndent()
+    {
+        wprintf(L&quot;%*ls&quot;, m_indentLevel * 2, L&quot;&quot;);
+    }
+
+    /*
+    Uses the PROPERTY_DATA_DESCRIPTORs in m_pdd (controlled with PushPdd/PopPdd)
+    to call TdhGetProperty. If successful, puts the property data into
+    m_propertyBuffer.
+    */
+    ULONG GetProperty()
+    {
+        ULONG status;
+        ULONG cb = 0;
+        status = TdhGetPropertySize(
+            m_pEvent,
+            m_tdhContextCount,
+            m_tdhContextCount ? m_tdhContext : nullptr,
+            static_cast&lt;ULONG&gt;(m_pdd.size()),
+            m_pdd.data(),
+            &amp;cb);
+        if (status == ERROR_SUCCESS)
+        {
+            m_propertyBuffer.resize(cb);
+            status = TdhGetProperty(
+                m_pEvent,
+                m_tdhContextCount,
+                m_tdhContextCount ? m_tdhContext : nullptr,
+                static_cast&lt;ULONG&gt;(m_pdd.size()),
+                m_pdd.data(),
+                cb,
+                m_propertyBuffer.data());
+        }
+
+        return status;
+    }
+
+    /*
+    Adds a property with the specified name to the PROPERTY_DATA_DESCRIPTOR
+    stack. Returns the property's index within the m_pdd vector.
+    */
+    unsigned PushPdd(_In_z_ LPCWSTR szPropertyName)
+    {
+        unsigned index = static_cast&lt;unsigned&gt;(m_pdd.size());
+        m_pdd.emplace_back();
+        PROPERTY_DATA_DESCRIPTOR&amp; pdd = m_pdd.back();
+        pdd.PropertyName = reinterpret_cast&lt;UINT_PTR&gt;(szPropertyName);
+        pdd.ArrayIndex = 0;
+        pdd.Reserved = 0;
+        return index;
+    }
+
+    /*
+    Removes a property from the PROPERTY_DATA_DESCRIPTOR stack.
+    */
+    void PopPdd()
+    {
+        m_pdd.pop_back();
+    }
+
+    /*
+    Returns true if the current event has the EVENT_HEADER_FLAG_STRING_ONLY
+    flag set.
+    */
+    bool IsStringEvent() const
+    {
+        return (m_pEvent-&gt;EventHeader.Flags &amp; EVENT_HEADER_FLAG_STRING_ONLY) != 0;
+    }
+
+    /*
+    Returns true if the current event has the EVENT_HEADER_FLAG_TRACE_MESSAGE
+    flag set.
+    */
+    bool IsWppEvent() const
+    {
+        return (m_pEvent-&gt;EventHeader.Flags &amp; EVENT_HEADER_FLAG_TRACE_MESSAGE) != 0;
+    }
+
+    /*
+    Converts a TRACE_EVENT_INFO offset (e.g. TaskNameOffset) into a string.
+    */
+    _Ret_z_ LPCWSTR TeiString(unsigned offset)
+    {
+        return reinterpret_cast&lt;LPCWSTR&gt;(m_teiBuffer.data() + offset);
+    }
+
+    /*
+    Converts an EVENT_MAP_INFO MapEntryArray index into a string.
+    */
+    static _Ret_z_ LPCWSTR MapString(_In_ const EVENT_MAP_INFO* pMapInfo, unsigned index)
+    {
+        return reinterpret_cast&lt;LPCWSTR&gt;(
+            reinterpret_cast&lt;const BYTE*&gt;(pMapInfo) + pMapInfo-&gt;MapEntryArray[index].OutputOffset);
+    }
+
+private:
+
+    TDH_CONTEXT m_tdhContext[1]; // May contain TDH_CONTEXT_WPP_TMFSEARCHPATH.
+    BYTE m_tdhContextCount;      // 1 if a TMF search path is present.
+    BYTE m_indentLevel;          // How far to indent the output.
+    EVENT_RECORD* m_pEvent;      // The event we're currently printing.
+    std::vector&lt;PROPERTY_DATA_DESCRIPTOR&gt; m_pdd; // Path to the property we're currently decoding.
+    std::vector&lt;USHORT&gt; m_integerValues; // Stored property values for resolving array lengths.
+    std::vector&lt;BYTE&gt; m_teiBuffer; // Buffer for TRACE_EVENT_INFO data.
+    std::vector&lt;BYTE&gt; m_propertyBuffer; // Buffer for the data returned by TdhGetProperty.
+    std::vector&lt;BYTE&gt; m_mapBuffer; // Buffer for the data returned by TdhGetEventMapInformation.
+};
+
+/*
+Parses and stores the command line options.
+*/
+struct DecoderSettings
+{
+    std::vector&lt;LPCWSTR&gt; etlFiles;
+    std::vector&lt;LPCWSTR&gt; manFiles;
+    std::vector&lt;LPCWSTR&gt; binFiles;
+    LPCWSTR szTmfSearchPath;
+    bool showUsage;
+
+    DecoderSettings(
+        int argc,
+        _In_count_(argc) LPWSTR argv[])
+        : szTmfSearchPath()
+        , showUsage()
+    {
+        for (int i = 1; i &lt; argc; i += 1)
+        {
+            LPCWSTR szArg = argv[i];
+            if (szArg[0] != L'/' &amp;&amp; szArg[0] != L'-')
+            {
+                etlFiles.push_back(szArg);
+            }
+            else if (szArg[1] == L'\0' ||
+                (szArg[2] != L'\0' &amp;&amp; szArg[2] != L':' &amp;&amp; szArg[2] != L'='))
+            {
+                // Options should be /X, /X:Value, or /X=Value
+                wprintf(L&quot;ERROR: Incorrectly-formatted option: %ls\n&quot;, szArg);
+                showUsage = true;
+            }
+            else
+            {
+                LPCWSTR szArgValue = &amp;szArg[3];
+                switch (szArg[1])
+                {
+                case L'?':
+                case L'h':
+                case L'H':
+                    showUsage = true;
+                    break;
+
+                case L'B':
+                case L'b':
+                    binFiles.push_back(szArgValue);
+                    break;
+
+                case L'M':
+                case L'm':
+                    manFiles.push_back(szArgValue);
+                    break;
+
+                case L'T':
+                case L't':
+                    if (szTmfSearchPath == nullptr)
+                    {
+                        szTmfSearchPath = szArgValue;
+                    }
+                    else
+                    {
+                        wprintf(L&quot;ERROR: TMF search path already set: %ls\n&quot;, szArg);
+                        showUsage = true;
+                    }
+                    break;
+
+                default:
+                    wprintf(L&quot;ERROR: Unrecognized option: %ls\n&quot;, szArg);
+                    showUsage = true;
+                    break;
+                }
+            }
+        }
+
+        if (!showUsage &amp;&amp; etlFiles.empty())
+        {
+            wprintf(L&quot;ERROR: No ETL files specified.\n&quot;);
+            showUsage = true;
+        }
+    }
+};
+
+/*
+Helper class to automatically close TRACEHANDLEs.
+*/
+class TraceHandles
+{
+public:
+
+    ~TraceHandles()
+    {
+        CloseHandles();
+    }
+
+    void CloseHandles()
+    {
+        while (!handles.empty())
+        {
+            CloseTrace(handles.back());
+            handles.pop_back();
+        }
+    }
+
+    ULONG OpenTraceW(
+        _Inout_ EVENT_TRACE_LOGFILEW* pLogFile)
+    {
+        ULONG status;
+
+        handles.reserve(handles.size() + 1);
+        TRACEHANDLE handle = ::OpenTraceW(pLogFile);
+        if (handle == INVALID_PROCESSTRACE_HANDLE)
+        {
+            status = GetLastError();
+        }
+        else
+        {
+            handles.push_back(handle);
+            status = 0;
+        }
+
+        return status;
+    }
+
+    ULONG ProcessTrace(
+        _In_opt_ LPFILETIME pStartTime,
+        _In_opt_ LPFILETIME pEndTime)
+    {
+        return ::ProcessTrace(
+            handles.data(),
+            static_cast&lt;ULONG&gt;(handles.size()),
+            pStartTime,
+            pEndTime);
+    }
+
+private:
+
+    std::vector&lt;TRACEHANDLE&gt; handles;
+};
+
+/*
+This function will be used as the EventRecordCallback function in EVENT_TRACE_LOGFILE.
+It expects that the EVENT_TRACE_LOGFILE's Context pointer is set to a DecoderContext.
+*/
+static void WINAPI EventRecordCallback(
+    _In_ EVENT_RECORD* pEventRecord)
+{
+    try
+    {
+        // We expect that the EVENT_TRACE_LOGFILE.Context pointer was set with a
+        // pointer to a DecoderContext. ProcessTrace will put the Context value
+        // into EVENT_RECORD.UserContext.
+        DecoderContext* pContext = static_cast&lt;DecoderContext*&gt;(pEventRecord-&gt;UserContext);
+
+        // The actual decoding work is done in PrintEventRecord.
+        pContext-&gt;PrintEventRecord(pEventRecord);
+    }
+    catch (std::exception const&amp; ex)
+    {
+        wprintf(L&quot;\nERROR: %hs\n&quot;, ex.what());
+    }
+}
+
+int __cdecl wmain(int argc, _In_count_(argc) LPWSTR argv[])
+{
+    int exitCode;
+
+    try
+    {
+        DecoderSettings settings(argc, argv);
+        TraceHandles handles;
+        if (settings.showUsage)
+        {
+            wprintf(L&quot;&quot;
+                &quot;\nUsage:&quot;
+                &quot;\n&quot;
+                &quot;\n  TdhGetProperty_Sample [options] filename1.etl (filename2.etl...)&quot;
+                &quot;\n&quot;
+                &quot;\nOptions:&quot;
+                &quot;\n&quot;
+                &quot;\n  -m:ManifestFile.man  Load decoding data from a manifest with TdhLoadManifest.&quot;
+                &quot;\n  -b:ResourceFile.dll  Load decoding data from a DLL with&quot;
+                &quot;\n                       TdhLoadManifestFromBinary.&quot;
+                &quot;\n  -t:TmfSearchPath     Set the TMF search path for WPP events.&quot;
+                &quot;\n&quot;
+                &quot;\n&quot;);
+            exitCode = 1;
+            goto Done;
+        }
+
+        DecoderContext context(settings.szTmfSearchPath);
+
+        for (size_t i = 0; i != settings.manFiles.size(); i += 1)
+        {
+            exitCode = TdhLoadManifest(const_cast&lt;LPWSTR&gt;(settings.manFiles[i]));
+            if (exitCode != 0)
+            {
+                wprintf(L&quot;ERROR: TdhLoadManifest error %u for manifest: %ls\n&quot;,
+                    exitCode,
+                    settings.manFiles[i]);
+                goto Done;
+            }
+        }
+
+        for (size_t i = 0; i != settings.binFiles.size(); i += 1)
+        {
+            exitCode = TdhLoadManifestFromBinary(const_cast&lt;LPWSTR&gt;(settings.binFiles[i]));
+            if (exitCode != 0)
+            {
+                wprintf(L&quot;ERROR: TdhLoadManifestFromBinary error %u for binary: %ls\n&quot;,
+                    exitCode,
+                    settings.binFiles[i]);
+                goto Done;
+            }
+        }
+
+        for (size_t i = 0; i != settings.etlFiles.size(); i += 1)
+        {
+            EVENT_TRACE_LOGFILEW logFile = { const_cast&lt;LPWSTR&gt;(settings.etlFiles[i]) };
+            logFile.ProcessTraceMode = PROCESS_TRACE_MODE_EVENT_RECORD;
+            logFile.EventRecordCallback = &amp;EventRecordCallback;
+            logFile.Context = &amp;context;
+
+            exitCode = handles.OpenTraceW(&amp;logFile);
+            if (exitCode != 0)
+            {
+                wprintf(L&quot;ERROR: OpenTraceW error %u for file: %ls\n&quot;,
+                    exitCode,
+                    settings.etlFiles[i]);
+                goto Done;
+            }
+
+            wprintf(L&quot;Opened: %ls\n&quot;, logFile.LogFileName);
+
+            // Optionally print information read from the log file.
+            // For example, show information about lost buffers and events.
+
+            if (logFile.LogfileHeader.BuffersLost != 0)
+            {
+                wprintf(L&quot;  **BuffersLost = %lu\n&quot;, logFile.LogfileHeader.BuffersLost);
+            }
+
+            if (logFile.LogfileHeader.EventsLost != 0)
+            {
+                wprintf(L&quot;  **EventsLost = %lu\n&quot;, logFile.LogfileHeader.EventsLost);
+            }
+        }
+
+        exitCode = handles.ProcessTrace(nullptr, nullptr);
+        if (exitCode != 0)
+        {
+            wprintf(L&quot;ERROR: ProcessTrace error %u\n&quot;,
+                exitCode);
+            goto Done;
+        }
+    }
+    catch (std::exception const&amp; ex)
+    {
+        wprintf(L&quot;\nERROR: %hs\n&quot;, ex.what());
+        exitCode = 1;
+    }
+
+Done:
+
+    return exitCode;
+}
+</code></pre>
+</body>

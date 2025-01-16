@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Intelligent Connect</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Intelligent Connect
+ms.assetid: 938ba1b0-822e-4871-8786-b7eeee243867
+title: Intelligent Connect
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Intelligent Connect</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>Intelligent Connect is the mechanism the Filter Graph Manager uses to build filter graphs. It consists of several related algorithms that select filters and add them to the filter graph.</p>
+<p>Read this topic if you are having trouble building a certain filter graph and want to troubleshoot the problem, or if you are writing your own filter and want to make it available for automatic graph building.</p>
+<p>Intelligent Connect involves the following <a href="/windows/desktop/api/Strmif/nn-strmif-igraphbuilder"><strong>IGraphBuilder</strong></a> methods:</p>
+<ul>
+<li><a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-addsourcefilter"><strong>IGraphBuilder::AddSourceFilter</strong></a></li>
+<li><a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-render"><strong>IGraphBuilder::Render</strong></a></li>
+<li><a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-renderfile"><strong>IGraphBuilder::RenderFile</strong></a></li>
+<li><a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-connect"><strong>IGraphBuilder::Connect</strong></a></li>
+</ul>
+<h3>IGraphBuilder::AddSourceFilter</h3>
+<p>The <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-addsourcefilter"><strong>IGraphBuilder::AddSourceFilter</strong></a> method adds a source filter that can render a specified file. First it looks in the registry and matches against the protocol (such as <code>https://</code>), the file name extension, or a set of predetermined <em>check bytes</em>, which are bytes at particular offsets in the file that match certain patterns. For details, see <a href="registering-a-custom-file-type.html">Registering a Custom File Type</a>. Assuming that the method locates an appropriate source filter, it then creates an instance of that filter, adds it to the graph, and calls the filter's <a href="/windows/desktop/api/Strmif/nf-strmif-ifilesourcefilter-load"><strong>IFileSourceFilter::Load</strong></a> method with the file name.</p>
+<h3>IGraphBuilder::Render</h3>
+<p>The <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-render"><strong>IGraphBuilder::Render</strong></a> method builds a subsection of a graph. It starts from an unconnected output pin and works downstream, adding new filters as needed. The starting filter must already be in the graph. At each step, the <strong>Render</strong> method searches for a filter that can connect to the previous filter. The stream can branch if a connecting filter has multiple output pins. The search stops when every stream has a renderer. If the <strong>Render</strong> method gets stuck, it might back up and try again, using a different set of filters.</p>
+<p>To connect each output pin, the <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-render"><strong>Render</strong></a> method does the following:</p>
+<ol>
+<li>
+<p>If the pin supports the <a href="/windows/desktop/api/Strmif/nn-strmif-istreambuilder"><strong>IStreamBuilder</strong></a> interface, the Filter Graph Manager delegates the entire process to the pin's <a href="/windows/desktop/api/Strmif/nf-strmif-istreambuilder-render"><strong>IStreamBuilder::Render</strong></a> method. By exposing this interface, the pin assumes responsibility for building the remainder of the graph, down to the renderer. However, very few pins support this interface.</p>
+</li>
+<li>
+<p>The Filter Graph Manager tries to use filters that are cached in memory, if any. Throughout the Intelligent Connect process, the Filter Graph Manager may cache filters from earlier steps in the process. (Also, see <a href="dynamic-graph-building.html">Dynamic Graph Building</a>.)</p>
+</li>
+<li>
+<p>If the filter graph contains any filters with unconnected input pins, the Filter Graph Manager tries them next. You can force the <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-render"><strong>Render</strong></a> method to try a particular filter by adding that filter to the graph before calling <strong>Render</strong>.</p>
+</li>
+<li>
+<p>Starting in WindowsÂ 7, DirectShow has a list of preferred filters for certain media subtypes. If there is a preferred filter for the media type that is being rendered, the Filter Graph Manager tries that filter next. An application can modify the list of preferred filters by using the <a href="/windows/desktop/api/Strmif/nn-strmif-iamplugincontrol"><strong>IAMPluginControl</strong></a> interface. Changes to the list affect the application's current process, and are discarded after the process ends.</p>
+</li>
+<li>
+<p>Finally, if no suitable filter has been found, the Filter Graph Manager searches the registry, using the <a href="/windows/desktop/api/Strmif/nf-strmif-ifiltermapper2-enummatchingfilters"><strong>IFilterMapper2::EnumMatchingFilters</strong></a> method. It tries to match the output pin's preferred media types against media types listed in the registry.</p>
+<p>Each filter is registered with a <em>merit</em>, a numerical value that indicates how preferable the filter is, relative to other filters. The <a href="/windows/desktop/api/Strmif/nf-strmif-ifiltermapper2-enummatchingfilters"><strong>EnumMatchingFilters</strong></a> method returns filters in order of merit, with a minimum merit of <strong>MERIT_DO_NOT_USE</strong> + 1. It ignores filters with a merit of <strong>MERIT_DO_NOT_USE</strong> or less. Filters are also grouped into categories, defined by GUID. Categories themselves have merit, and the <strong>EnumMatchingFilters</strong> method ignores any category with a merit of <strong>MERIT_DO_NOT_USE</strong> or less, even if the filters in that category have higher merit values.</p>
+<p>Starting in WindowsÂ 7, DirectShow has a list of blocked filters for certain media subtypes. The Filter Graph Manager skips filters on this list. An application can modify the list of blocked filters by using the <a href="/windows/desktop/api/Strmif/nn-strmif-iamplugincontrol"><strong>IAMPluginControl</strong></a> interface. Changes to this list affect the application's current process, and are discarded after the process ends.</p>
+</li>
+</ol>
+<p>To summarize, the <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-render"><strong>Render</strong></a> method tries filters in the following order:</p>
+<ol>
+<li>Use <a href="/windows/desktop/api/Strmif/nn-strmif-istreambuilder"><strong>IStreamBuilder</strong></a>.</li>
+<li>Try cached filters.</li>
+<li>Try filters in the graph.</li>
+<li>WindowsÂ 7 or later: Try the preferred filter for the media type, if any.</li>
+<li>Look up filters in the registry.</li>
+</ol>
+<h3>IGraphBuilder::RenderFile</h3>
+<p>The <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-renderfile"><strong>IGraphBuilder::RenderFile</strong></a> method builds a default playback graph from a file name. Internally, this method uses <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-addsourcefilter"><strong>AddSourceFilter</strong></a> to locate the correct source filter, and <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-render"><strong>Render</strong></a> to build the rest of the graph.</p>
+<h3>IGraphBuilder::Connect</h3>
+<p>The <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-connect"><strong>IGraphBuilder::Connect</strong></a> method connects an output pin to an input pin. This method adds intermediate filters if needed, using a variation of the algorithm described for the <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-render"><strong>Render</strong></a> method:</p>
+<ol>
+<li>Try a direct connection between the filters, with no intermediate filters.</li>
+<li>Try cached filters.</li>
+<li>Try filters in the graph.</li>
+<li>WindowsÂ 7 or later: Try the preferred filter for the media type, if any.</li>
+<li>Look up filters in the registry.</li>
+</ol>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="filter-categories.html">Filter Categories</a></p>
+<!-- raw HTML omitted -->
+<p><a href="merit.html">Merit</a></p>
+<!-- raw HTML omitted -->
+<p><a href="simulating-graph-building-with-graphedit.html">Simulating Graph Building with GraphEdit</a></p>
+<!-- raw HTML omitted -->
+<p><a href="building-the-filter-graph.html">Building the Filter Graph</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

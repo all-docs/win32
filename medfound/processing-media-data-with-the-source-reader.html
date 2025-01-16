@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using the Source Reader to Process Media Data</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to use the Source Reader to process media data.
+ms.assetid: 583f5736-f767-47c5-8fdc-b3645aed59f6
+title: Using the Source Reader to Process Media Data
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using the Source Reader to Process Media Data</h1>
+<p>This topic describes how to use the <a href="source-reader.html">Source Reader</a> to process media data.</p>
+<p>To use the Source Reader, follow these basic steps:</p>
+<ol>
+<li>Create an instance of the Source Reader.</li>
+<li>Enumerate the possible output formats.</li>
+<li>Set the actual output format for each stream.</li>
+<li>Process data from the source.</li>
+</ol>
+<p>The remainder of this topic describes these steps in detail.</p>
+<ul>
+<li><a href="#creating-the-source-reader">Creating the Source Reader</a></li>
+<li><a href="#enumerating-output-formats">Enumerating Output Formats</a></li>
+<li><a href="#setting-output-formats">Setting Output Formats</a></li>
+<li><a href="#using-the-source-reader-to-process-media-data">Processing Media Data</a></li>
+<li><a href="#draining-the-data-pipeline">Draining the Data Pipeline</a></li>
+<li><a href="#getting-the-file-duration">Getting the File Duration</a></li>
+<li><a href="#seeking">Seeking</a></li>
+<li><a href="#playback-rate">Playback Rate</a></li>
+<li><a href="#hardware-acceleration">Hardware Acceleration</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Creating the Source Reader</h2>
+<p>To create an instance of the Source Reader, call one of the following functions:</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-mfcreatesourcereaderfromurl"><strong>MFCreateSourceReaderFromURL</strong></a><!-- raw HTML omitted --></td>
+<td>Takes a URL as input. This function uses the <a href="source-resolver.html">Source Resolver</a> to create a media source from the URL.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-mfcreatesourcereaderfrombytestream"><strong>MFCreateSourceReaderFromByteStream</strong></a><!-- raw HTML omitted --></td>
+<td>Takes a pointer to a byte stream. This function also uses the Source Resolver to create the media source.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-mfcreatesourcereaderfrommediasource"><strong>MFCreateSourceReaderFromMediaSource</strong></a><!-- raw HTML omitted --></td>
+<td>Takes a pointer to a media source that has already been created. This function is useful for media sources that the Source Resolver cannot create, such capture devices or custom media sources.<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Typically, for media files, use <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-mfcreatesourcereaderfromurl"><strong>MFCreateSourceReaderFromURL</strong></a>. For devices, such as webcams, use <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-mfcreatesourcereaderfrommediasource"><strong>MFCreateSourceReaderFromMediaSource</strong></a>. (For more information about capture devices in Microsoft Media Foundation, see <a href="audio-video-capture.html">Audio/Video Capture</a>.)</p>
+<p>Each of these functions takes an optional <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfattributes"><strong>IMFAttributes</strong></a> pointer, which is used to set various options on the Source Reader, as described in the reference topics for these functions. To get the default behavior, set this parameter to <strong>NULL</strong>. Each function returns an <a href="/windows/desktop/api/mfreadwrite/nn-mfreadwrite-imfsourcereader"><strong>IMFSourceReader</strong></a> pointer as an output parameter. You must call <strong>CoInitialize(Ex)</strong> and <a href="/windows/desktop/api/mfapi/nf-mfapi-mfstartup"><strong>MFStartup</strong></a> function before calling any of these functions.</p>
+<p>The following code creates the Source Reader from a URL.</p>
+<pre lang="C++"><code>int __cdecl wmain(int argc, __in_ecount(argc) PCWSTR* argv)
+{
+    if (argc &lt; 2)
+    {
+        return 1;
+    }
+
+    const WCHAR *pszURL = argv[1];
+
+    // Initialize the COM runtime.
+    HRESULT hr = CoInitializeEx(0, COINIT_MULTITHREADED);
+    if (SUCCEEDED(hr))
+    {
+        // Initialize the Media Foundation platform.
+        hr = MFStartup(MF_VERSION);
+        if (SUCCEEDED(hr))
+        {
+            // Create the source reader.
+            IMFSourceReader *pReader;
+            hr = MFCreateSourceReaderFromURL(pszURL, NULL, &amp;pReader);
+            if (SUCCEEDED(hr))
+            {
+                ReadMediaFile(pReader);
+                pReader-&gt;Release();
+            }
+            // Shut down Media Foundation.
+            MFShutdown();
+        }
+        CoUninitialize();
+    }
+}
+</code></pre>
+<h2>Enumerating Output Formats</h2>
+<p>Every media source has at least one stream. For example, a video file might contain a video stream and an audio stream. The format of each stream is described using a media type, represented by the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediatype"><strong>IMFMediaType</strong></a> interface. For more information about media types, see <a href="media-types.html">Media Types</a>. You must examine the media type to understand the format of the data that you get from the Source Reader.</p>
+<p>Initially, every stream has a default format, which you can find by calling the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-getcurrentmediatype"><strong>IMFSourceReader::GetCurrentMediaType</strong></a> method:</p>
+<p>For each stream, the media source offers a list of possible media types for that stream. The number of types depends on the source. If the source represents a media file, there is typically only one type per stream. A webcam, on the other hand, might be able to stream video in several different formats. In that case, the application can select which format to use from the list of media types.</p>
+<p>To get one of the media types for a stream, call the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-getnativemediatype"><strong>IMFSourceReader::GetNativeMediaType</strong></a> method. This method takes two index parameters: The index of the stream, and an index into the list of media types for the stream. To enumerate all the types for a stream, increment the list index while keeping the stream index constant. When the list index goes out of bounds, <strong>GetNativeMediaType</strong> returns <strong>MF_E_NO_MORE_TYPES</strong>.</p>
+<pre lang="C++"><code>HRESULT EnumerateTypesForStream(IMFSourceReader *pReader, DWORD dwStreamIndex)
+{
+    HRESULT hr = S_OK;
+    DWORD dwMediaTypeIndex = 0;
+
+    while (SUCCEEDED(hr))
+    {
+        IMFMediaType *pType = NULL;
+        hr = pReader-&gt;GetNativeMediaType(dwStreamIndex, dwMediaTypeIndex, &amp;pType);
+        if (hr == MF_E_NO_MORE_TYPES)
+        {
+            hr = S_OK;
+            break;
+        }
+        else if (SUCCEEDED(hr))
+        {
+            // Examine the media type. (Not shown.)
+
+            pType-&gt;Release();
+        }
+        ++dwMediaTypeIndex;
+    }
+    return hr;
+}
+</code></pre>
+<p>To enumerate the media types for every stream, increment the stream index. When the stream index goes out of bounds, <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-getnativemediatype"><strong>GetNativeMediaType</strong></a> returns <strong>MF_E_INVALIDSTREAMNUMBER</strong>.</p>
+<pre lang="C++"><code>HRESULT EnumerateMediaTypes(IMFSourceReader *pReader)
+{
+    HRESULT hr = S_OK;
+    DWORD dwStreamIndex = 0;
+
+    while (SUCCEEDED(hr))
+    {
+        hr = EnumerateTypesForStream(pReader, dwStreamIndex);
+        if (hr == MF_E_INVALIDSTREAMNUMBER)
+        {
+            hr = S_OK;
+            break;
+        }
+        ++dwStreamIndex;
+    }
+    return hr;
+}
+</code></pre>
+<h2>Setting Output Formats</h2>
+<p>To change the output format, call the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-setcurrentmediatype"><strong>IMFSourceReader::SetCurrentMediaType</strong></a> method. This method takes the stream index and a media type:</p>
+<pre lang="syntax"><code>hr = pReader-&gt;SetCurrentMediaType(dwStreamIndex, pMediaType);
+</code></pre>
+<p>For the media type, it depends on whether you want to insert a decoder.</p>
+<ul>
+<li>To get data directly from the source without decoding it, use one of the types returned by <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-getnativemediatype"><strong>GetNativeMediaType</strong></a>.</li>
+<li>To decode the stream, create a new media type that describes the desired uncompressed format.</li>
+</ul>
+<p>In the case of the decoder, create the media type as follows:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreatemediatype"><strong>MFCreateMediaType</strong></a> to create a new media type.</li>
+<li>Set the <a href="mf-mt-major-type-attribute.html"><strong>MF_MT_MAJOR_TYPE</strong></a> attribute to specify audio or video.</li>
+<li>Set the <a href="mf-mt-subtype-attribute.html"><strong>MF_MT_SUBTYPE</strong></a> attribute to specify the subtype of the decoding format. (See <a href="audio-subtype-guids.html">Audio Subtype GUIDs</a> and <a href="video-subtype-guids.html">Video Subtype GUIDs</a>.)</li>
+<li>Call <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-setcurrentmediatype"><strong>IMFSourceReader::SetCurrentMediaType</strong></a>.</li>
+</ol>
+<p>The Source Reader will automatically load the decoder. To get the complete details of the decoded format, call <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-getcurrentmediatype"><strong>IMFSourceReader::GetCurrentMediaType</strong></a> after the call to <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-setcurrentmediatype"><strong>SetCurrentMediaType</strong></a></p>
+<p>The following code configures the video stream for RGB-32 and the audio stream for PCM audio.</p>
+<pre lang="C++"><code>HRESULT ConfigureDecoder(IMFSourceReader *pReader, DWORD dwStreamIndex)
+{
+    IMFMediaType *pNativeType = NULL;
+    IMFMediaType *pType = NULL;
+
+    // Find the native format of the stream.
+    HRESULT hr = pReader-&gt;GetNativeMediaType(dwStreamIndex, 0, &amp;pNativeType);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    GUID majorType, subtype;
+
+    // Find the major type.
+    hr = pNativeType-&gt;GetGUID(MF_MT_MAJOR_TYPE, &amp;majorType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Define the output type.
+    hr = MFCreateMediaType(&amp;pType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pType-&gt;SetGUID(MF_MT_MAJOR_TYPE, majorType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Select a subtype.
+    if (majorType == MFMediaType_Video)
+    {
+        subtype= MFVideoFormat_RGB32;
+    }
+    else if (majorType == MFMediaType_Audio)
+    {
+        subtype = MFAudioFormat_PCM;
+    }
+    else
+    {
+        // Unrecognized type. Skip.
+        goto done;
+    }
+
+    hr = pType-&gt;SetGUID(MF_MT_SUBTYPE, subtype);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Set the uncompressed format.
+    hr = pReader-&gt;SetCurrentMediaType(dwStreamIndex, NULL, pType);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+done:
+    SafeRelease(&amp;pNativeType);
+    SafeRelease(&amp;pType);
+    return hr;
+}
+</code></pre>
+<h2>Processing Media Data</h2>
+<p>To get media data from the source, call the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>IMFSourceReader::ReadSample</strong></a> method, as shown in the following code.</p>
+<pre lang="C++"><code>        DWORD streamIndex, flags;
+        LONGLONG llTimeStamp;
+
+        hr = pReader-&gt;ReadSample(
+            MF_SOURCE_READER_ANY_STREAM,    // Stream index.
+            0,                              // Flags.
+            &amp;streamIndex,                   // Receives the actual stream index. 
+            &amp;flags,                         // Receives status flags.
+            &amp;llTimeStamp,                   // Receives the time stamp.
+            &amp;pSample                        // Receives the sample or NULL.
+            );
+</code></pre>
+<p>The first parameter is the index of the stream for which you want to get data. You can also specify <strong>MF_SOURCE_READER_ANY_STREAM</strong> to get the next available data from any stream. The second parameter contains optional flags; see <a href="/windows/desktop/api/mfreadwrite/ne-mfreadwrite-mf_source_reader_control_flag"><strong>MF_SOURCE_READER_CONTROL_FLAG</strong></a> for a list of these. The third parameter receives the index of the stream that actually produces the data. You will need this information if you set the first parameter to <strong>MF_SOURCE_READER_ANY_STREAM</strong>. The fourth parameter receives status flags, indicating various events that can occur while reading the data, such as format changes in the stream. For a list of status flags, see <a href="/windows/desktop/api/mfreadwrite/ne-mfreadwrite-mf_source_reader_flag"><strong>MF_SOURCE_READER_FLAG</strong></a>.</p>
+<p>If the media source is able to produce data for the requested stream, the last parameter of <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>ReadSample</strong></a> receives a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfsample"><strong>IMFSample</strong></a> interface of a media sample object. Use the media sample to:</p>
+<ul>
+<li>Get a pointer to the media data.</li>
+<li>Get the presentation time and sample duration.</li>
+<li>Get attributes that describe interlacing, field dominance, and other aspects of the sample.</li>
+</ul>
+<p>The contents of the media data depend on the format of the stream. For an uncompressed video stream, each media sample contains a single video frame. For an uncompressed audio stream, each media sample contains a sequence of audio frames.</p>
+<p>The <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>ReadSample</strong></a> method can return <strong>S_OK</strong> and yet not return a media sample in the <em>pSample</em> parameter. For example, when you reach the end of the file, <strong>ReadSample</strong> sets the <strong>MF_SOURCE_READERF_ENDOFSTREAM</strong> flag in <em>dwFlags</em> and sets <em>pSample</em> to <strong>NULL</strong>. In this case, the <strong>ReadSample</strong> method returns <strong>S_OK</strong> because no error has occurred, even though the <em>pSample</em> parameter is set to <strong>NULL</strong>. Therefore, always check the value of <em>pSample</em> before you dereference it.</p>
+<p>The following code shows how to call <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>ReadSample</strong></a> in a loop and check the information returned by the method, until the end of the media file is reached.</p>
+<pre lang="C++"><code>HRESULT ProcessSamples(IMFSourceReader *pReader)
+{
+    HRESULT hr = S_OK;
+    IMFSample *pSample = NULL;
+    size_t  cSamples = 0;
+
+    bool quit = false;
+    while (!quit)
+    {
+        DWORD streamIndex, flags;
+        LONGLONG llTimeStamp;
+
+        hr = pReader-&gt;ReadSample(
+            MF_SOURCE_READER_ANY_STREAM,    // Stream index.
+            0,                              // Flags.
+            &amp;streamIndex,                   // Receives the actual stream index. 
+            &amp;flags,                         // Receives status flags.
+            &amp;llTimeStamp,                   // Receives the time stamp.
+            &amp;pSample                        // Receives the sample or NULL.
+            );
+
+        if (FAILED(hr))
+        {
+            break;
+        }
+
+        wprintf(L&quot;Stream %d (%I64d)\n&quot;, streamIndex, llTimeStamp);
+        if (flags &amp; MF_SOURCE_READERF_ENDOFSTREAM)
+        {
+            wprintf(L&quot;\tEnd of stream\n&quot;);
+            quit = true;
+        }
+        if (flags &amp; MF_SOURCE_READERF_NEWSTREAM)
+        {
+            wprintf(L&quot;\tNew stream\n&quot;);
+        }
+        if (flags &amp; MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED)
+        {
+            wprintf(L&quot;\tNative type changed\n&quot;);
+        }
+        if (flags &amp; MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED)
+        {
+            wprintf(L&quot;\tCurrent type changed\n&quot;);
+        }
+        if (flags &amp; MF_SOURCE_READERF_STREAMTICK)
+        {
+            wprintf(L&quot;\tStream tick\n&quot;);
+        }
+
+        if (flags &amp; MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED)
+        {
+            // The format changed. Reconfigure the decoder.
+            hr = ConfigureDecoder(pReader, streamIndex);
+            if (FAILED(hr))
+            {
+                break;
+            }
+        }
+
+        if (pSample)
+        {
+            ++cSamples;
+        }
+
+        SafeRelease(&amp;pSample);
+    }
+
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;ProcessSamples FAILED, hr = 0x%x\n&quot;, hr);
+    }
+    else
+    {
+        wprintf(L&quot;Processed %d samples\n&quot;, cSamples);
+    }
+    SafeRelease(&amp;pSample);
+    return hr;
+}
+</code></pre>
+<h2>Draining the Data Pipeline</h2>
+<p>During data processing, a decoder or other transform might buffer input samples. In the following diagram, the application calls <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>ReadSample</strong></a> and receives a sample with a presentation time equal to <em>t1</em>. The decoder is holding samples for <em>t2</em> and <em>t3</em>.</p>
+<p><img src="images/sourcereader02.png" alt="an illustration that shows buffering in a decoder." /></p>
+<p>On the next call to <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>ReadSample</strong></a>, the Source Reader might give <em>t4</em> to the decoder and return <em>t2</em> to the application.</p>
+<p>If you want to decode all of the samples that are currently buffered in the decoder, without passing any new samples to the decoder, set the <strong>MF_SOURCE_READER_CONTROLF_DRAIN</strong> flag in the <em>dwControlFlags</em> parameter of <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-readsample"><strong>ReadSample</strong></a>. Continue to do this in a loop until <strong>ReadSample</strong> returns a <strong>NULL</strong> sample pointer. Depending on how the decoder buffers samples, that might happen immediately or after several calls to <strong>ReadSample</strong>.</p>
+<h2>Getting the File Duration</h2>
+<p>To get the duration of a media file, call the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-getpresentationattribute"><strong>IMFSourceReader::GetPresentationAttribute</strong></a> method and request the <a href="mf-pd-duration-attribute.html"><strong>MF_PD_DURATION</strong></a> attribute, as shown in the following code.</p>
+<pre lang="C++"><code>HRESULT GetDuration(IMFSourceReader *pReader, LONGLONG *phnsDuration)
+{
+    PROPVARIANT var;
+    HRESULT hr = pReader-&gt;GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE, 
+        MF_PD_DURATION, &amp;var);
+    if (SUCCEEDED(hr))
+    {
+        hr = PropVariantToInt64(var, phnsDuration);
+        PropVariantClear(&amp;var);
+    }
+    return hr;
+}
+</code></pre>
+<p>The function shown here gets the duration in 100-nanosecond units. Divide by 10,000,000 to get the duration in seconds.</p>
+<h2>Seeking</h2>
+<p>A media source that gets data from a local file can usually seek to arbitrary positions in the file. Capture devices such as webcams generally cannot seek, because the data is live. A source that streams data over a network might be able to seek, depending on the network streaming protocol.</p>
+<p>To find out whether a media source can seek, call <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-getpresentationattribute"><strong>IMFSourceReader::GetPresentationAttribute</strong></a> and request the <a href="mf-source-reader-mediasource-characteristics.html">MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS</a> attribute, as shown in the following code:</p>
+<pre lang="C++"><code>HRESULT GetSourceFlags(IMFSourceReader *pReader, ULONG *pulFlags)
+{
+    ULONG flags = 0;
+
+    PROPVARIANT var;
+    PropVariantInit(&amp;var);
+
+    HRESULT hr = pReader-&gt;GetPresentationAttribute(
+        MF_SOURCE_READER_MEDIASOURCE, 
+        MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS, 
+        &amp;var);
+
+    if (SUCCEEDED(hr))
+    {
+        hr = PropVariantToUInt32(var, &amp;flags);
+    }
+    if (SUCCEEDED(hr))
+    {
+        *pulFlags = flags;
+    }
+
+    PropVariantClear(&amp;var);
+    return hr;
+}
+</code></pre>
+<p>This function gets a set of capabilities flags from the source. These flags are defined in the <a href="/windows/desktop/api/mfidl/ne-mfidl-mfmediasource_characteristics"><strong>MFMEDIASOURCE_CHARACTERISTICS</strong></a> enumeration. Two flags relate to seeking:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><strong>MFMEDIASOURCE_CAN_SEEK</strong><!-- raw HTML omitted --></td>
+<td>The source can seek.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><strong>MFMEDIASOURCE_HAS_SLOW_SEEK</strong><!-- raw HTML omitted --></td>
+<td>Seeking might take a long time to complete. For example, the source might need to download the entire file before it can seek. (There are no strict criteria for a source to return this flag.)<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The following code tests for the <strong>MFMEDIASOURCE_CAN_SEEK</strong> flag.</p>
+<pre lang="C++"><code>BOOL SourceCanSeek(IMFSourceReader *pReader)
+{
+    BOOL bCanSeek = FALSE;
+    ULONG flags;
+    if (SUCCEEDED(GetSourceFlags(pReader, &amp;flags)))
+    {
+        bCanSeek = ((flags &amp; MFMEDIASOURCE_CAN_SEEK) == MFMEDIASOURCE_CAN_SEEK);
+    }
+    return bCanSeek;
+}
+</code></pre>
+<p>To seek, call the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-setcurrentposition"><strong>IMFSourceReader::SetCurrentPosition</strong></a> method, as shown in the following code.</p>
+<pre lang="C++"><code>HRESULT SetPosition(IMFSourceReader *pReader, const LONGLONG&amp; hnsPosition)
+{
+    PROPVARIANT var;
+    HRESULT hr = InitPropVariantFromInt64(hnsPosition, &amp;var);
+    if (SUCCEEDED(hr))
+    {
+        hr = pReader-&gt;SetCurrentPosition(GUID_NULL, var);
+        PropVariantClear(&amp;var);
+    }
+    return hr;
+}
+</code></pre>
+<p>The first parameter gives the time format that you are using to specify the seek position. All media sources in Media Foundation are required to support 100-nanosecond units, indicated by the value <strong>GUID_NULL</strong>. The second parameter is a <strong>PROPVARIANT</strong> that contains the seek position. For 100-nanosecond time units, the data type is <strong>LONGLONG</strong>.</p>
+<p>Be aware that not every media source provides frame-accurate seeking. The accuracy of seeking depends on several factors, such as the key frame interval, whether the media file contains an index, and whether the data has a constant or variable bit rate. Therefore, after you seek to a position in a file, there is no guarantee that the time stamp on the next sample will exactly match the requested position. Generally, the actual position will not be later than the requested position, so you can discard samples until you reach the desired point in the stream.</p>
+<h2>Playback Rate</h2>
+<p>Although you can set the playback rate using the Source Reader, doing is typically not very useful, for the following reasons:</p>
+<ul>
+<li>The Source Reader does not support reverse playback, even if the media source does.</li>
+<li>The application controls the presentation times, so the application can implement fast or slow play without setting the rate on the source.</li>
+<li>Some media sources support <em>thinning</em> mode, where the source delivers fewer samplesâ€”typically just the key frames. However, if you want to drop non-key frames, you can check each sample for the <a href="mfsampleextension-cleanpoint-attribute.html">MFSampleExtension_CleanPoint</a> attribute.</li>
+</ul>
+<p>To set the playback rate using the Source Reader, call the <a href="/windows/desktop/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-getserviceforstream"><strong>IMFSourceReader::GetServiceForStream</strong></a> method to get the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratesupport"><strong>IMFRateSupport</strong></a> and <a href="/windows/desktop/api/mfidl/nn-mfidl-imfratecontrol"><strong>IMFRateControl</strong></a> interfaces from the media source.</p>
+<h2>Hardware Acceleration</h2>
+<p>The Source Reader is compatible with Microsoft DirectX Video Acceleration (DXVA) 2.0 for hardware accelerated video decoding. To use DXVA with the Source Reader, perform the following steps.</p>
+<ol>
+<li>Create a Microsoft Direct3D device.</li>
+<li>Call the <a href="/windows/desktop/api/dxva2api/nf-dxva2api-dxva2createdirect3ddevicemanager9"><strong>DXVA2CreateDirect3DDeviceManager9</strong></a> function to create the Direct3D device manager. This function gets a pointer to the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirect3ddevicemanager9"><strong>IDirect3DDeviceManager9</strong></a> interface.</li>
+<li>Call the <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-resetdevice"><strong>IDirect3DDeviceManager9::ResetDevice</strong></a> method with a pointer to the Direct3D device.</li>
+<li>Create an attribute store by calling the <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreateattributes"><strong>MFCreateAttributes</strong></a> function.</li>
+<li>Create the Source Reader. Pass the attribute store in the <em>pAttributes</em> parameter of the creation function.</li>
+</ol>
+<p>When you provide a Direct3D device, the Source Reader allocates video samples that are compatible with the DXVA video processor API. You can use DXVA video processing to perform hardware deinterlacing or video mixing. For more information, see <a href="dxva-video-processing.html">DXVA Video Processing</a>. Also, if the decoder supports DXVA 2.0, it will use the Direct3D device to perform hardware-accelerated decoding.</p>
+<blockquote>
+<p>[!IMPORTANT]
+Beginning in WindowsÂ 8, <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfdxgidevicemanager"><strong>IMFDXGIDeviceManager</strong></a> can be used instead of the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirect3ddevicemanager9"><strong>IDirect3DDeviceManager9</strong></a>. For Windows Store apps, you must use <strong>IMFDXGIDeviceManager</strong>. For more info, see the <a href="direct3d-11-video-apis.html">Direct3D 11 Video APIs</a>.</p>
+</blockquote>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="source-reader.html">Source Reader</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Query app package manifest info (C++)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Query app package manifest info (C++)
+description: Learn how to get info from the app package manifest for a Windows app using the packaging API.
+ms.assetid: A29986F9-C620-48CD-87F8-525DFA076AAB
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Query app package manifest info (C++)</h1>
+<p>Learn how to get info from the app package manifest for a Windows app using the <a href="interfaces.html">packaging API</a>.</p>
+<h3>Create a package manifest reader</h3>
+<p>To create a package manifest reader, call <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxfactory-createpackagereader"><strong>IAppxFactory::CreatePackageReader</strong></a> to create a package reader. The first parameter is an input stream for the package (.appx file). The second parameter is an output parameter that receives a pointer to an <a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxpackagereader"><strong>IAppxPackageReader</strong></a> pointer. Next, call <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxpackagereader-getmanifest"><strong>IAppxPackageReader::GetManifest</strong></a> to get the manifest reader. The parameter is an output parameter that receives a pointer to an <a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxmanifestreader"><strong>IAppxManifestReader</strong></a> pointer.</p>
+<pre lang="C++"><code>int wmain(
+    _In_ int argc,
+    _In_reads_(argc) wchar_t** argv)
+{
+    HRESULT hr = S_OK;
+ 
+    if (argc != 2)
+    {
+        wprintf(L&quot;Usage: DescribeAppx.exe inputFile\n&quot;);
+        wprintf(L&quot;       inputFile: Path to the app package to read\n&quot;);
+        return 2;
+    }
+
+    // Specify the appropriate COM threading model
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+    if (SUCCEEDED(hr))
+    {
+        IAppxPackageReader* packageReader = NULL;
+        IAppxManifestReader* manifestReader = NULL;
+
+        // Create a package reader using the file name given in command line
+        hr = GetPackageReader(argv[1], &amp;packageReader);
+
+        // Get manifest reader for the package and read from the manifest
+        if (SUCCEEDED(hr))
+        {
+            hr = packageReader-&gt;GetManifest(&amp;manifestReader);
+        }
+        if (SUCCEEDED(hr))
+        {
+            hr = ReadManifest(manifestReader);
+        }
+    }
+}
+
+//
+// Creates an app package reader.
+//
+// Parameters:
+//   inputFileName 
+//     Fully qualified name of the app package (.appx file) to be opened.
+//   reader 
+//     On success, receives the created instance of IAppxPackageReader.
+//
+HRESULT GetPackageReader(
+    _In_ LPCWSTR inputFileName,
+    _Outptr_ IAppxPackageReader** reader)
+{
+    HRESULT hr = S_OK;
+    IAppxFactory* appxFactory = NULL;
+    IStream* inputStream = NULL;
+
+    // Create a new factory
+    hr = CoCreateInstance(
+            __uuidof(AppxFactory),
+            NULL,
+            CLSCTX_INPROC_SERVER,
+            __uuidof(IAppxFactory),
+            (LPVOID*)(&amp;appxFactory));
+
+    // Create a stream over the input app package
+    if (SUCCEEDED(hr))
+    {
+        hr = SHCreateStreamOnFileEx(
+                inputFileName,
+                STGM_READ | STGM_SHARE_EXCLUSIVE,
+                0, // default file attributes
+                FALSE, // do not create new file
+                NULL, // no template
+                &amp;inputStream);
+    }
+
+    // Create a new package reader using the factory.  For 
+    // simplicity, we don't verify the digital signature of the package.
+    if (SUCCEEDED(hr))
+    {
+        hr = appxFactory-&gt;CreatePackageReader(
+                inputStream,
+                reader);
+    }
+
+    // Clean up allocated resources
+    if (inputStream != NULL)
+    {
+        inputStream-&gt;Release();
+        inputStream = NULL;
+    }
+    if (appxFactory != NULL)
+    {
+        appxFactory-&gt;Release();
+        appxFactory = NULL;
+    }
+    return hr;
+}
+</code></pre>
+<h3>Read package identity info</h3>
+<p>Package identify is specified using the <a href="/uwp/schemas/appxpackage/appxmanifestschema/element-identity"><strong>Identity</strong></a> element in the manifest. Use <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxmanifestreader-getpackageid"><strong>IAppxManifestReader::GetPackageId</strong></a> to get an <a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxmanifestpackageid"><strong>IAppxManifestPackageId</strong></a> to read package identity info, as shown here.</p>
+<p>This code uses <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxmanifestpackageid-getpackagefullname"><strong>IAppxManifestPackageId::GetPackageFullName</strong></a> to get the package full name, <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxmanifestpackageid-getname"><strong>IAppxManifestPackageId::GetName</strong></a> to get the package name, and <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxmanifestpackageid-getversion"><strong>IAppxManifestPackageId::GetVersion</strong></a> to get the package version.</p>
+<pre lang="C++"><code>//
+// Reads a subset of the manifest Identity element.
+//
+//
+HRESULT ReadManifestPackageId(
+    _In_ IAppxManifestReader* manifestReader)
+{
+    HRESULT hr = S_OK;
+
+    IAppxManifestPackageId* packageId = NULL;
+
+    // Get elements and attributes from the manifest reader
+    hr = manifestReader-&gt;GetPackageId(&amp;packageId);
+    if (SUCCEEDED(hr))
+    {
+        LPWSTR packageFullName = NULL;
+        LPWSTR packageName = NULL;
+        UINT64 packageVersion = 0;
+
+        hr = packageId-&gt;GetPackageFullName(&amp;packageFullName);
+
+        if (SUCCEEDED(hr))
+        {
+            hr = packageId-&gt;GetName(&amp;packageName);
+        }
+        if (SUCCEEDED(hr))
+        {
+            hr = packageId-&gt;GetVersion(&amp;packageVersion);
+        }
+        if (SUCCEEDED(hr))
+        {
+            wprintf(L&quot;Package full name: %s\n&quot;, packageFullName);
+            wprintf(L&quot;Package name: %s\n&quot;, packageName);
+            wprintf(L&quot;Package version: &quot;);
+
+            // Convert version number from 64-bit integer to dot-quad form
+            for (int bitPosition = 0x30; bitPosition &gt;= 0; bitPosition -= 0x10)
+            {
+                UINT64 versionWord = (packageVersion &gt;&gt; bitPosition) &amp; 0xFFFF;
+                wprintf(L&quot;%llu.&quot;, versionWord);
+            }
+            wprintf(L&quot;\n&quot;);
+        }
+
+        // Free all string buffers returned from the manifest API
+        CoTaskMemFree(packageFullName);
+        CoTaskMemFree(packageName);
+    }
+
+    // Clean up allocated resources
+    if (packageId != NULL)
+    {
+        packageId-&gt;Release();
+        packageId = NULL;
+    }
+     
+    return hr;
+}
+</code></pre>
+<h3>Read metadata that describes the package to users</h3>
+<p>Properties are specified using the <a href="/uwp/schemas/appxpackage/appxmanifestschema/element-properties"><strong>Properties</strong></a> element in the manifest. Use <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxmanifestreader-getproperties"><strong>IAppxManifestReader::GetProperties</strong></a> to get an <a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxmanifestproperties"><strong>IAppxManifestProperties</strong></a> to read this node, as shown here.</p>
+<p>This code uses <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxmanifestproperties-getstringvalue"><strong>IAppxManifestProperties::GetStringValue</strong></a> to get the package display name and package description.</p>
+<pre lang="C++"><code>//
+// Reads a subset of the manifest Properties element.
+//
+//
+HRESULT ReadManifestProperties(
+    _In_ IAppxManifestReader* manifestReader)
+{
+    HRESULT hr = S_OK;
+
+    IAppxManifestProperties* properties = NULL;
+
+    // Get elements and attributes from the manifest reader
+    hr = manifestReader-&gt;GetProperties(&amp;properties);
+    if (SUCCEEDED(hr))
+    {
+        LPWSTR displayName = NULL;
+        LPWSTR description = NULL;
+
+        hr = properties-&gt;GetStringValue(L&quot;DisplayName&quot;, &amp;displayName);
+
+        if (SUCCEEDED(hr))
+        {
+            hr = properties-&gt;GetStringValue(L&quot;Description&quot;, &amp;description);
+        }
+        if (SUCCEEDED(hr))
+        {
+            wprintf(L&quot;Package display name: %s\n&quot;, displayName);
+            wprintf(L&quot;Package description:  %s\n&quot;, description);
+        }
+
+        // Free all string buffers returned from the manifest API
+        CoTaskMemFree(displayName);
+        CoTaskMemFree(description);
+    }
+    // Clean up allocated resources
+    if (properties != NULL)
+    {
+        properties-&gt;Release();
+        properties = NULL;
+    }
+
+    return hr;
+}
+</code></pre>
+<h3>Read metadata about the apps included in the package</h3>
+<p>Apps are specified using the <a href="/uwp/schemas/appxpackage/appxmanifestschema/element-applications"><strong>Applications</strong></a> element in the manifest. Use <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxmanifestreader-getapplications"><strong>IAppxManifestReader::GetApplications</strong></a> to get an <a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxmanifestapplicationsenumerator"><strong>IAppxManifestApplicationsEnumerator</strong></a> to read this node. Use <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxmanifestapplicationsenumerator-getcurrent"><strong>IAppxManifestApplicationsEnumerator::GetCurrent</strong></a> and <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxmanifestapplicationsenumerator-movenext"><strong>IAppxManifestApplicationsEnumerator::MoveNext</strong></a> to get an <a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxmanifestapplication"><strong>IAppxManifestApplication</strong></a> for each app in the package.</p>
+<p>This code uses <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxmanifestapplication-getstringvalue"><strong>IAppxManifestApplication::GetStringValue</strong></a> to get the display name for each app.</p>
+<pre lang="C++"><code>//
+// Reads a subset of the manifest Applications element.
+//
+//
+HRESULT ReadManifestApplications(
+    _In_ IAppxManifestReader* manifestReader)
+{
+    HRESULT hr = S_OK;
+    BOOL hasCurrent = FALSE;
+    UINT32 applicationsCount = 0;
+
+    IAppxManifestApplicationsEnumerator* applications = NULL;
+
+    // Get elements and attributes from the manifest reader
+    hr = manifestReader-&gt;GetApplications(&amp;applications);
+    if (SUCCEEDED(hr))
+    {
+        hr = applications-&gt;GetHasCurrent(&amp;hasCurrent);
+
+        while (SUCCEEDED(hr) &amp;&amp; hasCurrent)
+        {
+            IAppxManifestApplication* application = NULL;
+            LPWSTR applicationName = NULL;
+
+            hr = applications-&gt;GetCurrent(&amp;application);
+            if (SUCCEEDED(hr))
+            {
+                application-&gt;GetStringValue(L&quot;DisplayName&quot;, &amp;applicationName);
+            }
+            if (SUCCEEDED(hr))
+            {
+                applicationsCount++;
+                wprintf(L&quot;App #%u: %s\n&quot;, applicationsCount, applicationName);
+            }
+
+            if (SUCCEEDED(hr))
+            {
+                hr = applications-&gt;MoveNext(&amp;hasCurrent);
+            }
+            if (application != NULL)
+            {
+                application-&gt;Release();
+                application = NULL;
+            }
+            CoTaskMemFree(applicationName);
+        }
+
+        wprintf(L&quot;Count of apps in the package: %u\n&quot;, applicationsCount);
+    }
+
+    // Clean up allocated resources
+    if (applications != NULL)
+    {
+        applications-&gt;Release();
+        applications = NULL;
+    }
+
+    return hr;
+}
+</code></pre>
+<h3>Clean up the package manifest reader</h3>
+<p>Before returning from the <code>wmain</code> function, call the <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> method to clean up the package manifest reader and call the <a href="/windows/desktop/api/combaseapi/nf-combaseapi-couninitialize"><strong>CoUninitialize</strong></a> function.</p>
+<pre lang="C++"><code>// Clean up allocated resources
+if (manifestReader != NULL)
+{
+    manifestReader-&gt;Release();
+    manifestReader = NULL;
+}
+if (packageReader != NULL)
+{
+    packageReader-&gt;Release();
+    packageReader = NULL;
+}
+
+CoUninitialize();
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Samples</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/AppxPackingDescribeAppx">Query app package and app manifest sample</a></p>
+<!-- raw HTML omitted -->
+<p><strong>Reference</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxmanifestreader"><strong>IAppxManifestReader</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

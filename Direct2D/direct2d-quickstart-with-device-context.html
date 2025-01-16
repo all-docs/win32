@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direct2D quickstart for Windows 8</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Direct2D quickstart for WindowsÂ 8
+description: Summarizes the steps required to draw with Direct2D for Windows 8 and provides example code. Direct2D is a native-code API for creating 2D graphics.
+ms.assetid: FF4623FA-CA60-4637-9EE6-34C4EC84E51A
+keywords:</p>
+<ul>
+<li>Direct2D,draw rectangle code example
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Direct2D quickstart for Windows 8</h1>
+<p>Direct2D is a native-code, immediate-mode API for creating 2D graphics. This topic illustrates how to use Direct2D to draw to a <a href="/uwp/api/Windows.UI.Core.CoreWindow"><strong>Windows::UI::Core::CoreWindow</strong></a>.</p>
+<p>This topic contains the following sections:</p>
+<ul>
+<li><a href="#drawing-a-simple-rectangle">Drawing a Simple Rectangle</a></li>
+<li><a href="#step-1-include-direct2d-header">Step 1: Include Direct2D Header</a></li>
+<li><a href="#step-2-create-an-id2d1factory1">Step 2: Create an ID2D1Factory1</a></li>
+<li><a href="#step-3-create-an-id2d1device-and-an-id2d1devicecontext">Step 3: Create an ID2D1Device and an ID2D1DeviceContext</a></li>
+<li><a href="#step-4-create-a-brush">Step 4: Create a Brush</a></li>
+<li><a href="#step-5-draw-the-rectangle">Step 5: Draw the Rectangle</a></li>
+<li><a href="#example-code">Example code</a></li>
+</ul>
+<h2>Drawing a Simple Rectangle</h2>
+<p>To draw a rectangle using <a href="/windows/desktop/gdi/windows-gdi">GDI</a>, you could handle the <a href="/windows/desktop/gdi/wm-paint"><strong>WM_PAINT</strong></a> message, as shown in the following code.</p>
+<pre lang="C++"><code>switch(message)
+{
+
+    case WM_PAINT:
+        {
+            PAINTSTRUCT ps;
+            BeginPaint(hwnd, &amp;ps);
+
+            // Obtain the size of the drawing area.
+            RECT rc;
+            GetClientRect(
+                hwnd,
+                &amp;rc
+            );          
+
+            // Save the original object
+            HGDIOBJ original = NULL;
+            original = SelectObject(
+                ps.hdc,
+                GetStockObject(DC_PEN)
+            );
+
+            // Create a pen.            
+            HPEN blackPen = CreatePen(PS_SOLID, 3, 0);
+
+            // Select the pen.
+            SelectObject(ps.hdc, blackPen);
+
+            // Draw a rectangle.
+            Rectangle(
+                ps.hdc, 
+                rc.left + 100, 
+                rc.top + 100, 
+                rc.right - 100, 
+                rc.bottom - 100);   
+
+            DeleteObject(blackPen);
+
+            // Restore the original object
+            SelectObject(ps.hdc, original);
+
+            EndPaint(hwnd, &amp;ps);
+        }
+        return 0;
+
+// Code for handling other messages. 
+</code></pre>
+<p>The code for drawing the same rectangle with Direct2D is similar: it creates drawing resources, describes a shape to draw, draws the shape, then releases the drawing resources. The sections that follow describe each of these steps in detail.</p>
+<h2>Step 1: Include Direct2D Header</h2>
+<p>In addition to the headers required for the application, include the d2d1.h and d2d1_1.h headers.</p>
+<h2>Step 2: Create an ID2D1Factory1</h2>
+<p>One of the first things that any Direct2D example does is create an <a href="/windows/desktop/api/d2d1_1/nn-d2d1_1-id2d1factory1"><strong>ID2D1Factory1</strong></a>.</p>
+<pre lang="C++"><code>DX::ThrowIfFailed(
+        D2D1CreateFactory(
+            D2D1_FACTORY_TYPE_SINGLE_THREADED,
+            __uuidof(ID2D1Factory1),
+            &amp;options,
+            &amp;m_d2dFactory
+            )
+        );
+</code></pre>
+<p>The <a href="/windows/desktop/api/d2d1_1/nn-d2d1_1-id2d1factory1"><strong>ID2D1Factory1</strong></a> interface is the starting point for using Direct2D; use an <strong>ID2D1Factory1</strong> to create Direct2D resources.</p>
+<p>When you create a factory, you can specify whether it is multi- or single-threaded. (For more information about multi-threaded factories, see the remarks on the <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1factory"><strong>ID2D1Factory reference page</strong></a>.) This example creates a single-threaded factory.</p>
+<p>In general, your application should create the factory once and retain it for the life of the application.</p>
+<h2>Step 3: Create an ID2D1Device and an ID2D1DeviceContext</h2>
+<p>After you create a factory, use it to create a Direct2D device and then use the device to create a Direct2D device context. In order to create these Direct2D objects, you must have a <a href="/windows/desktop/api/d3d11/nn-d3d11-id3d11device"><strong>Direct3D 11 device</strong></a> , a <a href="/windows/desktop/api/dxgi/nn-dxgi-idxgidevice"><strong>DXGI device</strong></a>, and a <a href="/windows/desktop/api/dxgi1_2/nn-dxgi1_2-idxgiswapchain1"><strong>DXGI swap chain</strong></a>. See <a href="devices-and-device-contexts.html">Devices and Device Contexts</a> for info on creating the necessary prerequisites.</p>
+<pre lang="C++"><code>
+    // Obtain the underlying DXGI device of the Direct3D11.1 device.
+    DX::ThrowIfFailed(
+        m_d3dDevice.As(&amp;dxgiDevice)
+        );
+
+    // Obtain the Direct2D device for 2-D rendering.
+    DX::ThrowIfFailed(
+        m_d2dFactory-&gt;CreateDevice(dxgiDevice.Get(), &amp;m_d2dDevice)
+        );
+
+    // And get its corresponding device context object.
+    DX::ThrowIfFailed(
+        m_d2dDevice-&gt;CreateDeviceContext(
+            D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+            &amp;m_d2dContext
+            )
+        );
+</code></pre>
+<p>A device context is a device that can perform drawing operations and create device-dependent drawing resources such as brushes. You also use the device context to link a <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1bitmap"><strong>ID2D1Bitmap</strong></a> to a DXGI surface to use as a render target. The device context can render to different types of targets.</p>
+<p>The code here declares the properties for bitmap that links to a DXGI swap chain that renders to a <a href="/uwp/api/Windows.UI.Core.CoreWindow"><strong>CoreWindow</strong></a>. The <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1devicecontext-createbitmapfromdxgisurface(idxgisurface_constd2d1_bitmap_properties1_id2d1bitmap1)"><strong>ID2D1DeviceContext::CreateBitmapFromDxgiSurface</strong></a> method gets a Direct2D surface from the DXGI surface. This makes it so anything rendered to the target <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1bitmap"><strong>ID2D1Bitmap</strong></a> is rendered to the surface of the swap chain.</p>
+<p>Once you have the Direct2D surface, use the <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1devicecontext-settarget"><strong>ID2D1DeviceContext::SetTarget</strong></a> method to set it as the active render target.</p>
+<pre lang="C++"><code>    // Now we set up the Direct2D render target bitmap linked to the swapchain. 
+    // Whenever we render to this bitmap, it will be directly rendered to the 
+    // swapchain associated with the window.
+    D2D1_BITMAP_PROPERTIES1 bitmapProperties = 
+        BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+            PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+            m_dpi,
+            m_dpi
+            );
+
+    // Direct2D needs the dxgi version of the backbuffer surface pointer.
+    ComPtr&lt;IDXGISurface&gt; dxgiBackBuffer;
+    DX::ThrowIfFailed(
+        m_swapChain-&gt;GetBuffer(0, IID_PPV_ARGS(&amp;dxgiBackBuffer))
+        );
+
+    // Get a D2D surface from the DXGI back buffer to use as the D2D render target.
+    DX::ThrowIfFailed(
+        m_d2dContext-&gt;CreateBitmapFromDxgiSurface(
+            dxgiBackBuffer.Get(),
+            &amp;bitmapProperties,
+            &amp;m_d2dTargetBitmap
+            )
+        );
+
+    // So now we can set the Direct2D render target.
+    m_d2dContext-&gt;SetTarget(m_d2dTargetBitmap.Get());
+</code></pre>
+<h2>Step 4: Create a Brush</h2>
+<p>Like a factory, a device context can create drawing resources. In this example, the device context creates a brush.</p>
+<pre lang="C++"><code>ComPtr&lt;ID2D1SolidColorBrush&gt; pBlackBrush;
+DX::ThrowIfFailed(
+   m_d2dContext-&gt;CreateSolidColorBrush(
+        D2D1::ColorF(D2D1::ColorF::Black),
+        &amp;pBlackBrush
+        )
+);
+</code></pre>
+<p>A brush is an object that paints an area, such as the stroke of a shape or the fill of a geometry. The brush in this example paints an area with a predefined solid color, black.</p>
+<p>Direct2D also provides other types of brushes: gradient brushes for painting linear and radial gradients, a <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1bitmapbrush"><strong>bitmap brush</strong></a> for painting with bitmaps and patterns, and starting in WindowsÂ 8, an <a href="/windows/win32/api/d2d1_1/nn-d2d1_1-id2d1imagebrush"><strong>image brush</strong></a> for painting with a rendered image.</p>
+<p>Some drawing APIs provide pens for drawing outlines and brushes for filling shapes. Direct2D is different: it does not provide a pen object but uses a brush for drawing outlines and filling shapes. When drawing outlines, use the <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1strokestyle"><strong>ID2D1StrokeStyle</strong></a> interface, or starting in WindowsÂ 8 the <a href="/windows/win32/api/d2d1_1/nn-d2d1_1-id2d1strokestyle1"><strong>ID2D1StrokeStyle1</strong></a> interface, with a brush to control path stroking operations.</p>
+<p>A brush can only be used with the render target that created it and with other render targets in the same resource domain. In general, you should create brushes once and retain them for the life of the render target that created them. <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1solidcolorbrush"><strong>ID2D1SolidColorBrush</strong></a> is the lone exception; because it is relatively inexpensive to create, you can create a <strong>ID2D1SolidColorBrush</strong> every time you draw a frame, without any noticeable performance hit. You can also use a single <strong>ID2D1SolidColorBrush</strong> and just change its color or opacity every time you use it.</p>
+<h2>Step 5: Draw the Rectangle</h2>
+<p>Next, use the device context to draw the rectangle.</p>
+<pre lang="C++"><code> 
+m_d2dContext-&gt;BeginDraw();
+
+m_d2dContext-&gt;DrawRectangle(
+    D2D1::RectF(
+        rc.left + 100.0f,
+        rc.top + 100.0f,
+        rc.right - 100.0f,
+        rc.bottom - 100.0f),
+        pBlackBrush);
+
+DX::ThrowIfFailed(
+    m_d2dContext-&gt;EndDraw()
+);
+
+DX::ThrowIfFailed(
+    m_swapChain-&gt;Present1(1, 0, &amp;parameters);
+);
+</code></pre>
+<p>The <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-drawrectangle(constd2d1_rect_f__id2d1brush_float_id2d1strokestyle)"><strong>DrawRectangle</strong></a> method takes two parameters: the rectangle to be drawn, and the brush to be used to paint the rectangle's outline. Optionally, you can also specify the stroke width, dash pattern, line join, and end cap options.</p>
+<p>You must call the <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-begindraw"><strong>BeginDraw</strong></a> method before issuing any drawing commands, and you must call the <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-enddraw"><strong>EndDraw</strong></a> method after you've finished issuing drawing commands. The <strong>EndDraw</strong> method returns an <strong>HRESULT</strong> that indicates whether the drawing commands were successful. If it is not successful, the ThrowIfFailed helper function will throw an exception.</p>
+<p>The <a href="/windows/desktop/api/dxgi/nf-dxgi-idxgiswapchain-present"><strong>IDXGISwapChain::Present</strong></a> method swaps the buffer surface with the on screen surface to display the result.</p>
+<h2>Example code</h2>
+<p>The code in this topic shows the basic elements of a Direct2D application. For brevity, the topic omits the application framework and error handling code that is characteristic of a well-written application.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

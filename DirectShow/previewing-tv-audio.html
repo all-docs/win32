@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Previewing TV Audio</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Previewing TV Audio
+ms.assetid: 25da8bcc-51c1-49f0-b4b5-885ff4f254d8
+title: Previewing TV Audio
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Previewing TV Audio</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>To preview TV audio, route the Audio Decoder pin on the crossbar filter to the Audio Tuner pin. To mute the audio, route the Audio Decoder pin to -1, as shown in the following diagram. (Crossbar filters are described in <a href="working-with-crossbars.html">Working with Crossbars</a>.)</p>
+<p><img src="images/vidcap07.png" alt="routing the audio decoder pin" /></p>
+<p>The basic approach is as follows:</p>
+<ol>
+<li>Use the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-findinterface"><strong>ICaptureGraphBuilder2::FindInterface</strong></a> method to locate the crossbar filter.</li>
+<li>Use the <a href="/windows/desktop/api/Strmif/nf-strmif-iamcrossbar-get_crossbarpininfo"><strong>IAMCrossbar::get_CrossbarPinInfo</strong></a> method to enumerate the crossbar filter's input and output pins. Search for an audio decoder output pin and an audio tuner input pin.</li>
+<li>If you find the correct pins, call <a href="/windows/desktop/api/Strmif/nf-strmif-iamcrossbar-route"><strong>IAMCrossbar::Route</strong></a> to route the pins. If not, look upstream for another crossbar and repeat the process.</li>
+<li>To mute the audio, route the audio decoder pin to -1.</li>
+</ol>
+<p>Most TV tuners use a single crossbar filter, but some use two crossbar filters. Therefore, you might have to search for a second crossbar if the first one fails.</p>
+<blockquote>
+<p>[!Note]<br />
+Contrary to what you might expect, no audio capture filter or audio renderer is required to preview the audio, because there is a physical connection between the tuner card and the sound card.</p>
+</blockquote>
+<p>Â </p>
+<p>The following code shows these steps in more detail. First, here is a helper function that searches a crossbar filter for a specified pin type:</p>
+<pre lang="C++"><code>HRESULT FindCrossbarPin(
+    IAMCrossbar *pXBar,                 // Pointer to the crossbar.
+    PhysicalConnectorType PhysicalType, // Pin type to match.
+    PIN_DIRECTION Dir,                  // Pin direction.
+    long *pIndex)       // Receives the index of the pin, if found.
+{
+    BOOL bInput = (Dir == PINDIR_INPUT ? TRUE : FALSE);
+
+    // Find out how many pins the crossbar has.
+    long cOut, cIn;
+    HRESULT hr = pXBar-&gt;get_PinCounts(&amp;cOut, &amp;cIn);
+    if (FAILED(hr)) return hr;
+    // Enumerate pins and look for a matching pin.
+    long count = (bInput ? cIn : cOut);
+    for (long i = 0; i &lt; count; i++)
+    {
+        long iRelated = 0;
+        long ThisPhysicalType = 0;
+        hr = pXBar-&gt;get_CrossbarPinInfo(bInput, i, &amp;iRelated,
+            &amp;ThisPhysicalType);
+        if (SUCCEEDED(hr) &amp;&amp; ThisPhysicalType == PhysicalType)
+        {
+            // Found a match, return the index.
+            *pIndex = i;
+            return S_OK;
+        }
+    }
+    // Did not find a matching pin.
+    return E_FAIL;
+}
+</code></pre>
+<p>The next function attempts to activate or mute the audio, depending on the value of the <em>bActivate</em> parameter. It searches the specified crossbar filter for the required pins. If it cannot find them, it returns an error code.</p>
+<pre lang="C++"><code>HRESULT ConnectAudio(IAMCrossbar *pXBar, BOOL bActivate)
+{
+    // Look for the Audio Decoder output pin.
+    long i = 0;
+    HRESULT hr = FindCrossbarPin(pXBar, PhysConn_Audio_AudioDecoder,
+        PINDIR_OUTPUT, &amp;i);
+    if (SUCCEEDED(hr))
+    {
+        if (bActivate)  // Activate the audio. 
+        {
+            // Look for the Audio Tuner input pin.
+            long j = 0;
+            hr = FindCrossbarPin(pXBar, PhysConn_Audio_Tuner, 
+                PINDIR_INPUT, &amp;j);
+            if (SUCCEEDED(hr))
+            {
+                return pXBar-&gt;Route(i, j);
+            }
+        }
+        else  // Mute the audio
+        {
+            return pXBar-&gt;Route(i, -1);
+        }
+    }
+    return E_FAIL;
+}
+</code></pre>
+<p>The next function searches the filter graph for a crossbar filter. If it finds one, it attempts to activate or mute the audio (using the previous function). If that operation fails, the method searches upstream for a second crossbar and tries again. For a more generalized approach to managing multiple crossbar filters in a graph, see the CCrossbar class in the AmCap sample application.</p>
+<pre lang="C++"><code>HRESULT ActivateAudio(ICaptureGraphBuilder2 *pBuild, IBaseFilter *pSrc,
+  BOOL bActivate)
+{
+    // Search upstream for a crossbar.
+    IAMCrossbar *pXBar1 = NULL;
+    HRESULT hr = pBuild-&gt;FindInterface(&amp;LOOK_UPSTREAM_ONLY, NULL, pSrc,
+        IID_IAMCrossbar, (void**)&amp;pXBar1);
+    if (SUCCEEDED(hr)) 
+    {
+        hr = ConnectAudio(pXBar1, bActivate);
+        if (FAILED(hr))
+        {
+            // Look for another crossbar.
+            IBaseFilter *pF = NULL;
+            hr = pXBar1-&gt;QueryInterface(IID_IBaseFilter, (void**)&amp;pF);
+            if (SUCCEEDED(hr)) 
+            {
+                // Search upstream for another one.
+                IAMCrossbar *pXBar2 = NULL;
+                hr = pBuild-&gt;FindInterface(&amp;LOOK_UPSTREAM_ONLY, NULL, pF,
+                    IID_IAMCrossbar, (void**)&amp;pXBar2);
+                pF-&gt;Release();
+                if (SUCCEEDED(hr))
+                {
+                    hr = ConnectAudio(pXBar2, bActivate);
+                    pXBar2-&gt;Release();
+                }
+            }
+        }
+        pXBar1-&gt;Release();
+    }
+    return hr;
+}
+</code></pre>
+<p>The following code shows how to call these functions:</p>
+<pre lang="C++"><code>// Build the analog TV graph (not shown).
+// Activate the audio.
+hr = ActivateAudio(pBuild, pCap, TRUE);
+// Later, mute the audio.
+hr = ActivateAudio(pBuild, pCap, FALSE);
+</code></pre>
+<p>Note that these example functions repeat many of the same function calls. For example, they enumerate the crossbar pins each time. In a real application, you might cache some of this information.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="analog-television-audio.html">Analog Television Audio</a></p>
+<!-- raw HTML omitted -->
+<p><a href="working-with-crossbars.html">Working with Crossbars</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

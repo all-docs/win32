@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Encoding an Enveloped, Signed Message</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Creates, signs, and envelopes a message.
+ms.assetid: 1d9d8a7a-0088-41a7-98fe-4f0e9cb21f31
+title: 'Example C Program: Encoding an Enveloped, Signed Message'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Encoding an Enveloped, Signed Message</h1>
+<p>The following example creates, signs, and envelopes a message, and it illustrates the following tasks and <a href="../secgloss/c-gly.html"><em>CryptoAPI</em></a> functions:</p>
+<ul>
+<li>Acquiring the handle of a CSP using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptacquirecontexta"><strong>CryptAcquireContext</strong></a>.</li>
+<li>Opening a system store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certopenstore"><strong>CertOpenStore</strong></a>.</li>
+<li>Finding a signer and recipient certificates using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certfindcertificateinstore"><strong>CertFindCertificateInStore</strong></a>.</li>
+<li>Initializing appropriate data structures for signing an enveloped message.</li>
+<li>Finding the length of the enveloped message using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgcalculateencodedlength"><strong>CryptMsgCalculateEncodedLength</strong></a>.</li>
+<li>Creating and signs the message using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgopentoencode"><strong>CryptMsgOpenToEncode</strong></a>, <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgupdate"><strong>CryptMsgUpdate</strong></a>, and <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsggetparam"><strong>CryptMsgGetParam</strong></a>.</li>
+<li>Enveloping the signed and encoded message for a receiver using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgopentoencode"><strong>CryptMsgOpenToEncode</strong></a>, <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgupdate"><strong>CryptMsgUpdate</strong></a>, and <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsggetparam"><strong>CryptMsgGetParam</strong></a>.</li>
+</ul>
+<p>This example will fail if a usable private key does not exist in the default <a href="../secgloss/k-gly.html"><em>key container</em></a>. If the needed private key is not available, code using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptacquirecertificateprivatekey"><strong>CryptAcquireCertificatePrivateKey</strong></a>, as demonstrated in the code sample <a href="example-c-program-sending-and-receiving-a-signed-and-encrypted-message.html">Example C Program: Sending and Receiving a Signed and Encrypted Message</a>, can be used.</p>
+<p>This example uses the function <a href="myhandleerror.html"><strong>MyHandleError</strong></a>. The code for this function is included with the sample. Code for this and other auxiliary functions is also listed under <a href="general-purpose-functions.html">General Purpose Functions</a>.</p>
+<pre lang="C++"><code>#pragma comment(lib, &quot;crypt32.lib&quot;)
+
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Wincrypt.h&gt;
+#define MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+void MyHandleError(char *s);
+
+void main(void)
+{
+//-------------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+// Declare and initialize variables.
+
+BYTE* pbContent = (BYTE*) &quot;Security is our only business.&quot;;
+                                    // a byte pointer
+DWORD cbContent = strlen((char *) pbContent)+1;
+                                    // the size of the message
+HCERTSTORE hStoreHandle;
+HCRYPTPROV hCryptProv;
+PCCERT_CONTEXT pSignerCert;         // signer's certificate
+PCCERT_CONTEXT pRecipCert;          // receiver's certificate
+LPWSTR pswzRecipientName = L&quot;Hortense&quot;;
+LPWSTR pswzCertSubject = L&quot;Full Test Cert&quot;;
+PCERT_INFO RecipCertArray[1];
+DWORD ContentEncryptAlgSize;
+CRYPT_ALGORITHM_IDENTIFIER ContentEncryptAlgorithm;
+CMSG_ENVELOPED_ENCODE_INFO EnvelopedEncodeInfo;
+DWORD cbEncodedBlob;
+BYTE *pbEncodedBlob;
+DWORD cbSignedBlob;
+BYTE *pbSignedBlob;
+HCRYPTMSG hMsg;
+DWORD HashAlgSize;
+CRYPT_ALGORITHM_IDENTIFIER HashAlgorithm;
+CMSG_SIGNER_ENCODE_INFO SignerEncodeInfo;
+CERT_BLOB SignerCertBlob;
+CERT_BLOB SignerCertBlobArray[1];
+CMSG_SIGNER_ENCODE_INFO SignerEncodeInfoArray[1];
+CMSG_SIGNED_ENCODE_INFO SignedMsgEncodeInfo;
+
+//-------------------------------------------------------------------
+// Begin processing. Display the original message.
+
+printf(&quot;The original message =&gt; %s\n&quot;,pbContent);  
+
+//-------------------------------------------------------------------
+// Acquire a cryptographic provider. 
+
+if(CryptAcquireContext(
+        &amp;hCryptProv,      // address for handle to be returned
+        NULL,             // use the current user's logon name
+        NULL,             // use the default provider
+        PROV_RSA_FULL,    // provider type
+        0))               // zero allows access to private keys
+{
+    printf(&quot;Context CSP acquired. \n&quot;);
+}
+else
+{
+   if ( GetLastError() == NTE_BAD_KEYSET)
+   {
+        printf(&quot;A Usable private key was not found \n&quot;);
+        printf(&quot;in the default key container. Either a \n&quot;);
+        printf(&quot;private key must be generated in that container \n&quot;);
+        printf(&quot;or CryptAquireCertificatePrivateKey can be used \n&quot;);
+        printf(&quot;to gain access to the needed private key.&quot;);
+   }
+    MyHandleError(&quot;CryptAcquireContext failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Open the My system certificate store.
+
+if(hStoreHandle = CertOpenStore(
+       CERT_STORE_PROV_SYSTEM,
+       0,
+       NULL,
+       CERT_SYSTEM_STORE_CURRENT_USER,
+       L&quot;MY&quot;))
+{
+    printf(&quot;The MY system store is open. \n&quot;);
+}
+else
+{
+    MyHandleError( &quot;Error getting store handle.&quot;);
+}
+//-------------------------------------------------------------------
+// Get the signer's certificate. This certificate must be in the
+// My store, and its private key must be available.
+
+if(pSignerCert = CertFindCertificateInStore(
+   hStoreHandle,
+   MY_ENCODING_TYPE,
+   0,
+   CERT_FIND_SUBJECT_STR,
+   pswzCertSubject,
+   NULL))
+{
+    printf(&quot;Found certificate for %S.\n&quot;,pswzCertSubject);
+}
+else
+{
+    MyHandleError(&quot;Signer certificate not found.&quot;);
+}
+//-------------------------------------------------------------------
+// Initialize the algorithm identifier structure.
+
+HashAlgSize = sizeof(HashAlgorithm);
+memset(&amp;HashAlgorithm, 0, HashAlgSize);    // initialize to zero
+HashAlgorithm.pszObjId = szOID_RSA_MD5;    // initialize the 
+                                           // necessary member
+//-------------------------------------------------------------------
+// Initialize the CMSG_SIGNER_ENCODE_INFO structure.
+
+memset(&amp;SignerEncodeInfo, 0, sizeof(CMSG_SIGNER_ENCODE_INFO));
+SignerEncodeInfo.cbSize = sizeof(CMSG_SIGNER_ENCODE_INFO);
+SignerEncodeInfo.pCertInfo = pSignerCert-&gt;pCertInfo;
+SignerEncodeInfo.hCryptProv = hCryptProv;
+SignerEncodeInfo.dwKeySpec = AT_KEYEXCHANGE;
+SignerEncodeInfo.HashAlgorithm = HashAlgorithm;
+SignerEncodeInfo.pvHashAuxInfo = NULL;
+
+//-------------------------------------------------------------------
+// Create an array of one. 
+// Note: The current program is set up for only a single signer.
+
+SignerEncodeInfoArray[0] = SignerEncodeInfo;
+
+//-------------------------------------------------------------------
+// Initialize the CMSG_SIGNED_ENCODE_INFO structure.
+
+SignerCertBlob.cbData = pSignerCert-&gt;cbCertEncoded;
+SignerCertBlob.pbData = pSignerCert-&gt;pbCertEncoded;
+
+//-------------------------------------------------------------------
+// Initialize the array of one CertBlob.
+
+SignerCertBlobArray[0] = SignerCertBlob;
+memset(&amp;SignedMsgEncodeInfo, 0, sizeof(CMSG_SIGNED_ENCODE_INFO));
+SignedMsgEncodeInfo.cbSize = sizeof(CMSG_SIGNED_ENCODE_INFO);
+SignedMsgEncodeInfo.cSigners = 1;
+SignedMsgEncodeInfo.rgSigners = SignerEncodeInfoArray;
+SignedMsgEncodeInfo.cCertEncoded = 1;
+SignedMsgEncodeInfo.rgCertEncoded = SignerCertBlobArray;
+SignedMsgEncodeInfo.rgCrlEncoded = NULL;
+
+//-------------------------------------------------------------------
+// Get the size of the encoded, signed message BLOB.
+
+if(cbSignedBlob = CryptMsgCalculateEncodedLength(
+    MY_ENCODING_TYPE,       // message encoding type
+    0,                      // flags
+    CMSG_SIGNED,            // message type
+    &amp;SignedMsgEncodeInfo,   // pointer to structure
+    NULL,                   // inner content OID
+    cbContent))             // size of content
+{
+    printf(&quot;%d, the length of data calculated. \n&quot;,cbSignedBlob);
+}
+else
+{
+   if ( GetLastError() == NTE_BAD_KEYSET)
+   {
+        printf(&quot;A Usable private key was not found \n&quot;);
+        printf(&quot;in the default key container. Either a \n&quot;);
+        printf(&quot;private key must be generated in that container \n&quot;);
+        printf(&quot;or CryptAquireCertificatePRivateKey can be used \n&quot;);
+        printf(&quot;to gain access to the needed private key.&quot;);
+    }
+    MyHandleError(&quot;Getting cbSignedBlob length failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Allocate memory for the encoded BLOB.
+
+if(pbSignedBlob = (BYTE *) malloc(cbSignedBlob))
+{
+   printf(&quot;Memory has been allocated for the signed message. \n&quot;);
+}
+else
+{
+   MyHandleError(&quot;Memory allocation failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Open a message to encode.
+
+if(hMsg = CryptMsgOpenToEncode(
+    MY_ENCODING_TYPE,        // encoding type
+    0,                       // flags
+    CMSG_SIGNED,             // message type
+    &amp;SignedMsgEncodeInfo,    // pointer to structure
+    NULL,                    // inner content OID
+    NULL))                   // stream information (not used)
+{
+    printf(&quot;The message to be encoded has been opened. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;OpenToEncode failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Update the message with the data.
+
+if(CryptMsgUpdate(
+     hMsg,         // handle to the message
+     pbContent,    // pointer to the content
+     cbContent,    // size of the content
+     TRUE))        // last call
+{
+    printf(&quot;Content has been added to the encoded message. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;MsgUpdate failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Get the resulting message.
+
+if(CryptMsgGetParam(
+    hMsg,                      // handle to the message
+    CMSG_CONTENT_PARAM,        // parameter type
+    0,                         // index
+    pbSignedBlob,              // pointer to the BLOB
+    &amp;cbSignedBlob))            // size of the BLOB
+{
+    printf(&quot;Message encoded successfully. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;MsgGetParam failed.&quot;);
+}
+//-------------------------------------------------------------------
+// pbSignedBlob now points to the encoded, signed content.
+
+//-------------------------------------------------------------------
+// Get a pointer to the recipient certificate.
+// For this program, the recipient's certificate must also be in the
+// My store. At this point, only the recipient's public key is needed.
+// To open the enveloped message, however, the recipient's 
+// private key must also be available.
+
+if(pRecipCert=CertFindCertificateInStore(      
+      hStoreHandle,
+      MY_ENCODING_TYPE,            // use X509_ASN_ENCODING
+      0,                           // no dwFlags needed
+      CERT_FIND_SUBJECT_STR,       // find a certificate with a
+                                   // subject that matches the 
+                                   // string in the next parameter
+      pswzRecipientName,           // the Unicode string to be found
+                                   // in a certificate's subject
+      NULL))                       // NULL for the first call to the
+                                   // function
+                                   // in all subsequent
+                                   // calls, it is the last pointer
+                                   // returned by the function
+{
+     printf(&quot;Certificate for %S found. \n&quot;, pswzRecipientName);
+}
+else
+{
+     MyHandleError(&quot;Could not find the countersigner's &quot;
+         &quot;certificate.&quot;);
+}
+//-------------------------------------------------------------------
+// Initialize the first element of the array of CERT_INFOs. 
+// In this example, there is only a single recipient.
+
+RecipCertArray[0] = pRecipCert-&gt;pCertInfo;
+
+//-------------------------------------------------------------------
+// Initialize the symmetric-encryption algorithm identifier
+// structure.
+
+ContentEncryptAlgSize = sizeof(ContentEncryptAlgorithm);
+memset(&amp;ContentEncryptAlgorithm, 
+       0,
+       ContentEncryptAlgSize);               // initialize to zero
+
+//-------------------------------------------------------------------
+// Initialize the necessary members. This particular OID does not
+// need any parameters. Some OIDs, however, will require that
+// the other members be initialized.
+
+ContentEncryptAlgorithm.pszObjId = szOID_RSA_RC4;
+
+//-------------------------------------------------------------------
+// Initialize the CMSG_ENVELOPED_ENCODE_INFO structure.
+
+memset(&amp;EnvelopedEncodeInfo, 
+       0,
+       sizeof(CMSG_ENVELOPED_ENCODE_INFO));
+EnvelopedEncodeInfo.cbSize = sizeof(CMSG_ENVELOPED_ENCODE_INFO);
+EnvelopedEncodeInfo.hCryptProv = hCryptProv;
+EnvelopedEncodeInfo.ContentEncryptionAlgorithm = 
+                                        ContentEncryptAlgorithm;
+EnvelopedEncodeInfo.pvEncryptionAuxInfo = NULL;
+EnvelopedEncodeInfo.cRecipients = 1;
+EnvelopedEncodeInfo.rgpRecipients = RecipCertArray;
+
+//-------------------------------------------------------------------
+// Get the size of the encoded message BLOB.
+
+if(cbEncodedBlob = CryptMsgCalculateEncodedLength(
+     MY_ENCODING_TYPE,        // message encoding type
+     0,                       // flags
+     CMSG_ENVELOPED,          // message type
+     &amp;EnvelopedEncodeInfo,    // pointer to structure
+     szOID_RSA_signedData,    // inner content OID
+     cbSignedBlob))           // size of content
+{
+    printf(&quot;Length of the encoded BLOB will be %d.\n&quot;,cbEncodedBlob);
+}
+else
+{
+    MyHandleError(&quot;Getting enveloped cbEncodedBlob length failed.&quot;);
+}
+//--------------------------------------------------------------------
+// Allocate memory for the encoded BLOB.
+
+if(pbEncodedBlob = (BYTE *) malloc(cbEncodedBlob))
+{
+    printf(&quot;Memory has been allocated for the BLOB. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Enveloped malloc operation failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Open a message to encode.
+
+if(hMsg = CryptMsgOpenToEncode(
+     MY_ENCODING_TYPE,        // encoding type
+     0,                       // flags
+     CMSG_ENVELOPED,          // message type
+     &amp;EnvelopedEncodeInfo,    // pointer to structure
+     szOID_RSA_signedData,    // inner content OID
+     NULL))                   // stream information (not used)
+{
+    printf(&quot;The message to encode is open. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Enveloped OpenToEncode failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Update the message with the data.
+
+if(CryptMsgUpdate(
+     hMsg,              // handle to the message
+     pbSignedBlob,      // pointer to the signed data BLOB
+     cbSignedBlob,      // size of the data BLOB
+     TRUE))             // last call
+{
+    printf(&quot;The signed BLOB has been added to the message. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Enveloped MsgUpdate failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Get the resulting message.
+
+if(CryptMsgGetParam(
+     hMsg,                  // handle to the message
+     CMSG_CONTENT_PARAM,    // parameter type
+     0,                     // index
+     pbEncodedBlob,         // pointer to the enveloped,
+                            // signed data BLOB
+     &amp;cbEncodedBlob))       // size of the BLOB
+{
+    printf(&quot;Enveloped message encoded successfully. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Enveloped MsgGetParam failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Clean up.
+
+CertFreeCertificateContext(pRecipCert);
+if(CertCloseStore(
+     hStoreHandle,
+     CERT_CLOSE_STORE_CHECK_FLAG))
+{
+  printf(&quot;The certificate store closed without a certificate &quot;
+      &quot;left open. \n&quot;);
+}
+else
+{
+  printf(&quot;The store closed but a certificate was still open. \n&quot;);
+}
+if(hMsg)
+   CryptMsgClose(hMsg);
+if(hCryptProv) 
+   CryptReleaseContext(hCryptProv,0);
+} // end main
+
+//-------------------------------------------------------------------
+// This example uses the function MyHandleError, a simple error
+// handling function to print an error message and exit 
+// the program. 
+// For most applications, replace this function with one 
+// that does more extensive error reporting.
+
+void MyHandleError(char *s)
+{
+    fprintf(stderr,&quot;An error occurred in running the program. \n&quot;);
+    fprintf(stderr,&quot;%s\n&quot;,s);
+    fprintf(stderr, &quot;Error number %x.\n&quot;, GetLastError());
+    fprintf(stderr, &quot;Program terminating. \n&quot;);
+    exit(1);
+} // end MyHandleError
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

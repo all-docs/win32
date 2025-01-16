@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SvcConfig.cpp</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following is a sample service configuration program.
+ms.assetid: effb469a-020e-4c70-aad6-12a91bd36f68
+title: SvcConfig.cpp
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>SvcConfig.cpp</h1>
+<p>The following is a sample <a href="service-configuration-programs.html">service configuration program</a>.</p>
+<p>When building the sample, be sure to link with Kernel32.lib and Advapi32.lib.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;strsafe.h&gt;
+#include &lt;stdio.h&gt;
+
+#pragma comment(lib, &quot;advapi32.lib&quot;)
+
+TCHAR szCommand[10];
+TCHAR szSvcName[80];
+
+VOID __stdcall DisplayUsage(void);
+
+VOID __stdcall DoQuerySvc(void);
+VOID __stdcall DoUpdateSvcDesc(void);
+VOID __stdcall DoDisableSvc(void);
+VOID __stdcall DoEnableSvc(void);
+VOID __stdcall DoDeleteSvc(void);
+
+//
+// Purpose: 
+//   Entry point function. Executes specified command from user.
+//
+// Parameters:
+//   Command-line syntax is: svcconfig [command] [service_path]
+// 
+// Return value:
+//   None, defaults to 0 (zero)
+//
+int __cdecl _tmain(int argc, TCHAR *argv[])
+{
+    printf(&quot;\n&quot;);
+    if( argc != 3 )
+    {
+        printf(&quot;ERROR:\tIncorrect number of arguments\n\n&quot;);
+        DisplayUsage();
+        return;
+    }
+
+    StringCchCopy(szCommand, 10, argv[1]);
+    StringCchCopy(szSvcName, 80, argv[2]);
+
+    if (lstrcmpi( szCommand, TEXT(&quot;query&quot;)) == 0 )
+        DoQuerySvc();
+    else if (lstrcmpi( szCommand, TEXT(&quot;describe&quot;)) == 0 )
+        DoUpdateSvcDesc();
+    else if (lstrcmpi( szCommand, TEXT(&quot;disable&quot;)) == 0 )
+        DoDisableSvc();
+    else if (lstrcmpi( szCommand, TEXT(&quot;enable&quot;)) == 0 )
+        DoEnableSvc();
+    else if (lstrcmpi( szCommand, TEXT(&quot;delete&quot;)) == 0 )
+        DoDeleteSvc();
+    else 
+    {
+        _tprintf(TEXT(&quot;Unknown command (%s)\n\n&quot;), szCommand);
+        DisplayUsage();
+    }
+}
+
+VOID __stdcall DisplayUsage()
+{
+    printf(&quot;Description:\n&quot;);
+    printf(&quot;\tCommand-line tool that configures a service.\n\n&quot;);
+    printf(&quot;Usage:\n&quot;);
+    printf(&quot;\tsvcconfig [command] [service_name]\n\n&quot;);
+    printf(&quot;\t[command]\n&quot;);
+    printf(&quot;\t  query\n&quot;);
+    printf(&quot;\t  describe\n&quot;);
+    printf(&quot;\t  disable\n&quot;);
+    printf(&quot;\t  enable\n&quot;);
+    printf(&quot;\t  delete\n&quot;);
+}
+
+//
+// Purpose: 
+//   Retrieves and displays the current service configuration.
+//
+// Parameters:
+//   None
+// 
+// Return value:
+//   None
+//
+VOID __stdcall DoQuerySvc()
+{
+    SC_HANDLE schSCManager;
+    SC_HANDLE schService;
+    LPQUERY_SERVICE_CONFIG lpsc; 
+    LPSERVICE_DESCRIPTION lpsd;
+    DWORD dwBytesNeeded, cbBufSize, dwError; 
+
+    // Get a handle to the SCM database. 
+ 
+    schSCManager = OpenSCManager( 
+        NULL,                    // local computer
+        NULL,                    // ServicesActive database 
+        SC_MANAGER_ALL_ACCESS);  // full access rights 
+ 
+    if (NULL == schSCManager) 
+    {
+        printf(&quot;OpenSCManager failed (%d)\n&quot;, GetLastError());
+        return;
+    }
+
+    // Get a handle to the service.
+
+    schService = OpenService( 
+        schSCManager,          // SCM database 
+        szSvcName,             // name of service 
+        SERVICE_QUERY_CONFIG); // need query config access 
+ 
+    if (schService == NULL)
+    { 
+        printf(&quot;OpenService failed (%d)\n&quot;, GetLastError()); 
+        CloseServiceHandle(schSCManager);
+        return;
+    }
+
+    // Get the configuration information.
+ 
+    if( !QueryServiceConfig( 
+        schService, 
+        NULL, 
+        0, 
+        &amp;dwBytesNeeded))
+    {
+        dwError = GetLastError();
+        if( ERROR_INSUFFICIENT_BUFFER == dwError )
+        {
+            cbBufSize = dwBytesNeeded;
+            lpsc = (LPQUERY_SERVICE_CONFIG) LocalAlloc(LMEM_FIXED, cbBufSize);
+        }
+        else
+        {
+            printf(&quot;QueryServiceConfig failed (%d)&quot;, dwError);
+            goto cleanup; 
+        }
+    }
+  
+    if( !QueryServiceConfig( 
+        schService, 
+        lpsc, 
+        cbBufSize, 
+        &amp;dwBytesNeeded) ) 
+    {
+        printf(&quot;QueryServiceConfig failed (%d)&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    if( !QueryServiceConfig2( 
+        schService, 
+        SERVICE_CONFIG_DESCRIPTION,
+        NULL, 
+        0, 
+        &amp;dwBytesNeeded))
+    {
+        dwError = GetLastError();
+        if( ERROR_INSUFFICIENT_BUFFER == dwError )
+        {
+            cbBufSize = dwBytesNeeded;
+            lpsd = (LPSERVICE_DESCRIPTION) LocalAlloc(LMEM_FIXED, cbBufSize);
+        }
+        else
+        {
+            printf(&quot;QueryServiceConfig2 failed (%d)&quot;, dwError);
+            goto cleanup; 
+        }
+    }
+ 
+    if (! QueryServiceConfig2( 
+        schService, 
+        SERVICE_CONFIG_DESCRIPTION,
+        (LPBYTE) lpsd, 
+        cbBufSize, 
+        &amp;dwBytesNeeded) ) 
+    {
+        printf(&quot;QueryServiceConfig2 failed (%d)&quot;, GetLastError());
+        goto cleanup;
+    }
+ 
+    // Print the configuration information.
+ 
+    _tprintf(TEXT(&quot;%s configuration: \n&quot;), szSvcName);
+    _tprintf(TEXT(&quot;  Type: 0x%x\n&quot;), lpsc-&gt;dwServiceType);
+    _tprintf(TEXT(&quot;  Start Type: 0x%x\n&quot;), lpsc-&gt;dwStartType);
+    _tprintf(TEXT(&quot;  Error Control: 0x%x\n&quot;), lpsc-&gt;dwErrorControl);
+    _tprintf(TEXT(&quot;  Binary path: %s\n&quot;), lpsc-&gt;lpBinaryPathName);
+    _tprintf(TEXT(&quot;  Account: %s\n&quot;), lpsc-&gt;lpServiceStartName);
+
+    if (lpsd-&gt;lpDescription != NULL &amp;&amp; lstrcmp(lpsd-&gt;lpDescription, TEXT(&quot;&quot;)) != 0)
+        _tprintf(TEXT(&quot;  Description: %s\n&quot;), lpsd-&gt;lpDescription);
+    if (lpsc-&gt;lpLoadOrderGroup != NULL &amp;&amp; lstrcmp(lpsc-&gt;lpLoadOrderGroup, TEXT(&quot;&quot;)) != 0)
+        _tprintf(TEXT(&quot;  Load order group: %s\n&quot;), lpsc-&gt;lpLoadOrderGroup);
+    if (lpsc-&gt;dwTagId != 0)
+        _tprintf(TEXT(&quot;  Tag ID: %d\n&quot;), lpsc-&gt;dwTagId);
+    if (lpsc-&gt;lpDependencies != NULL &amp;&amp; lstrcmp(lpsc-&gt;lpDependencies, TEXT(&quot;&quot;)) != 0)
+        _tprintf(TEXT(&quot;  Dependencies: %s\n&quot;), lpsc-&gt;lpDependencies);
+ 
+    LocalFree(lpsc); 
+    LocalFree(lpsd);
+
+cleanup:
+    CloseServiceHandle(schService); 
+    CloseServiceHandle(schSCManager);
+}
+
+//
+// Purpose: 
+//   Disables the service.
+//
+// Parameters:
+//   None
+// 
+// Return value:
+//   None
+//
+VOID __stdcall DoDisableSvc()
+{
+    SC_HANDLE schSCManager;
+    SC_HANDLE schService;
+
+    // Get a handle to the SCM database. 
+ 
+    schSCManager = OpenSCManager( 
+        NULL,                    // local computer
+        NULL,                    // ServicesActive database 
+        SC_MANAGER_ALL_ACCESS);  // full access rights 
+ 
+    if (NULL == schSCManager) 
+    {
+        printf(&quot;OpenSCManager failed (%d)\n&quot;, GetLastError());
+        return;
+    }
+
+    // Get a handle to the service.
+
+    schService = OpenService( 
+        schSCManager,            // SCM database 
+        szSvcName,               // name of service 
+        SERVICE_CHANGE_CONFIG);  // need change config access 
+ 
+    if (schService == NULL)
+    { 
+        printf(&quot;OpenService failed (%d)\n&quot;, GetLastError()); 
+        CloseServiceHandle(schSCManager);
+        return;
+    }    
+
+    // Change the service start type.
+
+    if (! ChangeServiceConfig( 
+        schService,        // handle of service 
+        SERVICE_NO_CHANGE, // service type: no change 
+        SERVICE_DISABLED,  // service start type 
+        SERVICE_NO_CHANGE, // error control: no change 
+        NULL,              // binary path: no change 
+        NULL,              // load order group: no change 
+        NULL,              // tag ID: no change 
+        NULL,              // dependencies: no change 
+        NULL,              // account name: no change 
+        NULL,              // password: no change 
+        NULL) )            // display name: no change
+    {
+        printf(&quot;ChangeServiceConfig failed (%d)\n&quot;, GetLastError()); 
+    }
+    else printf(&quot;Service disabled successfully.\n&quot;); 
+
+    CloseServiceHandle(schService); 
+    CloseServiceHandle(schSCManager);
+}
+
+//
+// Purpose: 
+//   Enables the service.
+//
+// Parameters:
+//   None
+// 
+// Return value:
+//   None
+//
+VOID __stdcall DoEnableSvc()
+{
+    SC_HANDLE schSCManager;
+    SC_HANDLE schService;
+
+    // Get a handle to the SCM database. 
+ 
+    schSCManager = OpenSCManager( 
+        NULL,                    // local computer
+        NULL,                    // ServicesActive database 
+        SC_MANAGER_ALL_ACCESS);  // full access rights 
+ 
+    if (NULL == schSCManager) 
+    {
+        printf(&quot;OpenSCManager failed (%d)\n&quot;, GetLastError());
+        return;
+    }
+
+    // Get a handle to the service.
+
+    schService = OpenService( 
+        schSCManager,            // SCM database 
+        szSvcName,               // name of service 
+        SERVICE_CHANGE_CONFIG);  // need change config access 
+ 
+    if (schService == NULL)
+    { 
+        printf(&quot;OpenService failed (%d)\n&quot;, GetLastError()); 
+        CloseServiceHandle(schSCManager);
+        return;
+    }    
+
+    // Change the service start type.
+
+    if (! ChangeServiceConfig( 
+        schService,            // handle of service 
+        SERVICE_NO_CHANGE,     // service type: no change 
+        SERVICE_DEMAND_START,  // service start type 
+        SERVICE_NO_CHANGE,     // error control: no change 
+        NULL,                  // binary path: no change 
+        NULL,                  // load order group: no change 
+        NULL,                  // tag ID: no change 
+        NULL,                  // dependencies: no change 
+        NULL,                  // account name: no change 
+        NULL,                  // password: no change 
+        NULL) )                // display name: no change
+    {
+        printf(&quot;ChangeServiceConfig failed (%d)\n&quot;, GetLastError()); 
+    }
+    else printf(&quot;Service enabled successfully.\n&quot;); 
+
+    CloseServiceHandle(schService); 
+    CloseServiceHandle(schSCManager);
+}
+
+//
+// Purpose: 
+//   Updates the service description to &quot;This is a test description&quot;.
+//
+// Parameters:
+//   None
+// 
+// Return value:
+//   None
+//
+VOID __stdcall DoUpdateSvcDesc()
+{
+    SC_HANDLE schSCManager;
+    SC_HANDLE schService;
+    SERVICE_DESCRIPTION sd;
+    LPTSTR szDesc = TEXT(&quot;This is a test description&quot;);
+
+    // Get a handle to the SCM database. 
+ 
+    schSCManager = OpenSCManager( 
+        NULL,                    // local computer
+        NULL,                    // ServicesActive database 
+        SC_MANAGER_ALL_ACCESS);  // full access rights 
+ 
+    if (NULL == schSCManager) 
+    {
+        printf(&quot;OpenSCManager failed (%d)\n&quot;, GetLastError());
+        return;
+    }
+
+    // Get a handle to the service.
+
+    schService = OpenService( 
+        schSCManager,            // SCM database 
+        szSvcName,               // name of service 
+        SERVICE_CHANGE_CONFIG);  // need change config access 
+ 
+    if (schService == NULL)
+    { 
+        printf(&quot;OpenService failed (%d)\n&quot;, GetLastError()); 
+        CloseServiceHandle(schSCManager);
+        return;
+    }    
+
+    // Change the service description.
+
+    sd.lpDescription = szDesc;
+
+    if( !ChangeServiceConfig2(
+        schService,                 // handle to service
+        SERVICE_CONFIG_DESCRIPTION, // change: description
+        &amp;sd) )                      // new description
+    {
+        printf(&quot;ChangeServiceConfig2 failed\n&quot;);
+    }
+    else printf(&quot;Service description updated successfully.\n&quot;);
+
+    CloseServiceHandle(schService); 
+    CloseServiceHandle(schSCManager);
+}
+
+//
+// Purpose: 
+//   Deletes a service from the SCM database
+//
+// Parameters:
+//   None
+// 
+// Return value:
+//   None
+//
+VOID __stdcall DoDeleteSvc()
+{
+    SC_HANDLE schSCManager;
+    SC_HANDLE schService;
+
+    // Get a handle to the SCM database. 
+ 
+    schSCManager = OpenSCManager( 
+        NULL,                    // local computer
+        NULL,                    // ServicesActive database 
+        SC_MANAGER_ALL_ACCESS);  // full access rights 
+ 
+    if (NULL == schSCManager) 
+    {
+        printf(&quot;OpenSCManager failed (%d)\n&quot;, GetLastError());
+        return;
+    }
+
+    // Get a handle to the service.
+
+    schService = OpenService( 
+        schSCManager,       // SCM database 
+        szSvcName,          // name of service 
+        DELETE);            // need delete access 
+ 
+    if (schService == NULL)
+    { 
+        printf(&quot;OpenService failed (%d)\n&quot;, GetLastError()); 
+        CloseServiceHandle(schSCManager);
+        return;
+    }
+
+    // Delete the service.
+ 
+    if (! DeleteService(schService) ) 
+    {
+        printf(&quot;DeleteService failed (%d)\n&quot;, GetLastError()); 
+    }
+    else printf(&quot;Service deleted successfully\n&quot;); 
+ 
+    CloseServiceHandle(schService); 
+    CloseServiceHandle(schSCManager);
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="the-complete-service-sample.html">The Complete Service Sample</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

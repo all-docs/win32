@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Create a Playlist</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to use the Sequence Source to play a sequence of files.
+ms.assetid: 5a760492-bd52-40b8-a652-8a62646db6ae
+title: How to Create a Playlist
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to Create a Playlist</h1>
+<p>This topic describes how to use the Sequence Source to play a sequence of files.</p>
+<h2>Overview</h2>
+<p>To play media files in a sequence, the application must add topologies in a sequence to create a playlist, and queue these topologies on the Media Session for playback.</p>
+<p>The sequencer source ensures seamless playback by initializing and loading the next topology before the Media Session starts playing the current topology. This enables the application to start the next topology quickly whenever it is required.</p>
+<p>The Media Session is responsible for feeding data to the sinks and playing the topologies in the sequence source. In addition, the Media Session manages the presentation time for the segments.</p>
+<p>For more information about how the sequencer source manages topologies, see <a href="about-the-sequencer-source.html">About the Sequencer Source</a>.</p>
+<p>This walk-through contains the following steps:</p>
+<ol>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#initializing-media-foundation">Initializing Media Foundation</a></li>
+<li><a href="#creating-media-foundation-objects">Creating Media Foundation Objects</a></li>
+<li><a href="#creating-the-media-source">Creating the Media Source</a></li>
+<li><a href="#creating-partial-topologies">Creating Partial Topologies</a></li>
+<li><a href="#adding-topologies-to-the-sequencer-source">Adding Topologies to the Sequencer Source</a></li>
+<li><a href="#setting-the-first-topology-on-the-media-session">Setting the First Topology on the Media Session</a></li>
+<li><a href="#queuing-the-next-topology-on-the-media-session">Queuing the Next Topology on the Media Session</a></li>
+<li><a href="#releasing-the-sequencer-source">Releasing the Sequencer Source</a></li>
+</ol>
+<p>The code examples shown this topic are excerpts from the topic <a href="sequencer-source-example-code.html">Sequencer Source Example Code</a>, which contains the complete example code.</p>
+<h2>Prerequisites</h2>
+<p>Before starting this walk-through, familiarize yourself with the following Media Foundation concepts:</p>
+<ul>
+<li><a href="media-session.html">Media Session</a></li>
+<li><a href="topologies.html">Topologies</a></li>
+<li><a href="media-event-generators.html">Media Event Generators</a></li>
+<li><a href="presentation-descriptors.html">Presentation Descriptors</a></li>
+</ul>
+<p>Also read <a href="how-to-play-unprotected-media-files.html">How to Play Media Files with Media Foundation</a>, because the example code shwon here expands on the code in that topic.</p>
+<h2>Initializing Media Foundation</h2>
+<p>Before you can use any Media Foundation interfaces or methods, initialize Media Foundation by calling the <a href="/windows/desktop/api/mfapi/nf-mfapi-mfstartup"><strong>MFStartup</strong></a> function. For more information, see <a href="initializing-media-foundation.html">Initializing Media Foundation</a>.</p>
+<pre lang="C++"><code>    hr = MFStartup(MF_VERSION);
+</code></pre>
+<h2>Creating Media Foundation Objects</h2>
+<p>Next, create the following Media Foundation objects:</p>
+<ul>
+<li>Media session. This object exposes the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasession"><strong>IMFMediaSession</strong></a> interface, which provides methods to play, pause, and stop the current topology.</li>
+<li>Sequencer source. This object exposes the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfsequencersource"><strong>IMFSequencerSource</strong></a> interface, which provides methods to add, update, and delete topologies in a sequence.</li>
+</ul>
+<ol>
+<li>Call the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatemediasession"><strong>MFCreateMediaSession</strong></a> function to create the Media Session.</li>
+<li>Call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaeventqueue-begingetevent"><strong>IMFMediaEventQueue::BeginGetEvent</strong></a> to request the first event from the Media Session.</li>
+<li>Call the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatesequencersource"><strong>MFCreateSequencerSource</strong></a> function to create the sequencer source.</li>
+</ol>
+<p>The following code creates the Media Session and requests the first event:</p>
+<pre lang="C++"><code>//  Create a new instance of the media session.
+HRESULT CPlayer::CreateSession()
+{
+    // Close the old session, if any.
+    HRESULT hr = CloseSession();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    assert(m_state == Closed);
+
+    // Create the media session.
+    hr = MFCreateMediaSession(NULL, &amp;m_pSession);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Start pulling events from the media session
+    hr = m_pSession-&gt;BeginGetEvent((IMFAsyncCallback*)this, NULL);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    m_state = Ready;
+
+done:
+    return hr;
+}
+</code></pre>
+<h2>Creating the Media Source</h2>
+<p>Next, create a media source for the first playlist segment. Use the <a href="source-resolver.html">Source Resolver</a> to create a media source from a URL. To do this, call the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatesourceresolver"><strong>MFCreateSourceResolver</strong></a> function to create a source resolver and then call the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsourceresolver-createobjectfromurl"><strong>IMFSourceResolver::CreateObjectFromURL</strong></a> method to create the media source.</p>
+<p>For information about media sources, see <a href="media-sources.html">Media Sources</a>.</p>
+<h2>Creating Partial Topologies</h2>
+<p>Each segment in the sequencer source has its own partial topology. Next, create partial topologies for media sources. For a partial topology, the topology source nodes are connected directly to the output nodes, without specifying any intermediate transforms. The Media Session uses the topology loader object to resolve the topology. After a topology is resolved, the required decoders and other transform nodes are added. The sequencer source can also contain full topologies.</p>
+<p>To create the topology object, use the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatetopology"><strong>MFCreateTopology</strong></a> function and then use the <a href="/windows/desktop/api/mfidl/nn-mfidl-imftopologynode"><strong>IMFTopologyNode</strong></a> interface to create stream nodes.</p>
+<p>For complete instructions on using these programming elements to create topologies, see <a href="creating-playback-topologies.html">Creating Playback Topologies</a>.</p>
+<p>An application can play a selected portion of the native source by configuring the source node. To do this, set the <a href="mf-toponode-mediastart-attribute.html"><strong>MF_TOPONODE_MEDIASTART</strong></a> attribute and the <a href="mf-toponode-mediastop-attribute.html"><strong>MF_TOPONODE_MEDIASTOP</strong></a> attribute on <strong>MF_TOPOLOGY_SOURCESTREAM_NODE</strong> topology nodes. Specify the media start time and the media stop time relative to the start of the native source as <strong>UINT64</strong> types.</p>
+<h2>Adding Topologies to the Sequencer Source</h2>
+<p>Next, add to the sequencer source the partial topologies that you created. Each sequence element, called a <em>segment</em>, is assigned an <strong>MFSequencerElementId</strong> identifier. For more information about how the sequencer source manages topologies, see <a href="about-the-sequencer-source.html">About the Sequencer Source</a>.</p>
+<p>After all of the topologies are added to the sequencer source, the application must flag the last segment in the sequence to end playback in the pipeline. Without this flag, the sequencer source expects more topologies to be added.</p>
+<ol>
+<li>
+<p>Call the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsequencersource-appendtopology"><strong>IMFSequencerSource::AppendTopology</strong></a> method to add a specific topology to the sequencer source.</p>
+<pre lang="C++"><code>    hr = m_pSequencerSource-&gt;AppendTopology(
+        pTopology, 
+        SequencerTopologyFlags_Last, 
+        &amp;SegmentId
+        );
+</code></pre>
+<p><a href="/windows/desktop/api/mfidl/nf-mfidl-imfsequencersource-appendtopology"><strong>AppendTopology</strong></a> adds the specified topology to the sequence. This method returns the segment identifier in the <em>pdwId</em> parameter.</p>
+<p>If the topology is the last one in the sequencer source, pass SequencerTopologyFlags_Last in the <em>dwFlags</em> parameter. This value is defined in the <a href="/windows/desktop/api/mfidl/ne-mfidl-mfsequencertopologyflags"><strong>MFSequencerTopologyFlags</strong></a> enumeration.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsequencersource-updatetopologyflags"><strong>IMFSequencerSource::UpdateTopologyFlags</strong></a> to update the flags for the topology associated with the segment identifier in the input list. In this case, the call indicates that the specified segment is the last segment in the sequencer. (This call is optional if the last topology is specified in the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsequencersource-appendtopology"><strong>AppendTopology</strong></a> call.)</p>
+<pre lang="C++"><code>    BOOL bFirstSegment = (NumSegments() == 0);
+
+    if (!bFirstSegment)
+    {
+        // Remove the &quot;last segment&quot; flag from the last segment.
+        hr = m_pSequencerSource-&gt;UpdateTopologyFlags(LastSegment(), 0);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+    }
+</code></pre>
+</li>
+</ol>
+<p>The application can replace a segment's topology with another topology by calling the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsequencersource-updatetopology"><strong>IMFSequencerSource::UpdateTopology</strong></a> and passing the new topology in <em>pTopology</em>. If there are new native sources in the new topology, the sources are added to the source cache. The preroll list is also refreshed.</p>
+<h2>Setting the First Topology on the Media Session</h2>
+<p>Next, queue the first topology in the sequence source on the Media Session. To get the first topology from the sequencer source, the application must call the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasourcetopologyprovider-getmediasourcetopology"><strong>IMFMediaSourceTopologyProvider::GetMediaSourceTopology</strong></a> method. This method returns the partial topology, which is resolved by the Media Session.</p>
+<p>For information about partial topologies, see <a href="about-topologies.html">About Topologies</a>.</p>
+<ol>
+<li>
+<p>Retrieve the native media source for the first topology of the sequence source.</p>
+</li>
+<li>
+<p>Create a presentation descriptor for the media source by calling the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-createpresentationdescriptor"><strong>IMFMediaSource::CreatePresentationDescriptor</strong></a> method.</p>
+</li>
+<li>
+<p>Retrieve the associated topology for the presentation by calling the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasourcetopologyprovider-getmediasourcetopology"><strong>IMFMediaSourceTopologyProvider::GetMediaSourceTopology</strong></a> method.</p>
+</li>
+<li>
+<p>Set the first topology on the Media Session by Calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-settopology"><strong>IMFMediaSession::SetTopology</strong></a>.</p>
+<p>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-settopology"><strong>SetTopology</strong></a> with the <em>dwSetTopologyFlags</em> parameter set to <strong>NULL</strong>. This instructs the Media Session to start the specified topology when the current topology has been completed. Because in this case, the specified topology is the first topology and there is no current presentation, the Media Session starts the new presentation immediately.</p>
+<p>The <strong>NULL</strong> value also indicates that Media Session must resolve the topology because the topology returned by the topology provider is always a partial topology.</p>
+</li>
+</ol>
+<pre lang="C++"><code>// Queues the next topology on the session.
+
+HRESULT CPlaylist::QueueNextSegment(IMFPresentationDescriptor *pPD)
+{
+    IMFMediaSourceTopologyProvider *pTopoProvider = NULL;
+    IMFTopology *pTopology = NULL;
+
+    //Get the topology for the presentation descriptor
+    HRESULT hr = m_pSequencerSource-&gt;QueryInterface(IID_PPV_ARGS(&amp;pTopoProvider));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pTopoProvider-&gt;GetMediaSourceTopology(pPD, &amp;pTopology);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //Set the topology on the media session
+    m_pSession-&gt;SetTopology(NULL, pTopology);
+
+done:
+    SafeRelease(&amp;pTopoProvider);
+    SafeRelease(&amp;pTopology);
+    return hr;
+}
+</code></pre>
+<h2>Queuing the Next Topology on the Media Session</h2>
+<p>Next, the application needs to handle the <a href="menewpresentation.html">MENewPresentation</a> event.</p>
+<p>Sequencer source raises <a href="menewpresentation.html">MENewPresentation</a> when the Media Session starts playing a segment that has another segment following it. This event informs the application about the next topology in the sequence source by providing the presentation descriptor for the next segment in the preroll list. The application must retrieve the associated topology, by using the topology provider, and queue it on the Media Session. The sequencer source then prerolls this topology, which ensures a seamless transition between presentations.</p>
+<p>When the application seeks across segments, the application receives several <a href="menewpresentation.html">MENewPresentation</a> events as the sequencer source refreshes the preroll list and sets up the correct topology. The application must handle each event and queue the topology returned in the event data, on the Media Session. For information about skipping segments, see <a href="using-the-sequencer-source.html">Using the Sequencer Source</a>.</p>
+<p>For information about getting sequencer source notifications, see <a href="sequencer-source-events.html">Sequencer Source Events</a>.</p>
+<ol>
+<li>
+<p>In the <a href="menewpresentation.html">MENewPresentation</a> event handler, retrieve the presentation descriptor for the next segment from the event data.</p>
+</li>
+<li>
+<p>Get the associated topology for the presentation by calling the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasourcetopologyprovider-getmediasourcetopology"><strong>IMFMediaSourceTopologyProvider::GetMediaSourceTopology</strong></a> method.</p>
+</li>
+<li>
+<p>Set the topology on the Media Session by calling the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-settopology"><strong>IMFMediaSession::SetTopology</strong></a> method.</p>
+<p>The Media Session starts the new presentation when the current presentation has been completed.</p>
+</li>
+</ol>
+<pre lang="C++"><code>HRESULT CPlaylist::OnNewPresentation(IMFMediaEvent *pEvent)
+{
+    IMFPresentationDescriptor *pPD = NULL;
+
+    HRESULT hr = GetEventObject(pEvent, &amp;pPD);
+
+    if (SUCCEEDED(hr))
+    {
+        // Queue the next segment on the media session
+        hr = QueueNextSegment(pPD);
+    }
+
+    SafeRelease(&amp;pPD);
+    return hr;
+}
+</code></pre>
+<h2>Releasing the Sequencer Source</h2>
+<p>Finally, shut down the sequencer source. To do so, call the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-shutdown"><strong>IMFMediaSource::Shutdown</strong></a> method on the sequencer source. This call shuts down all of the underlying native media sources in the sequencer source.</p>
+<p>After releasing the sequencer source, the application should close and shut down the Media Session by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-close"><strong>IMFMediaSession::Close</strong></a> and <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-shutdown"><strong>IMFMediaSession::Shutdown</strong></a>, in that order.</p>
+<p>To avoid memory leaks, the application must release pointers to Media Foundation interfaces when they are no longer needed.</p>
+<h2>Next Steps</h2>
+<p>This walk-through illustrated how to create a basic playlist by using the sequencer source. After creating the playlist, you might want to add advanced features such as segment skipping, changing the playback state, and seeking within a segment. The following list provides links to the related topics:</p>
+<ul>
+<li><a href="how-to-control-presentation-states.html">How to Control Presentation States</a>: The sequencer source relies on the Media Session to provide transport control such as, Play, Pause, and Stop.</li>
+<li><a href="how-to-perform-scrubbing.html">How to Perform Scrubbing</a> describes the steps required to seek to a specific position in a stream.</li>
+</ul>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="sequencer-source.html">Sequencer Source</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

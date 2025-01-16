@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Virtual machine generation identifier</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: WindowsÂ 8 and Windows ServerÂ 2012 introduce the ability for software that is running on a virtual machine to detect that a time shift event may have occurred.
+ms.assetid: 0793E46B-8464-425E-8C5B-77C14DA90004
+title: Virtual machine generation identifier
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Virtual machine generation identifier</h1>
+<p>WindowsÂ 8 and Windows ServerÂ 2012 introduce the ability for software that is running on a virtual machine to detect that a time shift event may have occurred. Time shift events can occur as a result of an application of a virtual machine snapshot or the restoration of a virtual machine backup. For more information about this functionality, see the <a href="https://download.microsoft.com/download/3/1/C/31CFC307-98CA-4CA5-914C-D9772691E214/VirtualMachineGenerationID.docx">Virtual Machine Generation ID white paper</a>.</p>
+<h2>Prerequisites</h2>
+<p>To use the virtual machine generation identifier from inside a virtual machine your virtual machine must conform to the following.</p>
+<ul>
+<li>
+<p>The virtual machine must be running on a hypervisor that implements support for virtual machine generation identifiers. Currently, these are the following:</p>
+<ul>
+<li>WindowsÂ 8</li>
+<li>Windows ServerÂ 2012</li>
+<li>Microsoft Hyper-V Server 2012</li>
+</ul>
+</li>
+<li>
+<p>The virtual machine must be running a guest operating system that has support for the virtual machine generation identifier. Currently, these are the following.</p>
+<p>The following operating systems have native support for the virtual machine generation identifier.</p>
+<ul>
+<li>WindowsÂ 8</li>
+<li>Windows ServerÂ 2012</li>
+<li></li>
+</ul>
+<p>The following operating can be used as the guest operating system if the Hyper-V integration services from WindowsÂ 8 or Windows ServerÂ 2012 are installed.</p>
+<ul>
+<li>Windows ServerÂ 2008Â R2 with Service PackÂ 1 (SP1)</li>
+<li>WindowsÂ 7 with Service PackÂ 1 (SP1)</li>
+<li>Windows ServerÂ 2008 with Service PackÂ 2 (SP2)</li>
+<li>Windows ServerÂ 2003Â R2</li>
+<li>Windows ServerÂ 2003 with Service PackÂ 2 (SP2)</li>
+<li>WindowsÂ Vista with Service PackÂ 2 (SP2)</li>
+<li>WindowsÂ XP with Service PackÂ 3 (SP3)</li>
+</ul>
+</li>
+</ul>
+<h2>Obtaining the virtual machine generation identifier</h2>
+<p>To programmatically obtain the virtual machine generation identifier, perform the following steps.</p>
+<blockquote>
+<p>[!Note]<br />
+The following must be run with administrator or system privileges to function correctly.</p>
+</blockquote>
+<p>Â </p>
+<ol>
+<li>
+<p>Include header file &quot;vmgenerationcounter.h&quot; in your app. The header file contains these definitions:</p>
+<pre lang="C++"><code>DEFINE_GUID(
+    GUID_DEVINTERFACE_VM_GENCOUNTER,
+    0x3ff2c92b, 
+    0x6598, 
+    0x4e60, 
+    0x8e, 
+    0x1c, 
+    0x0c, 
+    0xcf, 
+    0x49, 
+    0x27, 
+    0xe3, 
+    0x19);
+
+#define VM_GENCOUNTER_SYMBOLIC_LINK_NAME L&quot;VmGenerationCounter&quot;
+
+#define IOCTL_VMGENCOUNTER_READ CTL_CODE( \
+    FILE_DEVICE_ACPI, \
+    0x1, METHOD_BUFFERED, \
+    FILE_READ_ACCESS | FILE_WRITE_ACCESS)
+
+typedef struct _VM_GENCOUNTER
+{
+    ULONGLONG GenerationCount;
+    ULONGLONG GenerationCountHigh;
+} VM_GENCOUNTER, *PVM_GENCOUNTER;
+</code></pre>
+</li>
+<li>
+<p>Open a handle to the &quot;\\.\VmGenerationCounter&quot; device using the <a href="/windows/desktop/api/fileapi/nf-fileapi-createfilea"><strong>CreateFile</strong></a> function. Alternatively, you can use the PnP manager to consume the device interface <strong>GUID_DEVINTERFACE_VM_GENCOUNTER</strong> ({3ff2c92b-6598-4e60-8e1c-0ccf4927e319}). These objects will not be present if the app is not running in a virtual machine.</p>
+</li>
+<li>
+<p>Send the <a href="/windows/desktop/api/Vmgenerationcounter/ni-vmgenerationcounter-ioctl_vmgencounter_read"><strong>IOCTL_VMGENCOUNTER_READ</strong></a> IOCTL to the driver to retrieve the generation identifier.</p>
+<p>The <a href="/windows/desktop/api/Vmgenerationcounter/ni-vmgenerationcounter-ioctl_vmgencounter_read"><strong>IOCTL_VMGENCOUNTER_READ</strong></a> IOCTL operates in one of two modes, <em>polling</em>, and <em>event driven</em>.</p>
+<p>To issue the IOCTL in polling mode, you submit the IOCTL with an input buffer of zero length. In response to this, the driver retrieves the current generation identifier, writes it to the output buffer, and completes the IOCTL.</p>
+<p>To issue the IOCTL in event driven mode, submit the IOCTL with an input buffer that contains an existing generation identifier. In response to this, the driver waits until the current generation identifier becomes different from the generation identifier that was passed in. When the generation identifier changes, the driver writes the current generation identifier to the output buffer and completes the IOCTL.</p>
+<p>In both modes, the format and length of the output buffer is dictated by the <a href="/windows/desktop/api/Vmgenerationcounter/ns-vmgenerationcounter-vm_gencounter"><strong>VM_GENCOUNTER</strong></a> structure.</p>
+<p>Polling mode is supported on all of the guest operating systems listed above. Event driven mode is supported only on WindowsÂ Vista with SP2, Windows ServerÂ 2008 with SP2, and later operating systems. On earlier operating systems, the IOCTL will fail with the error code <strong>ERROR_NOT_SUPPORTED</strong> when issued in event driven mode.</p>
+<p>It is possible for the generation identifier to change between the time that it is retrieved by the driver and the time the IOCTL is completed. This can result in the client app receiving stale data. To avoid this, the client app can use event driven mode to ensure that it will eventually learn about any updates to the generation identifier. By taking the client app's current identifier as input, event driven mode avoids potential race conditions that would cause the caller to miss notifications.</p>
+</li>
+</ol>
+<p>The following code example shows how to perform the above actions to obtain the virtual machine generation identifier.</p>
+<blockquote>
+<p>[!Note]<br />
+The following code must be run with administrator or system privileges to function correctly.</p>
+</blockquote>
+<p>Â </p>
+<pre lang="C++"><code>HRESULT GetVmCounter(bool fWaitForChange)
+{
+    BOOL success = FALSE;
+    DWORD error = ERROR_SUCCESS;
+    VM_GENCOUNTER vmCounterOutput = {0};
+    DWORD size = 0;
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    HRESULT hr = S_OK;
+
+    handle = CreateFile(
+        L&quot;\\\\.\\&quot; VM_GENCOUNTER_SYMBOLIC_LINK_NAME,
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        NULL,
+        OPEN_EXISTING,
+        0,
+        NULL);
+
+    if (handle == INVALID_HANDLE_VALUE)
+    {
+        error = GetLastError();
+
+        wprintf(
+            L&quot;Unable to open device %s. Error code = %d.&quot;, 
+            VM_GENCOUNTER_SYMBOLIC_LINK_NAME, 
+            error);
+
+        hr = HRESULT_FROM_WIN32(error);
+
+        goto Cleanup;
+    }
+
+    /*
+    Call into the driver. 
+
+    Because the 4th parameter to DeviceIoControl (nInBufferSize) is zero, this 
+    is a polling request rather than an event-driven request.
+    */
+    success = DeviceIoControl(
+        handle,
+        IOCTL_VMGENCOUNTER_READ,
+        NULL,
+        0,
+        &amp;vmCounterOutput,
+        sizeof(vmCounterOutput),
+        &amp;size,
+        NULL);
+
+    if (!success)
+    {
+        error = GetLastError();
+
+        wprintf(L&quot;Call IOCTL_VMGENCOUNTER_READ failed with %d.&quot;, error);
+
+        hr = HRESULT_FROM_WIN32(error);
+
+        goto Cleanup;
+    }
+
+    wprintf(
+        L&quot;VmCounterValue: %I64x:%I64x&quot;,
+        vmCounterOutput.GenerationCount,
+        vmCounterOutput.GenerationCountHigh);
+
+    if (fWaitForChange)
+    {
+        /*
+        Call into the driver again in event-driven mode. DeviceIoControl won't 
+        return until the generation identifier has changed.
+        */
+        success = DeviceIoControl(
+            handle,
+            IOCTL_VMGENCOUNTER_READ,
+            &amp;vmCounterOutput,
+            sizeof(vmCounterOutput),
+            &amp;vmCounterOutput,
+            sizeof(vmCounterOutput),
+            &amp;size,
+            NULL);
+
+        if (!success)
+        {
+            error = GetLastError();
+
+            wprintf(L&quot;Call IOCTL_VMGENCOUNTER_READ failed with %d.&quot;, error);
+
+            hr = HRESULT_FROM_WIN32(error);
+
+            goto Cleanup;
+        }
+
+        wprintf(
+            L&quot;VmCounterValue changed to: %I64x:%I64x&quot;,
+            vmCounterOutput.GenerationCount,
+            vmCounterOutput.GenerationCountHigh);
+    }
+
+Cleanup:
+
+    if (handle != INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(handle);
+    }
+
+    return hr;
+};
+</code></pre>
+<h2>Determining if a time shift event has occurred</h2>
+<p>After you have obtained the virtual machine generation identifier, you should store it for future use. Before your app performs a time-sensitive operation, such as committing to a database, you should re-obtain the generation identifier and compare it to the stored value. If the identifier has changed, that means that a time shift event has occurred, and your app must act appropriately.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

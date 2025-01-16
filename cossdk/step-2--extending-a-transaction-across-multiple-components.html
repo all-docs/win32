@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 2: Extending a Transaction Across Components</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: 'Step 2: Extending a Transaction Across Multiple Components'
+ms.assetid: 20a30e87-e209-45ae-bf1b-722568758c47
+title: 'Step 2: Extending a Transaction Across Multiple Components'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Step 2: Extending a Transaction Across Components</h1>
+<h2>Objectives</h2>
+<p>In this step, you will learn about the following:</p>
+<ul>
+<li>Transaction flow</li>
+<li>How multiple objects vote in a transaction</li>
+</ul>
+<h2>Description</h2>
+<p><a href="step-1--creating-a-transactional-component.html">Step 1: Creating a Transactional Component</a> shows how to write a simple transactional component that updates author information in the Microsoft SQL Server Pubs database. Step 2 shows what happens when a transaction is extended across multiple components.</p>
+<p>In keeping with the COM+ programming model, <code>UpdateAuthorAddress</code> calls another component in the course of completing its work. The second component, <code>ValidateAuthorAddress</code>, validates the author's address and returns the results to its caller, <code>UpdateAuthorAddress</code>.</p>
+<p>Unlike its caller, <code>ValidateAuthorAddress</code> does not require a transaction, but it can still participate in its caller's transaction. In this step, its transaction attribute value is set to <strong>Supported</strong>, as shown in the following illustration, which extends the existing transaction to the new object.</p>
+<p><img src="images/f58acb34-55db-40a4-8c48-f51ad024ff7e.png" alt="Diagram that shows the extending the existing transaction to the new object." /></p>
+<p>The <strong>Supported</strong> attribute value extends (or flows) an existing transaction only when the caller is transactional. When <code>UpdateAuthorAddress</code> calls <code>ValidateAuthorAddress</code>, COM+ first looks at the caller's context to see whether it is transactional. COM+ then looks at the service attributes that are set on <code>ValidateAuthorAddress</code> and assigns the new object the same transaction identifier that is assigned to the caller object. To better understand this process, see <a href="context-activation.html">Context Activation</a>.</p>
+<p>Because they share the same transaction identifier, both objects must complete their work successfully or COM+ aborts the transaction (undoing any changes made to the Pubs database).</p>
+<p>All objects participating in a transaction vote to either commit or abort the transaction. Voting occurs explicitly when you include voting instructions in your code, as shown in the following extraction from the Step 1 Sample Code, which creates the <code>UpdateAuthorAddress</code> component:</p>
+<pre lang="VB"><code>  ' Everything works.
+  contextstate.SetMyTransactionVote TxCommit
+  contextstate.SetDeactivateOnReturn True
+  Exit Sub
+  
+UnexpectedError:
+  ' There's an error.
+  contextstate.SetMyTransactionVote TxAbort
+  contextstate.SetDeactivateOnReturn True
+</code></pre>
+<p>Voting also occurs implicitly, as is done in the <code>ValidateAuthorAddress</code> component. Unless the object declares otherwise, COM+ assumes an object has completed its work successfully but that it is not ready to be deactivated. COM+ makes the following assumption:</p>
+<pre lang="VB"><code>  contextstate.SetMyTransactionVote TxCommit
+  contextstate.SetDeactivateOnReturn False
+</code></pre>
+<p>When <code>ValidateAuthorAddress</code> returns to its caller, COM+ reads its vote as a commit. COM+ doesn't count the votes until it deactivates the root object, which is the first object in the transaction in this case, the <code>UpdateAuthorAddress</code> object.</p>
+<h2>Sample code</h2>
+<p>The <code>ValidateAuthorAddress</code> component makes a simple check of the author's address. Because <code>UpdateAuthorAddress</code> does not vote explicitly, COM+ uses the default vote settings.</p>
+<pre lang="VB"><code>Option Explicit
+'
+'   Purpose:   This class is used for validating an author's address
+'              (presumably right before updating that address in the
+'              database).
+'
+'   Notes:   This component could be in a transaction or not; it doesn't 
+'            matter because it doesn't touch any data in a database.
+'
+Public Function ValidateAuthorAddress( _
+                        ByVal strAddress As String, _
+                        ByVal strCity As String, _
+                        ByVal strState As String, _
+                        ByVal strZip As String) As Boolean
+  ' Default is to validate unless something is found to be wrong.
+  ValidateAuthorAddress = True
+                                                  
+  '  Invalidate authors who live in New York City
+  '  and authors who live in Montana.
+  '
+  If strCity = &quot;New York&quot; And strState = &quot;New York&quot; Then
+    ValidateAuthorAddress = False
+  ElseIf strState = &quot;Montana&quot; Then
+    ValidateAuthorAddress = False
+  End If
+  ' Done
+End Function
+</code></pre>
+<h2>Summary</h2>
+<ul>
+<li>
+<p>Setting a component's transaction attribute to <strong>Supported</strong> can result in the new object being created in the calling object's transaction. COM+ looks at the caller's context to determine the transactional status of the new object. If the caller is transactional, COM+ flows the transaction to the new object.</p>
+</li>
+<li>
+<p>All objects participating in the same transaction share a common transaction identifier, which COM+ reads from the object's context.</p>
+</li>
+<li>
+<p>Each object in a transaction votes independently of other objects. COM+ counts the votes when the root object is deactivated.</p>
+</li>
+<li>
+<p>You can toggle an object's transaction vote between commit and abort until COM+ deactivates the object or until COM+ deactivates the root object and ends the transaction. Only the last vote setting counts. The <a href="/windows/desktop/api/ComSvcs/nn-comsvcs-icontextstate"><strong>IContextState</strong></a> and <a href="/windows/desktop/api/ComSvcs/nn-comsvcs-iobjectcontext"><strong>IObjectContext</strong></a> interfaces provide methods and that produce similar voting results as shown in the following table. You can use either interface to vote explicitly in a transaction.</p>
+<table>
+<thead>
+<tr>
+<th><a href="/windows/desktop/api/ComSvcs/nn-comsvcs-icontextstate"><strong>IContextState</strong></a> combination methods</th>
+<th><a href="/windows/desktop/api/ComSvcs/nn-comsvcs-iobjectcontext"><strong>IObjectContext</strong></a> equivalent method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/ComSvcs/nf-comsvcs-icontextstate-setmytransactionvote"><strong>SetMyTransactionVote</strong></a> <em>txVote</em> = <strong>TxCommit</strong><!-- raw HTML omitted --> <a href="/windows/desktop/api/ComSvcs/nf-comsvcs-icontextstate-setdeactivateonreturn"><strong>SetDeactivateOnReturn</strong></a> <em>bDeactivate</em> = <strong>True</strong><!-- raw HTML omitted --></td>
+<td><a href="/windows/desktop/api/ComSvcs/nf-comsvcs-iobjectcontext-setcomplete"><strong>SetComplete</strong></a><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/ComSvcs/nf-comsvcs-icontextstate-setmytransactionvote"><strong>SetMyTransactionVote</strong></a> <em>txVote</em> = <strong>TxCommit</strong><!-- raw HTML omitted --> <a href="/windows/desktop/api/ComSvcs/nf-comsvcs-icontextstate-setdeactivateonreturn"><strong>SetDeactivateOnReturn</strong></a> <em>bDeactivate</em> = <strong>False</strong><!-- raw HTML omitted --></td>
+<td><a href="/windows/desktop/api/ComSvcs/nf-comsvcs-iobjectcontext-enablecommit"><strong>EnableCommit</strong></a><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/ComSvcs/nf-comsvcs-icontextstate-setmytransactionvote"><strong>SetMyTransactionVote</strong></a> <em>txVote</em> = <strong>TxAbort</strong><!-- raw HTML omitted --> <a href="/windows/desktop/api/ComSvcs/nf-comsvcs-icontextstate-setdeactivateonreturn"><strong>SetDeactivateOnReturn</strong></a> <em>bDeactivate</em> = <strong>True</strong><!-- raw HTML omitted --></td>
+<td><a href="/windows/desktop/api/ComSvcs/nf-comsvcs-iobjectcontext-setabort"><strong>SetAbort</strong></a><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/ComSvcs/nf-comsvcs-icontextstate-setmytransactionvote"><strong>SetMyTransactionVote</strong></a> <em>txVote</em> = <strong>TxAbort</strong><!-- raw HTML omitted --> <a href="/windows/desktop/api/ComSvcs/nf-comsvcs-icontextstate-setdeactivateonreturn"><strong>SetDeactivateOnReturn</strong></a> <em>bDeactivate</em> = <strong>False</strong><!-- raw HTML omitted --></td>
+<td><a href="/windows/desktop/api/ComSvcs/nf-comsvcs-iobjectcontext-disablecommit"><strong>DisableCommit</strong></a><!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+</li>
+<li>
+<p>COM+ sets an object's vote to the equivalent of <a href="/windows/desktop/api/ComSvcs/nf-comsvcs-iobjectcontext-enablecommit"><strong>EnableCommit</strong></a> unless the component votes explicitly.</p>
+</li>
+<li>
+<p>Voting explicitly can reduce the overall duration of the transaction and release expensive resource locks.</p>
+</li>
+</ul>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="step-1--creating-a-transactional-component.html">Step 1: Creating a Transactional Component</a></p>
+<!-- raw HTML omitted -->
+<p><a href="step-3--reusing-components.html">Step 3: Reusing Components</a></p>
+<!-- raw HTML omitted -->
+<p><a href="context-activation.html">Context Activation</a></p>
+<!-- raw HTML omitted -->
+<p><a href="managing-automatic-transactions-in-com-.html">Managing Automatic Transactions in COM+</a></p>
+<!-- raw HTML omitted -->
+</body>

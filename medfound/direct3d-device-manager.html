@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direct3D Device Manager</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Direct3D Device Manager
+ms.assetid: d82fd82d-510e-4004-b18b-8f2372e29701
+title: Direct3D Device Manager
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Direct3D Device Manager</h1>
+<p>The Microsoft Direct3D device manager enables two or more objects to share the same Microsoft Direct3DÂ 9 device. One object acts as the owner of the Direct3D 9 device. To share the device, the owner of the device creates the Direct3D device manager. Other objects can obtain a pointer to the device manager from the device owner, then use the device manager to get a pointer to the Direct3D device. Any object that uses the device holds an exclusive lock, which prevents other objects from using the device at the same time.</p>
+<blockquote>
+<p>[!Note]<br />
+The Direct3D Device Manager supports Direct3D 9 devices only. It does not support DXGI devices.</p>
+</blockquote>
+<p>Â </p>
+<p>To create the Direct3D device manager, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-dxva2createdirect3ddevicemanager9"><strong>DXVA2CreateDirect3DDeviceManager9</strong></a>. This function returns a pointer to the device manager's <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirect3ddevicemanager9"><strong>IDirect3DDeviceManager9</strong></a> interface, along with a reset token. The reset token enables the owner of the Direct3D device to set (and reset) the device on the device manager. To initialize the device manager, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-resetdevice"><strong>IDirect3DDeviceManager9::ResetDevice</strong></a>. Pass in a pointer to the Direct3D device, along with the reset token.</p>
+<p>The following code shows how to create and initialize the device manager.</p>
+<pre lang="C++"><code>HRESULT CreateD3DDeviceManager(
+    IDirect3DDevice9 *pDevice, 
+    UINT *pReset, 
+    IDirect3DDeviceManager9 **ppManager
+    )
+{
+    UINT resetToken = 0;
+
+    IDirect3DDeviceManager9 *pD3DManager = NULL;
+
+    HRESULT hr = DXVA2CreateDirect3DDeviceManager9(&amp;resetToken, &amp;pD3DManager);
+
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pD3DManager-&gt;ResetDevice(pDevice, resetToken);
+
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    *ppManager = pD3DManager;
+    (*ppManager)-&gt;AddRef();
+
+    *pReset = resetToken;
+
+
+done:
+    SafeRelease(&amp;pD3DManager);
+    return hr;
+}
+</code></pre>
+<p>The device owner must provide a way for other objects to get a pointer to the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirect3ddevicemanager9"><strong>IDirect3DDeviceManager9</strong></a> interface. The standard mechanism is to implement the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfgetservice"><strong>IMFGetService</strong></a> interface. The service GUID is MR_VIDEO_ACCELERATION_SERVICE.</p>
+<p>To share the device among several objects, each object (including the owner of the device) must access the device through the device manager, as follows:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-opendevicehandle"><strong>IDirect3DDeviceManager9::OpenDeviceHandle</strong></a> to get a handle to the device.</li>
+<li>To use the device, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-lockdevice"><strong>IDirect3DDeviceManager9::LockDevice</strong></a> and pass in the device handle. The method returns a pointer to the <strong>IDirect3DDevice9</strong> interface. The method can be called in a blocking mode or a non-blocking mode, depending on the value of the <em>fBlock</em> parameter.</li>
+<li>When you are done using the device, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-unlockdevice"><strong>IDirect3DDeviceManager9::UnlockDevice</strong></a>. This method makes the device available to other objects.</li>
+<li>Before exiting, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-closedevicehandle"><strong>IDirect3DDeviceManager9::CloseDeviceHandle</strong></a> to close the device handle.</li>
+</ol>
+<p>You should hold the device lock only while using the device, because holding the device lock prevents other objects from using the device.</p>
+<p>The owner of the device can switch to another device at any time by calling <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-resetdevice"><strong>ResetDevice</strong></a>, typically because the original device was lost. Device loss can occur for various reasons, including changes in the monitor resolution, power management actions, locking and unlocking the computer, and so forth. For more information, see the Direct3D documentation.</p>
+<p>The <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-resetdevice"><strong>ResetDevice</strong></a> method invalidates any device handles that were opened previously. When a device handle is invalid, the <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-lockdevice"><strong>LockDevice</strong></a> method returns <strong>DXVA2_E_NEW_VIDEO_DEVICE</strong>. If this occurs, close the handle and call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-opendevicehandle"><strong>OpenDeviceHandle</strong></a> again to obtain a new device handle, as shown in the following code.</p>
+<p>The following example shows how to open a device handle and lock the device.</p>
+<pre lang="C++"><code>HRESULT LockDevice(
+    IDirect3DDeviceManager9 *pDeviceManager,
+    BOOL fBlock,
+    IDirect3DDevice9 **ppDevice, // Receives a pointer to the device.
+    HANDLE *pHandle              // Receives a device handle.   
+    )
+{
+    *pHandle = NULL;
+    *ppDevice = NULL;
+
+    HANDLE hDevice = 0;
+
+    HRESULT hr = pDeviceManager-&gt;OpenDeviceHandle(&amp;hDevice);
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pDeviceManager-&gt;LockDevice(hDevice, ppDevice, fBlock);
+    }
+
+    if (hr == DXVA2_E_NEW_VIDEO_DEVICE)
+    {
+        // Invalid device handle. Try to open a new device handle.
+        hr = pDeviceManager-&gt;CloseDeviceHandle(hDevice);
+
+        if (SUCCEEDED(hr))
+        {
+            hr = pDeviceManager-&gt;OpenDeviceHandle(&amp;hDevice);
+        }
+
+        // Try to lock the device again.
+        if (SUCCEEDED(hr))
+        {
+            hr = pDeviceManager-&gt;LockDevice(hDevice, ppDevice, TRUE); 
+        }
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        *pHandle = hDevice;
+    }
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="directx-video-acceleration-2-0.html">DirectX Video Acceleration 2.0</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

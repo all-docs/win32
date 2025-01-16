@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Generating New ASF Data Packets</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Generating New ASF Data Packets
+ms.assetid: 7afa9694-c965-40e2-8549-e32ff48def2a
+title: Generating New ASF Data Packets
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Generating New ASF Data Packets</h1>
+<p>The ASF <em>multiplexer</em> is a WMContainer layer component that works with the <a href="asf-file-structure.html">ASF Data Object</a> and gives an application the ability to generate ASF data packets for a stream that match the requirements defined in the ContentInfo object.</p>
+<p>The multiplexer has one input and one output. It receives a stream sample that contains digital media data and produces one or more data packet that can be written to an ASF container.</p>
+<p>The following list summarizes the process of generating ASF data packets:</p>
+<ol>
+<li>Pass input data to the multiplexer in <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-processsample"><strong>IMFASFMultiplexer::ProcessSample</strong></a>.</li>
+<li>Collect the data packets by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-getnextpacket"><strong>IMFASFMultiplexer::GetNextPacket</strong></a> in a loop until all the complete packets have been retrieved.</li>
+<li>After the input data has been converted into complete packets there might be some pending data in the multiplexer, which was not retrieved by <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-getnextpacket"><strong>GetNextPacket</strong></a>. Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-flush"><strong>IMFASFMultiplexer::Flush</strong></a> to packetize the pending samples and collect them from the multiplexer by calling <strong>GetNextPacket</strong> again.</li>
+<li>Update the associated ASF Header Objects by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-end"><strong>IMFASFMultiplexer::End</strong></a> to reflect changes made by the multiplexer during data packet generation.</li>
+</ol>
+<p>The following diagram illustrates data packet generation for an ASF file through the multiplexer.</p>
+<p><img src="images/packet.gif" alt="diagram showing data packet generation for an asf file" /></p>
+<h2>ASF Data Packet Creation</h2>
+<p>After creating and initializing the multiplexer as described in <a href="creating-the-multiplexer-object.html">Creating the Multiplexer Object</a>, call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-processsample"><strong>IMFASFMultiplexer::ProcessSample</strong></a> to pass input data to the multiplexer for processing into data packets. The specified input must be in a media sample (<a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfsample"><strong>IMFSample</strong></a> interface) that can have one or more media buffers (<a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediabuffer"><strong>IMFMediaBuffer</strong></a> interface) containing the data for a stream. In case of ASF-to-ASF transcoding, the input media sample can be generated from the splitter that creates packetized stream samples. For more information, see <a href="asf-splitter.html">ASF Splitter</a>.</p>
+<p>Before calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-processsample"><strong>ProcessSample</strong></a>, make sure that the time stamp of the input media sample is a valid presentation time; otherwise <strong>ProcessSample</strong> fails and returns the MF_E_NO_SAMPLE_TIMESTAMP code.</p>
+<p>The multiplexer can accept input as compressed or uncompressed media samples through <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-processsample"><strong>ProcessSample</strong></a>. The multiplexer assigns send times to these samples depending on the bandwidth usage of the stream. During this process, the multiplexer checks the leaky bucket parameters (bit rate and buffer window utilization) and can reject samples that do not adhere to those values. The input media sample can fail the bandwidth check for either of the following reasons:</p>
+<ul>
+<li>If the input media sample arrived late because the last-assigned send time is greater than the time stamp on this media sample. <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-processsample"><strong>ProcessSample</strong></a> fails and returns the <strong>MF_E_LATE_SAMPLE</strong> error code.</li>
+<li>If the time stamp on the input media sample is earlier than the assigned send time (this indicates buffer overflow). The multiplexer can ignore this situation if it is configured to adjust the bit rate by setting the <strong>MFASF_MULTIPLEXER_AUTOADJUST_BITRATE</strong> flag during multiplexer initialization. For more information, see &quot;Multiplexer Initialization and Leaky Bucket Settings&quot; in <a href="creating-the-multiplexer-object.html">Creating the Multiplexer Object</a>. If this flag is not set and the multiplexer encounters bandwidth overrun, <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-processsample"><strong>ProcessSample</strong></a> fails and returns the <strong>MF_E_BANDWIDTH_OVERRUN</strong> error code.</li>
+</ul>
+<p>After the multiplexer assigns the send time, the input media sample is added to the <em>send window</em>â€”a list of input media samples ordered by send times and ready to be processed into data packets. During data packet construction, the input media sample is parsed and relevant data is written to a data packet as payload. A complete data packet can contain data from one or more input media samples.</p>
+<p>When new input media samples arrive in the send window, they are added to a queue until there are enough media samples to form one complete packet. The data in media buffers contained by the input media sample are not copied to the generated data packet. The data packet hold references to the input media buffers until the input media sample has been fully packetized and the complete packet have been collected from the multiplexer.</p>
+<p>When a complete data packet is available, it can be retrieved by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-getnextpacket"><strong>IMFASFMultiplexer::GetNextPacket</strong></a>. If you call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-processsample"><strong>ProcessSample</strong></a> while there are complete packets ready for retrieval, it fails and returns the <strong>MF_E_NOTACCEPTING</strong> error code. This indicates that the multiplexer cannot accept more input and you must call <strong>GetNextPacket</strong> to retrieve the waiting packets. Ideally, every <strong>ProcessSample</strong> call should be followed by one or more <strong>GetNextPacket</strong> calls to get the complete data packets. It may take more than one input media sample to create a complete data packet. Conversely, data in one input media sample might span multiple packets. Therefore, not all calls to <strong>ProcessSample</strong> will yield output media samples.</p>
+<p>If the input media sample contains a key frame indicated by the <a href="mfsampleextension-cleanpoint-attribute.html"><strong>MFSampleExtension_CleanPoint</strong></a> attribute, the multiplexer copies the attribute to the packet.</p>
+<h2>Getting ASF Data Packets</h2>
+<p>To collect the output media samples for a complete data packet generated by the multiplexer, call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-getnextpacket"><strong>IMFASFMultiplexer::GetNextPacket</strong></a> in a loop until there are no more output media samples left for the packet. The following lists the success cases:</p>
+<ul>
+<li>If there is a complete data packet available, <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-getnextpacket"><strong>GetNextPacket</strong></a> receives the <strong>ASF_STATUS_FLAGS_INCOMPLETE</strong> flag in the <em>pdwStatusFlags</em> parameter; the <em>ppIPacket</em> parameter receives a pointer to the first data packet. You must call this method as long it receives this flag. With every iteration, <em>ppIPacket</em> points to the next packet in the queue.</li>
+<li>If there is only one data packet, <em>ppIPacket</em> points to it and the <strong>ASF_STATUS_FLAGS_INCOMPLETE</strong> flag is not received in <em>pdwStatusFlags</em>.</li>
+<li><a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-getnextpacket"><strong>GetNextPacket</strong></a> can succeed without yielding any data packets if the multiplexer is still in the process of packetizing and adding data packets. In this case, <em>ppIPacket</em> points to <strong>NULL</strong>. To proceed, you must provide the multiplexer with more input media samples by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-processsample"><strong>ProcessSample</strong></a>.</li>
+</ul>
+<p>The following example code shows a function that generates data packets by using the multiplexer. The generated data packet contents will be written to the data byte stream allocated by the caller.</p>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+// GenerateASFDataPackets
+// 
+// Gets data packets from the mux. This function is called after 
+// calling IMFASFMultiplexer::ProcessSample. 
+//-------------------------------------------------------------------
+
+HRESULT GenerateASFDataPackets( 
+    IMFASFMultiplexer *pMux, 
+    IMFByteStream *pDataStream
+    )
+{
+    HRESULT hr = S_OK;
+
+    IMFSample *pOutputSample = NULL;
+    IMFMediaBuffer *pDataPacketBuffer = NULL;
+
+    DWORD dwMuxStatus = ASF_STATUSFLAGS_INCOMPLETE;
+
+    while (dwMuxStatus &amp; ASF_STATUSFLAGS_INCOMPLETE)
+    {
+        hr = pMux-&gt;GetNextPacket(&amp;dwMuxStatus, &amp;pOutputSample);
+
+        if (FAILED(hr))
+        {
+            break;
+        }
+
+        if (pOutputSample)
+        {
+            //Convert to contiguous buffer
+            hr = pOutputSample-&gt;ConvertToContiguousBuffer(&amp;pDataPacketBuffer);
+            
+            if (FAILED(hr))
+            {
+                break;
+            }
+
+            //Write buffer to byte stream
+            hr = WriteBufferToByteStream(pDataStream, pDataPacketBuffer, NULL);
+
+            if (FAILED(hr))
+            {
+                break;
+            }
+        }
+
+        SafeRelease(&amp;pDataPacketBuffer);
+        SafeRelease(&amp;pOutputSample);
+    }
+
+    SafeRelease(&amp;pOutputSample);
+    SafeRelease(&amp;pDataPacketBuffer);
+    return hr;
+}
+</code></pre>
+<p>The <code>WriteBufferToByteStream</code> function is shown in the topic <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfbytestream-write"><strong>IMFByteStream::Write</strong></a>.</p>
+<p>To see a complete application that uses this code example, see <a href="tutorial--copying-asf-streams-from-one-file-to-another.html">Tutorial: Copying ASF Streams from One File to Another</a>.</p>
+<h2>Post Packet-Generation Calls</h2>
+<p>To make sure that there are no complete data packets waiting in the multiplexer, call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-flush"><strong>IMFASFMultiplexer::Flush</strong></a>. This forces the multiplexer to packetize all the media samples that are in progress. The application can collect these packets in form of media samples through <strong>GetNextPacket</strong> in a loop until there are no more packets left to be retrieved.</p>
+<p>After all the media samples are generated, call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-end"><strong>IMFASFMultiplexer::End</strong></a> to update the ASF Header Object that is associated with these data packets. The Header Object is specified by passing the ContentInfo object that was used to initialize the multiplexer. This call updates various Header Objects to reflect changes made by the multiplexer during data packet generation. This information includes packet count, send duration, play duration, and stream numbers of all the streams. The overall header size is also updated.</p>
+<p>You must ensure that <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-end"><strong>End</strong></a> is called after all the data packets have been retrieved. If there are any packets waiting in the multiplexer, <strong>End</strong> will fail and return the <strong>MF_E_FLUSH_NEEDED</strong> error code. In this case, get the waiting packet by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-flush"><strong>Flush</strong></a> and <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-getnextpacket"><strong>GetNextPacket</strong></a> in a loop.</p>
+<blockquote>
+<p>[!Note]<br />
+For VBR encoding, after calling <strong>End</strong>, you must set the encoding statistics in the ContentInfo object's encoding properties. For information about this process, see &quot;Configuring the ContentInfo Object with Encoder Settings&quot; in <a href="setting-properties-in-the-contentinfo-object.html">Setting Properties in the ContentInfo Object</a>. The following list shows the specific properties to set:</p>
+<ul>
+<li><a href="mfpkey-ravgproperty.html"><strong>MFPKEY_RAVG</strong></a> is the average bit rate of the VBR content.</li>
+<li><a href="mfpkey-bavgproperty.html"><strong>MFPKEY_BAVG</strong></a> is the buffer window for the average bit rate.</li>
+<li><a href="mfpkey-rmaxproperty.html"><strong>MFPKEY_RMAX</strong></a> is the peak bit rate of the VBR content.</li>
+<li><a href="mfpkey-bmaxproperty.html"><strong>MFPKEY_BMAX</strong></a> is the peak buffer window.</li>
+</ul>
+</blockquote>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="asf-multiplexer.html">ASF Multiplexer</a></p>
+<!-- raw HTML omitted -->
+<p><a href="tutorial--copying-asf-streams-from-one-file-to-another.html">Tutorial: Copying ASF Streams from One File to Another</a></p>
+<!-- raw HTML omitted -->
+<p><a href="tutorial--writing-a-wma-file-by-using-cbr-encoding.html">Tutorial: Writing a WMA File by Using CBR Encoding</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

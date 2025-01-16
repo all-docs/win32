@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Encoding and Decoding a Hashed Message</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: hashes and encodes a text message, and then decodes and verifies the message.
+ms.assetid: effe4080-63c1-4f35-a5e3-e7e60754b28f
+title: 'Example C Program: Encoding and Decoding a Hashed Message'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Encoding and Decoding a Hashed Message</h1>
+<p>The following example <a href="../secgloss/h-gly.html"><em>hashes</em></a> and encodes a text message, and then decodes and verifies the message.</p>
+<p>Although, for simplicity, the two different functions have been combined in this example, in a more realistic setting the two parts would be used separately.</p>
+<p>This example illustrates the following tasks and CryptoAPI functions:</p>
+<ul>
+<li>Calling <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptacquirecontexta"><strong>CryptAcquireContext</strong></a> to acquire a CSP provider.</li>
+<li>Using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgcalculateencodedlength"><strong>CryptMsgCalculateEncodedLength</strong></a> to calculate the length of the encoded message.</li>
+<li>Allocating memory for a buffer to hold the encoded data.</li>
+<li>Opening a message to encode using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgopentoencode"><strong>CryptMsgOpenToEncode</strong></a>.</li>
+<li>Adding content to the message to encode using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgupdate"><strong>CryptMsgUpdate</strong></a>.</li>
+<li>Using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsggetparam"><strong>CryptMsgGetParam</strong></a> to copy the encoded message to the allocated buffer.</li>
+<li>Opening a message to decode using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgopentodecode"><strong>CryptMsgOpenToDecode</strong></a>.</li>
+<li>Adding the encoded message to the message to decode using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgupdate"><strong>CryptMsgUpdate</strong></a>.</li>
+<li>Creating a duplicate pointer to the message using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgduplicate"><strong>CryptMsgDuplicate</strong></a>.</li>
+<li>Checking the message type with <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsggetparam"><strong>CryptMsgGetParam</strong></a>.</li>
+<li>Using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsggetparam"><strong>CryptMsgGetParam</strong></a> to decode the message.</li>
+<li>Verifying the hash using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgcontrol"><strong>CryptMsgControl</strong></a>.</li>
+<li>Using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptmsgclose"><strong>CryptMsgClose</strong></a> to release the message handle.</li>
+<li>Using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptreleasecontext"><strong>CryptReleaseContext</strong></a> to release the CSP.</li>
+</ul>
+<p>This example uses the function <a href="myhandleerror.html"><strong>MyHandleError</strong></a>. Code for this function is included with the sample.</p>
+<p>Code for this and other auxiliary functions is also listed under <a href="general-purpose-functions.html">General Purpose Functions</a>.</p>
+<pre lang="C++"><code>#pragma comment(lib, &quot;crypt32.lib&quot;)
+
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Wincrypt.h&gt;
+#define MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+void MyHandleError(char *s);
+
+void main(void)
+{
+//-------------------------------------------------------------------
+//  Copyright (C) Microsoft.  All rights reserved.
+//  Declare and initialize variables. This includes creating a 
+//  pointer to the message content. In real situations, 
+//  the message content will usually exist somewhere and a pointer
+//  to it will get passed to the application. 
+
+BYTE* pbContent = (BYTE*) &quot;A razzle-dazzle hashed message \n&quot;
+       &quot;Hashing is better than trashing. \n&quot;;    // The message
+DWORD cbContent = strlen((char *)pbContent)+1;  // Size of message
+                                                // including the  
+                                                // final NULL.
+HCRYPTPROV hCryptProv;                          // CSP handle
+DWORD HashAlgSize;
+CRYPT_ALGORITHM_IDENTIFIER HashAlgorithm;
+CMSG_HASHED_ENCODE_INFO HashedEncodeInfo;
+DWORD cbEncodedBlob;
+BYTE *pbEncodedBlob;
+HCRYPTMSG hMsg;
+HCRYPTMSG hDupMsg;
+//-------------------------------------------------------------------
+//  Variables to be used in decoding.
+DWORD cbData = sizeof(DWORD);
+DWORD dwMsgType;
+DWORD cbDecoded;
+BYTE  *pbDecoded;
+
+//-------------------------------------------------------------------
+//  Begin processing.
+
+printf(&quot;Begin processing. \n&quot;);
+printf(&quot;The message to be hashed and encoded is: \n&quot;);
+printf(&quot;%s\n&quot;,pbContent);    // Display original message.
+printf(&quot;The starting message length is %d\n&quot;,cbContent);
+
+//-------------------------------------------------------------------
+// Acquire a cryptographic provider context handle.
+
+if(CryptAcquireContext(
+               &amp;hCryptProv,     // Address for the handle. 
+               NULL,            // Use the current user's logon name.
+               NULL,            // Use the default provider.
+               PROV_RSA_FULL,   // Provider type.
+               0))              // Zero allows access to
+                                // private keys.
+{
+    printf(&quot;A CSP context has been acquired. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;CryptAcquireContext failed.&quot;);
+}
+//-------------------------------------------------------------------
+// The function succeeded; hCryptProv is the CSP handle.
+
+//-------------------------------------------------------------------
+// Initialize the algorithm identifier structure.
+
+HashAlgSize = sizeof(HashAlgorithm);
+memset(&amp;HashAlgorithm, 0, HashAlgSize);   // Initialize to zero.
+HashAlgorithm.pszObjId = szOID_RSA_MD5;   // Then set the 
+                                          //   necessary member.
+
+//-------------------------------------------------------------------
+// Initialize the CMSG_HASHED_ENCODE_INFO structure.
+
+memset(&amp;HashedEncodeInfo, 0, sizeof(CMSG_HASHED_ENCODE_INFO));
+HashedEncodeInfo.cbSize = sizeof(CMSG_HASHED_ENCODE_INFO);
+HashedEncodeInfo.hCryptProv = hCryptProv;
+HashedEncodeInfo.HashAlgorithm = HashAlgorithm;
+HashedEncodeInfo.pvHashAuxInfo = NULL;
+
+//-------------------------------------------------------------------
+// Get the size of the encoded message BLOB.
+
+if(cbEncodedBlob = CryptMsgCalculateEncodedLength(
+                     MY_ENCODING_TYPE,     // Message encoding type
+                     0,                    // Flags
+                     CMSG_HASHED,          // Message type
+                     &amp;HashedEncodeInfo,    // Pointer to structure
+                     NULL,                 // Inner content object ID
+                     cbContent))           // Size of content
+{
+    printf(&quot;The length to be allocated is %d bytes.\n&quot;,
+        cbEncodedBlob);
+}
+else
+{
+    MyHandleError(&quot;Getting cbEncodedBlob length failed&quot;);
+}
+//-------------------------------------------------------------------
+// Allocate memory for the encoded BLOB.
+if(pbEncodedBlob = (BYTE *) malloc(cbEncodedBlob))
+{
+    printf(&quot;%d bytes of memory have been allocated.\n&quot;,
+        cbEncodedBlob);
+}
+else
+{
+    MyHandleError(&quot;Malloc operation failed.&quot;);
+}
+//-------------------------------------------------------------------
+// Open a message to encode.
+
+if(hMsg = CryptMsgOpenToEncode(
+            MY_ENCODING_TYPE,        // Encoding type
+            0,                       // Flags
+            CMSG_HASHED,             // Message type
+            &amp;HashedEncodeInfo,       // Pointer to structure
+            NULL,                    // Inner content object ID
+            NULL))                   // Stream information (not used)
+{
+    printf(&quot;The message to encode has been opened. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;OpenToEncode failed&quot;);
+}
+//-------------------------------------------------------------------
+// Update the message with the data.
+
+if(CryptMsgUpdate(
+            hMsg,          // Handle to the message
+            pbContent,     // Pointer to the content
+            cbContent,     // Size of the content
+            TRUE))         // Last call
+{
+    printf(&quot;Data has been added to the message to encode. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;MsgUpdate failed&quot;);
+}
+//-------------------------------------------------------------------
+// Create a duplicate of the message.
+
+if(hDupMsg = CryptMsgDuplicate(hMsg))
+{
+     printf(&quot;The message has been duplicated.\n&quot;);
+}
+else
+{
+     MyHandleError(&quot;Duplication of the message failed.&quot;);
+}
+
+//-------------------------------------------------------------------
+// Get the resulting message from the duplicate of the message.
+
+if(CryptMsgGetParam(
+               hDupMsg,                  // Handle to the message
+               CMSG_CONTENT_PARAM,       // Parameter type
+               0,                        // Index
+               pbEncodedBlob,            // Pointer to the BLOB
+               &amp;cbEncodedBlob))          // Size of the BLOB
+{
+     printf(&quot;Message encoded successfully. \n&quot;);
+}
+else    
+{
+    MyHandleError(&quot;MsgGetParam failed&quot;);
+}
+//-------------------------------------------------------------------
+// Close both messages to prepare for decoding.
+
+CryptMsgClose(hMsg);
+CryptMsgClose(hDupMsg);
+
+// The following code decodes the hashed message.
+// Usually, this would be in a separate program and the encoded,
+// hashed data would be input from a file, from an email message, 
+// or from some other source.
+//
+// The variables used in this code have already been
+// declared and initialized.
+
+//-------------------------------------------------------------------
+// Open the  message for decoding.
+
+if(hMsg = CryptMsgOpenToDecode(
+            MY_ENCODING_TYPE,       // Encoding type
+            0,                      // Flags
+            0,                      // Message type 
+                                    // (get from message)
+            hCryptProv,             // Cryptographic provider
+            NULL,                   // Recipient information
+            NULL))                  // Stream information
+{
+     printf(&quot;The message has been opened for decoding. \n&quot;);
+}
+else
+{
+     MyHandleError(&quot;OpenToDecode failed&quot;);
+}
+//-------------------------------------------------------------------
+// Update the message with the encoded BLOB. 
+
+if(CryptMsgUpdate(
+            hMsg,             // Handle to the message
+            pbEncodedBlob,    // Pointer to the encoded BLOB
+            cbEncodedBlob,    // Size of the encoded BLOB
+            TRUE))            // Last call
+{
+     printf(&quot;The encoded data is added to the message &quot;
+         &quot;to decode. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Decode MsgUpdate failed&quot;);
+}
+//-------------------------------------------------------------------
+// Get the message type.
+
+if(CryptMsgGetParam(
+       hMsg,               // Handle to the message
+       CMSG_TYPE_PARAM,    // Parameter type
+       0,                  // Index
+       &amp;dwMsgType,         // Address for returned information
+       &amp;cbData))           // Size of the returned information
+{
+    printf(&quot;The message type has been obtained. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Decode CMSG_TYPE_PARAM failed&quot;);
+}
+//-------------------------------------------------------------------
+// Some applications may need to use a switch statement here
+// and process the message differently, depending on the
+// message type.
+
+if(dwMsgType == CMSG_HASHED)
+{
+     printf(&quot;The message is a hashed message. Proceed. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Wrong message type&quot;);
+}
+//-------------------------------------------------------------------
+// Get the size of the content.
+
+if(CryptMsgGetParam(
+               hMsg,                   // Handle to the message
+               CMSG_CONTENT_PARAM,     // Parameter type
+               0,                      // Index
+               NULL,                   // Address for returned 
+                                       // information
+               &amp;cbDecoded))            // Size of the returned 
+                                       // information
+{
+    printf(&quot;The length %d of the message obtained. \n&quot;, cbDecoded);
+}
+else
+{
+    MyHandleError(&quot;Decode CMSG_CONTENT_PARAM failed&quot;);
+}
+//-------------------------------------------------------------------
+// Allocate memory.
+
+if(pbDecoded = (BYTE *) malloc(cbDecoded))
+{
+     printf(&quot;Memory for the decoded message has been allocated.\n&quot;);
+}
+else
+{
+    MyHandleError(&quot;Decoding memory allocation failed&quot;);
+}
+//-------------------------------------------------------------------
+// Copy the decoded message into the buffer just allocated.
+
+if(CryptMsgGetParam(
+            hMsg,                    // Handle to the message
+            CMSG_CONTENT_PARAM,      // Parameter type
+            0,                       // Index
+            pbDecoded,               // Address for returned 
+                                     // information
+            &amp;cbDecoded))             // Size of the returned 
+                                     // information
+{
+    printf(&quot;Message decoded successfully \n&quot;);
+    printf(&quot;The decoded message is \n%s\n&quot;, (LPSTR)pbDecoded);
+}
+else
+{
+    MyHandleError(&quot;Decoding CMSG_CONTENT_PARAM #2 failed&quot;);
+}
+//-------------------------------------------------------------------
+// Verify the hash.
+
+if(CryptMsgControl(
+              hMsg,                        // Handle to the message
+              0,                           // Flags
+              CMSG_CTRL_VERIFY_HASH,       // Control type
+              NULL))                       // Pointer not used
+{
+    printf(&quot;Verification of hash succeeded. \n&quot;);
+    printf(&quot;The data has not been tampered with.\n&quot;);
+}
+else
+{
+     printf(&quot;Verification of hash failed. Something changed &quot;
+         &quot;this message .\n&quot;);
+}
+
+printf(&quot;Test program completed without error. \n&quot;);
+
+//-------------------------------------------------------------------
+// Clean up
+
+if(pbEncodedBlob)
+    free(pbEncodedBlob);
+if(pbDecoded)
+    free(pbDecoded);
+
+CryptMsgClose(hMsg); 
+
+// Release the CSP.
+
+if(hCryptProv) 
+   CryptReleaseContext(hCryptProv,0);
+} // End of main
+
+//-------------------------------------------------------------------
+//  This example uses the function MyHandleError, a simple error
+//  handling function, to print an error message to the standard  
+//  error (stderr) file and exit the program. 
+//  For most applications, replace this function with one 
+//  that does more extensive error reporting.
+
+void MyHandleError(char *s)
+{
+    fprintf(stderr,&quot;An error occurred in running the program. \n&quot;);
+    fprintf(stderr,&quot;%s\n&quot;,s);
+    fprintf(stderr, &quot;Error number %x.\n&quot;, GetLastError());
+    fprintf(stderr, &quot;Program terminating. \n&quot;);
+    exit(1);
+} // End of MyHandleError
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

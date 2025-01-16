@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Subresources (Direct3D 12 Graphics)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Subresources (Direct3D 12 Graphics)
+description: Describes how a resource is divided into subresources, and how to reference a single, multiple or slice of subresources.
+ms.assetid: C4F92F8A-DBF0-412B-8707-CC4C1BF2D88F
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Subresources (Direct3D 12 Graphics)</h1>
+<p>Describes how a resource is divided into subresources, and how to reference a single, multiple or slice of subresources.</p>
+<ul>
+<li><a href="#example-subresources">Example subresources</a>
+<ul>
+<li><a href="#subresource-indexing">Subresource indexing</a></li>
+<li><a href="#mip-slice">Mip slice</a></li>
+<li><a href="#array-slice">Array slice</a></li>
+<li><a href="#plane-slice">Plane slice</a></li>
+<li><a href="#multiple-subresources">Multiple subresources</a></li>
+</ul>
+</li>
+<li><a href="#subresource-apis">Subresource APIs</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Example subresources</h2>
+<p>If a resource contains a buffer, then it simply contains one subresource with an index of 0. If the resource contains a texture (or texture array), then referencing the subresources is more complex.</p>
+<p>Some APIs access an entire resource (such as the <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copyresource"><strong>ID3D12GraphicsCommandList::CopyResource</strong></a> method), others access a portion of a resource (for example the <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-readfromsubresource"><strong>ID3D12Resource::ReadFromSubresource</strong></a> method). The methods that access a portion of a resource generally use a view description (such as the <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_array_srv"><strong>D3D12_TEX2D_ARRAY_SRV</strong></a> structure) to specify the subresources to access. Refer to the <a href="#subresource-apis">Subresource APIs</a> section for a complete list.</p>
+<h3>Subresource indexing</h3>
+<p>To index a particular subresource, the mip levels are indexed first as each array entry is indexed.</p>
+<p><img src="images/subresource-index.png" alt="subresource indexing" /></p>
+<h3>Mip slice</h3>
+<p>A mip slice includes one mipmap level for every texture in an array, as shown in the following image.</p>
+<p><img src="images/subresource-mip-slice.png" alt="subresource mip slices" /></p>
+<h3>Array slice</h3>
+<p>Given an array of textures, each texture with mipmaps, an array slice includes one texture and all of its mip levels, as shown in the following image.</p>
+<p><img src="images/subresource-array-slices.png" alt="subresource array slices" /></p>
+<h3>Plane slice</h3>
+<p>Typically planar formats are not used to store RGBA data, but in the cases where it is (perhaps 24bpp RGB data), one plane could represent the red image, one the green, and one the blue image. One plane though is not necessarily one color, two or more colors could be combined into one plane. More typically planar data is used for sub-sampled YCbCr and Depth-Stencil data. Depth-Stencil is the only format that fully supports mipmaps, arrays, and multiple planes (often plane 0 for Depth and plane 1 for Stencil).</p>
+<p>The subresource indexing for an array of two Depth-Stencil images, each with three mip levels, is shown below.</p>
+<p><img src="images/depth-stencil-indexing.png" alt="depth stencil indexing" /></p>
+<p>Sub-sampled YCbCr supports arrays and has planes, but does not support mipmaps. YCbCr images have two planes, one for the luminance (Y) that the human eye is most sensitive to, and one for the chrominance (both Cb, and Cr, interleaved) which the human eye is less sensitive to. This format enables compression of the chrominance values in order to compress an image without affecting the luminance, and is a common video compression format for that reason, although it is used to compress still images. The image below shows the NV12 format, noting the chrominance has been compressed to one quarter of the resolution of the luminance, meaning the width of each plane is identical, and the chrominance plane is half the height of the luminance plane. The planes would be indexed as subresources in an identical way to the Depth-Stencil example above.</p>
+<p><img src="images/ycbcr.png" alt="the nv12 format" /></p>
+<p>Planar formats existed in Direct3D 11, but individual planes could not be addressed individually, say for copy or mapping operations. This was changed in Direct3D 12 so that each plane received its own subresource ID. Compare the following two methods for calculating the subresource ID.</p>
+<p>Direct3D 11</p>
+<pre lang="syntax"><code>inline UINT D3D11CalcSubresource( UINT MipSlice, UINT ArraySlice, UINT MipLevels )
+{
+    return MipSlice + (ArraySlice * MipLevels); 
+}
+</code></pre>
+<p>Direct3D 12</p>
+<pre lang="syntax"><code>inline UINT D3D12CalcSubresource( UINT MipSlice, UINT ArraySlice, UINT PlaneSlice, UINT MipLevels, UINT ArraySize )
+{ 
+    return MipSlice + (ArraySlice * MipLevels) + (PlaneSlice * MipLevels * ArraySize); 
+}
+</code></pre>
+<p>Most hardware assumes that the memory for plane N is always immediately allocated after plane N-1.</p>
+<p>An alternative to using subresources is that an app could allocate a completely separate resource per plane. In this case, the application understands the data is planar and uses multiple resources to represent it.</p>
+<h3>Multiple subresources</h3>
+<p>A shader-resource view can select any rectangular region of subresources, using one of the slices described above and judicious use of fields in the view structures (such as <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_array_srv"><strong>D3D12_TEX2D_ARRAY_SRV</strong></a>), as shown in the image.</p>
+<p><img src="images/subresource-multiple.png" alt="multiple subresource selection" /></p>
+<p>A render-target view can only use a single subresource or mip slice and cannot include subresources from more than one mip slice. That is, every texture in a render-target view must be the same size. A shader-resource view can select any rectangular region of subresources, as shown in the image.</p>
+<h2>Subresource APIs</h2>
+<p>The following APIs reference and work with subresources:</p>
+<p>Enumerations:</p>
+<ul>
+<li><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_texture_copy_type"><strong>D3D12_TEXTURE_COPY_TYPE</strong></a></li>
+</ul>
+<p>The following structures contain <em>PlaneSlice</em> indexes, most contain <em>MipSlice</em> indexes.</p>
+<ul>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_rtv"><strong>D3D12_TEX2D_RTV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_array_rtv"><strong>D3D12_TEX2D_ARRAY_RTV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_srv"><strong>D3D12_TEX2D_SRV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_array_srv"><strong>D3D12_TEX2D_ARRAY_SRV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_uav"><strong>D3D12_TEX2D_UAV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_array_uav"><strong>D3D12_TEX2D_ARRAY_UAV</strong></a></li>
+</ul>
+<p>The following structures contain <em>ArraySlice</em> indexes, most contain <em>MipSlice</em> indexes.</p>
+<ul>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex1d_array_dsv"><strong>D3D12_TEX1D_ARRAY_DSV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_array_dsv"><strong>D3D12_TEX2D_ARRAY_DSV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2dms_array_dsv"><strong>D3D12_TEX2DMS_ARRAY_DSV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex1d_array_rtv"><strong>D3D12_TEX1D_ARRAY_RTV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_array_rtv"><strong>D3D12_TEX2D_ARRAY_RTV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2dms_array_rtv"><strong>D3D12_TEX2DMS_ARRAY_RTV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex1d_array_srv"><strong>D3D12_TEX1D_ARRAY_SRV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_array_srv"><strong>D3D12_TEX2D_ARRAY_SRV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2dms_array_srv"><strong>D3D12_TEX2DMS_ARRAY_SRV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex1d_array_uav"><strong>D3D12_TEX1D_ARRAY_UAV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_array_uav"><strong>D3D12_TEX2D_ARRAY_UAV</strong></a></li>
+</ul>
+<p>The following structures contain <em>MipSlice</em> indexes, but neither <em>ArraySlice</em> nor <em>PlaneSlice</em> indexes.</p>
+<ul>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex1d_dsv"><strong>D3D12_TEX1D_DSV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex2d_dsv"><strong>D3D12_TEX2D_DSV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex1d_rtv"><strong>D3D12_TEX1D_RTV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex3d_rtv"><strong>D3D12_TEX3D_RTV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex1d_uav"><strong>D3D12_TEX1D_UAV</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tex3d_uav"><strong>D3D12_TEX3D_UAV</strong></a></li>
+</ul>
+<p>The following structures also reference subresources:</p>
+<ul>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_discard_region"><strong>D3D12_DISCARD_REGION</strong></a> : a structure used in preparation for discarding a resource.</li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_placed_subresource_footprint"><strong>D3D12_PLACED_SUBRESOURCE_FOOTPRINT</strong></a> : adds an offset into a resource to the basic footprint.</li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_resource_transition_barrier"><strong>D3D12_RESOURCE_TRANSITION_BARRIER</strong></a> : describes the transition of subresources between different usages (shader resource, render target, etc.).</li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_subresource_data"><strong>D3D12_SUBRESOURCE_DATA</strong></a> : subresource data includes the data itself, and the row and slice pitch.</li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_subresource_footprint"><strong>D3D12_SUBRESOURCE_FOOTPRINT</strong></a> : a footprint includes the format, width, height, depth and row-pitch of the subresource.</li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_subresource_info"><strong>D3D12_SUBRESOURCE_INFO</strong></a> : contains the offset, row pitch and depth pitch of the subresource.</li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_subresource_tiling"><strong>D3D12_SUBRESOURCE_TILING</strong></a> : describes a tiled subresource volume (refer to <a href="volume-tiled-resources.html">Volume Tiled Resources</a>).</li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_texture_copy_location"><strong>D3D12_TEXTURE_COPY_LOCATION</strong></a> : describes a portion of a texture for the purpose of copying.</li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_tiled_resource_coordinate"><strong>D3D12_TILED_RESOURCE_COORDINATE</strong></a> : describes the coordinates of a tiled resource.</li>
+</ul>
+<p>Methods:</p>
+<ul>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-getcopyablefootprints"><strong>ID3D12Device::GetCopyableFootprints</strong></a> : gets information on a resource, to enable a copy to be made.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-getresourcetiling"><strong>ID3D12Device::GetResourceTiling</strong></a> : gets info about how a tiled resource is broken into tiles.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resolvesubresource"><strong>ID3D12GraphicsCommandList::ResolveSubresource</strong></a> : copies a multi-sampled subresource into a non-multi-sampled subresource.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-map"><strong>ID3D12Resource::Map</strong></a> : returns a pointer to the specified data in the resource, and denies the GPU access to the subresource.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-readfromsubresource"><strong>ID3D12Resource::ReadFromSubresource</strong></a> : copies data from a subresource, or a rectangular region of a subresource.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-unmap"><strong>ID3D12Resource::Unmap</strong></a> : unmaps the specified range of memory and invalidates the pointer to the resource. Reinstates GPU access to the subresource.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-writetosubresource"><strong>ID3D12Resource::WriteToSubresource</strong></a> : copies data to a subresource, or a rectangular region of a subresource.</li>
+</ul>
+<p>Textures must be in the <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_resource_states"><strong>D3D12_RESOURCE_STATE_COMMON</strong></a> state for CPU access through <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-writetosubresource"><strong>WriteToSubresource</strong></a> and <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-readfromsubresource"><strong>ReadFromSubresource</strong></a> to be legal; but buffers do not. CPU access to a resource is typically done through <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-map"><strong>Map</strong></a>/<a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-unmap"><strong>Unmap</strong></a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="resource-binding.html">Resource Binding</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

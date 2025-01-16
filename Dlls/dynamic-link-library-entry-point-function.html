@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dynamic-Link Library Entry-Point Function</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: A DLL can optionally specify an entry-point function.
+ms.assetid: ec035fc6-0a6f-4e52-a4cc-8d7a25a94366
+title: Dynamic-Link Library Entry-Point Function
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Dynamic-Link Library Entry-Point Function</h1>
+<p>A DLL can optionally specify an entry-point function. If present, the system calls the entry-point function whenever a process or thread loads or unloads the DLL. It can be used to perform simple initialization and cleanup tasks. For example, it can set up thread local storage when a new thread is created, and clean it up when the thread is terminated.</p>
+<p>If you are linking your DLL with the C run-time library, it may provide an entry-point function for you, and allow you to provide a separate initialization function. Check the documentation for your run-time library for more information.</p>
+<p>If you are providing your own entry-point, see the <a href="dllmain.html"><strong>DllMain</strong></a> function. The name <strong>DllMain</strong> is a placeholder for a user-defined function. You must specify the actual name you use when you build your DLL. For more information, see the documentation included with your development tools.</p>
+<h2>Calling the Entry-Point Function</h2>
+<p>The system calls the entry-point function whenever any one of the following events occurs:</p>
+<ul>
+<li>A process loads the DLL. For processes using load-time dynamic linking, the DLL is loaded during process initialization. For processes using run-time linking, the DLL is loaded before <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya"><strong>LoadLibrary</strong></a> or <a href="/windows/desktop/api/LibLoaderAPI/nf-libloaderapi-loadlibraryexa"><strong>LoadLibraryEx</strong></a> returns.</li>
+<li>A process unloads the DLL. The DLL is unloaded when the process terminates or calls the <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-freelibrary"><strong>FreeLibrary</strong></a> function and the reference count becomes zero. If the process terminates as a result of the <a href="/windows/desktop/api/processthreadsapi/nf-processthreadsapi-terminateprocess"><strong>TerminateProcess</strong></a> or <a href="/windows/desktop/api/processthreadsapi/nf-processthreadsapi-terminatethread"><strong>TerminateThread</strong></a> function, the system does not call the DLL entry-point function.</li>
+<li>A new thread is created in a process that has loaded the DLL. You can use the <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-disablethreadlibrarycalls"><strong>DisableThreadLibraryCalls</strong></a> function to disable notification when threads are created.</li>
+<li>A thread of a process that has loaded the DLL terminates normally, not using <a href="/windows/desktop/api/processthreadsapi/nf-processthreadsapi-terminatethread"><strong>TerminateThread</strong></a> or <a href="/windows/desktop/api/processthreadsapi/nf-processthreadsapi-terminateprocess"><strong>TerminateProcess</strong></a>. When a process unloads the DLL, the entry-point function is called only once for the entire process, rather than once for each existing thread of the process. You can use <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-disablethreadlibrarycalls"><strong>DisableThreadLibraryCalls</strong></a> to disable notification when threads are terminated.</li>
+</ul>
+<p>Only one thread at a time can call the entry-point function.</p>
+<p>The system calls the entry-point function in the context of the process or thread that caused the function to be called. This allows a DLL to use its entry-point function for allocating memory in the virtual address space of the calling process or to open handles accessible to the process. The entry-point function can also allocate memory that is private to a new thread by using thread local storage (TLS). For more information about thread local storage, see <a href="/windows/desktop/ProcThread/thread-local-storage">Thread Local Storage</a>.</p>
+<h2>Entry-Point Function Definition</h2>
+<p>The DLL entry-point function must be declared with the standard-call calling convention. If the DLL entry point is not declared correctly, the DLL is not loaded, and the system displays a message indicating that the DLL entry point must be declared with WINAPI.</p>
+<p>In the body of the function, you may handle any combination of the following scenarios in which the DLL entry point has been called:</p>
+<ul>
+<li>A process loads the DLL (<strong>DLL_PROCESS_ATTACH</strong>).</li>
+<li>The current process creates a new thread (<strong>DLL_THREAD_ATTACH</strong>).</li>
+<li>A thread exits normally (<strong>DLL_THREAD_DETACH</strong>).</li>
+<li>A process unloads the DLL (<strong>DLL_PROCESS_DETACH</strong>).</li>
+</ul>
+<p>The entry-point function should perform only simple initialization tasks. It must not call the <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya"><strong>LoadLibrary</strong></a> or <a href="/windows/desktop/api/LibLoaderAPI/nf-libloaderapi-loadlibraryexa"><strong>LoadLibraryEx</strong></a> function (or a function that calls these functions), because this may create dependency loops in the DLL load order. This can result in a DLL being used before the system has executed its initialization code. Similarly, the entry-point function must not call the <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-freelibrary"><strong>FreeLibrary</strong></a> function (or a function that calls <strong>FreeLibrary</strong>) during process termination, because this can result in a DLL being used after the system has executed its termination code.</p>
+<p>Because Kernel32.dll is guaranteed to be loaded in the process address space when the entry-point function is called, calling functions in Kernel32.dll does not result in the DLL being used before its initialization code has been executed. Therefore, the entry-point function can create <a href="/windows/desktop/Sync/synchronization-objects">synchronization objects</a> such as critical sections and mutexes, and use TLS, because these functions are located in Kernel32.dll. It is not safe to call the registry functions, for example, because they are located in Advapi32.dll.</p>
+<p>Calling other functions may result in problems that are difficult to diagnose. For example, calling User, Shell, and COM functions can cause access violation errors, because some functions in their DLLs call <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya"><strong>LoadLibrary</strong></a> to load other system components. Conversely, calling those functions during termination can cause access violation errors because the corresponding component may already have been unloaded or uninitialized.</p>
+<p>The following example demonstrates how to structure the DLL entry-point function.</p>
+<pre lang="syntax"><code>BOOL WINAPI DllMain(
+    HINSTANCE hinstDLL,  // handle to DLL module
+    DWORD fdwReason,     // reason for calling function
+    LPVOID lpReserved )  // reserved
+{
+    // Perform actions based on the reason for calling.
+    switch( fdwReason ) 
+    { 
+        case DLL_PROCESS_ATTACH:
+         // Initialize once for each new process.
+         // Return FALSE to fail DLL load.
+            break;
+
+        case DLL_THREAD_ATTACH:
+         // Do thread-specific initialization.
+            break;
+
+        case DLL_THREAD_DETACH:
+         // Do thread-specific cleanup.
+            break;
+
+        case DLL_PROCESS_DETACH:
+         // Perform any necessary cleanup.
+            break;
+    }
+    return TRUE;  // Successful DLL_PROCESS_ATTACH.
+}
+</code></pre>
+<h2>Entry-Point Function Return Value</h2>
+<p>When a DLL entry-point function is called because a process is loading, the function returns <strong>TRUE</strong> to indicate success. For processes using load-time linking, a return value of <strong>FALSE</strong> causes the process initialization to fail and the process terminates. For processes using run-time linking, a return value of FALSE causes the <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya"><strong>LoadLibrary</strong></a> or <a href="/windows/desktop/api/LibLoaderAPI/nf-libloaderapi-loadlibraryexa"><strong>LoadLibraryEx</strong></a> function to return <strong>NULL</strong>, indicating failure. (The system immediately calls your entry-point function with <strong>DLL_PROCESS_DETACH</strong> and unloads the DLL.) The return value of the entry-point function is disregarded when the function is called for any other reason.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

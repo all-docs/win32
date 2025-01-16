@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Render to a GDI Surface</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Render to a GDI Surface
+description: Render to a GDI Surface
+ms.assetid: a6096ff5-1e6e-4edb-b455-ea5d205072ff
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Render to a GDI Surface</h1>
+<p>In some cases, you may want to be able to display <a href="direct-write-portal.html">DirectWrite</a> text on a GDI surface. The <a href="/windows/win32/api/dwrite/nn-dwrite-idwritebitmaprendertarget"><strong>IDWriteBitmapRenderTarget</strong></a> interface encapsulates a bitmap and device context to render text onto. You create an <strong>IDWriteBitmapRenderTarget</strong> by using the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritegdiinterop-createbitmaprendertarget"><strong>IDWriteGdiInterop::CreateBitmapRenderTarget</strong></a> method, as shown in the following code.</p>
+<pre lang="C++"><code>if (SUCCEEDED(hr))
+{
+    hr = g_pGdiInterop-&gt;CreateBitmapRenderTarget(hdc, r.right, r.bottom, &amp;g_pBitmapRenderTarget);
+}
+</code></pre>
+<p>To render with an <a href="/windows/win32/api/dwrite/nn-dwrite-idwritebitmaprendertarget"><strong>IDWriteBitmapRenderTarget</strong></a>, you must implement a custom text renderer callback interface derived from the <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextrenderer"><strong>IDWriteTextRenderer</strong></a> interface. You must implement methods for drawing a glyph run, underline, strikethrough, inline objects, and so on. For a complete list of the methods, see the <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextrenderer"><strong>IDWriteTextRenderer</strong></a> reference page. Not every method must be implemented, they can just return <strong>E_NOTIMPL</strong>, and drawing will continue.</p>
+<p>You can then draw the text by using the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextlayout-draw"><strong>IDWriteTextLayout::Draw</strong></a> method and passing the callback interface that you implemented as a parameter. The <strong>IDWriteTextLayout::Draw</strong> method calls the methods of the custom renderer callback you provide. The <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawglyphrun"><strong>DrawGlyphRun</strong></a>, <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawunderline"><strong>DrawUnderline</strong></a>, <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawinlineobject"><strong>DrawInlineObject</strong></a>, and <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawstrikethrough"><strong>DrawStrikethrough</strong></a> methods perform the drawing functions.</p>
+<p>In your implementation of <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawglyphrun"><strong>DrawGlyphRun</strong></a>, call the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritebitmaprendertarget-drawglyphrun"><strong>IDWriteBitmapRenderTarget::DrawGlyphRun</strong></a> method to draw the glyphs. The rendering of the underline, strikethrough and inline objects must be done by your custom renderer.</p>
+<p><a href="/windows/win32/api/dwrite/nf-dwrite-idwritebitmaprendertarget-drawglyphrun"><strong>IDWriteBitmapRenderTarget::DrawGlyphRun</strong></a> has an optional RECT out parameter that contains the bounds of the area where the text was drawn. You can use this information to set the bounding rectangle for the device context with the <a href="/windows/win32/api/wingdi/nf-wingdi-setboundsrect"><strong>SetBoundsRect</strong></a> function that is provided by GDI. The following code is an example implementation of the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawglyphrun"><strong>DrawGlyphRun</strong></a> method of a custom renderer.</p>
+<pre lang="C++"><code>STDMETHODIMP GdiTextRenderer::DrawGlyphRun(
+    __maybenull void* clientDrawingContext,
+    FLOAT baselineOriginX,
+    FLOAT baselineOriginY,
+    DWRITE_MEASURING_MODE measuringMode,
+    __in DWRITE_GLYPH_RUN const* glyphRun,
+    __in DWRITE_GLYPH_RUN_DESCRIPTION const* glyphRunDescription,
+    IUnknown* clientDrawingEffect
+    )
+{
+    HRESULT hr = S_OK;
+
+    // Pass on the drawing call to the render target to do the real work.
+    RECT dirtyRect = {0};
+
+    hr = pRenderTarget_-&gt;DrawGlyphRun(
+        baselineOriginX,
+        baselineOriginY,
+        measuringMode,
+        glyphRun,
+        pRenderingParams_,
+        RGB(0,200,255),
+        &amp;dirtyRect
+        );
+    
+
+    return hr;
+}
+</code></pre>
+<p>The <a href="/windows/win32/api/dwrite/nn-dwrite-idwritebitmaprendertarget"><strong>IDWriteBitmapRenderTarget</strong></a> interface renders to a device context (DC) in memory. You get a handle to this DC by using the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritebitmaprendertarget-getmemorydc"><strong>IDWriteBitmapRenderTarget::GetMemoryDC</strong></a> method. As soon as the drawing has been performed, the memory DC of the <strong>IDWriteBitmapRenderTarget</strong> object must be copied to the destination GDI surface.</p>
+<p>You can retrieve the bounding rectangle by using the <a href="/windows/win32/api/wingdi/nf-wingdi-getboundsrect"><strong>GetBoundsRect</strong></a> function, then use the bounding rectangle with the <a href="/windows/win32/api/wingdi/nf-wingdi-bitblt"><strong>BitBlt</strong></a> function to copy the rendered <a href="direct-write-portal.html">DirectWrite</a> text from the memory DC to the GDI surface as shown in the following code.</p>
+<pre lang="C++"><code>// Transfer from DWrite's rendering target to the window.
+BitBlt(
+    hdc,
+    0, 0,
+    size.cx, size.cy,
+    memoryHdc,
+    0, 0, 
+    SRCCOPY | NOMIRRORBITMAP
+    );
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

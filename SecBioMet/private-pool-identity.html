@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Private Pool Identity</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Private Pool Identity
+description: Contains the identification console project.
+ms.assetid: 1A96A20D-6991-4D8D-B7EC-7AF84B550920
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Private Pool Identity</h1>
+<p>The following sections contain the code necessary for private sensor pool identification.</p>
+<ul>
+<li><a href="#targetverh">Targetver.h</a></li>
+<li><a href="#stdafxh">Stdafx.h</a></li>
+<li><a href="#privatepoolidentifycpp">PrivatePoolIdentify.cpp</a></li>
+</ul>
+<h2>Targetver.h</h2>
+<p>This sample was created for WindowsÂ 7 and later operating systems.</p>
+<pre lang="C++"><code>#pragma once
+#ifndef _WIN32_WINNT            
+#define _WIN32_WINNT NTDDI_WIN7 
+#endif
+</code></pre>
+<h2>Stdafx.h</h2>
+<pre lang="C++"><code>// stdafx.h : include file for standard system include files,
+// or project specific include files that are used frequently but
+// are changed infrequently
+//
+
+#pragma once
+
+#include &quot;targetver.h&quot;
+
+// Use secure (template) versions of nonsecure 
+// CRT text routines
+#define _CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES     1
+
+#include &lt;stdio.h&gt;
+#include &lt;tchar.h&gt;
+
+#include &lt;windows.h&gt;
+#include &lt;winbio.h&gt;
+
+#include &quot;BioHelper.h&quot;
+
+#ifndef ARGUMENT_PRESENT
+#define ARGUMENT_PRESENT(x) (((x) != NULL))
+#endif
+</code></pre>
+<h2>PrivatePoolIdentify.cpp</h2>
+<pre lang="C++"><code>/******************************************************************************
+THIS CODE AND INFORMATION IS PROVIDED &quot;AS IS&quot; WITHOUT WARRANTY OF
+ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
+PARTICULAR PURPOSE.
+
+Copyright (C) Microsoft.  All rights reserved.
+
+This source code is only intended as a supplement to Microsoft Development
+Tools and/or WinHelp documentation.  See these sources for detailed information
+regarding the Microsoft samples programs.
+******************************************************************************/
+
+// PrivatePoolIdentify.cpp : Defines the entry point for the console application.
+//
+
+#include &quot;stdafx.h&quot;
+#include &quot;PrivatePoolCommonDefs.h&quot; // From Private Pool Setup
+#include &quot;Strsafe.h&quot;               // For StringCbGets()
+
+
+// Forward declarations of local functions...
+//
+static void onIdentifyOrDelete(
+    __in bool DeleteEnrollment
+    );
+
+static bool selectSensorMenu(
+    __in LPCTSTR Prompt,
+    __in WINBIO_UNIT_SCHEMA *UnitArray,
+    __in SIZE_T UnitCount,
+    __out SIZE_T *SelectedUnit
+    );
+
+static void displayIdentity(
+    __in PWINBIO_IDENTITY Identity,
+    __in WINBIO_BIOMETRIC_SUBTYPE SubFactor
+    );
+
+//-----------------------------------------------------------------------------
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    _tprintf( _T(&quot;\nWinBio Private Pool Identification\n\n&quot;));
+
+    if (argc &lt; 2)
+    {
+        _tprintf(_T(&quot;Usage: %s -identify | -delete\n&quot;), argv[0]);
+        _tprintf(
+            _T(&quot;\n&quot;)
+            _T(&quot;  -identify     locate template that matches a finger swipe\n&quot;)
+            _T(&quot;  -delete       locate matching template and delete it\n&quot;)
+            _T(&quot;\n&quot;)
+            );
+    }
+    else
+    {
+        if (_tcsicmp( argv[1], _T(&quot;-identify&quot;)) == 0)
+        {
+            onIdentifyOrDelete(false);
+        }
+        else if (_tcsicmp( argv[1], _T(&quot;-delete&quot;)) == 0)
+        {
+            onIdentifyOrDelete(true);
+        }
+        else
+        {
+            _tprintf(_T(&quot;*** Error - Unknown command option: %s\n&quot;), argv[1]);
+        }
+    }
+
+    return 0;
+}
+
+//-----------------------------------------------------------------------------
+
+static void onIdentifyOrDelete(
+    __in bool DeleteEnrollment
+    )
+{
+    WINBIO_UNIT_ID unitIdArray[1] = {};
+    SIZE_T unitIdCount = ARRAYSIZE(unitIdArray);
+
+    WINBIO_UNIT_SCHEMA *unitSchemaArray = NULL;
+    SIZE_T unitSchemaCount = 0;
+    HRESULT hr = WinBioEnumBiometricUnits( 
+                    WINBIO_TYPE_FINGERPRINT, 
+                    &amp;unitSchemaArray, 
+                    &amp;unitSchemaCount 
+                    );
+    if (SUCCEEDED(hr))
+    {
+        SIZE_T selectedUnit = 0;
+        if (selectSensorMenu( 
+                _T(&quot;Choose a sensor for the private pool&quot;), 
+                unitSchemaArray, 
+                unitSchemaCount, 
+                &amp;selectedUnit
+                ))
+        {
+            // Build the array of unit IDs that will make up the private pool
+            unitIdArray[0] = unitSchemaArray[selectedUnit].UnitId;
+            unitIdCount = 1;
+        }
+        else
+        {
+            hr = E_INVALIDARG;
+        }
+        WinBioFree( unitSchemaArray );
+        unitSchemaArray = NULL;
+        unitSchemaCount = 0;
+    }
+    if (SUCCEEDED(hr))
+    {
+        WINBIO_UUID privateDatabaseId = PRIVATE_POOL_DATABASE_ID;
+        WINBIO_SESSION_HANDLE sessionHandle = NULL;
+        hr = WinBioOpenSession( 
+                WINBIO_TYPE_FINGERPRINT, 
+                WINBIO_POOL_PRIVATE, 
+                WINBIO_FLAG_BASIC, 
+                unitIdArray, 
+                unitIdCount, 
+                &amp;privateDatabaseId, 
+                &amp;sessionHandle 
+                );
+        if (SUCCEEDED(hr))
+        {
+            _tprintf(_T(&quot;\nIdentify yourself by swiping your finger on the sensor...\n&quot;));
+
+            WINBIO_UNIT_ID unitId = 0;
+            WINBIO_REJECT_DETAIL rejectDetail = 0;
+            WINBIO_BIOMETRIC_SUBTYPE subFactor = WINBIO_SUBTYPE_NO_INFORMATION;
+            WINBIO_IDENTITY identity = {};
+
+            hr = WinBioIdentify( 
+                    sessionHandle, 
+                    &amp;unitId, 
+                    &amp;identity, 
+                    &amp;subFactor, 
+                    &amp;rejectDetail
+                    );
+            _tprintf(_T(&quot;\n- Swipe processed - Unit ID: %d\n&quot;), unitId);
+            if (FAILED(hr))
+            {
+                if (hr == WINBIO_E_UNKNOWN_ID)
+                {
+                    _tprintf(_T(&quot;\n- Unknown identity.\n&quot;));
+                    hr = S_OK;
+                }
+                else if (hr == WINBIO_E_BAD_CAPTURE)
+                {
+                    _tprintf(_T(&quot;\n- Bad capture.\n&quot;));
+                    _tprintf(
+                        _T(&quot;- %s\n&quot;), 
+                        BioHelper::ConvertRejectDetailToString( rejectDetail )
+                        );
+                    hr = S_OK;
+                }
+            }
+            else
+            {
+                // Display identity
+                displayIdentity( &amp;identity, subFactor );
+
+                // Delete identity
+                if (DeleteEnrollment)
+                {
+                    _tprintf(_T(&quot;\nDeleting template...\n&quot;));
+                    hr = WinBioDeleteTemplate( 
+                            sessionHandle, 
+                            unitId, 
+                            &amp;identity, 
+                            subFactor 
+                            );
+                    if (SUCCEEDED(hr))
+                    {
+                        _tprintf(_T(&quot;\n- Template removed from private database.\n&quot;));
+                    }
+                }
+            }
+            WinBioCloseSession( sessionHandle );
+            sessionHandle = NULL;
+        }
+    }
+
+    if (FAILED(hr))
+    {
+        LPTSTR errorMessage = BioHelper::ConvertErrorCodeToString( hr );
+        _tprintf(_T(&quot;*** Error - %s\n&quot;), errorMessage );
+        LocalFree(errorMessage);
+        errorMessage = NULL;
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+static bool selectSensorMenu(
+    __in LPCTSTR Prompt,
+    __in WINBIO_UNIT_SCHEMA *UnitArray,
+    __in SIZE_T UnitCount,
+    __out SIZE_T *SelectedUnit
+    )
+{
+    if (!ARGUMENT_PRESENT(UnitArray) ||
+        !ARGUMENT_PRESENT(SelectedUnit) ||
+        UnitCount == 0)
+    {
+        return false;
+    }
+
+    _tprintf(_T(&quot;\n%s:\n\n&quot;), Prompt);
+    for (SIZE_T i = 0; i &lt; UnitCount; ++i)
+    {
+        _tprintf(
+            _T(&quot; %3d - %ls (%ls)\n&quot;), 
+            (i + 1), 
+            UnitArray[i].Manufacturer, 
+            UnitArray[i].Description 
+            );
+    }
+
+    _tprintf(_T(&quot;\nSelect sensor and press &lt;ENTER&gt;: &quot;));
+    TCHAR buffer[20] = {};
+    HRESULT hr = StringCbGets( buffer, 20*sizeof(TCHAR) );
+    _tprintf(_T(&quot;\n&quot;));
+
+    int selected = _tstoi( buffer );
+    if (selected &lt;= 0 ||
+        selected &gt; (int)UnitCount)
+    {
+        return false;
+    }
+    *SelectedUnit = (SIZE_T)(selected - 1);
+    return true;
+}
+
+//-----------------------------------------------------------------------------
+
+static void displayIdentity(
+    __in PWINBIO_IDENTITY Identity,
+    __in WINBIO_BIOMETRIC_SUBTYPE SubFactor
+    )
+{
+    _tprintf(_T(&quot;\n- Identity: &quot;));
+    switch (Identity-&gt;Type)
+    {
+    case WINBIO_ID_TYPE_NULL:
+        _tprintf(_T(&quot;NULL value\n&quot;));
+        break;
+
+    case WINBIO_ID_TYPE_WILDCARD:
+        _tprintf(_T(&quot;WILDCARD value\n&quot;));
+        if (Identity-&gt;Value.Wildcard != WINBIO_IDENTITY_WILDCARD)
+        {
+            _tprintf(
+                _T(&quot;\n*** Error: Invalid wildcard marker (0x%08x)\n&quot;), 
+                Identity-&gt;Value.Wildcard
+                );
+        }
+        break;
+
+    case WINBIO_ID_TYPE_GUID:
+        _tprintf(_T(&quot;GUID\n&quot;));
+        _tprintf(
+            _T(&quot;    Value:      {%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}\n&quot;),
+            Identity-&gt;Value.TemplateGuid.Data1,
+            Identity-&gt;Value.TemplateGuid.Data2,
+            Identity-&gt;Value.TemplateGuid.Data3,
+            Identity-&gt;Value.TemplateGuid.Data4[0],
+            Identity-&gt;Value.TemplateGuid.Data4[1],
+            Identity-&gt;Value.TemplateGuid.Data4[2],
+            Identity-&gt;Value.TemplateGuid.Data4[3],
+            Identity-&gt;Value.TemplateGuid.Data4[4],
+            Identity-&gt;Value.TemplateGuid.Data4[5],
+            Identity-&gt;Value.TemplateGuid.Data4[6],
+            Identity-&gt;Value.TemplateGuid.Data4[7]
+            );
+        break;
+
+    default:
+        _tprintf(_T(&quot;(Invalid type)\n&quot;));
+        break;
+    }
+    _tprintf(
+        _T(&quot;    Subfactor:  %s\n&quot;), 
+        BioHelper::ConvertSubFactorToString(SubFactor)
+        );
+}
+
+//-----------------------------------------------------------------------------
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

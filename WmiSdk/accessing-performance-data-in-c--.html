@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Accessing Performance Data in C++</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The WMI high-performance API is a series of interfaces that obtain data from Performance Counter Classes.
+ms.assetid: ee0a2ead-f53a-4651-a287-04a62eba3f84
+ms.tgt_platform: multiple
+title: Accessing Performance Data in C++
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Accessing Performance Data in C++</h1>
+<p>The WMI high-performance API is a series of interfaces that obtain data from <a href="/windows/desktop/CIMWin32Prov/performance-counter-classes">Performance Counter Classes</a>. These interfaces require use of a <a href="gloss-r.html"><em>refresher</em></a> object to increase the sampling rate. For more information about using the refresher object in scripting, see <a href="accessing-performance-data-in-script.html">Accessing Performance Data in Script</a> and <a href="wmi-tasks--performance-monitoring.html">WMI Tasks: Performance Monitoring</a>.</p>
+<p>The following sections are discussed in this topic:</p>
+<ul>
+<li><a href="#refreshing-performance-data">Refreshing Performance Data</a></li>
+<li><a href="#adding-enumerators-to-the-wmi-refresher">Adding Enumerators to the WMI Refresher</a></li>
+<li><a href="#example">Example</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Refreshing Performance Data</h2>
+<p>A refresher object increases data provider and client performance by retrieving data without crossing process boundaries. If both the client and the server are located on the same computer, a refresher loads the high-performance provider in-process to the client, and copies data directly from provider objects into client objects. If the client and the server are located on different computers, the refresher increases performance by caching objects on the remote computer, and transmitting minimal data sets to the client.</p>
+<p>A refresher also:</p>
+<ul>
+<li>
+<p>Automatically reconnects a client to a remote WMI service when a network error occurs, or the remote computer is restarted.</p>
+<p>By default, a refresher attempts to reconnect your application to the relevant high-performance provider when a remote connection between the two computers fails. To prevent the reconnection, pass the <strong>WBEM_FLAG_REFRESH_NO_AUTO_RECONNECT</strong> flag in the <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemrefresher-refresh"><strong>Refresh</strong></a> method call. Scripting clients must set the <a href="swbemrefresher-autoreconnect.html"><strong>SWbemRefresher.AutoReconnect</strong></a> property to <strong>FALSE</strong>.</p>
+</li>
+<li>
+<p>Loads multiple objects and enumerators that are provided by the same or different providers.</p>
+<p>Allows you to add multiple objects, enumerators, or both to a refresher.</p>
+</li>
+<li>
+<p>Enumerates objects.</p>
+<p>Like other providers, a high-performance provider can enumerate objects.</p>
+</li>
+</ul>
+<p>After you finish writing your high-performance client, you may want to improve your response time. Because the <a href="/windows/desktop/api/Wbemcli/nn-wbemcli-iwbemobjectaccess"><strong>IWbemObjectAccess</strong></a> interface is optimized for speed, the interface is not intrinsically threadsafe. Therefore, during a refresh operation, do not access the refreshable object or enumeration. To protect objects across threads during <strong>IWbemObjectAccess</strong> method calls, use the <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemobjectaccess-lock"><strong>IWbemObjectAccess::Lock</strong></a> and <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemobjectaccess-unlock"><strong>Unlock</strong></a> methods. For improved performance, synchronize your threads so that you do not need to lock individual threads. Reducing threads and synchronizing groups of objects for refresh operations provides the best overall performance.</p>
+<h2>Adding Enumerators to the WMI Refresher</h2>
+<p>Both the number of instances and data in each instance are refreshed by adding an enumerator to the refresher so that each call to <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemrefresher-refresh"><strong>IWbemRefresher::Refresh</strong></a> results in a complete enumeration.</p>
+<p>The following C++ code example requires the following references and #include statements to compile correctly.</p>
+<pre lang="C++"><code>#define _WIN32_DCOM
+
+#include &lt;iostream&gt;
+using namespace std;
+#include &lt;Wbemidl.h&gt;
+#pragma comment(lib, &quot;wbemuuid.lib&quot;)
+</code></pre>
+<p>The following procedure shows how to add an enumerator to a refresher.</p>
+<p><strong>To add an enumerator to a refresher</strong></p>
+<ol>
+<li>
+<p>Call the <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemconfigurerefresher-addenum"><strong>IWbemConfigureRefresher::AddEnum</strong></a> method using the path to the refreshable object and the <a href="/windows/desktop/api/WbemCli/nn-wbemcli-iwbemservices"><strong>IWbemServices</strong></a> interface.</p>
+<p>The refresher returns a pointer to an <a href="/windows/desktop/api/Wbemcli/nn-wbemcli-iwbemhiperfenum"><strong>IWbemHiPerfEnum</strong></a> interface. You can use the <strong>IWbemHiPerfEnum</strong> interface to access the objects in the enumeration.</p>
+<pre lang="C++"><code>IWbemHiPerfEnum* pEnum = NULL;
+long lID;
+IWbemConfigureRefresher* pConfig;
+IWbemServices* pNameSpace;
+
+// Add an enumerator to the refresher.
+if (FAILED (hr = pConfig-&gt;AddEnum(
+    pNameSpace, 
+    L&quot;Win32_PerfRawData_PerfProc_Process&quot;, 
+    0, 
+    NULL,
+    &amp;pEnum, 
+    &amp;lID)))
+{
+    goto CLEANUP;
+}
+pConfig-&gt;Release();
+pConfig = NULL;
+</code></pre>
+</li>
+<li>
+<p>Create a loop that performs the following actions:</p>
+<ul>
+<li>
+<p>Refreshes the object by using a call to <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemrefresher-refresh"><strong>IWbemRefresher::Refresh</strong></a>.</p>
+</li>
+<li>
+<p>Provides an array of <a href="/windows/desktop/api/Wbemcli/nn-wbemcli-iwbemobjectaccess"><strong>IWbemObjectAccess</strong></a> interface pointers to the <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemhiperfenum-getobjects"><strong>IWbemHiPerfEnum::GetObjects</strong></a> method.</p>
+</li>
+<li>
+<p>Accesses the properties of the enumerator by using the <a href="/windows/desktop/api/Wbemcli/nn-wbemcli-iwbemobjectaccess"><strong>IWbemObjectAccess</strong></a> methods passed into <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemhiperfenum-getobjects"><strong>GetObjects</strong></a>.</p>
+<p>A property handle can be passed to each <a href="/windows/desktop/api/Wbemcli/nn-wbemcli-iwbemobjectaccess"><strong>IWbemObjectAccess</strong></a> instance to retrieve the refreshed value. The client must call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> to release the <strong>IWbemObjectAccess</strong> pointers returned by <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemhiperfenum-getobjects"><strong>GetObjects</strong></a>.</p>
+</li>
+</ul>
+</li>
+</ol>
+<h2>Example</h2>
+<p>The following C++ code example enumerates a high-performance class, where the client retrieves a property handle from the first object, and reuses the handle for the remainder of the refresh operation. Each call to the <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemrefresher-refresh"><strong>Refresh</strong></a> method updates the number of instances and the instance data.</p>
+<pre lang="C++"><code>#define _WIN32_DCOM
+
+#include &lt;iostream&gt;
+using namespace std;
+#include &lt;Wbemidl.h&gt;
+
+#pragma comment(lib, &quot;wbemuuid.lib&quot;)
+
+int __cdecl wmain(int argc, wchar_t* argv[])
+{
+    // To add error checking,
+    // check returned HRESULT below where collected.
+    HRESULT                 hr = S_OK;
+    IWbemRefresher          *pRefresher = NULL;
+    IWbemConfigureRefresher *pConfig = NULL;
+    IWbemHiPerfEnum         *pEnum = NULL;
+    IWbemServices           *pNameSpace = NULL;
+    IWbemLocator            *pWbemLocator = NULL;
+    IWbemObjectAccess       **apEnumAccess = NULL;
+    BSTR                    bstrNameSpace = NULL;
+    long                    lID = 0;
+    long                    lVirtualBytesHandle = 0;
+    long                    lIDProcessHandle = 0;
+    DWORD                   dwVirtualBytes = 0;
+    DWORD                   dwProcessId = 0;
+    DWORD                   dwNumObjects = 0;
+    DWORD                   dwNumReturned = 0;
+    DWORD                   dwIDProcess = 0;
+    DWORD                   i=0;
+    int                     x=0;
+
+    if (FAILED (hr = CoInitializeEx(NULL,COINIT_MULTITHREADED)))
+    {
+        goto CLEANUP;
+    }
+
+    if (FAILED (hr = CoInitializeSecurity(
+        NULL,
+        -1,
+        NULL,
+        NULL,
+        RPC_C_AUTHN_LEVEL_NONE,
+        RPC_C_IMP_LEVEL_IMPERSONATE,
+        NULL, EOAC_NONE, 0)))
+    {
+        goto CLEANUP;
+    }
+
+    if (FAILED (hr = CoCreateInstance(
+        CLSID_WbemLocator, 
+        NULL,
+        CLSCTX_INPROC_SERVER,
+        IID_IWbemLocator,
+        (void**) &amp;pWbemLocator)))
+    {
+        goto CLEANUP;
+    }
+
+    // Connect to the desired namespace.
+    bstrNameSpace = SysAllocString(L&quot;\\\\.\\root\\cimv2&quot;);
+    if (NULL == bstrNameSpace)
+    {
+        hr = E_OUTOFMEMORY;
+        goto CLEANUP;
+    }
+    if (FAILED (hr = pWbemLocator-&gt;ConnectServer(
+        bstrNameSpace,
+        NULL, // User name
+        NULL, // Password
+        NULL, // Locale
+        0L,   // Security flags
+        NULL, // Authority
+        NULL, // Wbem context
+        &amp;pNameSpace)))
+    {
+        goto CLEANUP;
+    }
+    pWbemLocator-&gt;Release();
+    pWbemLocator=NULL;
+    SysFreeString(bstrNameSpace);
+    bstrNameSpace = NULL;
+
+    if (FAILED (hr = CoCreateInstance(
+        CLSID_WbemRefresher,
+        NULL,
+        CLSCTX_INPROC_SERVER,
+        IID_IWbemRefresher, 
+        (void**) &amp;pRefresher)))
+    {
+        goto CLEANUP;
+    }
+
+    if (FAILED (hr = pRefresher-&gt;QueryInterface(
+        IID_IWbemConfigureRefresher,
+        (void **)&amp;pConfig)))
+    {
+        goto CLEANUP;
+    }
+
+    // Add an enumerator to the refresher.
+    if (FAILED (hr = pConfig-&gt;AddEnum(
+        pNameSpace, 
+        L&quot;Win32_PerfRawData_PerfProc_Process&quot;, 
+        0, 
+        NULL, 
+        &amp;pEnum, 
+        &amp;lID)))
+    {
+        goto CLEANUP;
+    }
+    pConfig-&gt;Release();
+    pConfig = NULL;
+
+    // Get a property handle for the VirtualBytes property.
+
+    // Refresh the object ten times and retrieve the value.
+    for(x = 0; x &lt; 10; x++)
+    {
+        dwNumReturned = 0;
+        dwIDProcess = 0;
+        dwNumObjects = 0;
+
+        if (FAILED (hr =pRefresher-&gt;Refresh(0L)))
+        {
+            goto CLEANUP;
+        }
+
+        hr = pEnum-&gt;GetObjects(0L, 
+            dwNumObjects, 
+            apEnumAccess, 
+            &amp;dwNumReturned);
+        // If the buffer was not big enough,
+        // allocate a bigger buffer and retry.
+        if (hr == WBEM_E_BUFFER_TOO_SMALL 
+            &amp;&amp; dwNumReturned &gt; dwNumObjects)
+        {
+            apEnumAccess = new IWbemObjectAccess*[dwNumReturned];
+            if (NULL == apEnumAccess)
+            {
+                hr = E_OUTOFMEMORY;
+                goto CLEANUP;
+            }
+            SecureZeroMemory(apEnumAccess,
+                dwNumReturned*sizeof(IWbemObjectAccess*));
+            dwNumObjects = dwNumReturned;
+
+            if (FAILED (hr = pEnum-&gt;GetObjects(0L, 
+                dwNumObjects, 
+                apEnumAccess, 
+                &amp;dwNumReturned)))
+            {
+                goto CLEANUP;
+            }
+        }
+        else
+        {
+            if (hr == WBEM_S_NO_ERROR)
+            {
+                hr = WBEM_E_NOT_FOUND;
+                goto CLEANUP;
+            }
+        }
+
+        // First time through, get the handles.
+        if (0 == x)
+        {
+            CIMTYPE VirtualBytesType;
+            CIMTYPE ProcessHandleType;
+            if (FAILED (hr = apEnumAccess[0]-&gt;GetPropertyHandle(
+                L&quot;VirtualBytes&quot;,
+                &amp;VirtualBytesType,
+                &amp;lVirtualBytesHandle)))
+            {
+                goto CLEANUP;
+            }
+            if (FAILED (hr = apEnumAccess[0]-&gt;GetPropertyHandle(
+                L&quot;IDProcess&quot;,
+                &amp;ProcessHandleType,
+                &amp;lIDProcessHandle)))
+            {
+                goto CLEANUP;
+            }
+        }
+           
+        for (i = 0; i &lt; dwNumReturned; i++)
+        {
+            if (FAILED (hr = apEnumAccess[i]-&gt;ReadDWORD(
+                lVirtualBytesHandle,
+                &amp;dwVirtualBytes)))
+            {
+                goto CLEANUP;
+            }
+            if (FAILED (hr = apEnumAccess[i]-&gt;ReadDWORD(
+                lIDProcessHandle,
+                &amp;dwIDProcess)))
+            {
+                goto CLEANUP;
+            }
+
+            wprintf(L&quot;Process ID %lu is using %lu bytes\n&quot;,
+                dwIDProcess, dwVirtualBytes);
+
+            // Done with the object
+            apEnumAccess[i]-&gt;Release();
+            apEnumAccess[i] = NULL;
+        }
+
+        if (NULL != apEnumAccess)
+        {
+            delete [] apEnumAccess;
+            apEnumAccess = NULL;
+        }
+
+       // Sleep for a second.
+       Sleep(1000);
+    }
+    // exit loop here
+    CLEANUP:
+
+    if (NULL != bstrNameSpace)
+    {
+        SysFreeString(bstrNameSpace);
+    }
+
+    if (NULL != apEnumAccess)
+    {
+        for (i = 0; i &lt; dwNumReturned; i++)
+        {
+            if (apEnumAccess[i] != NULL)
+            {
+                apEnumAccess[i]-&gt;Release();
+                apEnumAccess[i] = NULL;
+            }
+        }
+        delete [] apEnumAccess;
+    }
+    if (NULL != pWbemLocator)
+    {
+        pWbemLocator-&gt;Release();
+    }
+    if (NULL != pNameSpace)
+    {
+        pNameSpace-&gt;Release();
+    }
+    if (NULL != pEnum)
+    {
+        pEnum-&gt;Release();
+    }
+    if (NULL != pConfig)
+    {
+        pConfig-&gt;Release();
+    }
+    if (NULL != pRefresher)
+    {
+        pRefresher-&gt;Release();
+    }
+
+    CoUninitialize();
+
+    if (FAILED (hr))
+    {
+        wprintf (L&quot;Error status=%08x\n&quot;,hr);
+    }
+
+    return 1;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/CIMWin32Prov/performance-counter-classes">Performance Counter Classes</a></p>
+<!-- raw HTML omitted -->
+<p><a href="accessing-performance-data-in-script.html">Accessing Performance Data in Script</a></p>
+<!-- raw HTML omitted -->
+<p><a href="refreshing-wmi-data-in-scripts.html">Refreshing WMI Data in Scripts</a></p>
+<!-- raw HTML omitted -->
+<p><a href="wmi-tasks--performance-monitoring.html">WMI Tasks: Performance Monitoring</a></p>
+<!-- raw HTML omitted -->
+<p><a href="monitoring-performance-data.html">Monitoring Performance Data</a></p>
+<!-- raw HTML omitted -->
+<p><a href="property-qualifiers-for-performance-counter-classes.html">Property Qualifiers for Formatted Performance Counter Classes</a></p>
+<!-- raw HTML omitted -->
+<p><a href="wmi-performance-counter-types.html">WMI Performance Counter Types</a></p>
+<!-- raw HTML omitted -->
+<p><a href="wmiadap.html"><strong>Wmiadap.exe</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/win32/api/profileapi/nf-profileapi-queryperformancecounter"><strong>QueryPerformanceCounter</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

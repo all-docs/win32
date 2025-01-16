@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Writing the File</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Writing the File
+ms.assetid: d3dbe6ab-810c-4798-a769-c3f00c52a93a
+title: Writing the File
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Writing the File</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>To write the file, simply run the filter graph by calling the <a href="/windows/desktop/api/Control/nf-control-imediacontrol-run"><strong>IMediaControl::Run</strong></a> method. Wait for playback to complete and explicitly stop the graph by calling <a href="/windows/desktop/api/Control/nf-control-imediacontrol-stop"><strong>IMediaControl::Stop</strong></a>; otherwise the file is not written correctly.</p>
+<p>To display the progress of the file-writing operation, query the Mux filter for the <a href="/windows/desktop/api/Strmif/nn-strmif-imediaseeking"><strong>IMediaSeeking</strong></a> interface. Call the <a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-getduration"><strong>IMediaSeeking::GetDuration</strong></a> method to retrieve the duration of the file. Periodically while the graph is running, call the <a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-getcurrentposition"><strong>IMediaSeeking::GetCurrentPosition</strong></a> method to retrieve the graph's current position in the stream. Current position divided by duration gives the percentage complete.</p>
+<blockquote>
+<p>[!Note]<br />
+An application usually queries the Filter Graph Manager for <strong>IMediaSeeking</strong>, but file writing is an exception to this rule. The Filter Graph Manager calculates the current position from the starting position and how long the graph has been running, which is accurate for file playback but not for file writing. Therefore, to get an accurate result, you should retrieve the position from the MUX filter.</p>
+</blockquote>
+<p>Â </p>
+<p>The following code gets the duration of the file, starts a timer to update the application UI, and runs the filter graph. (Error checking is omitted for clarity.)</p>
+<pre lang="C++"><code>IMediaSeeking *pSeek = NULL;
+IMediaEventEx *pEvent = NULL;
+IMediaControl *pControl = NULL;
+REFERENCE_TIME rtTotal;
+
+// Query for interfaces. Remember to release them later.
+hr = pMux-&gt;QueryInterface(IID_IMediaSeeking, (void**)&amp;pSeek);
+hr = pGraph-&gt;QueryInterface(IID_IMediaEventEx, (void**)&amp;pEvent);
+hr = pGraph-&gt;QueryInterface(IID_IMediaControl, (void**)&amp;pControl);
+
+// Error checking is omitted for clarity.
+
+// Set the DirectShow event notification window.
+hr = pEvent-&gt;SetNotifyWindow((OAHWND)hwnd, WM_GRAPHNOTIFY, 0);
+
+// Set the range of the progress bar to the file length (in seconds).
+hr = pSeek-&gt;GetDuration(&amp;rtTotal);
+SendDlgItemMessage(hwnd, IDC_PROGRESS1, PBM_SETRANGE, 0, 
+   MAKELPARAM(0, rtTotal / 10000000));
+// Start the timer.
+UINT_PTR res = SetTimer(hwnd, nIDEvent, 100, NULL);
+// Run the graph.
+pControl-&gt;Run();
+</code></pre>
+<p>When the application receives a timer event, it can update the UI with the current position:</p>
+<pre lang="C++"><code>void OnTimer(HWND hDlg, IMediaSeeking *pSeek)
+{
+    REFERENCE_TIME rtNow;
+    HRESULT hr = pSeek-&gt;GetCurrentPosition(&amp;rtNow);
+    if (SUCCEEDED(hr))
+    {
+        SendDlgItemMessage(hDlg, IDC_PROGRESS1, PBM_SETPOS, rtNow/10000000, 0);
+    }
+}
+</code></pre>
+<p>When the application receives a DirectShow completion event, it should stop the graph, as shown in the following code:</p>
+<pre lang="C++"><code>// Application window procedure
+LRESULT CALLBACK WndProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg)
+    {
+    /*  ...  */
+    case WM_GRAPHNOTIFY:
+        DoHandleEvent();
+        break;
+    /*  ...  */
+    }
+}
+
+void DoHandleEvent()
+{
+    long evCode, param1, param2;
+    bool bComplete = false;
+    if (!pEvent) return;
+
+    // Get all the events, and see we're done.
+    while (SUCCEEDED(pEvent-&gt;GetEvent(&amp;evCode, &amp;param1, &amp;param2, 0))
+    {
+        pEvent-&gt;FreeEventParams(evCode, param1, param2);
+        switch(evCode)
+        {
+            case EC_USERABORT:
+            case EC_ERRORABORT:
+            case EC_COMPLETE:
+                bComplete = true;
+                break;
+        }
+    }
+    if (bComplete)
+    {
+        pControl-&gt;Stop(); // Important! You must stop the graph!
+
+        // Turn off event notification.
+        pEvent-&gt;SetNotifyWindow(NULL, 0, 0);
+        pEvent-&gt;Release();
+        pEvent = NULL;
+        // Reset the progress bar to zero and get rid of the timer.
+        SendDlgItemMessage(IDC_PROGRESS1, PBM_SETPOS, 0, 0);
+        KillTimer(hwnd, nIDEvent);
+    }
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

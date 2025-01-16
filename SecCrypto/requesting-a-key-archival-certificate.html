@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Requesting a Key Archival Certificate</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Demonstrates how to request a key archival certificate.
+ms.assetid: a09f55c1-fb27-41e7-9a2f-617d2360c02f
+title: Requesting a Key Archival Certificate
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Requesting a Key Archival Certificate</h1>
+<p>The following example shows creating and submitting a <a href="../secgloss/c-gly.html"><em>certificate request</em></a> and receiving the resulting key archival certificate. For this example to succeed, the <a href="../secgloss/c-gly.html"><em>certification authority</em></a> (CA) that receives the certificate request must be configured for key archival.</p>
+<p>The following steps describe how to create and submit a certificate request.</p>
+<p><strong>To create and submit a certificate request</strong></p>
+<ol>
+<li>Retrieve the CA's exchange certificate using the <a href="/windows/desktop/api/Certcli/nf-certcli-icertrequest-getcacertificate"><strong>ICertRequest2::GetCACertificate</strong></a> method.</li>
+<li>Specify that the retrieved CA exchange certificate is the key archive certificate using the <a href="/windows/desktop/api/Xenroll/nf-xenroll-icenroll4-get_privatekeyarchivecertificate"><strong>ICEnroll4::PrivateKeyArchiveCertificate</strong></a> property.</li>
+<li>Create a CMC certificate request using the <a href="/windows/desktop/api/Xenroll/nf-xenroll-icenroll4-createrequest"><strong>ICEnroll4::createRequest</strong></a> method.</li>
+<li>Submit the certificate request to a CA using the <a href="/windows/desktop/api/Certcli/nf-certcli-icertrequest-submit"><strong>ICertRequest2::Submit</strong></a> method. The CA must be configured to support key archival.</li>
+</ol>
+<p>The following steps describe how to retrieve the issued certificate for key archival purposes.</p>
+<p><strong>To retrieve the issued certificate for key archival purposes</strong></p>
+<ol>
+<li>Retrieve the full response, including the issued certificate, using the <a href="/windows/desktop/api/Certcli/nf-certcli-icertrequest2-getfullresponseproperty"><strong>ICertRequest2::GetFullResponseProperty</strong></a> method.</li>
+<li>Install the issued certificate using the <a href="/windows/desktop/api/Xenroll/nf-xenroll-icenroll4-acceptresponse"><strong>ICEnroll4::acceptResponse</strong></a> method.</li>
+</ol>
+<p>The following example shows creating and submitting a certificate request and receiving the resulting key archival certificate.</p>
+<pre lang="C++"><code>// Pointer to interface objects.
+ICEnroll4 * pEnroll = NULL;
+ICertRequest2 * pRequest = NULL;
+
+// BSTR variables.
+BSTR    bstrCACert = NULL;
+BSTR    bstrDN = NULL;
+BSTR    bstrCertAuth = NULL;
+BSTR    bstrReq = NULL;
+BSTR    bstrDispMsg = NULL;
+BSTR    bstrErrorMsg = NULL;
+
+VARIANT varFullResp;
+
+LONG    lDisp =0;
+LONG    lRequestID = 0;
+LONG    lStatus = 0;
+
+HRESULT    hr;
+
+// Initialize COM.
+hr = CoInitializeEx( NULL, COINIT_APARTMENTTHREADED );
+if ( FAILED( hr ) )
+{
+    printf(&quot;Failed CoInitializeEx - [%x]\n&quot;, hr);
+    goto error;
+}
+
+// Create an instance of the Certificate Enrollment object.
+hr = CoCreateInstance( CLSID_CEnroll,
+                       NULL,
+                       CLSCTX_INPROC_SERVER,
+                       IID_ICEnroll4,
+                       (void **)&amp;pEnroll);
+if ( FAILED( hr ) )
+{
+    printf(&quot;Failed CoCreateInstance - pEnroll [%x]\n&quot;, hr);
+    goto error;
+}
+
+// Create an instance of the Certificate Request object.
+hr = CoCreateInstance( CLSID_CCertRequest,
+                       NULL,
+                       CLSCTX_INPROC_SERVER,
+                       IID_ICertRequest2,
+                       (void **)&amp;pRequest);
+if ( FAILED( hr ) )
+{
+    printf(&quot;Failed CoCreateInstance - pRequest [%x]\n&quot;, hr);
+    goto error;
+}
+
+// Allocate the BSTR that represents the certification authority.
+// Note the use of '\\' to produce a single '\' in C++.
+bstrCertAuth = SysAllocString(L&quot;Server\\CertAuth&quot;);
+if (NULL == bstrCertAuth)
+{
+    printf(&quot;Failed SysAllocString\n&quot;);
+    goto error;
+}
+
+// Retrieve the CA's exchange certificate.
+hr = pRequest-&gt;GetCACertificate(TRUE,
+                                bstrCertAuth,
+                                CR_OUT_BASE64HEADER,
+                                &amp;bstrCACert);
+if (FAILED(hr))
+{
+    printf(&quot;Failed GetCACertificate [%x]\n&quot;, hr);
+    goto error;
+}
+
+// Specify the retrieved certificate 
+// as the key archive certificate.
+hr = pEnroll-&gt;put_PrivateKeyArchiveCertificate(bstrCACert);
+if (FAILED(hr))
+{
+    printf(&quot;put_PrivateKeyArchiveCertificate [%x]\n&quot;, hr);
+    goto error;
+}
+
+// Create the data for the request.
+// A user interface or database retrieval could
+// be used instead of this example's hard-coded text.
+bstrDN = SysAllocString(L&quot;CN=UserName&quot;    // common name
+                        L&quot;,OU=UserUnit&quot;   // org unit
+                        L&quot;,O=UserOrg&quot;     // org
+                        L&quot;,L=UserCity&quot;    // locality
+                        L&quot;,S=WA&quot;          // state
+                        L&quot;,C=US&quot;);        // country/region
+if (NULL == bstrDN)
+{
+    printf(&quot;Failed SysAllocString\n&quot;);
+    goto error;
+}
+
+// Create the certificate request.
+hr = pEnroll-&gt;createRequest( XECR_CMC,
+                             bstrDN, 
+                             NULL,
+                             &amp;bstrReq );
+if ( FAILED( hr ) )
+{
+    printf(&quot;Failed createRequest - [%x]\n&quot;, hr);
+    goto error;
+}
+
+// Submit the certificate request.
+hr = pRequest-&gt;Submit( CR_IN_CMC,
+                       bstrReq,
+                       NULL,
+                       bstrCertAuth,
+                       &amp;lDisp );
+if ( FAILED( hr ) )
+{
+    
+    printf(&quot;Failed Submit - [%x]\n&quot;, hr);  
+    goto error;
+}
+
+// Evaluate the disposition of the submitted request.
+switch (lDisp)
+{
+    case CR_DISP_ISSUED:
+           printf(&quot;Certificate was issued.\n&quot;);
+           break;
+
+    case CR_DISP_ISSUED_OUT_OF_BAND:
+    case CR_DISP_INCOMPLETE:
+    case CR_DISP_ERROR:
+    case CR_DISP_DENIED:
+    case CR_DISP_UNDER_SUBMISSION:
+    case CR_DISP_REVOKED:
+            printf(&quot;Certificate was not issued: %d\n&quot;, lDisp);
+            break;
+
+    default:
+            printf(&quot;Unexpected disposition: %d\n&quot;, lDisp);
+            goto error;
+}
+
+// Retrieve the request ID.
+hr = pRequest-&gt;GetRequestId(&amp;lRequestID);
+if ( FAILED(hr) )
+{
+    printf(&quot;Failed GetRequestId - [%x]\n&quot;, hr);  
+    goto error;
+}
+printf(&quot;The request ID is %d\n&quot;, lRequestID);
+
+if (CR_DISP_ISSUED != lDisp)
+{
+    // Provide information about why a certificate 
+    // was not issued.
+    
+    // Retrieve the last status.
+    hr = pRequest-&gt;GetLastStatus(&amp;lStatus);
+    if ( FAILED(hr) )
+    {
+        printf(&quot;Failed GetLastStatus - [%x]\n&quot;, hr);  
+        goto error;
+    }
+
+    // Retrieve the disposition message.
+    hr = pRequest-&gt;GetDispositionMessage(&amp;bstrDispMsg);
+    if ( FAILED(hr) )
+    {
+        printf(&quot;Failed GetDispositionMessage - [%x]\n&quot;, hr);  
+        goto error;
+    }
+
+    // Retrieve the error message.
+    hr = pRequest-&gt;GetErrorMessageText(lStatus,
+                                       CR_GEMT_HRESULT_STRING,
+                                       &amp;bstrErrorMsg);
+    if ( FAILED(hr) )
+    {
+        printf(&quot;Failed GetErrorMessageText - [%x]\n&quot;, hr);  
+        goto error;
+    }
+    
+    // Display the information and exit.
+    printf(&quot;Request ID: %d\nDisposition: %S\nError: %S\n&quot;,
+           lRequestID,
+           bstrDispMsg,
+           bstrErrorMsg);
+    goto error;
+}
+
+// Retrieve the full response.
+VariantInit(&amp;varFullResp);
+hr = pRequest-&gt;GetFullResponseProperty( FR_PROP_FULLRESPONSE,
+                                        0,
+                                        PROPTYPE_BINARY,
+                                        CR_OUT_BASE64,
+                                        &amp;varFullResp );
+if ( FAILED( hr ) )
+{
+    printf(&quot;Failed GetFullResponseProperty - [%x]\n&quot;, hr);
+    goto error;
+}
+
+// Accept the response.
+hr = pEnroll-&gt;acceptResponse(varFullResp.bstrVal);
+if ( FAILED( hr ) )
+{
+    printf(&quot;Failed AcceptResponse - [%x]\n&quot;, hr);
+    goto error;
+}
+else
+{
+    printf(&quot;Successfully completed processing\n&quot;);
+}
+
+error:
+
+// Done processing.
+// Clean up object resources.
+if ( NULL != pEnroll )
+    pEnroll-&gt;Release();
+if ( NULL != pRequest )
+    pRequest-&gt;Release();
+
+// Free BSTR variables.
+if ( NULL != bstrCACert )
+    SysFreeString ( bstrCACert );
+if ( NULL != bstrDN )
+    SysFreeString ( bstrDN );
+if ( NULL != bstrCertAuth )
+    SysFreeString ( bstrCertAuth );
+if ( NULL != bstrReq )
+    SysFreeString ( bstrReq );
+if ( NULL != bstrDispMsg )
+    SysFreeString ( bstrDispMsg );
+if ( NULL != bstrErrorMsg )
+    SysFreeString ( bstrErrorMsg );
+
+// Clear VARIANTS.
+VariantClear(&amp;varFullResp);
+
+// Free COM resources.
+CoUninitialize();
+
+return hr;
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

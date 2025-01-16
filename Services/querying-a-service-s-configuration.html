@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Querying a Service's Configuration</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: A service configuration program uses the OpenService function to get a handle with SERVICE_QUERY_CONFIG access to an installed service object.
+ms.assetid: e6633dc9-c9b6-457d-8adc-e751ec9cf71d
+title: Querying a Services Configuration
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Querying a Service's Configuration</h1>
+<p>A <a href="service-configuration-programs.html">service configuration program</a> uses the <a href="/windows/desktop/api/Winsvc/nf-winsvc-openservicea"><strong>OpenService</strong></a> function to get a handle with SERVICE_QUERY_CONFIG access to an installed service object. The program can then use the service object handle in the <a href="/windows/desktop/api/Winsvc/nf-winsvc-queryserviceconfiga"><strong>QueryServiceConfig</strong></a> and <a href="/windows/desktop/api/Winsvc/nf-winsvc-queryserviceconfig2a"><strong>QueryServiceConfig2</strong></a> functions to retrieve the current configuration of the service.</p>
+<p>In the following example, the DoQuerySvc function uses <a href="/windows/desktop/api/Winsvc/nf-winsvc-queryserviceconfiga"><strong>QueryServiceConfig</strong></a> and <a href="/windows/desktop/api/Winsvc/nf-winsvc-queryserviceconfig2a"><strong>QueryServiceConfig2</strong></a> to retrieve configuration information, then writes selected information to the console. The szSvcName variable is a global variable that contains the name of the service. For the complete example that sets this variable, see <a href="svcconfig-cpp.html">SvcConfig.cpp</a>.</p>
+<pre lang="C++"><code>//
+// Purpose: 
+//   Retrieves and displays the current service configuration.
+//
+// Parameters:
+//   None
+// 
+// Return value:
+//   None
+//
+VOID __stdcall DoQuerySvc()
+{
+    SC_HANDLE schSCManager;
+    SC_HANDLE schService;
+    LPQUERY_SERVICE_CONFIG lpsc; 
+    LPSERVICE_DESCRIPTION lpsd;
+    DWORD dwBytesNeeded, cbBufSize, dwError; 
+
+    // Get a handle to the SCM database. 
+ 
+    schSCManager = OpenSCManager( 
+        NULL,                    // local computer
+        NULL,                    // ServicesActive database 
+        SC_MANAGER_ALL_ACCESS);  // full access rights 
+ 
+    if (NULL == schSCManager) 
+    {
+        printf(&quot;OpenSCManager failed (%d)\n&quot;, GetLastError());
+        return;
+    }
+
+    // Get a handle to the service.
+
+    schService = OpenService( 
+        schSCManager,          // SCM database 
+        szSvcName,             // name of service 
+        SERVICE_QUERY_CONFIG); // need query config access 
+ 
+    if (schService == NULL)
+    { 
+        printf(&quot;OpenService failed (%d)\n&quot;, GetLastError()); 
+        CloseServiceHandle(schSCManager);
+        return;
+    }
+
+    // Get the configuration information.
+ 
+    if( !QueryServiceConfig( 
+        schService, 
+        NULL, 
+        0, 
+        &amp;dwBytesNeeded))
+    {
+        dwError = GetLastError();
+        if( ERROR_INSUFFICIENT_BUFFER == dwError )
+        {
+            cbBufSize = dwBytesNeeded;
+            lpsc = (LPQUERY_SERVICE_CONFIG) LocalAlloc(LMEM_FIXED, cbBufSize);
+        }
+        else
+        {
+            printf(&quot;QueryServiceConfig failed (%d)&quot;, dwError);
+            goto cleanup; 
+        }
+    }
+  
+    if( !QueryServiceConfig( 
+        schService, 
+        lpsc, 
+        cbBufSize, 
+        &amp;dwBytesNeeded) ) 
+    {
+        printf(&quot;QueryServiceConfig failed (%d)&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    if( !QueryServiceConfig2( 
+        schService, 
+        SERVICE_CONFIG_DESCRIPTION,
+        NULL, 
+        0, 
+        &amp;dwBytesNeeded))
+    {
+        dwError = GetLastError();
+        if( ERROR_INSUFFICIENT_BUFFER == dwError )
+        {
+            cbBufSize = dwBytesNeeded;
+            lpsd = (LPSERVICE_DESCRIPTION) LocalAlloc(LMEM_FIXED, cbBufSize);
+        }
+        else
+        {
+            printf(&quot;QueryServiceConfig2 failed (%d)&quot;, dwError);
+            goto cleanup; 
+        }
+    }
+ 
+    if (! QueryServiceConfig2( 
+        schService, 
+        SERVICE_CONFIG_DESCRIPTION,
+        (LPBYTE) lpsd, 
+        cbBufSize, 
+        &amp;dwBytesNeeded) ) 
+    {
+        printf(&quot;QueryServiceConfig2 failed (%d)&quot;, GetLastError());
+        goto cleanup;
+    }
+ 
+    // Print the configuration information.
+ 
+    _tprintf(TEXT(&quot;%s configuration: \n&quot;), szSvcName);
+    _tprintf(TEXT(&quot;  Type: 0x%x\n&quot;), lpsc-&gt;dwServiceType);
+    _tprintf(TEXT(&quot;  Start Type: 0x%x\n&quot;), lpsc-&gt;dwStartType);
+    _tprintf(TEXT(&quot;  Error Control: 0x%x\n&quot;), lpsc-&gt;dwErrorControl);
+    _tprintf(TEXT(&quot;  Binary path: %s\n&quot;), lpsc-&gt;lpBinaryPathName);
+    _tprintf(TEXT(&quot;  Account: %s\n&quot;), lpsc-&gt;lpServiceStartName);
+
+    if (lpsd-&gt;lpDescription != NULL &amp;&amp; lstrcmp(lpsd-&gt;lpDescription, TEXT(&quot;&quot;)) != 0)
+        _tprintf(TEXT(&quot;  Description: %s\n&quot;), lpsd-&gt;lpDescription);
+    if (lpsc-&gt;lpLoadOrderGroup != NULL &amp;&amp; lstrcmp(lpsc-&gt;lpLoadOrderGroup, TEXT(&quot;&quot;)) != 0)
+        _tprintf(TEXT(&quot;  Load order group: %s\n&quot;), lpsc-&gt;lpLoadOrderGroup);
+    if (lpsc-&gt;dwTagId != 0)
+        _tprintf(TEXT(&quot;  Tag ID: %d\n&quot;), lpsc-&gt;dwTagId);
+    if (lpsc-&gt;lpDependencies != NULL &amp;&amp; lstrcmp(lpsc-&gt;lpDependencies, TEXT(&quot;&quot;)) != 0)
+        _tprintf(TEXT(&quot;  Dependencies: %s\n&quot;), lpsc-&gt;lpDependencies);
+ 
+    LocalFree(lpsc); 
+    LocalFree(lpsd);
+
+cleanup:
+    CloseServiceHandle(schService); 
+    CloseServiceHandle(schSCManager);
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="service-configuration.html">Service Configuration</a></p>
+<!-- raw HTML omitted -->
+<p><a href="the-complete-service-sample.html">The Complete Service Sample</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

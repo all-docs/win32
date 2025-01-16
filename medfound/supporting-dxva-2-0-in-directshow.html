@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Supporting DXVA 2.0 in DirectShow</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to support DirectX Video Acceleration (DXVA) 2.0 in a DirectShow decoder filter.
+ms.assetid: 40deaddb-bb17-4a34-8294-5c7dc8a8a457
+title: Supporting DXVA 2.0 in DirectShow
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Supporting DXVA 2.0 in DirectShow</h1>
+<p>This topic describes how to support DirectX Video Acceleration (DXVA) 2.0 in a DirectShow decoder filter. Specifically, it describes the communication between the decoder and the video renderer. This topic does not describe how to implement DXVA decoding.</p>
+<ul>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#migration-notes">Migration Notes</a></li>
+<li><a href="#finding-a-decoder-configuration">Finding a Decoder Configuration</a></li>
+<li><a href="#notifying-the-video-renderer">Notifying the Video Renderer</a></li>
+<li><a href="#allocating-uncompressed-buffers">Allocating Uncompressed Buffers</a></li>
+<li><a href="#decoding">Decoding</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Prerequisites</h2>
+<p>This topic assumes that you are familiar with writing DirectShow filters. For more information, see the topic <a href="../directshow/writing-directshow-filters.html">Writing DirectShow Filters</a> in the DirectShow SDK documentation. The code examples in this topic assume that the decoder filter is derived from the <a href="../directshow/ctransformfilter.html"><strong>CTransformFilter</strong></a> class, with the following class definition:</p>
+<pre lang="C++"><code>class CDecoder : public CTransformFilter
+{
+public:
+    static CUnknown* WINAPI CreateInstance(IUnknown *pUnk, HRESULT *pHr);
+
+    HRESULT CompleteConnect(PIN_DIRECTION direction, IPin *pPin);
+
+    HRESULT InitAllocator(IMemAllocator **ppAlloc);
+    HRESULT DecideBufferSize(IMemAllocator *pAlloc, ALLOCATOR_PROPERTIES *pProp);
+
+    // TODO: The implementations of these methods depend on the specific decoder.
+    HRESULT CheckInputType(const CMediaType *mtIn);
+    HRESULT CheckTransform(const CMediaType *mtIn, const CMediaType *mtOut);
+    HRESULT CTransformFilter::GetMediaType(int,CMediaType *);
+
+private:
+    CDecoder(HRESULT *pHr);
+    ~CDecoder();
+
+    CBasePin * GetPin(int n);
+
+    HRESULT ConfigureDXVA2(IPin *pPin);
+    HRESULT SetEVRForDXVA2(IPin *pPin);
+
+    HRESULT FindDecoderConfiguration(
+        /* [in] */  IDirectXVideoDecoderService *pDecoderService,
+        /* [in] */  const GUID&amp; guidDecoder, 
+        /* [out] */ DXVA2_ConfigPictureDecode *pSelectedConfig,
+        /* [out] */ BOOL *pbFoundDXVA2Configuration
+        );
+
+private:
+    IDirectXVideoDecoderService *m_pDecoderService;
+
+    DXVA2_ConfigPictureDecode m_DecoderConfig;
+    GUID                      m_DecoderGuid;
+    HANDLE                    m_hDevice;
+
+    FOURCC                    m_fccOutputFormat;
+};
+</code></pre>
+<p>In the remainder of this topic, the term <em>decoder</em> refers to the decoder filter, which receives compressed video and outputs uncompressed video. The term <em>decoder device</em> refers to a hardware video accelerator implemented by the graphics driver.</p>
+<p>Here are the basic steps that a decoder filter must perform to support DXVA 2.0:</p>
+<ol>
+<li>Negotiate a media type.</li>
+<li>Find a DXVA decoder configuration.</li>
+<li>Notify the video renderer that the decoder is using DXVA decoding.</li>
+<li>Provide a custom allocator that allocates Direct3D surfaces.</li>
+</ol>
+<p>These steps are described in more detail in the remainder of this topic.</p>
+<h2>Migration Notes</h2>
+<p>If you are migrating from DXVA 1.0, you should be aware of some significant differences between the two versions:</p>
+<ul>
+<li>DXVA 2.0 does not use the <a href="/previous-versions/windows/desktop/api/videoacc/nn-videoacc-iamvideoaccelerator"><strong>IAMVideoAccelerator</strong></a> and <a href="/previous-versions/windows/desktop/api/videoacc/nn-videoacc-iamvideoacceleratornotify"><strong>IAMVideoAcceleratorNotify</strong></a> interfaces, because the decoder can access the DXVA 2.0 APIs directly through the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoder"><strong>IDirectXVideoDecoder</strong></a> interface.</li>
+<li>During media type negotiation, the decoder does not use a video acceleration GUID as the subtype. Instead, the subtype is just the uncompressed video format (such as NV12), as with software decoding.</li>
+<li>The procedure for configuring the accelerator has changed. In DXVA 1.0, the decoder calls <strong>Execute</strong> with a <strong>DXVA_ConfigPictureDecode</strong> structure to configure the accerlator. In DXVA 2.0, the decoder uses the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoderservice"><strong>IDirectXVideoDecoderService</strong></a> interface, as described in the next section.</li>
+<li>The decoder allocates the uncompressed buffers. The video renderer no longer allocates them.</li>
+<li>Instead of calling <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-displayframe"><strong>IAMVideoAccelerator::DisplayFrame</strong></a> to display the decoded frame, the decoder delivers the frame to the renderer by calling <a href="/windows/win32/api/strmif/nf-strmif-imeminputpin-receive"><strong>IMemInputPin::Receive</strong></a>, as with software decoding.</li>
+<li>The decoder is no longer responsible for checking when data buffers are safe for updates. Therefore DXVA 2.0 does not have any method equivalent to <a href="/previous-versions/windows/desktop/api/videoacc/nf-videoacc-iamvideoaccelerator-queryrenderstatus"><strong>IAMVideoAccelerator::QueryRenderStatus</strong></a>.</li>
+<li>Subpicture blending is done by the video renderer, using the DXVA2.0 video processor APIs. Decoders that provide subpictures (for example, DVD decoders) should send subpicture data on a separate output pin.</li>
+</ul>
+<p>For decoding operations, DXVA 2.0 uses the same data structures as DXVA 1.0.</p>
+<p>The enhanced video renderer (EVR) filter supports DXVA 2.0. The Video Mixing Renderer filters (VMR-7 and VMR-9) support DXVA 1.0 only.</p>
+<h2>Finding a Decoder Configuration</h2>
+<p>After the decoder negotiates the output media type, it must find a compatible configuration for the DXVA decoder device. You can perform this step inside the output pin's <a href="../directshow/cbaseoutputpin-completeconnect.html"><strong>CBaseOutputPin::CompleteConnect</strong></a> method. This step ensures that the graphics driver supports the capabilities needed by the decoder, before the decoder commits to using DXVA.</p>
+<p>To find a configuration for the decoder device, do the following:</p>
+<ol>
+<li>
+<p>Query the renderer's input pin for the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfgetservice"><strong>IMFGetService</strong></a> interface.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfgetservice-getservice"><strong>IMFGetService::GetService</strong></a> to get a pointer to the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirect3ddevicemanager9"><strong>IDirect3DDeviceManager9</strong></a> interface. The service GUID is MR_VIDEO_ACCELERATION_SERVICE.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-opendevicehandle"><strong>IDirect3DDeviceManager9::OpenDeviceHandle</strong></a> to get a handle to the renderer's Direct3D device.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-getvideoservice"><strong>IDirect3DDeviceManager9::GetVideoService</strong></a> and pass in the device handle. This method returns a pointer to the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoderservice"><strong>IDirectXVideoDecoderService</strong></a> interface.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoderservice-getdecoderdeviceguids"><strong>IDirectXVideoDecoderService::GetDecoderDeviceGuids</strong></a>. This method returns an array of decoder device GUIDs.</p>
+</li>
+<li>
+<p>Loop through the array of decoder GUIDs to find the ones that the decoder filter supports. For example, for an MPEG-2 decoder, you would look for <strong>DXVA2_ModeMPEG2_MOCOMP</strong>, <strong>DXVA2_ModeMPEG2_IDCT</strong>, or <strong>DXVA2_ModeMPEG2_VLD</strong>.</p>
+</li>
+<li>
+<p>When you find a candidate decoder device GUID, pass the GUID to the <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoderservice-getdecoderrendertargets"><strong>IDirectXVideoDecoderService::GetDecoderRenderTargets</strong></a> method. This method returns an array of render target formats, specified as <strong>D3DFORMAT</strong> values.</p>
+</li>
+<li>
+<p>Loop through the render target formats and look for one that matches your output format. Typically, a decoder device supports a single render target format. The decoder filter should connect to the renderer using this subtype. In the first call to <a href="../directshow/cbaseoutputpin-completeconnect.html"><strong>CompleteConnect</strong></a>, the decoder can determing the render target format and then return this format as a preferred output type.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoderservice-getdecoderconfigurations"><strong>IDirectXVideoDecoderService::GetDecoderConfigurations</strong></a>. Pass in the same decoder device GUID, along with a <a href="/windows/desktop/api/dxva2api/ns-dxva2api-dxva2_videodesc"><strong>DXVA2_VideoDesc</strong></a> structure that describes the proposed format. The method returns an array of <a href="/windows/desktop/api/dxva2api/ns-dxva2api-dxva2_configpicturedecode"><strong>DXVA2_ConfigPictureDecode</strong></a> structures. Each structure describes one possible configuration for the decoder device.</p>
+</li>
+<li>
+<p>Assuming that the previous steps are successful, store the Direct3D device handle, the decoder device GUID, and the configuration structure. The filter will use this information to create the decoder device.</p>
+</li>
+</ol>
+<p>The following code shows how to find a decoder configuration.</p>
+<pre lang="C++"><code>HRESULT CDecoder::ConfigureDXVA2(IPin *pPin)
+{
+    UINT    cDecoderGuids = 0;
+    BOOL    bFoundDXVA2Configuration = FALSE;
+    GUID    guidDecoder = GUID_NULL;
+
+    DXVA2_ConfigPictureDecode config;
+    ZeroMemory(&amp;config, sizeof(config));
+
+    // Variables that follow must be cleaned up at the end.
+
+    IMFGetService               *pGetService = NULL;
+    IDirect3DDeviceManager9     *pDeviceManager = NULL;
+    IDirectXVideoDecoderService *pDecoderService = NULL;
+
+    GUID   *pDecoderGuids = NULL; // size = cDecoderGuids
+    HANDLE hDevice = INVALID_HANDLE_VALUE;
+
+    // Query the pin for IMFGetService.
+    HRESULT hr = pPin-&gt;QueryInterface(IID_PPV_ARGS(&amp;pGetService));
+
+    // Get the Direct3D device manager.
+    if (SUCCEEDED(hr))
+    {
+        hr = pGetService-&gt;GetService(
+
+            MR_VIDEO_ACCELERATION_SERVICE,
+            IID_PPV_ARGS(&amp;pDeviceManager)
+            );
+    }
+
+    // Open a new device handle.
+    if (SUCCEEDED(hr))
+    {
+        hr = pDeviceManager-&gt;OpenDeviceHandle(&amp;hDevice);
+    } 
+
+    // Get the video decoder service.
+    if (SUCCEEDED(hr))
+    {
+        hr = pDeviceManager-&gt;GetVideoService(
+            hDevice, IID_PPV_ARGS(&amp;pDecoderService));
+    }
+
+    // Get the decoder GUIDs.
+    if (SUCCEEDED(hr))
+    {
+        hr = pDecoderService-&gt;GetDecoderDeviceGuids(
+            &amp;cDecoderGuids, &amp;pDecoderGuids);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Look for the decoder GUIDs we want.
+        for (UINT iGuid = 0; iGuid &lt; cDecoderGuids; iGuid++)
+        {
+            // Do we support this mode?
+            if (!IsSupportedDecoderMode(pDecoderGuids[iGuid]))
+            {
+                continue;
+            }
+
+            // Find a configuration that we support. 
+            hr = FindDecoderConfiguration(pDecoderService, pDecoderGuids[iGuid],
+                &amp;config, &amp;bFoundDXVA2Configuration);
+            if (FAILED(hr))
+            {
+                break;
+            }
+
+            if (bFoundDXVA2Configuration)
+            {
+                // Found a good configuration. Save the GUID and exit the loop.
+                guidDecoder = pDecoderGuids[iGuid];
+                break;
+            }
+        }
+    }
+
+    if (!bFoundDXVA2Configuration)
+    {
+        hr = E_FAIL; // Unable to find a configuration.
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Store the things we will need later.
+
+        SafeRelease(&amp;m_pDecoderService);
+        m_pDecoderService = pDecoderService;
+        m_pDecoderService-&gt;AddRef();
+
+        m_DecoderConfig = config;
+        m_DecoderGuid = guidDecoder;
+        m_hDevice = hDevice;
+    }
+
+    if (FAILED(hr))
+    {
+        if (hDevice != INVALID_HANDLE_VALUE)
+        {
+            pDeviceManager-&gt;CloseDeviceHandle(hDevice);
+        }
+    }
+
+    SafeRelease(&amp;pGetService);
+    SafeRelease(&amp;pDeviceManager);
+    SafeRelease(&amp;pDecoderService);
+    return hr;
+}
+HRESULT CDecoder::FindDecoderConfiguration(
+    /* [in] */  IDirectXVideoDecoderService *pDecoderService,
+    /* [in] */  const GUID&amp; guidDecoder, 
+    /* [out] */ DXVA2_ConfigPictureDecode *pSelectedConfig,
+    /* [out] */ BOOL *pbFoundDXVA2Configuration
+    )
+{
+    HRESULT hr = S_OK;
+    UINT cFormats = 0;
+    UINT cConfigurations = 0;
+
+    D3DFORMAT                   *pFormats = NULL;     // size = cFormats
+    DXVA2_ConfigPictureDecode   *pConfig = NULL;      // size = cConfigurations
+
+    // Find the valid render target formats for this decoder GUID.
+    hr = pDecoderService-&gt;GetDecoderRenderTargets(
+        guidDecoder,
+        &amp;cFormats,
+        &amp;pFormats
+        );
+
+    if (SUCCEEDED(hr))
+    {
+        // Look for a format that matches our output format.
+        for (UINT iFormat = 0; iFormat &lt; cFormats;  iFormat++)
+        {
+            if (pFormats[iFormat] != (D3DFORMAT)m_fccOutputFormat)
+            {
+                continue;
+            }
+
+            // Fill in the video description. Set the width, height, format, 
+            // and frame rate.
+            DXVA2_VideoDesc videoDesc = {0};
+
+            FillInVideoDescription(&amp;videoDesc); // Private helper function.
+            videoDesc.Format = pFormats[iFormat];
+
+            // Get the available configurations.
+            hr = pDecoderService-&gt;GetDecoderConfigurations(
+                guidDecoder,
+                &amp;videoDesc,
+                NULL, // Reserved.
+                &amp;cConfigurations,
+                &amp;pConfig
+                );
+
+            if (FAILED(hr))
+            {
+                break;
+            }
+
+            // Find a supported configuration.
+            for (UINT iConfig = 0; iConfig &lt; cConfigurations; iConfig++)
+            {
+                if (IsSupportedDecoderConfig(pConfig[iConfig]))
+                {
+                    // This configuration is good.
+                    *pbFoundDXVA2Configuration = TRUE;
+                    *pSelectedConfig = pConfig[iConfig];
+                    break;
+                }
+            }
+
+            CoTaskMemFree(pConfig);
+            break;
+
+        } // End of formats loop.
+    }
+
+    CoTaskMemFree(pFormats);
+
+    // Note: It is possible to return S_OK without finding a configuration.
+    return hr;
+}
+</code></pre>
+<p>Because this example is generic, some of the logic has been placed in helper functions that would need to be implemented by the decoder. The following code shows the declarations for these functions:</p>
+<pre lang="C++"><code>// Returns TRUE if the decoder supports a given decoding mode.
+BOOL IsSupportedDecoderMode(const GUID&amp; mode);
+
+// Returns TRUE if the decoder supports a given decoding configuration.
+BOOL IsSupportedDecoderConfig(const DXVA2_ConfigPictureDecode&amp; config);
+
+// Fills in a DXVA2_VideoDesc structure based on the input format.
+void FillInVideoDescription(DXVA2_VideoDesc *pDesc);
+</code></pre>
+<h2>Notifying the Video Renderer</h2>
+<p>If the decoder finds a decoder configuration, the next step is to notify the video renderer that the decoder will use hardware acceleration. You can perform this step inside the <a href="../directshow/cbaseoutputpin-completeconnect.html"><strong>CompleteConnect</strong></a> method. This step must occur before the allocator is selected, because it affects how the allocator is selected.</p>
+<ol>
+<li>Query the renderer's input pin for the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfgetservice"><strong>IMFGetService</strong></a> interface.</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfgetservice-getservice"><strong>IMFGetService::GetService</strong></a> to get a pointer to the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideomemoryconfiguration"><strong>IDirectXVideoMemoryConfiguration</strong></a> interface. The service GUID is <strong>MR_VIDEO_ACCELERATION_SERVICE</strong>.</li>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideomemoryconfiguration-getavailablesurfacetypebyindex"><strong>IDirectXVideoMemoryConfiguration::GetAvailableSurfaceTypeByIndex</strong></a> in a loop, incrementing the <em>dwTypeIndex</em> variable from zero. Stop when the method returns the value <strong>DXVA2_SurfaceType_DecoderRenderTarget</strong> in the <em>pdwType</em> parameter. This step ensures that the video renderer supports hardware-accelerated decoding. This step will always succeed for the EVR filter.</li>
+<li>If the previous step succeeded, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideomemoryconfiguration-setsurfacetype"><strong>IDirectXVideoMemoryConfiguration::SetSurfaceType</strong></a> with the value DXVA2_SurfaceType_DecoderRenderTarget. Calling <strong>SetSurfaceType</strong> with this value puts the video renderer into DXVA mode. When the video renderer is in this mode, the decoder must provide its own allocator.</li>
+</ol>
+<p>The following code shows how to notify the video renderer.</p>
+<pre lang="C++"><code>HRESULT CDecoder::SetEVRForDXVA2(IPin *pPin)
+{
+    HRESULT hr = S_OK;
+
+    IMFGetService                       *pGetService = NULL;
+    IDirectXVideoMemoryConfiguration    *pVideoConfig = NULL;
+
+    // Query the pin for IMFGetService.
+    hr = pPin-&gt;QueryInterface(__uuidof(IMFGetService), (void**)&amp;pGetService);
+
+    // Get the IDirectXVideoMemoryConfiguration interface.
+    if (SUCCEEDED(hr))
+    {
+        hr = pGetService-&gt;GetService(
+            MR_VIDEO_ACCELERATION_SERVICE, IID_PPV_ARGS(&amp;pVideoConfig));
+    }
+
+    // Notify the EVR. 
+    if (SUCCEEDED(hr))
+    {
+        DXVA2_SurfaceType surfaceType;
+
+        for (DWORD iTypeIndex = 0; ; iTypeIndex++)
+        {
+            hr = pVideoConfig-&gt;GetAvailableSurfaceTypeByIndex(iTypeIndex, &amp;surfaceType);
+            
+            if (FAILED(hr))
+            {
+                break;
+            }
+
+            if (surfaceType == DXVA2_SurfaceType_DecoderRenderTarget)
+            {
+                hr = pVideoConfig-&gt;SetSurfaceType(DXVA2_SurfaceType_DecoderRenderTarget);
+                break;
+            }
+        }
+    }
+
+    SafeRelease(&amp;pGetService);
+    SafeRelease(&amp;pVideoConfig);
+
+    return hr;
+}
+</code></pre>
+<p>If the decoder finds a valid configuration and successfully notifies the video renderer, the decoder can use DXVA for decoding. The decoder must implement a custom allocator for its output pin, as described in the next section.</p>
+<h2>Allocating Uncompressed Buffers</h2>
+<p>In DXVA 2.0, the decoder is responsible for allocating Direct3D surfaces to use as uncompressed video buffers. Therefore, the decoder must implement a custom allocator that will create the surfaces. The media samples provided by this allocator will hold pointers to the Direct3D surfaces. The EVR retrieves a pointer to the surface by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfgetservice-getservice"><strong>IMFGetService::GetService</strong></a> on the media sample. The service identifier is <strong>MR_BUFFER_SERVICE</strong>.</p>
+<p>To provide the custom allocator, perform the following steps:</p>
+<ol>
+<li>Define a class for the media samples. This class can derive from the <a href="../directshow/cmediasample.html"><strong>CMediaSample</strong></a> class. Inside this class, do the following:
+<ul>
+<li>Store a pointer to the Direct3D surface.</li>
+<li>Implement the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfgetservice"><strong>IMFGetService</strong></a> interface. In the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfgetservice-getservice"><strong>GetService</strong></a> method, if the service GUID is <strong>MR_BUFFER_SERVICE</strong>, query the Direct3D surface for the requested interface. Otherwise, <strong>GetService</strong> can return <strong>MF_E_UNSUPPORTED_SERVICE</strong>.</li>
+<li>Override the <a href="../directshow/cmediasample-getpointer.html"><strong>CMediaSample::GetPointer</strong></a> method to return E_NOTIMPL.</li>
+</ul>
+</li>
+<li>Define a class for the allocator. The allocator can derive from the <a href="../directshow/cbaseallocator.html"><strong>CBaseAllocator</strong></a> class. Inside this class, do the following.
+<ul>
+<li>Override the <a href="../directshow/cbaseallocator-alloc.html"><strong>CBaseAllocator::Alloc</strong></a> method. Inside this method, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideoaccelerationservice-createsurface"><strong>IDirectXVideoAccelerationService::CreateSurface</strong></a> to create the surfaces. (The <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoderservice"><strong>IDirectXVideoDecoderService</strong></a> interface inherits this method from <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideoaccelerationservice"><strong>IDirectXVideoAccelerationService</strong></a>.)</li>
+<li>Override the <a href="../directshow/cbaseallocator-free.html"><strong>CBaseAllocator::Free</strong></a> method to release the surfaces.</li>
+</ul>
+</li>
+<li>In your filter's output pin, override the <a href="../directshow/cbaseoutputpin-initallocator.html"><strong>CBaseOutputPin::InitAllocator</strong></a> method. Inside this method, create an instance of your custom allocator.</li>
+<li>In your filter, implement the <a href="../directshow/ctransformfilter-decidebuffersize.html"><strong>CTransformFilter::DecideBufferSize</strong></a> method. The <em>pProperties</em> parameter indicates the number of surfaces that the EVR requires. Add to this value the number of surfaces that your decoder requires, and call <a href="/windows/win32/api/strmif/nf-strmif-imemallocator-setproperties"><strong>IMemAllocator::SetProperties</strong></a> on the allocator.</li>
+</ol>
+<p>The following code shows how to implement the media sample class:</p>
+<pre lang="C++"><code>class CDecoderSample : public CMediaSample, public IMFGetService
+{
+    friend class CDecoderAllocator;
+
+public:
+
+    CDecoderSample(CDecoderAllocator *pAlloc, HRESULT *phr)
+        : CMediaSample(NAME(&quot;DecoderSample&quot;), (CBaseAllocator*)pAlloc, phr, NULL, 0),
+          m_pSurface(NULL),
+          m_dwSurfaceId(0)
+    { 
+    }
+
+    // Note: CMediaSample does not derive from CUnknown, so we cannot use the
+    //       DECLARE_IUNKNOWN macro that is used by most of the filter classes.
+
+    STDMETHODIMP QueryInterface(REFIID riid, void **ppv)
+    {
+        CheckPointer(ppv, E_POINTER);
+
+        if (riid == IID_IMFGetService)
+        {
+            *ppv = static_cast&lt;IMFGetService*&gt;(this);
+            AddRef();
+            return S_OK;
+        }
+        else
+        {
+            return CMediaSample::QueryInterface(riid, ppv);
+        }
+    }
+    STDMETHODIMP_(ULONG) AddRef()
+    {
+        return CMediaSample::AddRef();
+    }
+
+    STDMETHODIMP_(ULONG) Release()
+    {
+        // Return a temporary variable for thread safety.
+        ULONG cRef = CMediaSample::Release();
+        return cRef;
+    }
+
+    // IMFGetService::GetService
+    STDMETHODIMP GetService(REFGUID guidService, REFIID riid, LPVOID *ppv)
+    {
+        if (guidService != MR_BUFFER_SERVICE)
+        {
+            return MF_E_UNSUPPORTED_SERVICE;
+        }
+        else if (m_pSurface == NULL)
+        {
+            return E_NOINTERFACE;
+        }
+        else
+        {
+            return m_pSurface-&gt;QueryInterface(riid, ppv);
+        }
+    }
+
+    // Override GetPointer because this class does not manage a system memory buffer.
+    // The EVR uses the MR_BUFFER_SERVICE service to get the Direct3D surface.
+    STDMETHODIMP GetPointer(BYTE ** ppBuffer)
+    {
+        return E_NOTIMPL;
+    }
+
+private:
+
+    // Sets the pointer to the Direct3D surface. 
+    void SetSurface(DWORD surfaceId, IDirect3DSurface9 *pSurf)
+    {
+        SafeRelease(&amp;m_pSurface);
+
+        m_pSurface = pSurf;
+        if (m_pSurface)
+        {
+            m_pSurface-&gt;AddRef();
+        }
+
+        m_dwSurfaceId = surfaceId;
+    }
+
+    IDirect3DSurface9   *m_pSurface;
+    DWORD               m_dwSurfaceId;
+};
+</code></pre>
+<p>The following code shows how to implement the <a href="../directshow/cbaseallocator-alloc.html"><strong>Alloc</strong></a> method on the allocator.</p>
+<pre lang="C++"><code>HRESULT CDecoderAllocator::Alloc()
+{
+    CAutoLock lock(this);
+
+    HRESULT hr = S_OK;
+
+    if (m_pDXVA2Service == NULL)
+    {
+        return E_UNEXPECTED;
+    }
+
+    hr = CBaseAllocator::Alloc();
+
+    // If the requirements have not changed, do not reallocate.
+    if (hr == S_FALSE)
+    {
+        return S_OK;
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Free the old resources.
+        Free();
+
+        // Allocate a new array of pointers.
+        m_ppRTSurfaceArray = new (std::nothrow) IDirect3DSurface9*[m_lCount];
+        if (m_ppRTSurfaceArray == NULL)
+        {
+            hr = E_OUTOFMEMORY;
+        }
+        else
+        {
+            ZeroMemory(m_ppRTSurfaceArray, sizeof(IDirect3DSurface9*) * m_lCount);
+        }
+    }
+
+    // Allocate the surfaces.
+    if (SUCCEEDED(hr))
+    {
+        hr = m_pDXVA2Service-&gt;CreateSurface(
+            m_dwWidth,
+            m_dwHeight,
+            m_lCount - 1,
+            (D3DFORMAT)m_dwFormat,
+            D3DPOOL_DEFAULT,
+            0,
+            DXVA2_VideoDecoderRenderTarget,
+            m_ppRTSurfaceArray,
+            NULL
+            );
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        for (m_lAllocated = 0; m_lAllocated &lt; m_lCount; m_lAllocated++)
+        {
+            CDecoderSample *pSample = new (std::nothrow) CDecoderSample(this, &amp;hr);
+
+            if (pSample == NULL)
+            {
+                hr = E_OUTOFMEMORY;
+                break;
+            }
+            if (FAILED(hr))
+            {
+                break;
+            }
+            // Assign the Direct3D surface pointer and the index.
+            pSample-&gt;SetSurface(m_lAllocated, m_ppRTSurfaceArray[m_lAllocated]);
+
+            // Add to the sample list.
+            m_lFree.Add(pSample);
+        }
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        m_bChanged = FALSE;
+    }
+    return hr;
+}
+</code></pre>
+<p>Here is the code for the <a href="../directshow/cbaseallocator-free.html"><strong>Free</strong></a> method:</p>
+<pre lang="C++"><code>void CDecoderAllocator::Free()
+{
+    CMediaSample *pSample = NULL;
+
+    do
+    {
+        pSample = m_lFree.RemoveHead();
+        if (pSample)
+        {
+            delete pSample;
+        }
+    } while (pSample);
+
+    if (m_ppRTSurfaceArray)
+    {
+        for (long i = 0; i &lt; m_lAllocated; i++)
+        {
+            SafeRelease(&amp;m_ppRTSurfaceArray[i]);
+        }
+
+        delete [] m_ppRTSurfaceArray;
+    }
+    m_lAllocated = 0;
+}
+</code></pre>
+<p>For more information about implementing custom allocators, see the topic <a href="../directshow/providing-a-custom-allocator.html">Providing a Custom Allocator</a> in the DirectShow SDK documentation.</p>
+<h2>Decoding</h2>
+<p>To create the decoder device, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoderservice-createvideodecoder"><strong>IDirectXVideoDecoderService::CreateVideoDecoder</strong></a>. The method returns a pointer to the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoder"><strong>IDirectXVideoDecoder</strong></a> interface of the decoder device.</p>
+<p>On each frame, call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-testdevice"><strong>IDirect3DDeviceManager9::TestDevice</strong></a> to test the device handle. If the device has changed, the method returns DXVA2_E_NEW_VIDEO_DEVICE. If this occurs, do the following:</p>
+<ol>
+<li>Close the device handle by calling <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-closedevicehandle"><strong>IDirect3DDeviceManager9::CloseDeviceHandle</strong></a>.</li>
+<li>Release the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoderservice"><strong>IDirectXVideoDecoderService</strong></a> and <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoder"><strong>IDirectXVideoDecoder</strong></a> pointers.</li>
+<li>Open a new device handle.</li>
+<li>Negotiate a new decoder configuration, as described in the section <a href="#finding-a-decoder-configuration">Finding a Decoder Configuration</a>.</li>
+<li>Create a new decoder device.</li>
+</ol>
+<p>Assuming that the device handle is valid, the decoding process works as follows:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-beginframe"><strong>IDirectXVideoDecoder::BeginFrame</strong></a>.</li>
+<li>Do the following one or more times:
+<ol>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-getbuffer"><strong>IDirectXVideoDecoder::GetBuffer</strong></a> to get a DXVA decoder buffer.</li>
+<li>Fill the buffer.</li>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-releasebuffer"><strong>IDirectXVideoDecoder::ReleaseBuffer</strong></a>.</li>
+</ol>
+</li>
+<li>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-execute"><strong>IDirectXVideoDecoder::Execute</strong></a> to perform the decoding operations on the frame.</li>
+</ol>
+<p>DXVA 2.0 uses the same data structures as DXVA 1.0 for decoding operations. For the original set of DXVA profiles (for H.261, H.263, and MPEG-2), these data structures are described in the <a href="/windows-hardware/drivers/display/directx-video-acceleration">DXVA 1.0 specification</a>.</p>
+<p>Within each pair of <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-beginframe"><strong>BeginFrame</strong></a>/<a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-execute"><strong>Execute</strong></a> calls, you may call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-getbuffer"><strong>GetBuffer</strong></a> multiple times, but only once for each type of DXVA buffer. If you call it twice with the same buffer type, you will overwrite the data.</p>
+<p>After calling <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-execute"><strong>Execute</strong></a>, call <a href="/windows/win32/api/strmif/nf-strmif-imeminputpin-receive"><strong>IMemInputPin::Receive</strong></a> to deliver the frame to the video renderer, as with software decoding. The <strong>Receive</strong> method is asynchronous; after it returns, the decoder can continue decoding the next frame. The display driver prevents any decoding commands from overwriting the buffer while the buffer is in use. The decoder should not reuse a surface to decode another frame until the renderer has released the sample. When the renderer releases the sample, the allocator puts the sample back into its pool of available samples. To get the next available sample, call <a href="../directshow/cbaseoutputpin-getdeliverybuffer.html"><strong>CBaseOutputPin::GetDeliveryBuffer</strong></a>, which in turn calls <a href="/windows/win32/api/strmif/nf-strmif-imemallocator-getbuffer"><strong>IMemAllocator::GetBuffer</strong></a>. For more information, see the topic <a href="../directshow/overview-of-data-flow-in-directshow.html">Overview of Data Flow in DirectShow</a> in the DirectShow documentation.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="directx-video-acceleration-2-0.html">DirectX Video Acceleration 2.0</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

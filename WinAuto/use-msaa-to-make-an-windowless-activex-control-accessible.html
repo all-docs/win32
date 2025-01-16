@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Use MSAA to make a windowless ActiveX control accessible</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Use MSAA to make a windowless ActiveX control accessible
+description: Describes how to use the Microsoft Active Accessibility \ 32;API to ensure that your windowless Microsoft ActiveX control is accessible to assistive technology (AT) client applications.
+ms.assetid: 30F874F9-EA45-4365-8798-FEA011C62DA9
+keywords:</p>
+<ul>
+<li>ActiveX Control, accessibility
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Use MSAA to make a windowless ActiveX control accessible</h1>
+<p>Describes how to use the Microsoft Active Accessibility API to ensure that your windowless Microsoft ActiveX control is accessible to assistive technology (AT) client applications.</p>
+<h2>What you need to know</h2>
+<h3>Technologies</h3>
+<ul>
+<li><a href="/windows/desktop/com/activex-controls">ActiveX Controls</a></li>
+<li><a href="microsoft-active-accessibility.html">Microsoft Active Accessibility</a></li>
+</ul>
+<h3>Prerequisites</h3>
+<ul>
+<li>C/C++</li>
+<li>Microsoft Win32 and Component Object Model (COM) programming</li>
+<li>Windowless ActiveX Controls</li>
+<li>Microsoft Active Accessibility servers</li>
+</ul>
+<h2>Instructions</h2>
+<h3>Step 1: Implement the IAccessible interface.</h3>
+<p>To make your windowless ActiveX control accessible, you must implement the Microsoft Active Accessibility <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface, just as you would for a window-based control, except as described in the following steps. For more information about implementing <strong>IAccessible</strong>, see <a href="developer-s-guide-for-active-accessibility-servers.html">Developer's Guide for Active Accessibility Servers</a>.</p>
+<h3>Step 2: Implement the IServiceProvider interface.</h3>
+<p>When a client requests accessibility information about your windowless control, the container calls your control's <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/cc678966(v=vs.85)"><strong>IServiceProvider::QueryService</strong></a> method to retrieve the <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface pointer.</p>
+<p>This example shows how to implement the <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/cc678966(v=vs.85)"><strong>QueryService</strong></a> method.</p>
+<pre lang="C++"><code>STDMETHODIMP CMyAccessibleMSAAControl::QueryService(REFGUID guidService, 
+        REFIID riid, void **ppvObject)
+{      
+    if (ppvObject == NULL)
+    {
+        return E_INVALIDARG;
+    }
+
+    *ppvObject = NULL;  
+    HRESULT hr = E_FAIL;  
+
+    if (guidService == __uuidof(IAccessible))
+    {  
+        hr = QueryInterface(riid, ppvObject);  
+    }  
+    return hr;  
+}
+</code></pre>
+<h3>Step 3: Delegate IAccessible::get_accParent method calls to the control site's IAccessibleWindowlessSite::GetParentAccessible method.</h3>
+<p>When a client requests the parent object of your windowless control, the container calls your control's <a href="/windows/desktop/api/Oleacc/nf-oleacc-iaccessible-get_accparent"><strong>IAccessible::get_accParent</strong></a> method. Your <strong>get_accParent</strong> implementation should delegate to the <a href="/windows/desktop/api/oleacc/nf-oleacc-iaccessiblewindowlesssite-getparentaccessible"><strong>IAccessibleWindowlessSite::GetParentAccessible</strong></a> method of the container.</p>
+<p>This example shows how to implement the <a href="/windows/desktop/api/Oleacc/nf-oleacc-iaccessible-get_accparent"><strong>get_accParent</strong></a> method.</p>
+<pre lang="C++"><code>HRESULT CMyAccessibleMSAAControl::get_accParent(IDispatch **ppdispParent)  
+{  
+    if (ppdispParent == NULL)
+    {
+        return E_INVALIDARG;
+    }
+
+    HRESULT hr = S_FALSE;  
+    *ppdispParent = NULL;  
+
+    IAccessibleWindowlessSite *pWindowlessSite = NULL;  
+
+    if (SUCCEEDED(m_pClientSite-&gt;QueryInterface(IID_PPV_ARGS(&amp;pWindowlessSite))))  
+    {  
+        IAccessible *pParentAcc = NULL;
+        if (SUCCEEDED(pWindowlessSite-&gt;GetParentAccessible(&amp;pParentAcc)))
+        {
+            hr = pParentAcc-&gt;QueryInterface(IID_PPV_ARGS(ppdispParent));  
+        }
+    }  
+
+    SafeRelease(&amp;pWindowlessSite);
+    return hr;  
+}
+</code></pre>
+<h3>Step 4: Acquire a range of object IDs to assign to the event sources in your windowless control.</h3>
+<p>Like window-based controls, a windowless ActiveX control calls the <a href="/windows/desktop/api/Winuser/nf-winuser-notifywinevent"><strong>NotifyWinEvent</strong></a> function to notify clients of important events. The function parameters include the object ID of the item that is raising the event. Your windowless control must assign object IDs by using a value from a range acquired by calling the control siteâ€™s <a href="/windows/desktop/api/oleacc/nf-oleacc-iaccessiblewindowlesssite-acquireobjectidrange"><strong>IAccessibleWindowlessSite::AcquireObjectIdRange</strong></a> method.</p>
+<p>This example shows how to acquire a range of object ID values from the control container.</p>
+<pre lang="C++"><code>IAccessibleWindowlessSite *pWindowlessSite = NULL;
+
+if (SUCCEEDED(m_pClientSite-&gt;QueryInterface(
+        IID_PPV_ARGS(&amp;pWindowlessSite))))  
+{  
+    if (FAILED(pWindowlessSite-&gt;AcquireObjectIdRange(100, this, 
+            &amp;m_idObjectBase)))  
+    {  
+        m_idObjectBase = -1;  
+    } 
+}
+
+SafeRelease(&amp;pWindowlessSite);
+</code></pre>
+<h3>Step 5: Implement the IAccessibleHandler interface.</h3>
+<p>When a windowless control calls the <a href="/windows/desktop/api/Winuser/nf-winuser-notifywinevent"><strong>NotifyWinEvent</strong></a> function, the control specifies the object ID of the UI item that is raising the event, and specifies the control container as the window that will respond to <a href="wm-getobject.html"><strong>WM_GETOBJECT</strong></a> messages on behalf of the control.</p>
+<p>If a client application responds to the event, the control container receives a <a href="wm-getobject.html"><strong>WM_GETOBJECT</strong></a> message that includes the object ID of the UI item that raised the event. The control container responds by looking up the windowless control that &quot;owns&quot; the object ID, and then calling that control's <a href="/windows/desktop/api/Oleacc/nf-oleacc-iaccessiblehandler-accessibleobjectfromid"><strong>IAccessibleHandler::AccessibleObjectFromID</strong></a> method. The <strong>AccessibleObjectFromID</strong> method returns the <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface pointer for the UI item, and the control container forwards the pointer to the client application.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="use-ui-automation-to-make-an-windowless-activex-control-accessible.html">Use UI Automation to Make a Windowless ActiveX Control Accessible</a></p>
+<!-- raw HTML omitted -->
+<p><a href="windowless-activex-control-accessibility.html">Windowless ActiveX Control Accessibility</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

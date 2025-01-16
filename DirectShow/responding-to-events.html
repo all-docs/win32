@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Responding to Events</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This article describes how to respond to events that occur in a filter graph.
+ms.assetid: 1c09149b-7f34-4296-bd32-dbbae5e1d62b
+title: Responding to Events
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Responding to Events</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This article describes how to respond to events that occur in a filter graph.</p>
+<h2>How Event Notification Works</h2>
+<p>While a DirectShow application is running, events can occur within the filter graph. For example, a filter might encounter a streaming error. Filters alert the Filter Graph Manager by sending events, which consist of an event code and two event parameters. The event code indicates the type of event, and the event parameters supply additional information. The meaning of the parameters depends on the event code. For a complete list of event codes, see <a href="event-notification-codes.html">Event Notification Codes</a>.</p>
+<p>Some events are handled silently by the Filter Graph Manager, without the application being notified. Other events are placed on a queue for the application. Depending on the application, there are various events that you might need to handle. This article focuses on three events that are very common:</p>
+<ul>
+<li>The <a href="ec-complete.html"><strong>EC_COMPLETE</strong></a> event indicates that playback has completed normally.</li>
+<li>The <a href="ec-userabort.html"><strong>EC_USERABORT</strong></a> event indicates that the user has interrupted playback. Video renderers send this event if the user closes the video window.</li>
+<li>The <a href="ec-errorabort.html"><strong>EC_ERRORABORT</strong></a> event indicates that an error has caused playback to halt.</li>
+</ul>
+<h2>Using Event Notification</h2>
+<p>An application can instruct the Filter Graph Manager to send a Windows message to a designated window whenever a new event occurs. This enables the application to respond inside the window's message loop. First, define the message that will be sent to the application window. Applications can use message numbers in the range from WM_APP through 0xBFFF as private messages:</p>
+<pre lang="C++"><code>#define WM_GRAPHNOTIFY  WM_APP + 1
+</code></pre>
+<p>Next, query the Filter Graph Manager for the <a href="/windows/desktop/api/Control/nn-control-imediaeventex"><strong>IMediaEventEx</strong></a> interface and call the <a href="/windows/desktop/api/Control/nf-control-imediaeventex-setnotifywindow"><strong>IMediaEventEx::SetNotifyWindow</strong></a> method:</p>
+<pre lang="C++"><code>IMediaEventEx *g_pEvent = NULL;
+g_pGraph-&gt;QueryInterface(IID_IMediaEventEx, (void **)&amp;g_pEvent);
+g_pEvent-&gt;SetNotifyWindow((OAHWND)g_hwnd, WM_GRAPHNOTIFY, 0);
+</code></pre>
+<p>This method designates the specified window (g_hwnd) as the recipient of the message. Call the method after you create the filter graph, but before running the graph.</p>
+<p>WM_GRAPHNOTIFY is an ordinary Windows message. Whenever the Filter Graph Manager puts a new event on the event queue, it posts a WM_GRAPHNOTIFY message to the designated application window. The message's <em>lParam</em> parameter is equal to the third parameter in <a href="/windows/desktop/api/Control/nf-control-imediaeventex-setnotifywindow"><strong>SetNotifyWindow</strong></a>. This parameter enables you to send instance data with the message. The window message's <em>wParam</em> parameter is always zero.</p>
+<p>In your application's <strong>WindowProc</strong> function, add a case statement for the WM_GRAPHNOTIFY message:</p>
+<pre lang="C++"><code>case WM_GRAPHNOTIFY:
+    HandleGraphEvent();
+    break;
+</code></pre>
+<p>In the event handler function, call the <a href="/windows/desktop/api/Control/nf-control-imediaevent-getevent"><strong>IMediaEvent::GetEvent</strong></a> method to retrieve events from the queue:</p>
+<pre lang="C++"><code>void HandleGraphEvent()
+{
+    // Disregard if we don't have an IMediaEventEx pointer.
+    if (g_pEvent == NULL)
+    {
+        return;
+    }
+    // Get all the events
+    long evCode;
+    LONG_PTR param1, param2;
+    HRESULT hr;
+    while (SUCCEEDED(g_pEvent-&gt;GetEvent(&amp;evCode, &amp;param1, &amp;param2, 0)))
+    {
+        g_pEvent-&gt;FreeEventParams(evCode, param1, param2);
+        switch (evCode)
+        {
+        case EC_COMPLETE:  // Fall through.
+        case EC_USERABORT: // Fall through.
+        case EC_ERRORABORT:
+            CleanUp();
+            PostQuitMessage(0);
+            return;
+        }
+    } 
+}
+</code></pre>
+<p>The <a href="/windows/desktop/api/Control/nf-control-imediaevent-getevent"><strong>GetEvent</strong></a> method retrieves the event code and the two event parameters. The fourth <strong>GetEvent</strong> parameter specifies the length of time to wait for an event, in milliseconds. Because the application calls this method in response to a WM_GRAPHNOTIFY message, the event is already queued. Therefore, we set the time-out value to zero.</p>
+<p>Event notification and the message loop are both asynchronous, so the queue might hold more than one event by the time your application responds to the message. Also, the Filter Graph Manager can remove certain events from the queue, if they become invalid. Therefore, you should call <a href="/windows/desktop/api/Control/nf-control-imediaevent-getevent"><strong>GetEvent</strong></a> until it returns a failure code, indicating the queue is empty.</p>
+<p>In this example, the application responds to <a href="ec-complete.html"><strong>EC_COMPLETE</strong></a>, <a href="ec-userabort.html"><strong>EC_USERABORT</strong></a>, and <a href="ec-errorabort.html"><strong>EC_ERRORABORT</strong></a> by invoking the application-defined CleanUp function, which causes the application to quit gracefully. The example ignores the two event parameters. After you retrieve an event, call <a href="/windows/desktop/api/Control/nf-control-imediaevent-freeeventparams"><strong>IMediaEvent::FreeEventParams</strong></a> to any free resources associated with the event parameters.</p>
+<p>Note that an <a href="ec-complete.html"><strong>EC_COMPLETE</strong></a> event does not cause the filter graph to stop. The application can either stop or pause the graph. If you stop the graph, filters release any resources they are holding. If you pause the graph, filters continue to hold resources. Also, when a video renderer pauses, it displays a static image of the most recent frame.</p>
+<p>Before you release the <a href="/windows/desktop/api/Control/nn-control-imediaeventex"><strong>IMediaEventEx</strong></a> pointer, cancel event notification by calling <a href="/windows/desktop/api/Control/nf-control-imediaeventex-setnotifywindow"><strong>SetNotifyWindow</strong></a> with a <strong>NULL</strong> window handle:</p>
+<pre lang="C++"><code>// Disable event notification before releasing the graph.
+g_pEvent-&gt;SetNotifyWindow(NULL, 0, 0);
+g_pEvent-&gt;Release();
+g_pEvent = NULL;
+</code></pre>
+<p>In the WM_GRAPHNOTIFY message handler, check the <a href="/windows/desktop/api/Control/nn-control-imediaeventex"><strong>IMediaEventEx</strong></a> pointer before calling <a href="/windows/desktop/api/Control/nf-control-imediaevent-getevent"><strong>GetEvent</strong></a>:</p>
+<pre lang="C++"><code>if (g_pEvent == NULL) return;
+</code></pre>
+<p>This prevents a possible error that can occur if the application receives the event notification after releasing the pointer.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="basic-directshow-tasks.html">Basic DirectShow Tasks</a></p>
+<!-- raw HTML omitted -->
+<p><a href="event-notification-in-directshow.html">Event Notification in DirectShow</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

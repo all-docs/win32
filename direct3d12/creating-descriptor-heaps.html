@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating Descriptor Heaps</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Creating Descriptor Heaps
+description: To create and configure a descriptor heap, you must select a descriptor heap type, determine how many descriptors it contains, and set flags that indicate whether it is CPU visible and/or shader visible.
+ms.assetid: 58677023-692C-4BA4-90B7-D568F3DD3F73
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Creating Descriptor Heaps</h1>
+<p>To create and configure a descriptor heap, you must select a descriptor heap type, determine how many descriptors it contains, and set flags that indicate whether it is CPU visible and/or shader visible.</p>
+<ul>
+<li><a href="#descriptor-heap-types">Descriptor Heap types</a></li>
+<li><a href="#descriptor-heap-properties">Descriptor Heap Properties</a></li>
+<li><a href="#descriptor-handles">Descriptor Handles</a></li>
+<li><a href="#descriptor-heap-methods">Descriptor Heap Methods</a></li>
+<li><a href="#minimal-descriptor-heap-wrapper">Minimal descriptor heap wrapper</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Descriptor Heap types</h2>
+<p>The type of heap is determined by one member of the <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_descriptor_heap_type"><strong>D3D12_DESCRIPTOR_HEAP_TYPE</strong></a> enum:</p>
+<pre lang="syntax"><code>typedef enum D3D12_DESCRIPTOR_HEAP_TYPE
+{
+    D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,    // Constant buffer/Shader resource/Unordered access views
+    D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,        // Samplers
+    D3D12_DESCRIPTOR_HEAP_TYPE_RTV,            // Render target view
+    D3D12_DESCRIPTOR_HEAP_TYPE_DSV,            // Depth stencil view
+    D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES       // Simply the number of descriptor heap types
+} D3D12_DESCRIPTOR_HEAP_TYPE;
+</code></pre>
+<h2>Descriptor Heap Properties</h2>
+<p>Heap properties are set on the <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_descriptor_heap_desc"><strong>D3D12_DESCRIPTOR_HEAP_DESC</strong></a> structure, which references both the <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_descriptor_heap_type"><strong>D3D12_DESCRIPTOR_HEAP_TYPE</strong></a> and <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_descriptor_heap_flags"><strong>D3D12_DESCRIPTOR_HEAP_FLAGS</strong></a> enums.</p>
+<p>The flag D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE can optionally be set on a descriptor heap to indicate it is be bound on a command list for reference by shaders. Descriptor heaps created <em>without</em> this flag allow applications the option to stage descriptors in CPU memory before copying them to a shader visible descriptor heap, as a convenience. But it is also fine for applications to directly create descriptors into shader visible descriptor heaps with no requirement to stage anything on the CPU.</p>
+<p>This flag only applies to CBV, SRV, UAV and samplers. It does not apply to other descriptor heap types since shaders do not directly reference the other types.</p>
+<p>For example, describe and create a sampler descriptor heap.</p>
+<pre lang="C++"><code>// Describe and create a sampler descriptor heap.
+D3D12_DESCRIPTOR_HEAP_DESC samplerHeapDesc = {};
+samplerHeapDesc.NumDescriptors = 1;
+samplerHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+samplerHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+ThrowIfFailed(m_device-&gt;CreateDescriptorHeap(&amp;samplerHeapDesc, IID_PPV_ARGS(&amp;m_samplerHeap)));
+</code></pre>
+<p>Describe and create a constant buffer view (CBV), Shader resource view (SRV), and unordered access view (UAV) descriptor heap.</p>
+<pre lang="C++"><code>// Describe and create a shader resource view (SRV) and unordered
+// access view (UAV) descriptor heap.
+D3D12_DESCRIPTOR_HEAP_DESC srvUavHeapDesc = {};
+srvUavHeapDesc.NumDescriptors = DescriptorCount;
+srvUavHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+srvUavHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+ThrowIfFailed(m_device-&gt;CreateDescriptorHeap(&amp;srvUavHeapDesc, IID_PPV_ARGS(&amp;m_srvUavHeap)));
+
+m_rtvDescriptorSize = m_device-&gt;GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+m_srvUavDescriptorSize = m_device-&gt;GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+</code></pre>
+<h2>Descriptor Handles</h2>
+<p>The <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_gpu_descriptor_handle"><strong>D3D12_GPU_DESCRIPTOR_HANDLE</strong></a> and <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_cpu_descriptor_handle"><strong>D3D12_CPU_DESCRIPTOR_HANDLE</strong></a> structures identify specific descriptors in a descriptor heap. A handle is a bit like a pointer, but the application must not dereference it manually; otherwise, the behavior is undefined. The use of the handles must go through the API. A handle itself can be copied freely or passed into APIs that operate on/use descriptors. There is no ref counting, so the application must ensure that it does not use a handle after the underlying descriptor heap has been deleted.</p>
+<p>Applications can find out the increment size of the descriptors for a given descriptor heap type, so that they can generate handles to any location in a descriptor heap manually starting from the handle to the base. Applications must never hardcode descriptor handle increment sizes, and should always query them for a given device instance; otherwise, the behavior is undefined. Applications must also not use the increment sizes and handles to do their own examination or manipulation of descriptor heap data, as the results from doing so are undefined. The handles may not actually be used as pointers, but rather as proxies for pointers so as to avoid accidental dereferencing.</p>
+<blockquote>
+<p>[!Note]</p>
+<p>There is a helper structure, CD3DX12_GPU_DESCRIPTOR_HANDLE, defined in the header d3dx12.h, which inherits the <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_gpu_descriptor_handle"><strong>D3D12_GPU_DESCRIPTOR_HANDLE</strong></a> structure and provides initialization and other useful operations. Similarly the CD3DX12_CPU_DESCRIPTOR_HANDLE helper structure is defined for the <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_cpu_descriptor_handle"><strong>D3D12_CPU_DESCRIPTOR_HANDLE</strong></a> structure.</p>
+</blockquote>
+<p>Â </p>
+<p>Both of these helper structures are used when populating command lists.</p>
+<pre lang="C++"><code>// Fill the command list with all the render commands and dependent state.
+void D3D12nBodyGravity::PopulateCommandList()
+{
+    // Command list allocators can only be reset when the associated
+    // command lists have finished execution on the GPU; apps should use
+    // fences to determine GPU execution progress.
+    ThrowIfFailed(m_commandAllocators[m_frameIndex]-&gt;Reset());
+
+    // However, when ExecuteCommandList() is called on a particular command
+    // list, that command list can then be reset at any time and must be before
+    // re-recording.
+    ThrowIfFailed(m_commandList-&gt;Reset(m_commandAllocators[m_frameIndex].Get(), m_pipelineState.Get()));
+
+    // Set necessary state.
+    m_commandList-&gt;SetPipelineState(m_pipelineState.Get());
+    m_commandList-&gt;SetGraphicsRootSignature(m_rootSignature.Get());
+
+    m_commandList-&gt;SetGraphicsRootConstantBufferView(RootParameterCB, m_constantBufferGS-&gt;GetGPUVirtualAddress() + m_frameIndex * sizeof(ConstantBufferGS));
+
+    ID3D12DescriptorHeap* ppHeaps[] = { m_srvUavHeap.Get() };
+    m_commandList-&gt;SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+
+    m_commandList-&gt;IASetVertexBuffers(0, 1, &amp;m_vertexBufferView);
+    m_commandList-&gt;IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
+    m_commandList-&gt;RSSetScissorRects(1, &amp;m_scissorRect);
+
+    // Indicate that the back buffer will be used as a render target.
+    m_commandList-&gt;ResourceBarrier(1, &amp;CD3DX12_RESOURCE_BARRIER::Transition(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+
+    CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_rtvHeap-&gt;GetCPUDescriptorHandleForHeapStart(), m_frameIndex, m_rtvDescriptorSize);
+    m_commandList-&gt;OMSetRenderTargets(1, &amp;rtvHandle, FALSE, nullptr);
+
+    // Record commands.
+    const float clearColor[] = { 0.0f, 0.0f, 0.1f, 0.0f };
+    m_commandList-&gt;ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+
+    // Render the particles.
+    float viewportHeight = static_cast&lt;float&gt;(static_cast&lt;UINT&gt;(m_viewport.Height) / m_heightInstances);
+    float viewportWidth = static_cast&lt;float&gt;(static_cast&lt;UINT&gt;(m_viewport.Width) / m_widthInstances);
+    for (UINT n = 0; n &lt; ThreadCount; n++)
+    {
+        const UINT srvIndex = n + (m_srvIndex[n] == 0 ? SrvParticlePosVelo0 : SrvParticlePosVelo1);
+
+        D3D12_VIEWPORT viewport;
+        viewport.TopLeftX = (n % m_widthInstances) * viewportWidth;
+        viewport.TopLeftY = (n / m_widthInstances) * viewportHeight;
+        viewport.Width = viewportWidth;
+        viewport.Height = viewportHeight;
+        viewport.MinDepth = D3D12_MIN_DEPTH;
+        viewport.MaxDepth = D3D12_MAX_DEPTH;
+        m_commandList-&gt;RSSetViewports(1, &amp;viewport);
+
+        CD3DX12_GPU_DESCRIPTOR_HANDLE srvHandle(m_srvUavHeap-&gt;GetGPUDescriptorHandleForHeapStart(), srvIndex, m_srvUavDescriptorSize);
+        m_commandList-&gt;SetGraphicsRootDescriptorTable(RootParameterSRV, srvHandle);
+
+        m_commandList-&gt;DrawInstanced(ParticleCount, 1, 0, 0);
+    }
+
+    m_commandList-&gt;RSSetViewports(1, &amp;m_viewport);
+
+    // Indicate that the back buffer will now be used to present.
+    m_commandList-&gt;ResourceBarrier(1, &amp;CD3DX12_RESOURCE_BARRIER::Transition(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+
+    ThrowIfFailed(m_commandList-&gt;Close());
+}
+</code></pre>
+<h2>Descriptor Heap Methods</h2>
+<p>Descriptor heaps (<a href="/windows/desktop/api/d3d12/nn-d3d12-id3d12descriptorheap"><strong>ID3D12DescriptorHeap</strong></a>) inherit from <a href="/windows/win32/api/d3d12/nn-d3d12-id3d12pageable"><strong>ID3D12Pageable</strong></a>. This imposes the responsibility for the residency management of descriptor heaps on applications, just like resource heaps. The residency management methods only apply to shader visible heaps since the non shader visible heaps are not visible to the GPU directly.</p>
+<p>The <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-getdescriptorhandleincrementsize"><strong>ID3D12Device::GetDescriptorHandleIncrementSize</strong></a> method allows applications to manually offset handles into a heap (producing handles into anywhere in a descriptor heap). The heap start locationâ€™s handle comes from <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12descriptorheap-getcpudescriptorhandleforheapstart"><strong>ID3D12DescriptorHeap::GetCPUDescriptorHandleForHeapStart</strong></a>/<a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12descriptorheap-getgpudescriptorhandleforheapstart"><strong>ID3D12DescriptorHeap::GetGPUDescriptorHandleForHeapStart</strong></a>. Offsetting is done by adding the increment size * the number of descriptors to offset to the descriptor heap start . Note that the increment size cannot be thought of as a byte size since applications must not dereference handles as if they are memory â€“ the memory pointed to has a non-standardized layout and can vary even for a given device.</p>
+<p><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12descriptorheap-getcpudescriptorhandleforheapstart"><strong>GetCPUDescriptorHandleForHeapStart</strong></a> returns a CPU handle for CPU visible descriptor heaps. It returns a NULL handle (and the debug layer will report an error) if the descriptor heap is not CPU visible.</p>
+<p><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12descriptorheap-getgpudescriptorhandleforheapstart"><strong>GetGPUDescriptorHandleForHeapStart</strong></a> returns a GPU handle for shader visible descriptor heaps. It returns a NULL handle (and the debug layer will report an error) if the descriptor heap is not shader visible.</p>
+<p>For example, creating render target views to display D2D text using an 11on12 device.</p>
+<pre lang="C++"><code>    // Create descriptor heaps.
+    {
+        // Describe and create a render target view (RTV) descriptor heap.
+        D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+        rtvHeapDesc.NumDescriptors = FrameCount;
+        rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        ThrowIfFailed(m_d3d12Device-&gt;CreateDescriptorHeap(&amp;rtvHeapDesc, IID_PPV_ARGS(&amp;m_rtvHeap)));
+
+        m_rtvDescriptorSize = m_d3d12Device-&gt;GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    }
+
+    // Create frame resources.
+    {
+        CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_rtvHeap-&gt;GetCPUDescriptorHandleForHeapStart());
+
+        // Create a RTV, D2D render target, and a command allocator for each frame.
+        for (UINT n = 0; n &lt; FrameCount; n++)
+        {
+            ThrowIfFailed(m_swapChain-&gt;GetBuffer(n, IID_PPV_ARGS(&amp;m_renderTargets[n])));
+            m_d3d12Device-&gt;CreateRenderTargetView(m_renderTargets[n].Get(), nullptr, rtvHandle);
+
+            // Create a wrapped 11On12 resource of this back buffer. Since we are 
+            // rendering all D3D12 content first and then all D2D content, we specify 
+            // the In resource state as RENDER_TARGET - because D3D12 will have last 
+            // used it in this state - and the Out resource state as PRESENT. When 
+            // ReleaseWrappedResources() is called on the 11On12 device, the resource 
+            // will be transitioned to the PRESENT state.
+            D3D11_RESOURCE_FLAGS d3d11Flags = { D3D11_BIND_RENDER_TARGET };
+            ThrowIfFailed(m_d3d11On12Device-&gt;CreateWrappedResource(
+                m_renderTargets[n].Get(),
+                &amp;d3d11Flags,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
+                D3D12_RESOURCE_STATE_PRESENT,
+                IID_PPV_ARGS(&amp;m_wrappedBackBuffers[n])
+                ));
+
+            // Create a render target for D2D to draw directly to this back buffer.
+            ComPtr&lt;IDXGISurface&gt; surface;
+            ThrowIfFailed(m_wrappedBackBuffers[n].As(&amp;surface));
+            ThrowIfFailed(m_d2dDeviceContext-&gt;CreateBitmapFromDxgiSurface(
+                surface.Get(),
+                &amp;bitmapProperties,
+                &amp;m_d2dRenderTargets[n]
+                ));
+
+            rtvHandle.Offset(1, m_rtvDescriptorSize);
+
+            ThrowIfFailed(m_d3d12Device-&gt;CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&amp;m_commandAllocators[n])));
+        }
+    
+    }
+</code></pre>
+<h2>Minimal descriptor heap wrapper</h2>
+<p>Application developers will likely want to build their own helper code for managing descriptor handles and heaps. A basic example is shown below. More sophisticated wrappers could, for example, keep track of what types of descriptors are where in a heap and store the descriptor creation arguments.</p>
+<pre lang="syntax"><code>class CDescriptorHeapWrapper
+{
+public:
+    CDescriptorHeapWrapper() { memset(this, 0, sizeof(*this)); }
+
+    HRESULT Create(
+        ID3D12Device* pDevice, 
+        D3D12_DESCRIPTOR_HEAP_TYPE Type, 
+        UINT NumDescriptors, 
+        bool bShaderVisible = false)
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC Desc;
+        Desc.Type = Type;
+        Desc.NumDescriptors = NumDescriptors;
+        Desc.Flags = (bShaderVisible ? D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE : D3D12_DESCRIPTOR_HEAP_FLAG_NONE);
+       
+        HRESULT hr = pDevice-&gt;CreateDescriptorHeap(&amp;Desc, 
+                               __uuidof(ID3D12DescriptorHeap), 
+                               (void**)&amp;pDH);
+        if (FAILED(hr)) return hr;
+
+        hCPUHeapStart = pDH-&gt;GetCPUDescriptorHandleForHeapStart();
+        hGPUHeapStart = pDH-&gt;GetGPUDescriptorHandleForHeapStart();
+
+        HandleIncrementSize = pDevice-&gt;GetDescriptorHandleIncrementSize(Desc.Type);
+        return hr;
+    }
+    operator ID3D12DescriptorHeap*() { return pDH; }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE hCPU(UINT index)
+    {
+        return hCPUHeapStart.MakeOffsetted(index,HandleIncrementSize); 
+    }
+    D3D12_GPU_DESCRIPTOR_HANDLE hGPU(UINT index) 
+    {
+        assert(Desc.Flags&amp;D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE); 
+        return hGPUHeapStart.MakeOffsetted(index,HandleIncrementSize); 
+    }
+    D3D12_DESCRIPTOR_HEAP_DESC Desc;
+    CComPtr&lt;ID3D12DescriptorHeap&gt; pDH;
+    D3D12_CPU_DESCRIPTOR_HANDLE hCPUHeapStart;
+    D3D12_GPU_DESCRIPTOR_HANDLE hGPUHeapStart;
+    UINT HandleIncrementSize;
+};
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="descriptor-heaps.html">Descriptor Heaps</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Developing Property Handlers for Windows Search</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Microsoft Windows Search uses property handlers to extract the values of properties from items and uses the property system schema to determine how a specific property should be indexed.
+ms.assetid: b475329a-1ed7-43a4-8e11-3700889a4ce9
+title: Developing Property Handlers for Windows Search
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Developing Property Handlers for Windows Search</h1>
+<p>Microsoft Windows Search uses property handlers to extract the values of properties from items and uses the property system schema to determine how a specific property should be indexed. To read and index property values, property handlers are invoked out-of-process by Windows Search to improve security and robustness. In contrast, property handlers are invoked in-process by Windows Explorer to read and write property values.</p>
+<p>This topic supplements the <a href="../properties/building-property-handlers.html">Property System</a> topic with information specific to Windows Search and contains the following sections:</p>
+<ul>
+<li><a href="#design-decisions-for-property-handlers">Design Decisions for Property Handlers</a>
+<ul>
+<li><a href="#property-decisions">Property Decisions</a></li>
+<li><a href="#full-text-support">Full-Text Support</a></li>
+<li><a href="#operating-system-implementatation-considerations">Operating System Implementation Considerations</a></li>
+</ul>
+</li>
+<li><a href="#writing-property-description-files">Writing Property Description Files</a></li>
+<li><a href="#implementing-property-handlers">Implementing Property Handlers</a>
+<ul>
+<li><a href="#iinitializewithstream">IInitializeWithStream</a></li>
+<li><a href="#ipropertystore">IPropertyStore</a></li>
+<li><a href="#ipropertystorecapabilities">IPropertyStoreCapabilities</a></li>
+</ul>
+</li>
+<li><a href="#ensuring-your-items-get-indexed">Ensuring Your Items Get Indexed</a></li>
+<li><a href="#installing-and-registering-property-handlers">Installing and Registering Property Handlers</a></li>
+<li><a href="#testing-and-troubleshooting-property-handlers">Testing and Troubleshooting Property Handlers</a>
+<ul>
+<li><a href="#installation-and-setup-tests">Installation and Setup Tests</a></li>
+<li><a href="#troubleshooting-property-handlers">Troubleshooting Property Handlers</a></li>
+</ul>
+</li>
+<li><a href="#using-system-supplied-property-handlers">Using System-Supplied Property Handlers</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<p>Â </p>
+<h2>Design Decisions for Property Handlers</h2>
+<p>Implementing property handlers involves the following steps:</p>
+<ol>
+<li>Making design decisions regarding the properties you want to support.</li>
+<li>Creating a Property Description (.propdesc) file for properties not already in the property system.</li>
+<li>Implementing and testing the property handler.</li>
+<li>Installing and registering the property handler and property description files.</li>
+<li>Testing property handler installation and registration.</li>
+</ol>
+<p>Before you begin, you need to consider the following design questions:</p>
+<ul>
+<li>What properties does/should the file format support?</li>
+<li>Are these properties already in the System schema?</li>
+<li>Can I use an existing system-supplied property handler?</li>
+<li>Which properties can be displayed to end users?</li>
+<li>Which properties can users edit?</li>
+<li>Should support for full-text search come from a property handler or a filter?</li>
+<li>Do I need to support legacy applications? If so, what do I implement?</li>
+</ul>
+<blockquote>
+<p>[!Note]<br />
+Before continuing, see <a href="#using-system-supplied-property-handlers">Using System-Supplied Property Handlers</a> to see if you can use a system-supplied property handler, saving you both time and development resources.</p>
+</blockquote>
+<p>Â </p>
+<p>After you have made these decisions, you can write formal descriptions of your custom properties so that the Windows Search engine can begin indexing your files and properties. These formal descriptions are XML files, described in <a href="/previous-versions//cc144127(v=vs.85)">Property Description Schema</a>.</p>
+<h3>Property Decisions</h3>
+<p>When considering which properties to support, you should identify your users' indexing and searching needs. For example, you may be able to identify one hundred potentially useful properties for your file type, but users may be interested in searching on only a handful. Furthermore, you may want to display a different, larger or smaller, group of those properties to users in Windows Explorer, and allow users to edit only a subset of those properties displayed.</p>
+<p>Your file type can support any custom properties you define, as well as a set of system-defined properties. Before you create a custom property, please review <a href="https://msdn.microsoft.com/library/bb763010(VS.85).aspx">System Properties</a> to see if the property you want to support is already defined by a system property. Always be sure you support the most important system-defined properties.</p>
+<p>We recommend using a matrix to help you design your properties:</p>
+<table>
+<thead>
+<tr>
+<th>Property name</th>
+<th>Is indexable?</th>
+<th>Is displayable?</th>
+<th>Is editable?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>property1</td>
+<td>Y</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td>property...</td>
+<td>Y</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td>propertyn</td>
+<td>N</td>
+<td>N</td>
+<td>N</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>For each of these properties, you need to determine what attributes it should have and then describe them formally in Property Description XML files (.propdesc). Attributes include the property's data type, label, help string and more. For indexable properties, you should pay particular attention to the following property attributes found in the <a href="../properties/propdesc-schema-searchinfo.html">searchInfo</a> Â  XML element of the Property Description file.</p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+For the columnIndexType attribute, the benefit of faster queries needs to be weighed against the greater indexing time and space costs that the secondary indices can incur. However, this cost is only paid for items that have a non-<strong>null</strong> value, so for most properties can have this attribute set to &quot;OnDisk&quot;.</p>
+</blockquote>
+<p>Â </p>
+<h3>Full-Text Support</h3>
+<p>Generally speaking, full-text search is supported by components called <a href="-search-3x-wds-extidx-filters.html">filters</a>; however, for text-based file types with uncomplicated file formats, property handlers may be able to provide this functionality with less development effort. You should review the <a href="../properties/building-property-handlers-property-handlers.html">Full-Text Contents</a> section for a comparison of filter and property handler functionality to help you decide what is best for your file type. Of particular importance is the fact that filters can handle multiple language code identifiers (LCIDs) per file while property handlers cannot.</p>
+<blockquote>
+<p>[!Note]<br />
+Because property handlers cannot chunk content the way filters can, large files (even if they are uncomplicated file formats) must be completely loaded into memory.</p>
+</blockquote>
+<p>Â </p>
+<h3>Operating System Implementatation Considerations</h3>
+<h3>Implementation Information for Windows 7</h3>
+<p>In WindowsÂ 7Â and later, there is new behavior when registering a property handler, <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a>, or new extension. When a new property handler and/or <strong>IFilter</strong> is installed, files with the corresponding extensions are automatically reindexed.</p>
+<p>In WindowsÂ 7 it is recommended that an <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a> is installed in conjunction with its corresponding property handlers, and that the <strong>IFilter</strong> is registered before the property handler. The registration of the property handler initiates immediate re-indexing of previously indexed files without first requiring a reboot, and takes advantage of any previously registered IFilter(s) for the purpose of content indexing.</p>
+<p>If only an <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a> is installed, without a corresponding property handler, then automatic reindexing occurs either after a restart of the indexing service, or a reboot of the system.</p>
+<p>For property description flags specific to WindowsÂ 7, see the following reference topics:</p>
+<ul>
+<li><a href="/windows/win32/api/propsys/ne-propsys-getpropertystoreflags">GETPROPERTYSTOREFLAGS</a></li>
+<li><a href="/windows/win32/api/propsys/ne-propsys-propdesc_columnindex_type">PROPDESC_COLUMNINDEX_TYPE</a></li>
+<li><a href="/windows/win32/api/propsys/ne-propsys-propdesc_searchinfo_flags">PROPDESC_SEARCHINFO_FLAGS</a></li>
+</ul>
+<h3>Implementation Information for Windows Vista and Earlier</h3>
+<p>Prior to WindowsÂ Vista, filters provided support for parsing and enumerating file content and properties. With the introduction of the property system, property handlers handle file properties while filters handle file content. For WindowsÂ Vista, you need develop only a partial implementation of the <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a>interface in coordination with a property handler, as described in <a href="-search-3x-wds-extidx-filters.html">Best Practices for Creating Filter Handlers in Windows Search</a>.</p>
+<p>While the property system is also included with the Windows Search installation for WindowsÂ XP, third-party and legacy applications may require that filters handle both content and properties. Therefore, if you are developing on the WindowsÂ XP platform, you should provide a full filter implementation as well as a property handler for your file type or custom property.</p>
+<p>Â </p>
+<h2>Writing Property Description Files</h2>
+<p>The structure of property description XML files (.propdesc) is described in the <a href="../properties/propdesc-schema-propertydescription.html">propertyDescription</a> topic. Of particular interest for search are the attributes of the <a href="../properties/propdesc-schema-searchinfo.html">searchInfo</a> element. Once you've decided which properties to support, you need to create and register property description files for each properties. When you register your .propdesc files, they are included in the schema's property description list and become column names within the Search engine's property store.</p>
+<p>You can register your custom property descriptions using the <a href="/windows/win32/api/propsys/nf-propsys-psregisterpropertyschema">PSRegisterPropertySchema</a> function, a wrapper API that calls the schema subsystem's IPropertySystem::RegisterPropertySchema. This function informs the schema subsystem of the addition of property description schema (.propdesc) files, using file path(s) to the .propdesc file(s) on the local machine, usually the application's install directory under &quot;Program Files&quot;. Typically, a setup or application (for example, your property handler installer) will call this method after installing the .propdesc file(s).</p>
+<p>Â </p>
+<h2>Implementing Property Handlers</h2>
+<p>Developing a property handler involves implementing the following interfaces:</p>
+<ul>
+<li>IInitialzeWithStream: Provides stream-based initialization of your property handler.</li>
+<li>IPropertyStore: Enumerates, gets, and sets property values.</li>
+<li>IPropertyStoreCapabilities: Optional. Identifies whether users can edit a property from a user interface.</li>
+</ul>
+<h3>IInitializeWithStream</h3>
+<p>As described in the <a href="../properties/building-property-handlers.html">Property System</a> topic, we strongly recommend implementing property handlers with <strong>IInitializeWithStream</strong> to do stream-based initialization. If you chose not to implement IInitializeWithStream, the property handler must opt out of running in the isolation process by setting the DisableProcessIsolation flag on the property handler's registry key. Disabling process isolation is generally intended only for legacy property handlers and should be strenuously avoided by any new code.</p>
+<h3>IPropertyStore</h3>
+<p>To create a property handler, you must implement the <a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a> interface with the following methods.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Commit</td>
+<td>Saves a property change to the file.</td>
+</tr>
+<tr>
+<td>GetAt</td>
+<td>Retrieves a property key from an item's array of properties.</td>
+</tr>
+<tr>
+<td>GetCount</td>
+<td>Gets the number of properties attached to the file.</td>
+</tr>
+<tr>
+<td>GetValue</td>
+<td>Retrieves data for a specific property.</td>
+</tr>
+<tr>
+<td>SetValue</td>
+<td>Sets a new property value or replaces or removes an existing value.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Â </p>
+<p>Â </p>
+<p>Important considerations for implementing this interface are included in the <a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a> documentation.</p>
+<blockquote>
+<p>[!Note]<br />
+If your property handler emits multiple values for the same property for a given item, only the last value emitted is stored in the catalog.</p>
+</blockquote>
+<p>Â </p>
+<p>Â </p>
+<h3>IPropertyStoreCapabilities</h3>
+<p>Property handlers can optionally implement this interface to disable a user's ability to edit specific properties. These properties are normally editable in the Details page and pane but editing them is not allowed under the implementing property handler. Implementing this interface correctly provides a better user experience than the alternativeâ€”a simple run-time error from the Shell.</p>
+<p>Â </p>
+<h2>Ensuring Your Items Get Indexed</h2>
+<p>Now that you've implemented your property handler, you want to make sure the items your handler is registered for get indexed. You can use the <a href="-search-3x-wds-mngidx-catalog-manager.html">Catalog Manager</a> to initiate re-indexing, and you can also use the <a href="-search-3x-wds-extidx-csm.html">Crawl Scope Manager</a> to set up default rules indicating the URLs you want the Indexer to crawl. Another option is to follow the ReIndex code sample in the <a href="-search-samples-ovw.html">Windows Search Code Samples</a>.</p>
+<p>For further information, refer to <a href="-search-3x-wds-mngidx-catalog-manager.html">Using the Catalog Manager</a> and <a href="-search-3x-wds-extidx-csm.html">Using the Crawl Scope Manager</a>.</p>
+<p>Â </p>
+<h2>Installing and Registering Property Handlers</h2>
+<p>With the property handler implemented, it must be registered and its file name extension associated with the handler. The following example shows the registry keys and values required to do this.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â CLSID
+Â Â Â Â Â Â {&lt;CLSID for property handler&gt;}
+Â Â Â Â Â Â Â Â Â (Default) = &lt;Property Handler Name&gt;
+Â Â Â Â Â Â Â Â Â InProcServer32
+Â Â Â Â Â Â Â Â Â Â Â Â (Default) = &lt;full path to property handler dll&gt;
+Â Â Â Â Â Â Â Â Â Â Â Â ThreadingModel = &lt;your threading model&gt;
+</code></pre>
+<pre><code>HKEY_LOCAL_MACHINE
+Â Â Â SOFTWARE
+Â Â Â Â Â Â Microsoft
+Â Â Â Â Â Â Â Â Â Windows
+Â Â Â Â Â Â Â Â Â Â Â Â CurrentVersion
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â PropertySystem
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â PropertyHandlers
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â &lt;.fileextention&gt;
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â (Default) = {&lt;CLSID for property handler&gt;}
+</code></pre>
+<p>Â </p>
+<h2>Testing and Troubleshooting Property Handlers</h2>
+<p>The following list provides advice on the kinds of tests you should perform:</p>
+<ul>
+<li>Test getting output from every single property supported by the file type.</li>
+<li>Use big property values, for example, use a large metatag in HTML documents.</li>
+<li>Check that the property handler does not leak file handles by editing it after getting output from the property handler, or by using a tool like oh.exe before and after enumerating file properties.</li>
+<li>Test all file types associated with the property handler. For example, check that the HTML filter works with .htm and .html file types.</li>
+<li>Test with corrupted files. Property handler should fail gracefully.</li>
+<li>If an application supports encryption, test that the property handler does not output encrypted text.</li>
+<li>If your property handler supports full-text search:
+<ul>
+<li>Use multiple special Unicode characters in the file contents and test for their output.</li>
+<li>Test the handling of very large documents to ensure the property handler works as expected.</li>
+</ul>
+</li>
+</ul>
+<h3>Installation and Setup Tests</h3>
+<p>Lastly, you need to test your install and uninstall routines.</p>
+<ul>
+<li>Installation must recover from failed installations (for example, from canceling and then restarting setup).</li>
+<li>Uninstall must delete all files associated with the property handler.</li>
+<li>Uninstall must not delete files other than the ones associated with the property handler installation.</li>
+<li>Registry keys associated with the property handler must be removed when uninstalled.</li>
+<li>Uninstall must work even if files are deleted from the installation directory.</li>
+</ul>
+<h3>Troubleshooting Property Handlers</h3>
+<p>The following are some common errors made while developing property handlers:</p>
+<ul>
+<li>Installing .propdesc files or DLLs under a user directory.</li>
+<li>Registering components using relative paths.</li>
+<li>Registering components under HKEY_CURRENT_USER instead of HKEY_LOCAL_MACHINE.</li>
+<li>Forgetting to set DisableProcessIsolation for non-stream handlers.</li>
+<li>Placing the test file in an unindexed location.</li>
+</ul>
+<p>If you're having trouble getting your property handler working with the indexer, here are some tips to help you troubleshoot:</p>
+<ul>
+<li>Verify that your property descriptions (.propdesc files) are marked isColumn=&quot;<strong>true</strong>&quot;, isViewable=&quot;<strong>true</strong>&quot;, and isQueryable=&quot;<strong>true</strong>&quot; as appropriate.</li>
+<li>Verify that your .propdesc files are in a global location.</li>
+<li>Verify that you registered your .propdesc files using absolute paths.</li>
+<li>Verify that the event log did not record any failures from registering your .propdesc file.</li>
+<li>Verify that your DLLs is in a global location (and not under your user profile).</li>
+<li>Verify that your DLLs is registered under HKEY_LOCAL_MACHINE\Software\Classes.</li>
+<li>Verify that your DLLs is registered using full paths (or REG_EXPAND_SZ strings that expand to absolute paths using environment variables known by the System account).</li>
+<li>Verify that your property handler works under Windows Explorer.</li>
+<li>While we recommend using IInitializeWithStream, if you must use IInitializeWithFile or IInitializeWithItem, verify that you specify DisableProcessIsolation.</li>
+<li>Verify that the Indexing Options Control Panel lists your file type as an indexed file type.</li>
+<li>Verify that the test file is in an indexed location.</li>
+<li>Verify that the test file has been modified since you installed your property handler.</li>
+</ul>
+<p>If your test file is in an indexed location and the indexer has already crawled that location, you need to modify the file in some way in order to trigger a reindexing of the file.</p>
+<p>Â </p>
+<h2>Using System-Supplied Property Handlers</h2>
+<p>Windows includes a number of system-supplied property handlers that you can use if the format of your file type is compatible. If you define a new file extension that uses one of these formats you can use the system-provided handlers by registering the handler class identifier (CLSID) for your file extension.</p>
+<p>You can use the CLSID listed in the following table to register the system-supplied property handlers for your file format type.</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>CLSID</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OLE DocFile</td>
+<td>{8d80504a-0826-40c5-97e1-ebc68f953792}</td>
+</tr>
+<tr>
+<td>Save Game XML</td>
+<td>{ECDD6472-2B9B-4b4b-AE36-F316DF3C8D60}</td>
+</tr>
+<tr>
+<td>XPS/OPC handler</td>
+<td>{45670FA8-ED97-4F44-BC93-305082590BFB}</td>
+</tr>
+<tr>
+<td>XML</td>
+<td>{c73f6f30-97a0-4ad1-a08f-540d4e9bc7b9}</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Before creating a custom property, you should be sure there isn't a system-defined property you can use instead. You can enumerate the system-defined properties by calling <a href="/windows/win32/api/propsys/nf-propsys-psenumeratepropertydescriptions"><strong>PSEnumeratePropertyDescriptions</strong></a> or using the prop.exe command line tool.</p>
+<p>The system schema defines how these properties interact with the indexer, and you cannot change that. Furthermore, the application you use to create, edit and save your file type needs to conform to certain behavior as well. For example, if the application implements safe save (whereby a temporary file is created during editing, and then ReplaceFile() is used to swap the new version for the old), it must transfer all of the properties from the original file to the new file. Failure to do means the file loses properties added by users or other applications.</p>
+<p>Â </p>
+<p><strong>Example</strong></p>
+<p>The following shows the registration of the system-supplied OLE DocFile handler for a file type with a .OLEDocFile extension.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â SystemFileAssociations
+Â Â Â Â Â Â .OLEDocFile
+Â Â Â Â Â Â Â Â Â shellex
+Â Â Â Â Â Â Â Â Â Â Â Â {BB2E617C-0920-11d1-9A0B-00C04FC2D6C1}
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â (Default) = {9DBD2C50-62AD-11d0-B806-00C04FD706EC}
+</code></pre>
+<p>The following shows the registration of the property list information so properties of .OLEDocFile files are displayed on the Details tab and pane.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â SystemFileAssociations
+Â Â Â Â Â Â .OLEDocFile
+Â Â Â Â Â Â Â Â Â ExtendedTileInfo = prop:System.ItemType;System.Size;System.DateModified;System.Author;System.OfflineAvailability
+Â Â Â Â Â Â Â Â Â FullDetails = prop:System.PropGroup.Description;System.Title;System.Subject;
+System.Keywords;System.Category;System.Comment;System.PropGroup.Origin;
+System.Author;System.Document.LastAuthor;System.Document.RevisionNumber;
+System.Document.Version;System.ApplicationName;System.Company;System.Document.Manager;
+System.Document.DateCreated;System.Document.DateSaved;System.Document.DatePrinted;
+System.Document.TotalEditingTime;System.PropGroup.Content;System.ContentStatus;
+System.ContentType;System.Document.PageCount;System.Document.WordCount;
+System.Document.CharacterCount;System.Document.LineCount;
+System.Document.ParagraphCount;System.Document.Template;System.Document.Scale;
+System.Document.LinksDirty;System.Language;System.PropGroup.FileSystem;
+System.ItemNameDisplay;System.ItemType;System.ItemFolderPathDisplay;
+System.DateCreated;System.DateModified;System.Size;System.FileAttributes;
+System.OfflineAvailability;System.OfflineStatus;System.SharedWith;
+System.FileOwner;System.ComputerName
+Â Â Â Â Â Â Â Â Â InfoTip = prop:System.ItemType;System.Size;System.DateModified;System.Document.PageCoun
+Â Â Â Â Â Â Â Â Â PerceivedType = document
+Â Â Â Â Â Â Â Â Â PreviewDetails = prop:*System.DateModified;System.Author;System.Keywords;
+*System.Size;System.Title;System.Comment;System.Category;
+*System.Document.PageCount;System.ContentStatus;System.ContentType;
+*System.OfflineAvailability;*System.OfflineStatus;System.Subject;
+*System.DateCreated;*System.SharedWith
+</code></pre>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Reference</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-propertymappings.html">Property Mappings</a></p>
+<!-- raw HTML omitted -->
+<p><strong>Conceptual</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-extidx-filters.html">Best Practices for Creating Filter Handlers in Windows Search</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-indexing-process-overview.html">The Indexing Process</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-phaddins.html">Developing Protocol Handlers</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-shell-systemdefinedpropertiesforfileformats.html">System-Defined Properties for Custom File Formats</a></p>
+<!-- raw HTML omitted -->
+<p><strong>Other Resources</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="../properties/building-property-handlers.html">Property System</a></p>
+<!-- raw HTML omitted -->
+<p><a href="https://msdn.microsoft.com/library/bb763010(VS.85).aspx">System Properties</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-samples-ovw.html">Windows Search Code Samples</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

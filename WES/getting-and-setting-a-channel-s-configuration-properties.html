@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Getting and Setting Channel Configuration Properties</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Getting and Setting a Channel's Configuration Properties
+description: A channel is initially configured in the manifest (see Defining Channels). To get the configurable properties of a channel, call the EvtOpenChannelConfig function to get a handle to the channel.
+ms.assetid: 4ee44dae-b390-4d98-bcef-836b53b04860
+ms.topic: article
+ms.date: 11/24/2021</h2>
+<h1>Getting and Setting Channel Configuration Properties</h1>
+<p>A channel is initially configured in the manifest (see <a href="defining-channels.html">Defining Channels</a>). To get the configurable properties of a channel, call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtopenchannelconfig"><strong>EvtOpenChannelConfig</strong></a> function to get a handle to the channel. Then, call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtgetchannelconfigproperty"><strong>EvtGetChannelConfigProperty</strong></a> function to get the value of a configurable property of the channel. For a list of configurable properties, see the <a href="/windows/desktop/api/WinEvt/ne-winevt-evt_channel_config_property_id"><strong>EVT_CHANNEL_CONFIG_PROPERTY_ID</strong></a> enumeration. The channel's name, value, and message string properties are considered metadata and cannot be retrieved using the <strong>EvtGetChannelConfigProperty</strong> function. For details on getting these properties, see <a href="getting-a-provider-s-metadata-.html">Getting a Provider's Metadata</a>.</p>
+<p>You can configure many of the channel's properties at run time. The <a href="/windows/desktop/api/WinEvt/ne-winevt-evt_channel_config_property_id"><strong>EVT_CHANNEL_CONFIG_PROPERTY_ID</strong></a> enumeration identifies those properties that you cannot set. To configure channel properties, the user must be in the administrators group and be running with elevated privileges. To set the configurable properties of a channel, call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtopenchannelconfig"><strong>EvtOpenChannelConfig</strong></a> function to get a handle to the channel. Then, call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtsetchannelconfigproperty"><strong>EvtSetChannelConfigProperty</strong></a> function to set the value of a configurable property. After setting the configurable properties, call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtsavechannelconfig"><strong>EvtSaveChannelConfig</strong></a> function to save and apply the changes.</p>
+<p>See the following sections for examples that show how to get and set channel properties:</p>
+<ul>
+<li><a href="#enumerating-channels">Enumerating channels</a></li>
+<li><a href="#getting-channel-properties">Getting channel properties</a></li>
+<li><a href="#setting-channel-properties">Setting channel properties</a></li>
+</ul>
+<h2>Enumerating channels</h2>
+<p>The following example shows how to enumerate the channels that are registered on the computer.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;winevt.h&gt;
+
+#pragma comment(lib, &quot;wevtapi.lib&quot;)
+
+
+void main(void)
+{
+    EVT_HANDLE hChannels = NULL;
+    LPWSTR pBuffer = NULL;
+    LPWSTR pTemp = NULL;
+    DWORD dwBufferSize = 0;
+    DWORD dwBufferUsed = 0;
+    DWORD status = ERROR_SUCCESS;
+
+    // Get a handle to an enumerator that contains all the names of the 
+    // channels registered on the computer.
+    hChannels = EvtOpenChannelEnum(NULL, 0);
+
+    if (NULL == hChannels)
+    {
+        wprintf(L&quot;EvtOpenChannelEnum failed with %lu.\n&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    wprintf(L&quot;List of Channels\n\n&quot;);
+
+    // Enumerate through the list of channel names. If the buffer is not big
+    // enough reallocate the buffer. To get the configuration information for
+    // a channel, call the EvtOpenChannelConfig function.
+    while (true)
+    {
+        if (!EvtNextChannelPath(hChannels, dwBufferSize, pBuffer, &amp;dwBufferUsed))
+        {
+            status = GetLastError();
+
+            if (ERROR_NO_MORE_ITEMS == status)
+            {
+                break;
+            }
+            else if (ERROR_INSUFFICIENT_BUFFER == status)
+            {
+                dwBufferSize = dwBufferUsed;
+                pTemp = (LPWSTR)realloc(pBuffer, dwBufferSize * sizeof(WCHAR));
+                if (pTemp)
+                {
+                    pBuffer = pTemp;
+                    pTemp = NULL;
+                    EvtNextChannelPath(hChannels, dwBufferSize, pBuffer, &amp;dwBufferUsed);
+                }
+                else
+                {
+                    wprintf(L&quot;realloc failed\n&quot;);
+                    status = ERROR_OUTOFMEMORY;
+                    goto cleanup;
+                }
+            }
+            else
+            {
+                wprintf(L&quot;EvtNextChannelPath failed with %lu.\n&quot;, status);
+            }
+        }
+
+        wprintf(L&quot;%s\n&quot;, pBuffer);
+    }
+
+cleanup:
+
+    if (hChannels)
+        EvtClose(hChannels);
+
+    if (pBuffer)
+        free(pBuffer);
+}
+</code></pre>
+<h2>Getting channel properties</h2>
+<p>The following example shows how to get the configurable properties of a channel.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;winevt.h&gt;
+
+#pragma comment(lib, &quot;wevtapi.lib&quot;)
+#pragma comment(lib, &quot;ole32.lib&quot;)
+
+LPWSTR pwcsChannelTypes[] = {L&quot;Admin&quot;, L&quot;Operational&quot;, L&quot;Analytic&quot;, L&quot;Debug&quot;};
+LPWSTR pwcsIsolationTypes[] = {L&quot;Application&quot;, L&quot;System&quot;, L&quot;Custom&quot;};
+LPWSTR pwcsClockTypes[] = {L&quot;System&quot;, L&quot;QPC&quot;};
+
+DWORD PrintChannelProperties(EVT_HANDLE hChannel);
+DWORD PrintChannelProperty(int Id, PEVT_VARIANT pProperty);
+
+void main(void)
+{
+    EVT_HANDLE hChannel = NULL;
+    DWORD status = ERROR_SUCCESS;
+    LPWSTR pwsChannelName = L&quot;&lt;name of channel goes here&gt;&quot;;
+
+    hChannel = EvtOpenChannelConfig(NULL, pwsChannelName, 0);
+
+    if (NULL == hChannel) // Fails with 15007 (ERROR_EVT_CHANNEL_NOT_FOUND) if the channel is not found
+    {
+        wprintf(L&quot;EvtOpenChannelConfig failed with %lu.\n&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    status = PrintChannelProperties(hChannel);
+
+cleanup:
+
+    if (hChannel)
+        EvtClose(hChannel);
+}
+
+// Print the channel's configuration properties. Use the EVT_CHANNEL_CONFIG_PROPERTY_ID
+// enumeration values to loop through all the properties.
+DWORD PrintChannelProperties(EVT_HANDLE hChannel)
+{
+    PEVT_VARIANT pProperty = NULL;  // Buffer that receives the property value
+    PEVT_VARIANT pTemp = NULL;
+    DWORD dwBufferSize = 0;
+    DWORD dwBufferUsed = 0;
+    DWORD status = ERROR_SUCCESS;
+
+    for (int Id = 0; Id &lt; EvtChannelConfigPropertyIdEND; Id++)
+    {
+        // Get the specified property. If the buffer is too small, reallocate it.
+        if  (!EvtGetChannelConfigProperty(hChannel, (EVT_CHANNEL_CONFIG_PROPERTY_ID)Id, 0, dwBufferSize, pProperty, &amp;dwBufferUsed))
+        {
+            status = GetLastError();
+            if (ERROR_INSUFFICIENT_BUFFER == status)
+            {
+                dwBufferSize = dwBufferUsed;
+                pTemp = (PEVT_VARIANT)realloc(pProperty, dwBufferSize);
+                if (pTemp)
+                {
+                    pProperty = pTemp;
+                    pTemp = NULL;
+                    EvtGetChannelConfigProperty(hChannel, (EVT_CHANNEL_CONFIG_PROPERTY_ID)Id, 0, dwBufferSize, pProperty, &amp;dwBufferUsed);
+                }
+                else
+                {
+                    wprintf(L&quot;realloc failed\n&quot;);
+                    status = ERROR_OUTOFMEMORY;
+                    goto cleanup;
+                }
+            }
+
+            if (ERROR_SUCCESS != (status = GetLastError()))
+            {
+                wprintf(L&quot;EvtGetChannelConfigProperty failed with %d\n&quot;, GetLastError());
+                goto cleanup;
+            }
+        }
+
+        if (status = PrintChannelProperty(Id, pProperty))
+            break;
+    }
+
+cleanup:
+
+    if (pProperty)
+        free(pProperty);
+
+    return status;
+}
+
+// Print the property value.
+DWORD PrintChannelProperty(int Id, PEVT_VARIANT pProperty)
+{
+    DWORD status = ERROR_SUCCESS;
+    WCHAR wszSessionGuid[50];
+    LPWSTR lpws = NULL;
+
+    switch(Id)
+    {
+        case EvtChannelConfigEnabled:
+            wprintf(L&quot;Enabled: %s\n&quot;, (TRUE == pProperty-&gt;BooleanVal) ? L&quot;TRUE&quot; : L&quot;FALSE&quot;);
+            break;
+
+        case EvtChannelConfigIsolation:
+            wprintf(L&quot;Isolation: %s\n&quot;, pwcsIsolationTypes[pProperty-&gt;UInt32Val]);
+            break;
+
+        case EvtChannelConfigType:
+            wprintf(L&quot;Type: %s\n&quot;, pwcsChannelTypes[pProperty-&gt;UInt32Val]);
+            break;
+
+        // This will contain a value if the channel is imported.
+        case EvtChannelConfigOwningPublisher:
+            wprintf(L&quot;Publisher that defined the channel: %s\n&quot;, pProperty-&gt;StringVal);
+            break;
+
+        case EvtChannelConfigClassicEventlog:
+            wprintf(L&quot;ClassicEventlog: %s\n&quot;, (TRUE == pProperty-&gt;BooleanVal) ? L&quot;TRUE&quot; : L&quot;FALSE&quot;);
+            break;
+
+        case EvtChannelConfigAccess:
+            wprintf(L&quot;Access: %s\n&quot;, pProperty-&gt;StringVal);
+            break;
+
+        case EvtChannelLoggingConfigRetention:
+            wprintf(L&quot;Retention: %s\n&quot;, (TRUE == pProperty-&gt;BooleanVal) ? L&quot;TRUE (Sequential)&quot; : L&quot;FALSE (Circular)&quot;);
+            break;
+
+        case EvtChannelLoggingConfigAutoBackup:
+            wprintf(L&quot;AutoBackup: %s\n&quot;, (TRUE == pProperty-&gt;BooleanVal) ? L&quot;TRUE&quot; : L&quot;FALSE&quot;); 
+            break;
+
+        case EvtChannelLoggingConfigMaxSize:
+            wprintf(L&quot;MaxSize: %I64u MB\n&quot;, pProperty-&gt;UInt64Val / (1024*1024));
+            break;
+
+        case EvtChannelLoggingConfigLogFilePath:
+            wprintf(L&quot;LogFilePath: %s\n&quot;, pProperty-&gt;StringVal);
+            break;
+
+        case EvtChannelPublishingConfigLevel:
+            if (EvtVarTypeNull == pProperty-&gt;Type)
+                wprintf(L&quot;Level: \n&quot;);
+            else
+                wprintf(L&quot;Level: %lu\n&quot;, pProperty-&gt;UInt32Val);
+
+            break;
+
+        // The upper 8 bits can contain reserved bit values, so do not include them
+        // when checking to see if any keywords are set.
+        case EvtChannelPublishingConfigKeywords:
+            if (EvtVarTypeNull == pProperty-&gt;Type)
+                wprintf(L&quot;Keywords: \n&quot;);
+            else
+                wprintf(L&quot;Keywords: %I64u\n&quot;, pProperty-&gt;UInt64Val &amp; 0x00FFFFFFFFFFFFFF);
+
+            break;
+
+        case EvtChannelPublishingConfigControlGuid:
+            if (EvtVarTypeNull == pProperty-&gt;Type)
+                wprintf(L&quot;ControlGuid: \n&quot;);
+            else
+            {
+                StringFromGUID2(*(pProperty-&gt;GuidVal), wszSessionGuid, sizeof(wszSessionGuid)/sizeof(WCHAR));
+                wprintf(L&quot;ControlGuid: %s\n&quot;, wszSessionGuid);
+            }
+
+            break;
+
+        case EvtChannelPublishingConfigBufferSize:
+            wprintf(L&quot;BufferSize: %lu KB\n&quot;, pProperty-&gt;UInt32Val);
+            break;
+
+        case EvtChannelPublishingConfigMinBuffers:
+            wprintf(L&quot;MinBuffers: %lu\n&quot;, pProperty-&gt;UInt32Val);
+            break;
+
+        case EvtChannelPublishingConfigMaxBuffers:
+            wprintf(L&quot;MaxBuffers: %lu\n&quot;, pProperty-&gt;UInt32Val);
+            break;
+
+        case EvtChannelPublishingConfigLatency:
+            wprintf(L&quot;Latency: %lu (sec)\n&quot;, pProperty-&gt;UInt32Val / 1000); // 1 ms
+            break;
+
+        case EvtChannelPublishingConfigClockType:
+            wprintf(L&quot;ClockType: %s\n&quot;, pwcsClockTypes[pProperty-&gt;UInt32Val]);
+            break;
+
+        case EvtChannelPublishingConfigSidType:
+            wprintf(L&quot;Include security ID (SID): %s\n&quot;, (EvtChannelSidTypeNone == pProperty-&gt;UInt32Val) ? L&quot;No&quot; : L&quot;Yes&quot;);
+            break;
+
+        case EvtChannelPublisherList:
+
+            wprintf(L&quot;List of providers that import this channel: \n&quot;);
+            for (DWORD i = 0; i &lt; pProperty-&gt;Count; i++)
+            {
+                wprintf(L&quot;  %s\n&quot;, pProperty-&gt;StringArr[i]);
+            }
+
+            break;
+
+        case EvtChannelPublishingConfigFileMax:
+            wprintf(L&quot;FileMax: %lu\n&quot;, pProperty-&gt;UInt32Val);
+            break;
+
+        default:
+            wprintf(L&quot;Unknown property Id: %d\n&quot;, Id);
+    }
+    
+    return status;
+}
+</code></pre>
+<h2>Setting channel properties</h2>
+<p>The following example shows how to set the configurable properties of a channel.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;winevt.h&gt;
+#include &lt;winmeta.h&gt;
+
+// For this example, including the keywords that were defined in the header file 
+// that the message compiler generated for the manifest.
+//
+// Keywords
+//
+#define READ_KEYWORD 0x10
+#define WRITE_KEYWORD 0x20
+// #include &quot;myprovider.h&quot;  // Contains the keywords defined for my provider
+
+#pragma comment(lib, &quot;wevtapi.lib&quot;)
+
+void main(void)
+{
+    EVT_HANDLE hChannel = NULL;
+    DWORD status = ERROR_SUCCESS;
+    EVT_VARIANT ChannelProperty;
+    DWORD dwBufferSize = sizeof(EVT_VARIANT);
+    DWORD dwBufferUsed = 0;
+
+    hChannel = EvtOpenChannelConfig(NULL, L&quot;&lt;name of channel goes here&gt;&quot;, 0);
+    if (NULL == hChannel)
+    {
+        wprintf(L&quot;EvtOpenChannelConfig failed with %lu.\n&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    RtlZeroMemory(&amp;ChannelProperty, dwBufferSize);
+    ChannelProperty.Type = EvtVarTypeBoolean;
+    ChannelProperty.BooleanVal = FALSE;
+    if  (!EvtSetChannelConfigProperty(hChannel, EvtChannelConfigEnabled, 0, &amp;ChannelProperty))
+    {
+        wprintf(L&quot;EvtSetChannelConfigProperty for Enabled property failed with %lu\n&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    RtlZeroMemory(&amp;ChannelProperty, dwBufferSize);
+    ChannelProperty.Type = EvtVarTypeUInt32;
+    ChannelProperty.UInt32Val = WINEVENT_LEVEL_WARNING;  // Found in winmeta.h
+    if  (!EvtSetChannelConfigProperty(hChannel, EvtChannelPublishingConfigLevel, 0, &amp;ChannelProperty))
+    {
+        wprintf(L&quot;EvtSetChannelConfigProperty for Level failed with %lu\n&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    RtlZeroMemory(&amp;ChannelProperty, dwBufferSize);
+    ChannelProperty.Type = EvtVarTypeUInt64;
+    ChannelProperty.UInt64Val = READ_KEYWORD | WRITE_KEYWORD;
+    if  (!EvtSetChannelConfigProperty(hChannel, EvtChannelPublishingConfigKeywords, 0, &amp;ChannelProperty))
+    {
+        wprintf(L&quot;EvtSetChannelConfigProperty for Keywords failed with %lu\n&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    RtlZeroMemory(&amp;ChannelProperty, dwBufferSize);
+    ChannelProperty.Type = EvtVarTypeBoolean;
+    ChannelProperty.BooleanVal = TRUE;
+    if  (!EvtSetChannelConfigProperty(hChannel, EvtChannelConfigEnabled, 0, &amp;ChannelProperty))
+    {
+        wprintf(L&quot;EvtSetChannelConfigProperty for Enabled property failed with %lu\n&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    // The user needs to be in the administrators group and be running with
+    // elevated permissions for this call to work.
+    if (!EvtSaveChannelConfig(hChannel, 0))
+    {
+        wprintf(L&quot;EvtSaveChannelConfig failed with %lu\n&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    wprintf(L&quot;Channel properties updated.\n&quot;);
+
+cleanup:
+
+    if (hChannel)
+        EvtClose(hChannel);
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Indexing Prioritization and Rowset Events in Windows 7</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Outlines the introduction of indexing prioritization and rowset events for WindowsÂ 7.
+ms.assetid: 6cdfb7d3-f849-432c-960f-912e5024c583
+title: Indexing Prioritization and Rowset Events in Windows 7
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Indexing Prioritization and Rowset Events in Windows 7</h1>
+<p>This topic outlines the introduction of indexing prioritization and rowset events for WindowsÂ 7.</p>
+<p>This topic is organized as follows:</p>
+<ul>
+<li><a href="#indexing-prioritization-and-rowset-events">Indexing Prioritization and Rowset Events</a>
+<ul>
+<li><a href="#irowsetpriorization-examples">IRowsetPriorization Examples</a></li>
+<li><a href="#indexing-prioritization-and-rowset-events-in-windows-7">IRowsetPrioritization Events</a></li>
+</ul>
+</li>
+<li><a href="#additional-resources">Additional Resources</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Indexing Prioritization and Rowset Events</h2>
+<p>In WindowsÂ 7?and later, there is a priority stack within which the context of any particular query, the client can request that the scopes used in that query be prioritized above that of normal items.</p>
+<p>This prioritization stack has the following characteristics:</p>
+<ul>
+<li>Items in the stack can have foreground, high, or low priority:
+<ul>
+<li><strong>Foreground</strong>: Backoff logic is skipped and indexing proceeds as fast as the machine allows.</li>
+<li><strong>High</strong>: Prioritization has been requested with backoff.</li>
+<li><strong>Low</strong>: Prioritization has been requested, not at the expense of other scopes on the stack, but above non-prioritized indexing.</li>
+</ul>
+</li>
+<li>Any request for high or foreground priority bumps the requesting query to the top of the stack automatically.</li>
+<li>Only the item on top of the stack can have foreground priority.</li>
+<li>A query with foreground priority that is bumped down in priority receives an event notifying it that it has lost foreground priority and has become a high priority with backoff.</li>
+</ul>
+<p>The priority stack sets an overall priority of items that are processed in the indexer as follows:</p>
+<ul>
+<li>
+<p>High Priority notifications have no backoff, and are typically sent only for a small number of items. For example, Windows Explorer uses this priority for small copy engine operations.</p>
+</li>
+<li>
+<p>Priority Stack is top of the stack, has backoff, and is the last requested priority query.</p>
+</li>
+<li>
+<p>Second query in the stack.</p>
+</li>
+<li>
+<p>Third query in the stack.</p>
+</li>
+<li>
+<p>Fourth query in the stack, and so forth.</p>
+</li>
+<li>
+<p>Normal Priority items.</p>
+</li>
+<li>
+<p>Deleted items.</p>
+<blockquote>
+<p>[!Note]<br />
+Items within each group are prioritized internally through the older per-item semantics.</p>
+</blockquote>
+<p>Â </p>
+</li>
+</ul>
+<h3>IRowsetPriorization Examples</h3>
+<p>The primary API for prioritization work is available through the following interface, which can be called by querying the returned rowset:</p>
+<pre><code>typedef [v1_enum] enum
+{
+    PRIORITY_LEVEL_FOREGROUND           = 0,    // process items in the scope first as quickly as possible
+    PRIORITY_LEVEL_HIGH                 = 1,    // process items in the scope first at the normal rate
+    PRIORITY_LEVEL_LOW                  = 2,    // process items in this scope before those at the normal rate, but after any other prioritization requests
+    PRIORITY_LEVEL_DEFAULT              = 3     // process items at the normal indexer rate
+} PRIORITY_LEVEL;
+
+
+[
+    object,
+    uuid(IRowsetPrioritization_GUID),
+    pointer_default(unique)
+]
+interface IRowsetPrioritization : IUnknown
+{
+    // Sets or retrieves the current indexer prioritization level for the scope specified by
+    // this query.
+
+    HRESULT SetScopePriority( [in] PRIORITY_LEVEL priority, [in] DWORD scopeStatisticsEventFrequency );
+    HRESULT GetScopePriority( [out] PRIORITY_LEVEL * priority, [out] DWORD * scopeStatisticsEventFrequency );
+
+    // Gets information describing the scope specified by this query:
+    // indexedDocumentCount     -   The total number of documents currently indexed in the scope
+    // oustandingAddCount       -   The total number of documents yet to be indexed in the scope (those not yet included in indexedDocumentCount)
+    // oustandingModifyCount    -   The total number of documents indexed in the scope that need to be re-indexed (included in indexedDocumentCount)
+    
+    HRESULT GetScopeStatistics( [out] DWORD * indexedDocumentCount, [out] DWORD * oustandingAddCount, [out] DWORD * oustandingModifyCount );
+};
+</code></pre>
+<p>Rowset prioritization works as follows:</p>
+<ol>
+<li><a href="/windows/desktop/api/Searchapi/nn-searchapi-irowsetprioritization"><strong>IRowsetPrioritization</strong></a> is acquired with <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)">IUnknown::QueryInterface Method</a> on an indexer rowset. <strong>DBPROP_ENABLEROWSETEVENTS</strong> must be set to <strong>TRUE</strong> with the OLE DB <a href="/previous-versions/windows/desktop/ms711497(v=vs.85)">ICommandProperties::SetProperties</a> method prior to executing the query in order to use rowset prioritization.</li>
+<li><a href="/windows/desktop/api/Searchapi/nf-searchapi-irowsetprioritization-setscopepriority"><strong>IRowsetPrioritization::SetScopePriority</strong></a> sets the prioritization for the scopes belonging to the query, and the interval the scope statistics event is raised when there are outstanding documents to be indexed within the query scopes. This event is raised if the priority level is set to default.</li>
+<li><a href="/windows/desktop/api/Searchapi/nf-searchapi-irowsetprioritization-getscopestatistics"><strong>IRowsetPrioritization::GetScopeStatistics</strong></a> can be used to get the number of indexed items in the scope, the number of outstanding documents to be added in the scope, and the number of documents that need to be re-indexed within this scope.</li>
+</ol>
+<h3>IRowsetPrioritization Events</h3>
+<p>There are three rowset events in <a href="/windows/desktop/api/Searchapi/nf-searchapi-irowsetevents-onrowsetevent"><strong>IRowsetEvents::OnRowsetEvent</strong></a> in the <a href="/windows/win32/api/searchapi/ne-searchapi-rowsetevent_type"><strong>ROWSETEVENT_TYPE</strong></a> enumeration:</p>
+<pre><code>    // This method allows for future notifications of various actions about your rowset or items within
+    // eventType:                               - An identifier of the particular event being sent
+    // pVarEventData:                           - The expected value of the EventData for each event type
+    //      ROWSETEVENT_TYPE_DATAEXPIRED        - VT_EMPTY
+    //      ROWSETEVENT_TYPE_FOREGROUNDLOST     - VT_EMPTY
+    //      ROWSETEVENT_TYPE_SCOPESTATISTICS    - VT_VECTOR | VT_UI4 - 3 elements (0 = indexed items, 1 = outstanding adds, 2 = oustanding modifies)
+
+    HRESULT OnRowsetEvent( [in] ROWSETEVENT_TYPE eventType, [in] REFPROPVARIANT eventData );
+</code></pre>
+<p>The rowset events are as follows:</p>
+<ul>
+<li>The <strong>ROWSETEVENT_TYPE_DATAEXPIRED</strong> event indicates that data backing the rowset has expired, and that a new rowset should be requested.</li>
+<li>The <strong>ROWSET_TYPE_FOREGROUNDLOST</strong> event indicates that an item that did have foreground priority in the prioritization stack has been demoted, because someone else prioritized themselves ahead of this query.</li>
+<li>The <strong>ROWSETEVENT_TYPE_SCOPESTATISTICS</strong> event gives you the same information available from the <a href="/windows/desktop/api/Searchapi/nf-searchapi-irowsetprioritization-getscopestatistics"><strong>IRowsetPrioritization::GetScopeStatistics</strong></a> method call, but through a push mechanic, as follows:
+<ul>
+<li>The event arises if the prioritization API has been used to request a non-default prioritization level, and a non-zero statistics event frequency.</li>
+<li>The event arises only when statistics actually change, and the interval specified in the <a href="/windows/desktop/api/Searchapi/nn-searchapi-irowsetprioritization"><strong>IRowsetPrioritization</strong></a> has elapsed (the interval does not guarantee the frequency of the event).</li>
+<li>This event is guaranteed to raise a &quot;bounce zero&quot; state (zero items remaining to be added, zero modifies remaining), provided that a non-zero event has been raised.</li>
+<li>The indexer may process items without sending this event, if the queue empties before the statistics event frequency.</li>
+</ul>
+</li>
+</ul>
+<h2>Additional Resources</h2>
+<p>See the following resources related to prioritization and rowsets:</p>
+<ul>
+<li>Interfaces:
+<ul>
+<li><a href="/windows/desktop/api/Searchapi/nn-searchapi-irowsetevents"><strong>IRowsetEvents</strong></a></li>
+<li><a href="/windows/desktop/api/Searchapi/nn-searchapi-irowsetprioritization"><strong>IRowsetPrioritization</strong></a></li>
+</ul>
+</li>
+<li>Enumerations:
+<ul>
+<li><a href="/windows/win32/api/searchapi/ne-searchapi-tagprioritize_flags"><strong>PRIORITIZE_FLAGS</strong></a></li>
+<li><a href="/windows/win32/api/searchapi/ne-searchapi-priority_level"><strong>PRIORITY_LEVEL</strong></a></li>
+<li><a href="/windows/win32/api/searchapi/ne-searchapi-rowsetevent_itemstate"><strong>ROWSETEVENT_ITEMSTATE</strong></a></li>
+<li><a href="/windows/win32/api/searchapi/ne-searchapi-rowsetevent_type"><strong>ROWSETEVENT_TYPE</strong></a></li>
+</ul>
+</li>
+</ul>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="./-search-3x-wds-overview.html">Windows 7 Search</a></p>
+<!-- raw HTML omitted -->
+<p><a href="new-for-windows-7-search.html">New for Windows 7 Search</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-win7-development-scenarios.html">Windows Shell Libraries in Windows 7</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

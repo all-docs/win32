@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Enumerating Services</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Enumerating Services
+ms.assetid: 6ee6eecb-3812-45c6-8b27-7dfd6fa82758
+title: Enumerating Services
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Enumerating Services</h1>
+<p>The WpdServicesApiSample application includes code that demonstrates how an application can enumerate all of the Contacts services found on any of the devices currently connected to a computer.</p>
+<p>When the user chooses option &quot;0&quot; at the command line, the application invokes the <strong>EnumerateContactsServices</strong> method that is found in the ServiceEnumeration.cpp module. This method displays a list of all connected devices that support the Contacts service.</p>
+<p>For example, if the WpdServiceSampleDriver is the only installed device, the application returns three fields of data: a Friendly Name (&quot;Sample Device&quot;), a Manufacturer (&quot;Windows Portable Devices Group&quot;), and, a Description (&quot;Contacts Service Device 2000&quot;).</p>
+<p>The <strong>EnumerateContactsServices</strong> method accomplishes the following tasks:</p>
+<ul>
+<li>Creates an <a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-iportabledevicemanager"><strong>IPortableDeviceManager</strong></a> interface to handle enumeration of installed devices.</li>
+<li>Creates an <a href="/windows/desktop/api/PortableDeviceAPI/nn-portabledeviceapi-iportabledeviceservicemanager"><strong>IPortableDeviceServiceManager</strong></a> interface to handle enumeration of the services on each device.</li>
+<li>Iterates through the installed devices, searching for the Contacts service, and displays the device information for any device that supports this service.</li>
+</ul>
+<p>The following code illustrates the <strong>EnumerateContactsServices</strong> method.</p>
+<pre lang="C++"><code>// Enumerates all Contacts Services, displaying the associated device of each service.
+void EumerateContactsServices(CAtlArray&lt;PWSTR&gt;&amp; ContactsServicePnpIDs)
+{
+    HRESULT                                 hr              = S_OK;
+    DWORD                                   cPnpDeviceIDs   = 0;
+    PWSTR*                                  pPnpDeviceIDs   = NULL;
+    CComPtr&lt;IPortableDeviceManager&gt;         pPortableDeviceManager;
+    CComPtr&lt;IPortableDeviceServiceManager&gt;  pServiceManager;
+
+    // CoCreate the IPortableDeviceManager interface to enumerate
+    // portable devices and to get information about them.
+    hr = CoCreateInstance(CLSID_PortableDeviceManager,
+                          NULL,
+                          CLSCTX_INPROC_SERVER,
+                          IID_PPV_ARGS(&amp;pPortableDeviceManager));
+
+    if (FAILED(hr))
+    {
+        printf(&quot;! Failed to CoCreateInstance CLSID_PortableDeviceManager, hr = 0x%lx\n&quot;,hr);
+    }        
+
+    // Retrieve the IPortableDeviceServiceManager interface to enumerate device services.
+    if (SUCCEEDED(hr))
+    {
+        hr = pPortableDeviceManager-&gt;QueryInterface(IID_PPV_ARGS(&amp;pServiceManager));
+        if (FAILED(hr))
+        {
+            printf(&quot;! Failed to QueryInterface IID_IPortableDeviceServiceManager, hr = 0x%lx\n&quot;,hr);
+        }
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // First, pass NULL as the PWSTR array pointer to get the total number
+        // of devices found on the system.
+        hr = pPortableDeviceManager-&gt;GetDevices(NULL, &amp;cPnpDeviceIDs);
+
+        if (FAILED(hr))
+        {
+            printf(&quot;! Failed to get number of devices on the system, hr = 0x%lx\n&quot;,hr);
+        }
+
+        if (SUCCEEDED(hr) &amp;&amp; (cPnpDeviceIDs &gt; 0))
+        {
+            // Second, allocate an array to hold the PnPDeviceID strings returned from
+            // the IPortableDeviceManager::GetDevices method
+            pPnpDeviceIDs = new (std::nothrow) PWSTR[cPnpDeviceIDs];
+
+            if (pPnpDeviceIDs != NULL)
+            {
+                DWORD dwIndex = 0;
+
+                hr = pPortableDeviceManager-&gt;GetDevices(pPnpDeviceIDs, &amp;cPnpDeviceIDs);
+                if (SUCCEEDED(hr))
+                {   
+                    // For each device found, find the contacts service
+                    for (dwIndex = 0; dwIndex &lt; cPnpDeviceIDs; dwIndex++)
+                    {
+                        DWORD   cPnpServiceIDs = 0;
+                        PWSTR   pPnpServiceID  = NULL;
+
+                        // First, pass NULL as the PWSTR array pointer to get the total number
+                        // of contacts services (SERVICE_Contacts) found on the device.
+                        // To find the total number of all services on the device, use GUID_DEVINTERFACE_WPD_SERVICE.
+                        hr = pServiceManager-&gt;GetDeviceServices(pPnpDeviceIDs[dwIndex], SERVICE_Contacts, NULL, &amp;cPnpServiceIDs);
+                        
+                        if (SUCCEEDED(hr) &amp;&amp; (cPnpServiceIDs &gt; 0))
+                        {                               
+                            // For simplicity, we are only using the first contacts service on each device
+                            cPnpServiceIDs = 1;
+                            hr = pServiceManager-&gt;GetDeviceServices(pPnpDeviceIDs[dwIndex], SERVICE_Contacts, &amp;pPnpServiceID, &amp;cPnpServiceIDs);
+
+                            if (SUCCEEDED(hr))
+                            {
+                                // We've found the service, display it and save its PnP Identifier
+                                ContactsServicePnpIDs.Add(pPnpServiceID);
+
+                                printf(&quot;[%d] &quot;, static_cast&lt;DWORD&gt;(ContactsServicePnpIDs.GetCount()-1));
+
+                                // Display information about the device that contains this service.
+                                DisplayDeviceInformation(pServiceManager, pPnpServiceID);
+
+                                // ContactsServicePnpIDs now owns the memory for this string
+                                pPnpServiceID = NULL;
+                            }
+                            else
+                            {
+                                printf(&quot;! Failed to get the first contacts service from '%ws, hr = 0x%lx\n&quot;,pPnpDeviceIDs[dwIndex],hr);
+                            }
+                        }
+                    }
+                }
+
+                // Free all returned PnPDeviceID strings
+                FreePortableDevicePnPIDs(pPnpDeviceIDs, cPnpDeviceIDs);
+
+                // Delete the array of PWSTR pointers
+                delete [] pPnpDeviceIDs;
+                pPnpDeviceIDs = NULL;
+
+            }
+            else
+            {
+                printf(&quot;! Failed to allocate memory for PWSTR array\n&quot;);
+            }            
+        }
+    }
+    
+    printf(&quot;\n%d Contacts Device Service(s) found on the system\n\n&quot;, static_cast&lt;DWORD&gt;(ContactsServicePnpIDs.GetCount()));
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-iportabledevicemanager"><strong>IPortableDeviceManager Interface</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/PortableDeviceAPI/nn-portabledeviceapi-iportabledeviceservicemanager"><strong>IPortableDeviceServiceManager Interface</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="wpdapisample-sample-service-application.html">WpdServicesApiSample</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

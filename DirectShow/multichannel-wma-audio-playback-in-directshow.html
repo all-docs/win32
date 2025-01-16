@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Multichannel WMA Audio Playback in DirectShow</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Multichannel WMA Audio Playback in DirectShow
+ms.assetid: 99c69290-545a-4368-8f51-74e547c9466d
+title: Multichannel WMA Audio Playback in DirectShow
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Multichannel WMA Audio Playback in DirectShow</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>To play back a multichannel Windows Media Audio file in DirectShow, you must set the <strong>MFPKEY_WMADEC_HIRESOUTPUT</strong> property directly on the decoder after it has been connected to the WM ASF Reader. This property is defined in the header file wmcodecdsp.h, which is available in the Windows SDK.</p>
+<blockquote>
+<p>[!Note]<br />
+This configuration procedure is supported only for files that are not protected by Digital Rights Management.</p>
+</blockquote>
+<p>Â </p>
+<p>The basic steps to enable multichannel output are as follows:</p>
+<ol>
+<li>Call <strong>RenderFile</strong> to create the filter graph.</li>
+<li>Obtain a pointer to the DMO Wrapper filter.</li>
+<li>Disconnect the DMO Wrapper from the Audio Renderer.</li>
+<li>Use the <strong>IPropertyBag</strong> interface to set the <strong>MFPKEY_WMADEC_HIRESOUTPUT</strong> property on the decoder. The property name is defined by the global constant <strong>g_wszWMACHiResOutput</strong>.</li>
+<li>Reconnect the DMO Wrapper and the Audio Renderer.</li>
+<li>Run the graph.</li>
+</ol>
+<p>The following code snippets demonstrate these steps. This code assumes that the source file contains an audio stream and no video stream. The video codec DMO does not support the <strong>MFPKEY_WMADEC_HIRESOUTPUT</strong> property.</p>
+<pre lang="C++"><code>HRESULT BuildGraph(IGraphBuilder *pGraph, const WCHAR *wFileName)
+{
+    HRESULT hr = S_OK;
+    IBaseFilter       *pDmoWrapper = NULL;
+    IPin              *pDmoOut = NULL;
+    IPin              *pRendererIn = NULL;
+    IPropertyBag      *pPropBag = NULL;
+
+    hr = pGraph-&gt;RenderFile(wFileName, NULL);
+
+    // Get pointers to the two DMO Wrapper interfaces we need.
+    // (Function bodies provided at the end of this snippet.)
+    if (SUCCEEDED(hr))
+    {
+        hr = GetDMOWrapper(pGraph, &amp;pDmoWrapper); 
+    }
+
+    //Disconnect the DMO Wrapper from the Audio Renderer.
+    if (SUCCEEDED(hr))
+    {
+        hr = GetPin(pDmoWrapper, PINDIR_OUTPUT, &amp;pDmoOut);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = DisconnectPin(pGraph, pDmoOut, &amp;pRendererIn);
+    }
+
+    //Set the property on the DMO.
+    VARIANT varg;
+    ::VariantInit(&amp;varg);
+    varg.vt    = VT_BOOL;
+    varg.boolVal = TRUE;
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pDmoWrapper-&gt;QueryInterface(IID_IPropertyBag, (void**)&amp;pPropBag);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pPropBag-&gt;Write(g_wszWMACHiResOutput, &amp;varg);
+    }
+
+    // Reconnect the DMO Wrapper and the Audio Renderer
+    if (SUCCEEDED(hr))
+    {
+        hr = pGraph-&gt;Connect(pDmoOut, pRendererIn);
+    }
+
+    SAFE_RELEASE(pDmoWrapper);
+    SAFE_RELEASE(pDmoOut);
+    SAFE_RELEASE(pRendererIn);
+    SAFE_RELEASE(pPropBag);
+    return hr;
+}
+</code></pre>
+<p>The helper functions from the previous code snippet are implemented as follows:</p>
+<pre lang="C++"><code>HRESULT GetDMOWrapper (IFilterGraph *pGraph, IBaseFilter** ppFilter) 
+{
+    BOOL bFound = FALSE;
+
+    IEnumFilters *pEnum = NULL;
+    IBaseFilter *pFilter = NULL;
+    IDMOWrapperFilter *pWrapper = NULL;
+
+    HRESULT hr = pGraph-&gt;EnumFilters(&amp;pEnum);
+    if (SUCCEEDED(hr))
+    {
+        while(pEnum-&gt;Next(1, &amp;pFilter, NULL) == S_OK)
+        {
+            // If we find the IDMOWrapperFilter interface, that means we 
+            // have the DMO Wrapper filter. 
+            hr = pFilter-&gt;QueryInterface(IID_IDMOWrapperFilter, (void**) &amp;pWrapper);
+            if (SUCCEEDED(hr))
+            {
+                bFound = TRUE;
+                break;
+            }
+            SAFE_RELEASE(pFilter);
+        }
+    }
+
+    if (bFound)
+    {
+        *ppFilter = pFilter;
+        (*ppFilter)-&gt;AddRef();
+    }
+    else
+    {
+        hr = E_FAIL;
+    }
+
+    SAFE_RELEASE(pEnum);
+    SAFE_RELEASE(pFilter);
+    SAFE_RELEASE(pWrapper);
+    return hr;
+}
+
+HRESULT GetPin(IBaseFilter *pFilter, PIN_DIRECTION PinDir, IPin** ppPin)
+{
+    BOOL bFound = FALSE;
+    IEnumPins *pEnum = NULL;
+    IPin *pPin = NULL;
+
+    HRESULT hr = pFilter-&gt;EnumPins(&amp;pEnum);
+    if (SUCCEEDED(hr))
+    {
+        while(pEnum-&gt;Next(1, &amp;pPin, 0) == S_OK)
+        {
+            PIN_DIRECTION PinDirThis;
+            hr = pPin-&gt;QueryDirection(&amp;PinDirThis);
+            if (FAILED(hr))
+            {
+                break;
+            }
+            if (PinDir == PinDirThis)
+            {
+                bFound = TRUE;
+                break;
+            }
+            SAFE_RELEASE(pPin);
+        }
+    }
+
+    if (bFound)
+    {
+        *ppPin = pPin;
+        (*ppPin)-&gt;AddRef();
+    }
+    else
+    {
+        hr = E_FAIL;
+    }
+
+    SAFE_RELEASE(pPin);
+    SAFE_RELEASE(pEnum);
+    return hr;
+}
+
+HRESULT DisconnectPin(IGraphBuilder *pGraph, IPin *pPin, IPin **ppConnected)
+{
+    IPin *pConnected = NULL;
+
+    HRESULT hr = pPin-&gt;ConnectedTo(&amp;pConnected);
+    if (SUCCEEDED(hr))
+    {
+        hr = pGraph-&gt;Disconnect(pPin);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pGraph-&gt;Disconnect(pConnected);
+    }
+    if (SUCCEEDED(hr))
+    {
+        *ppConnected = pConnected;
+        (*ppConnected)-&gt;AddRef();
+    }
+
+    SAFE_RELEASE(pConnected);
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="reading-asf-files-in-directshow.html">Reading ASF Files in DirectShow</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

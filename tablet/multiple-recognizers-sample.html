@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Multiple Recognizers Sample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This sample demonstrates advanced features of the MicrosoftTablet PC Automation application programming interface (API) used for handwriting recognition.
+ms.assetid: c9e6613c-5797-44c3-8ce1-92d4d1459ecf
+title: Multiple Recognizers Sample
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Multiple Recognizers Sample</h1>
+<p>This sample demonstrates advanced features of the MicrosoftTablet PC Automation application programming interface (API) used for <em>handwriting</em> recognition.</p>
+<p>It includes the following:</p>
+<ul>
+<li>Enumerating the installed recognizers</li>
+<li>Creating a <em>recognizer context</em> with a specific language recognizer</li>
+<li>Serializing recognition results with a stroke collection</li>
+<li>Organizing stroke collections into a custom collection within the <a href="inkdisp-class.html"><strong>InkDisp</strong></a> object</li>
+<li>Serializing <em>ink</em> objects to and retrieving them from an <em>ink serialized format (ISF)</em> file</li>
+<li>Setting recognizer input guides</li>
+<li>Using synchronous and asynchronous recognition</li>
+</ul>
+<h2>Ink Headers</h2>
+<p>First, include the headers for Tablet PC Automation interfaces. These are installed with the Microsoft Windows XP Tablet PC Edition Software Development Kit (SDK).</p>
+<pre lang="C++"><code>#include &lt;msinkaut.h&gt;
+#include &lt;msinkaut_i.c&gt;
+</code></pre>
+<p>The EventSinks.h file defines the IInkEventsImpl and IInkRecognitionEventsImpl interfaces.</p>
+<pre lang="C++"><code>#include &quot;EventSinks.h&quot;
+</code></pre>
+<h2>Enumerating the Installed Recognizers</h2>
+<p>The application's LoadMenu method populates the Create New Strokes menu with the available recognizers. An <a href="/previous-versions/windows/desktop/legacy/ms702438(v=vs.85)"><strong>InkRecognizers</strong></a> is created. If the <a href="/windows/desktop/api/msinkaut/nf-msinkaut-iinkrecognizer-get_languages"><strong>Languages</strong></a> property of an <strong>InkRecognizers</strong> object is not empty, then the recognizer is a <em>text recognizer</em>, and the value of its <a href="/windows/desktop/api/msinkaut/nf-msinkaut-iinkrecognizer-get_name"><strong>Name</strong></a> property is added to the menu.</p>
+<pre lang="C++"><code>// Create the enumerator for the installed recognizers
+hr = m_spIInkRecognizers.CoCreateInstance(CLSID_InkRecognizers);
+...
+    // Filter out non-language recognizers by checking for
+    // the languages supported by the recognizer - there is not
+    // any if it is a gesture or object recognizer.
+    CComVariant vLanguages;
+    if (SUCCEEDED(spIInkRecognizer-&gt;get_Languages(&amp;vLanguages)))
+    {
+        if ((VT_ARRAY == (VT_ARRAY &amp; vLanguages.vt))           // it should be an array
+            &amp;&amp; (NULL != vLanguages.parray)
+            &amp;&amp; (0 &lt; vLanguages.parray-&gt;rgsabound[0].cElements)) // with at least one element
+        {
+            // This is a language recognizer. Add its name to the menu.
+            CComBSTR bstrName;
+            if (SUCCEEDED(spIInkRecognizer-&gt;get_Name(&amp;bstrName)))
+                ...
+        }
+    }
+</code></pre>
+<h2>Creating an Ink Collector</h2>
+<p>The application's OnCreate method creates an <a href="inkcollector-class.html"><strong>InkCollector</strong></a> object, connects it to its event source, and enables ink collection.</p>
+<pre lang="C++"><code>// Create an ink collector object.
+hr = m_spIInkCollector.CoCreateInstance(CLSID_InkCollector);
+
+// Establish a connection to the collector's event source.
+hr = IInkCollectorEventsImpl&lt;CMultiRecoApp&gt;::DispEventAdvise(m_spIInkCollector);
+
+// Enable ink input in the m_wndInput window
+hr = m_spIInkCollector-&gt;put_hWnd((long)m_wndInput.m_hWnd);
+hr = m_spIInkCollector-&gt;put_Enabled(VARIANT_TRUE);
+</code></pre>
+<h2>Creating a Recognizer Context</h2>
+<p>The application's CreateRecoContext method creates and initializes a new recognizer context, and sets up the guides supported by the associated language. The <a href="/windows/desktop/api/msinkaut/nn-msinkaut-iinkrecognizer"><strong>IInkRecognizer</strong></a> object's <a href="/windows/desktop/api/msinkaut/nf-msinkaut-iinkrecognizer-createrecognizercontext"><strong>CreateRecognizerContext</strong></a> method creates a <a href="/windows/desktop/api/msinkaut/nn-msinkaut-iinkrecognizercontext2"><strong>IInkRecognizerContext2</strong></a> object for the language. If necessary, the old recognizer context is replaced. The context is connected to its event source. Finally, the <a href="/windows/desktop/api/msinkaut/nf-msinkaut-iinkrecognizer-get_capabilities"><strong>Capabilities</strong></a> property of the recognizer context is checked for which guides the recognizer context supports.</p>
+<pre lang="C++"><code>// Create a recognizer context
+CComPtr&lt;IInkRecognizerContext2&gt; spNewContext;
+if (FAILED(pIInkRecognizer2-&gt;CreateRecognizerContext(&amp;spNewContext)))
+    return false;
+
+// Replace the current context with the new one
+if (m_spIInkRecoContext != NULL)
+{
+    // Close the connection to the recognition events source
+    IInkRecognitionEventsImpl&lt;CMultiRecoApp&gt;::DispEventUnadvise(m_spIInkRecoContext);
+}
+m_spIInkRecoContext.Attach(spNewContext.Detach());
+
+// Establish a connection with the recognizer context's event source
+if (FAILED(IInkRecognitionEventsImpl&lt;CMultiRecoApp&gt;::DispEventAdvise(m_spIInkRecoContext)))
+    ...
+
+// Set the guide if it's supported by the recognizer and has been created 
+int cRows = 0, cColumns = 0;
+InkRecognizerCapabilities dwCapabilities = IRC_DontCare;
+if (SUCCEEDED(pIInkRecognizer-&gt;get_Capabilities(&amp;dwCapabilities)))
+    ...
+</code></pre>
+<h2>Collecting Strokes and Displaying Recognition Results</h2>
+<p>The application's OnStroke method updates the <a href="/previous-versions/windows/desktop/legacy/ms703293(v=vs.85)"><strong>InkStrokes</strong></a> of the ink collector, cancels existing asynchronous recognition requests, and creates a recognition request on the recognizer context.</p>
+<pre lang="C++"><code>// Add the new stroke to the current collection
+hr = m_spIInkStrokes-&gt;Add(pIInkStroke);
+
+if (SUCCEEDED(hr))
+{
+    // Cancel the previous background recognition requests
+    // which have not been processed yet
+    m_spIInkRecoContext-&gt;StopBackgroundRecognition();
+
+    // Ask the context to update the recognition results with newly added strokes
+    // When the results are ready, the recognizer context returns them
+    // through the corresponding event RecognitionWithAlternates
+    CComVariant vCustomData;
+    m_spIInkRecoContext-&gt;BackgroundRecognize(vCustomData);
+}
+</code></pre>
+<p>The application's <code>OnRecognition</code> method sends the results of the recognition request to the output window's <code>UpdateString</code> method.</p>
+<pre lang="C++"><code>// Update the output window with the new results
+m_wndResults.UpdateString(bstrRecognizedString);
+</code></pre>
+<h2>Deleting Strokes and Recognition Results</h2>
+<p>The application's OnClear method deletes all strokes and recognition results from the <a href="inkdisp-class.html"><strong>InkDisp</strong></a> object and clears the windows. The recognizer context's association with its <a href="/previous-versions/windows/desktop/legacy/ms703293(v=vs.85)"><strong>InkStrokes</strong></a> collection is removed.</p>
+<pre lang="C++"><code>// Detach the current stroke collection from the recognizer context and release it
+if (m_spIInkRecoContext != NULL)
+    m_spIInkRecoContext-&gt;putref_Strokes(NULL);
+
+m_spIInkStrokes.Release();
+
+// Clear the custom strokes collection
+if (m_spIInkCustomStrokes != NULL)
+    m_spIInkCustomStrokes-&gt;Clear();
+
+// Delete all strokes from the Ink object
+// Passing NULL as a stroke collection pointer means asking to delete all strokes
+m_spIInkDisp-&gt;DeleteStrokes(NULL);
+
+// Get a new stroke collection from the ink object
+...
+// Ask for an empty collection by passing an empty variant 
+if (SUCCEEDED(m_spIInkDisp-&gt;CreateStrokes(v, &amp;m_spIInkStrokes)))
+{
+    // Attach it to the recognizer context
+    if (FAILED(m_spIInkRecoContext-&gt;putref_Strokes(m_spIInkStrokes)))
+        ...
+}
+</code></pre>
+<h2>Changing Recognizer Contexts</h2>
+<p>The application's OnNewStrokes method is called when the user selects a recognizer in the Create New Strokes menu. The current <a href="/previous-versions/windows/desktop/legacy/ms703293(v=vs.85)"><strong>InkStrokes</strong></a> is saved. If a different language recognizer was selected, a new recognizer context is created. Then, a new <strong>InkStrokes</strong> is attached to the new recognizer context.</p>
+<pre lang="C++"><code>// Save the current stroke collection if there is any
+if (m_spIInkRecoContext != NULL)
+{
+    // Cancel the previous background recognition requests
+    // which have not been processed yet
+    m_spIInkRecoContext-&gt;StopBackgroundRecognition();
+    
+    // Let the context know that there'll be no more input 
+    // for the attached stroke collection
+    m_spIInkRecoContext-&gt;EndInkInput();
+
+    // Add the stroke collection to the Ink object's CustomStrokes collection
+    SaveStrokeCollection();
+}
+...
+// If a different recognizer was selected, create a new recognizer context
+// Else, reuse the same recognizer context
+if (wID != m_nCmdRecognizer)
+{
+    // Get a pointer to the recognizer object from the recognizer collection  
+    CComPtr&lt;IInkRecognizer&gt; spIInkRecognizer;
+    if ((m_spIInkRecognizers == NULL)
+        || FAILED(m_spIInkRecognizers-&gt;Item(wID - ID_RECOGNIZER_FIRST,
+                                             &amp;spIInkRecognizer))
+        || (false == CreateRecoContext(spIInkRecognizer)))
+    {
+        // restore the cursor
+        ::SetCursor(hCursor);
+        return 0;
+    }
+
+    // Update the status bar
+    m_bstrCurRecoName.Empty();
+    spIInkRecognizer-&gt;get_Name(&amp;m_bstrCurRecoName);
+    UpdateStatusBar();
+
+    // Store the selected recognizer's command id
+    m_nCmdRecognizer = wID;
+}
+</code></pre>
+<p>It then calls StartNewStrokeCollection, which creates an empty <a href="/previous-versions/windows/desktop/legacy/ms703293(v=vs.85)"><strong>InkStrokes</strong></a> and attaches it to the recognizer context.</p>
+<h2>Saving the Strokes Collection for a Recognizer Context</h2>
+<p>The application's <code>SaveStrokeCollection</code> method checks for an existing recognizer context, and finalizes the recognition of the current strokes collection. Then the <a href="/previous-versions/windows/desktop/legacy/ms703293(v=vs.85)"><strong>InkStrokes</strong></a> collection is added to the <a href="/windows/desktop/api/msinkaut/nf-msinkaut-iinkdisp-get_customstrokes"><strong>CustomStrokes</strong></a> of the ink object.</p>
+<pre lang="C++"><code>if (m_spIInkRecoContext != NULL)
+{
+    if (SUCCEEDED(m_spIInkStrokes-&gt;get_Count(&amp;lCount)) &amp;&amp; 0 != lCount)
+    {
+        CComPtr&lt;IInkRecognitionResult&gt; spIInkRecoResult;
+        InkRecognitionStatus RecognitionStatus;
+        if (SUCCEEDED(m_spIInkRecoContext-&gt;Recognize(&amp;RecognitionStatus, &amp;spIInkRecoResult)))
+        {
+            if (SUCCEEDED(spIInkRecoResult-&gt;SetResultOnStrokes()))
+            {
+                CComBSTR bstr;
+                spIInkRecoResult-&gt;get_TopString(&amp;bstr);
+                m_wndResults.UpdateString(bstr);
+            }
+            ...
+        }
+    }
+    // Detach the stroke collection from the old recognizer context
+    m_spIInkRecoContext-&gt;putref_Strokes(NULL);
+}
+
+// Now add it to the ink's custom strokes collection
+// Each item (stroke collection) of the custom strokes must be identified
+// by a unique string. Here we generate a GUID for this.
+if ((0 != lCount) &amp;&amp; (m_spIInkCustomStrokes != NULL))
+{
+    GUID guid;
+    WCHAR szGuid[40]; // format: &quot;{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}&quot;
+    if (SUCCEEDED(::CoCreateGuid(&amp;guid)) 
+        &amp;&amp; (::StringFromGUID2(guid, szGuid, countof(szGuid)) != 0))
+    {
+        CComBSTR bstrGuid(szGuid);
+        if (FAILED(m_spIInkCustomStrokes-&gt;Add(bstrGuid, m_spIInkStrokes)))
+            ...
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

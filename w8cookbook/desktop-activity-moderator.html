@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Desktop Activity Moderator</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Desktop Activity Moderator
+description: Desktop Activity Moderator
+ms.assetid: F1C54DB0-0AFC-4A1B-9697-6CEB519C2663
+keywords:</p>
+<ul>
+<li>battery life</li>
+<li>connected standby</li>
+<li>suspension</li>
+<li>throttling
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Desktop Activity Moderator</h1>
+<h2>Platform</h2>
+<p><strong>Clients</strong> â€“ WindowsÂ 8</p>
+<blockquote>
+<p>[!Note]<br />
+The DAM is present only on WindowsÂ 8 client machines that support connected standby. The DAM is not present on server SKUs.</p>
+</blockquote>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+Windows Store apps built for Windows 8 are not impacted by the DAM.</p>
+</blockquote>
+<p>Â </p>
+<!-- raw HTML omitted -->
+<h2>Description</h2>
+<p>Our customers are shifting towards lighter, smaller, more mobile platforms to satisfy their computing needs. As part of the shift to mobile devices, users have become increasingly concerned about battery life of their devices. The Desktop Activity Moderator (DAM) is one of several new features in Windows 8 designed to ensure consistent, long battery life for devices that support connected standby.</p>
+<p>Connected standby occurs when the device is powered on, but the screen is turned off. In this power state, the system is technically always â€œonâ€ (to support key scenarios like mail, VoIP, social networking, and instant messaging with Windows Store apps). It is analogous to the state a smart phone is in when the user presses the power button.</p>
+<p>As such, software (including apps and operating system software) must be well-behaved during connected standby. The DAM was created to suppress desktop app execution in a manner similar to the Sleep state (S3 on ACPI devices). It does this by suspending or throttling desktop software processes across the system upon connected standby entry. This enables systems that support connected standby to deliver minimized resource usage and long, consistent battery life while enabling Windows Store apps to deliver the connected experiences they promise.</p>
+<h2>Details</h2>
+<p>The DAM is a kernel -mode driver that is loaded and initialized at system boot if the system supports connected standby. (This is determined by evaluating if the AOAC field in the SYSTEM_POWER_CAPABILITIES structure returned by CallNtPowerInformation is set to TRUE).</p>
+<p>When the DAM is enabled and your desktop process is created, the DAM adds your process to system-managed job objects:</p>
+<ul>
+<li>If the process was created in session 0, DAM adds the process to a job object subject to <strong>throttling</strong></li>
+<li>If the process was created in an interactive session (session 1 or higher), DAM adds the process to a job object subject to <strong>suspension</strong></li>
+</ul>
+<blockquote>
+<p>[!Note]<br />
+For Windows 8, job objects can be nested. This means that the DAMâ€™s usage of job objects does not interfere with an appâ€™s existing usage of job objects.</p>
+</blockquote>
+<p>Â </p>
+<p>When the screen is on, the DAM is disengaged and does not impact any processes on the system. When the system is in connected standby, depending on activity on the system, DAM might throttle or suspend processes.</p>
+<ul>
+<li>Processes that are subject to suspension have all their threads suspended (not allowed to run under any circumstances); app state (process memory) is maintained</li>
+<li>Processes that are subject to throttling cycle between suspended and unsuspended (a large majority of time is spent in the suspended state)
+<ul>
+<li>Be aware that Windows might also detect that critical activities are occurring and might unsuspend throttled services for longer periods of time during this activity</li>
+<li>Also, note that while in connected standby, sensors and networks might not be available, so throttled processes should be designed to be resilient to poor network conditions (for most processes, this doesnâ€™t require any change)</li>
+</ul>
+</li>
+</ul>
+<p>When DAM suspension is engaged or disengaged, DAM triggers delivery of a WM_POWERBROADCAST message to those processes subject to suspension that have opted-in to message delivery (via API call or compatibility shim, described later). After a few seconds delay, DAM suspends the process.</p>
+<p>There are no notifications when DAM throttling is engaged or disengaged. Processes should not need modification; processes continue to function, albeit at a slower rate.</p>
+<h2>Manifestation</h2>
+<p>Processes are often suspended or throttled during the connected standby state. To the majority of suspended apps, this should be very similar to an S3 suspend / resume or S4 hibernate / resume transition. Manifestations might include but are not limited to inconsistencies in uptime / runtime vs. wall clock time, inconsistencies in timer behavior, or dramatic changes in operating system state before and after the suspend completes.</p>
+<p>Suspension and throttling happens as a unit (all suspendable processes are suspended and unsuspended in unison, and all processes that can be throttled are throttled and unthrottled in unison), so communication between two suspended processes or two throttled processes does not pose a problem.</p>
+<p>Software that relies on cross-process communication might need special consideration:</p>
+<ul>
+<li><strong>Communication between processes in session 0 (throttled) and session 1+ (suspended)</strong> â€“ examples include tray icons or UI components that represent current service state</li>
+<li><strong>Communication between components in user mode (session 0 or 1) and drivers (which are neither throttled nor suspended)</strong> â€“ examples include services that do work on behalf of a driver</li>
+</ul>
+<p>In these cases, if cross-process communication is not handled correctly, apps can appear hung or unresponsive (though the user might not see this impact directly, as the screen will be off when in connected standby). In most cases, however, services and drivers should already be developed to be robust against cross-process communication issues.</p>
+<p>Vendors who create software for, or dependent on, the web should consider how process suspension affects connection lifetimes and handshakes. Additionally, because network connectivity might not be available when in Connected Standby mode, developers of processes created in session 0 should be especially aware of how intermittent network connections affect the process.</p>
+<h2>Solution</h2>
+<p>Windows Store apps are not impacted by the DAM. If your desktop app is impacted by the DAM, you can request notifications before suspension is engaged (for example, to save state or close network connections) using one of these methods:</p>
+<ul>
+<li>If your app has a window (HWND) and you want to handle these notifications through your window procedure, call <a href="/windows/win32/api/winuser/nf-winuser-registersuspendresumenotification">RegisterSuspendResumeNotification</a> to register for these messages (or <a href="/windows/win32/api/winuser/nf-winuser-unregistersuspendresumenotification">UnregisterSuspendResumeNotification</a> to unregister). You can use DEVICE_NOTIFY_WINDOW_HANDLE in the Flags parameter, and pass your windowâ€™s HWND in as the Recipient parameter. The message received is the WM_POWERBROADCAST message.</li>
+<li>If your app does not have a window (HWND) or you want a direct callback, call <a href="/windows/win32/api/powerbase/nf-powerbase-powerregistersuspendresumenotification">PowerRegisterSuspendResumeNotification</a> to register for these messages (or <a href="/windows/win32/api/powerbase/nf-powerbase-powerunregistersuspendresumenotification">PowerUnregisterSuspendResumeNotification</a> to unregister). You must use DEVICE_NOTIFY_CALLBACK in the Flags parameter and pass a value of type PDEVICE_NOTIFY_SUBSCRIBE_PARAMETERS in the Recipient parameter.</li>
+<li>If your app cannot be recompiled, you can opt in to receive these WM_POWERBROADCAST messages via the <a href="../win7appqual/application-compatibility-toolkit--act-.html">AppCompat toolkit</a> (using the PromoteDAM shim).</li>
+</ul>
+<p>The suspend message is WM_POWERBROADCAST with wParam=PBT_APMSUSPEND; this message is broadcast concurrently to all opted in processes on the system. Your app must perform any work on the suspend path quickly and efficiently. The timeout after the broadcast notification is global, not per process, so your process might be contending for system resources if the work required in this path is extensive.</p>
+<p>The resume message is WM_POWERBROADCAST with wParam=PBT_APMRESUME; this message is broadcast concurrently to all opted in processes after a resume. Relative time of delivery to the system exit from connected standby is not guaranteed.</p>
+<p>For camera related applications, when power state transition is taking place, during the suspension notification, applications must release all references to the camera (all capture pipeline objects must be shutdown and disposed of).  To avoid possible battery drain, on Windows 10 RS3+ systems Windows Camera Frame Server service will close all capture sessions if the application does not handle the suspension notification properly.  The side effect of this is that when the system comes out of standby or S3/S4 state, the applicationâ€™s capture pipeline is no longer in a working state.</p>
+<h2>Tests</h2>
+<p>Test your software across connected standby transitions.</p>
+<h2>Resources</h2>
+<ul>
+<li><a href="/previous-versions/windows/hardware/design/dn641606(v=vs.85)">Mobile Battery Life Solutions for Windows 7</a></li>
+<li><a href="/windows/win32/api/winnt/ns-winnt-system_power_capabilities">SYSTEM_POWER_CAPABILITIES</a></li>
+<li><a href="/windows/win32/api/powerbase/nf-powerbase-callntpowerinformation">CallNtPowerInformation function</a></li>
+<li><a href="../procthread/job-objects.html">Job Objects</a></li>
+<li><a href="/windows/win32/api/winuser/nf-winuser-registersuspendresumenotification">RegisterSuspendResumeNotification</a></li>
+<li><a href="/windows/win32/api/winuser/nf-winuser-unregistersuspendresumenotification">UnregisterSuspendResumeNotification</a></li>
+<li><a href="/windows/win32/api/powerbase/nf-powerbase-powerregistersuspendresumenotification">PowerRegisterSuspendResumeNotification</a></li>
+<li><a href="/windows/win32/api/powerbase/nf-powerbase-powerunregistersuspendresumenotification">PowerUnregisterSuspendResumeNotification</a></li>
+<li><a href="../win7appqual/application-compatibility-toolkit--act-.html">AppCompat toolkit</a></li>
+</ul>
+<p>Â </p>
+<p>Â </p>
+</body>

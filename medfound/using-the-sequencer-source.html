@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using the Sequencer Source</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to use the Sequencer Source.
+ms.assetid: 7ce8dc67-02b1-4fd4-9e4d-6614fdb40620
+title: Using the Sequencer Source
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using the Sequencer Source</h1>
+<p>This topic describes how to use the <a href="sequencer-source.html">Sequencer Source</a>. It contains the following sections:</p>
+<ul>
+<li><a href="#overview">Overview</a></li>
+<li><a href="#adding-topologies">Adding Topologies</a></li>
+<li><a href="#deleting-topologies">Deleting Topologies</a></li>
+<li><a href="#skipping-to-a-segment">Skipping to a Segment</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<p>For a general overview of the sequencer source, see <a href="about-the-sequencer-source.html">About the Sequencer Source</a>.</p>
+<h2>Overview</h2>
+<p>The sequencer source exposes the following interfaces.</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasource"><strong>IMFMediaSource</strong></a></td>
+<td>Exposes generic media source functionality.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfsequencersource"><strong>IMFSequencerSource</strong></a></td>
+<td>Enables the application to add or remove topologies.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasourcetopologyprovider"><strong>IMFMediaSourceTopologyProvider</strong></a></td>
+<td>Retrieves the next topology to queue on the Media Session.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasourcepresentationprovider"><strong>IMFMediaSourcePresentationProvider</strong></a></td>
+<td>Used by the Media Session to end segments. Applications do not use this interface.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfgetservice"><strong>IMFGetService</strong></a></td>
+<td>Queries the sequencer source for <a href="service-interfaces.html">Service Interfaces</a>.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>To play a sequence of media sources, perform the following steps:</p>
+<ol>
+<li>To create the sequencer source, call the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatesequencersource"><strong>MFCreateSequencerSource</strong></a> function.</li>
+<li>For each segment, create a playback topology, as described in <a href="creating-playback-topologies.html">Creating Playback Topologies</a>. To add the topology to the presentation, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsequencersource-appendtopology"><strong>IMFSequencerSource::AppendTopology</strong></a>.</li>
+<li>Before starting playback, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-createpresentationdescriptor"><strong>IMFMediaSource::CreatePresentationDescriptor</strong></a> on the sequencer source. This method returns a pointer to a presentation descriptor for the first segment. To get the topology associated with this segment, call <strong>QueryInterface</strong> on the sequencer source for the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasourcetopologyprovider"><strong>IMFMediaSourceTopologyProvider</strong></a> interface. Pass the presentation descriptor to the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasourcetopologyprovider-getmediasourcetopology"><strong>IMFMediaSourceTopologyProvider::GetMediaSourceTopology</strong></a> method. This method returns a pointer to the topology.</li>
+<li>Pass the topology for the first segment to the Media Session, by calling the Media Session's <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-settopology"><strong>IMFMediaSession::SetTopology</strong></a> method.</li>
+<li>Start playback by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-start"><strong>IMFMediaSession::Start</strong></a>.</li>
+<li>When the sequencer source is ready to preroll the next segment, it sends an <a href="menewpresentation.html">MENewPresentation</a> event whose event data is an <a href="/windows/desktop/api/mfidl/nn-mfidl-imfpresentationdescriptor"><strong>IMFPresentationDescriptor</strong></a> interface pointer. Again, get the topology for the segment by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasourcetopologyprovider-getmediasourcetopology"><strong>GetMediaSourceTopology</strong></a> on the sequencer source, and set the topology on the Media Session by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-settopology"><strong>SetTopology</strong></a>. It is not necessary to re-start the media source; it will automatically play through to the next segment.</li>
+<li>Before the application quits, shut down the sequencer source by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-shutdown"><strong>IMFMediaSource::Shutdown</strong></a>.</li>
+</ol>
+<p>The following code shows how to get the topology and set it on the Media Session:</p>
+<pre lang="C++"><code>// Queues the next topology on the session.
+
+HRESULT CPlaylist::QueueNextSegment(IMFPresentationDescriptor *pPD)
+{
+    IMFMediaSourceTopologyProvider *pTopoProvider = NULL;
+    IMFTopology *pTopology = NULL;
+
+    //Get the topology for the presentation descriptor
+    HRESULT hr = m_pSequencerSource-&gt;QueryInterface(IID_PPV_ARGS(&amp;pTopoProvider));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pTopoProvider-&gt;GetMediaSourceTopology(pPD, &amp;pTopology);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //Set the topology on the media session
+    m_pSession-&gt;SetTopology(NULL, pTopology);
+
+done:
+    SafeRelease(&amp;pTopoProvider);
+    SafeRelease(&amp;pTopology);
+    return hr;
+}
+</code></pre>
+<p>For a complete code example, see <a href="sequencer-source-example-code.html">Sequencer Source Example Code</a>.</p>
+<h2>Adding Topologies</h2>
+<p>The sequencer source maintains two lists of topologies: the <em>input list</em> and the <em>preroll list</em>.</p>
+<p>The input list is a collection of topologies corresponding to playlist segments, in the order that they were added by the application by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsequencersource-appendtopology"><strong>IMFSequencerSource::AppendTopology</strong></a>. This method assigns each topology a unique <em>segment identifier</em> of the type <strong>MFSequencerElementId</strong>. The segment identifier is set as an attribute for all source topology nodes. An application can get the segment identifier from a source node by using the <a href="mf-toponode-sequence-elementid-attribute.html">MF_TOPONODE_SEQUENCE_ELEMENTID</a> attribute. The input list can have duplicate topologies if the application called <strong>AppendTopology</strong> on the same topology more than once; however, they are identified by their unique segment identifiers.</p>
+<p>The preroll list is a collection of input list topologies that have been initialized in preparation for playback. This enables the Media Session to transition to the next topology seamlessly when the active topology ends. The application cannot directly add or remove topologies from the preroll list; it is generated by the sequencer source when a topology from the input list is selected for playback. This causes the sequencer source to add the next topology from the input list to the preroll list. After doing so, the sequencer source asynchronously raises the <a href="menewpresentation.html">MENewPresentation</a> event and passes the presentation descriptor for the preroll topology as event data. The application must listen for this event by using the Media Session's <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a> interface and queue the preroll topology on the Media Session by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-settopology"><strong>IMFMediaSession::SetTopology</strong></a>. This must be done before the Media Session completes playback of the active topology. <strong>SetTopology</strong> informs the Media Session about the next topology that it must play after playback of the active topology has ended. To ensure a seamless transition, the application must call <strong>SetTopology</strong> before the Media Session completes playing the previous topology. Otherwise, there will be a gap between the segments.</p>
+<p>The <a href="menewpresentation.html">MENewPresentation</a> event is raised as long as there is a topology following the active topology. Consequently, if the input list contains only one topology, or if the active topology is the last one in the input list, this event is not raised.</p>
+<p>The preroll list is synchronized with the input list and is refreshed each time a topology is added to or deleted from the input list.</p>
+<h2>Deleting Topologies</h2>
+<p>To remove a topology from the sequencer source, an application must call the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsequencersource-deletetopology"><strong>IMFSequencerSource::DeleteTopology</strong></a> method and specify the segment identifier.</p>
+<p>Before calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsequencersource-deletetopology"><strong>DeleteTopology</strong></a>, the application must make sure that Media Session is not using the topology that the application wants to delete. To do this, both of the following must occur before the application calls <strong>DeleteTopology</strong>:</p>
+<ul>
+<li>
+<p><a href="mesessiontopologystatus.html">MESessionTopologyStatus</a> event with MF_TOPOSTATUS_ENDED is received for the topology to ensure that Media Session has completed playback.</p>
+</li>
+<li>
+<p><a href="mesessiontopologystatus.html">MESessionTopologyStatus</a> with MF_TOPOSTATUS_STARTED_SOURCE is received for the next topology to ensure that the Media Session has started playing the next topology, <a href="mesessionended.html">MESessionEnded</a> event is received to ensure that Media Session is done with the last topology in the sequencer source.</p>
+</li>
+</ul>
+<p>If the segment being deleted is the active topology, playback is stopped and the sequencer source raises the <a href="meendofpresentationsegment.html">MEEndOfPresentationSegment</a> event. If the active topology is also the last topology, the <a href="meendofpresentation.html">MEEndOfPresentation</a> event is raised.</p>
+<h2>Skipping to a Segment</h2>
+<p>An application can skip to a particular segment in the sequence by starting the <a href="media-session.html">Media Session</a> with a segment offset, as follows:</p>
+<ol>
+<li>
+<p>Call the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatesequencersegmentoffset"><strong>MFCreateSequencerSegmentOffset</strong></a> function to create the segment offset. Specify the identifier of the segment in the <em>dwId</em> parameter. (The identifier was returned by the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfsequencersource-appendtopology"><strong>IMFSequencerSource::AppendTopology</strong></a> method when you first added the topology to the sequencer source.) The <em>hnsOffset</em> parameter specifies a time offset, relative to the start of the segment. Playback will start at this time. For the <em>pvarSegmentOffset</em> parameter, pass in the address of an empty <strong>PROPVARIANT</strong>. When the function returns, this <strong>PROPVARIANT</strong> contains the segment offset.</p>
+</li>
+<li>
+<p>Call the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasession-start"><strong>IMFMediaSession::Start</strong></a> method on the Media Session. For the <em>pguidTimeFormat</em> parameter, use the GUID value MF_TIME_FORMAT_SEGMENT_OFFSET. This value indicates seeking by segment offset. For the <em>pvarStartPosition</em> parameter, pass the address of the <strong>PROPVARIANT</strong> created in the previous step.</p>
+</li>
+</ol>
+<p>The following code example shows how to skip to the start of a specified segment in a sequence.</p>
+<pre lang="C++"><code>// Skips to the specified segment in the sequencer source
+
+HRESULT CPlaylist::SkipTo(DWORD index)
+{
+    if (index &gt;= m_count)
+    {
+        return E_INVALIDARG;
+    }
+
+    MFSequencerElementId ID = m_segments[index].SegmentID;
+
+    PROPVARIANT var;
+
+    HRESULT hr = MFCreateSequencerSegmentOffset(ID, NULL, &amp;var);
+    
+    if (SUCCEEDED(hr))
+    {
+        hr = m_pSession-&gt;Start(&amp;MF_TIME_FORMAT_SEGMENT_OFFSET, &amp;var);
+        PropVariantClear(&amp;var);
+    }
+    return hr;
+}
+</code></pre>
+<p>When the application seeks across segments, the application receives several events as the sequencer source ends the current segment and prepares to play the new segment. Because these events are received asynchronously, it is difficult to predict the exact sequence of events. These events are as follows:</p>
+<ul>
+<li>
+<p>The sequencer source sends an <a href="menewpresentation.html">MENewPresentation</a> event for the new segment to which the Media Session is skipping.</p>
+</li>
+<li>
+<p>When the sequencer source ends the active segment, it sends the <a href="meendofpresentationsegment.html">MEEndOfPresentationSegment</a> event.</p>
+</li>
+<li>
+<p>The sequencer source then cancels the preroll topology. This results in the following events for the canceled topology:</p>
+<ul>
+<li><a href="mesessiontopologystatus.html">MESessionTopologyStatus</a> event with the MF_TOPOSTATUS_READY flag.</li>
+<li><a href="mesessiontopologystatus.html">MESessionTopologyStatus</a> event with the MF_TOPOSTATUS_STARTED_SOURCE flag.</li>
+<li><a href="meendofpresentationsegment.html">MEEndOfPresentationSegment</a> event with the <a href="mf-event-source-topology-canceled-attribute.html">MF_EVENT_SOURCE_TOPOLOGY_CANCELED</a> attribute to indicate that the topology was canceled by the sequencer source.</li>
+</ul>
+</li>
+<li>
+<p>Next, the sequencer source sends events for the new segment, including various <a href="mesessiontopologystatus.html">MESessionTopologyStatus</a> events.</p>
+</li>
+<li>
+<p>If the new segment is not the last on the list, the sequencer source refreshes the preroll list and raises another <a href="menewpresentation.html">MENewPresentation</a> for the new preroll topology. For information about topologies in the preroll list, see <a href="about-the-sequencer-source.html">About the Sequencer Source</a>.</p>
+</li>
+</ul>
+<p>More details about the events sent by the sequencer source can be found in the topic <a href="sequencer-source-events.html">Sequencer Source Events</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="how-to-create-a-playlist.html">How to Create a Playlist</a></p>
+<!-- raw HTML omitted -->
+<p><a href="sequencer-source.html">Sequencer Source</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

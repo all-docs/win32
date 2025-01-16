@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>3D lookup table effect</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: 3D lookup table effect
+description: A 3D look-up table is a general-purpose effect that is used to encapsulate any 1 1 imaging effect by pre-computing how the effect maps inputs to outputs for a subset of all input values.
+ms.assetid: 2f0b4b6d-f371-101c-918a-bf564778e593
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>3D lookup table effect</h1>
+<p>A 3D look-up table is a general-purpose effect that is used to encapsulate any 1:1 imaging effect by pre-computing how the effect maps inputs to outputs for a subset of all input values.</p>
+<p>The 3D Lookup Table (LUT) effect modifies an input image by using the image's RGB color value to index a 3D texture, where the texture contains a precomputed output value of an arbitrary effect pipeline.</p>
+<p>The 3D LUT must be loaded into a GPU texture resource in order to be rendered, and this can be expensive depending on the size of the texture and the device capabilities. Application developers can specify when to pay this cost using the <a href="/windows/win32/api/d2d1_3/nn-d2d1_3-id2d1lookuptable3d"><strong>ID2D1LookupTable3D</strong></a> D2D resource. <strong>ID2D1LookupTable3D</strong> has the following attributes:</p>
+<ul>
+<li>Provides an abstracted representation of 3D LUT's GPU resource.</li>
+<li>Depending on the device capabilities, either a 2D or 3D texture will be created and filled with the provided LUT data.</li>
+<li>Can be passed to the 3D LUT effect's property for rendering.</li>
+</ul>
+<p>The CLSID for this effect is CLSID_D2D1LookupTable3D.</p>
+<ul>
+<li><a href="#example-image">Example Image</a></li>
+<li><a href="#sample-code">Sample Code</a></li>
+<li><a href="#effect-properties">Effect Properties</a></li>
+<li><a href="#requirements">Requirements</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Example image</h2>
+<p><img src="images/3dlookuptable-effect.png" alt="example of effect output" /></p>
+<h2>Sample code</h2>
+<pre lang="cpp"><code>//
+    // 1. Generate the lookup table data and create an ID2D1LookupTable3D.
+    //
+Â 
+    // Create a 16x16x16 LUT of arbitrary data type T.
+    UINT extents[] = { 16, 16, 16 };
+    UINT cElements = extents[0] * extents[1] * extents[2] * 4;
+    UINT cbElements = cElements * formatSize;
+Â 
+    // Compute the step size in each direction to vary the RGB 
+    // channels uniformly over the range [0, 1]
+    float steps[] = 
+    { 
+        1.0f / static_cast&lt;float&gt;(extents[0] - 1),
+        1.0f / static_cast&lt;float&gt;(extents[1] - 1),
+        1.0f / static_cast&lt;float&gt;(extents[2] - 1),
+    };
+Â 
+    CArray&lt;BYTE&gt; lutData;
+    IFR(lutData.Resize(cbElements));
+Â 
+    T* pData = reinterpret_cast&lt;T *&gt;(lutData.GetData());
+    T oneValue = ConvertValue&lt;T&gt;(1.0f);
+    
+    // Generate the LUT by applying an imaging pipeline to RGB values.
+    for (UINT iR = 0; iR &lt; extents[2]; iR++)
+    {
+        for (UINT iG = 0; iG &lt; extents[1]; iG++)
+        {
+            for (UINT iB = 0; iB &lt; extents[0]; iB++)
+            {
+                T outputColor[3];
+                ApplyPipeline(iR * steps[2], iG * steps[1], iB * steps[0], &amp;outputColor);
+Â 
+                pData[0] = outColor[0];
+                pData[1] = outColor[1];
+                pData[2] = outColor[2];
+Â 
+                // Set opaque alpha in the output
+                pData[3] = oneValue;
+Â 
+                // Advance the pointer
+                pData += sizeof(T) * 4;
+            }
+        }
+    }
+    
+    // Compute the strides of the LUT data.
+    UINT strides[2];
+    IFR(UIntMult(sizeof(T) * 4, extents[0], &amp;strides[0]));
+    IFR(UIntMult(strides[0], extents[1], &amp;strides[1]));
+    
+    D2D1_BUFFER_PRECISION precision = GetBufferPrecision&lt;T&gt;();
+Â 
+    // Create an ID2D1LookupTable3D from the LUT data.
+    CComPtr&lt;ID2D1LookupTable3D&gt; sp3dLut;
+    IFR(_spEffectContext1-&gt;CreateLookupTable3D(
+        precision,
+        extents,
+        lutData.GetData(),
+        lutData.GetCount(),
+        strides,
+        &amp;sp3dLut
+        )); 
+Â 
+    //
+    // 2. To apply the lookup table to an input image, create a LookupTable3D effect
+    //    and pass the ID2D1LookupTable3D to the effect as a property.
+    //
+Â 
+    // Create a 3D LUT effect to render our LUT.
+    CComPtr&lt;ID2D1Effect&gt; sp3dLutEffect;
+    IFR(pEffectContext-&gt;CreateEffect(CLSID_D2D1LookupTable3D, &amp;sp3dLutEffect)); 
+Â 
+    // Set the LUT as a property on the effect.
+    IFR(sp3dLutEffect-&gt;SetValue(D2D1_LOOKUPTABLE3D_PROP_LUT, _spLut));
+</code></pre>
+<h2>Effect properties</h2>
+<p>The properties for the 3D lookup table effect are defined by the <a href="/windows/desktop/api/d2d1effects_2/ne-d2d1effects_2-d2d1_lookuptable3d_prop"><strong>D2D1_LOOKUPTABLE3D_PROP</strong></a> enumeration.</p>
+<h2>Requirements</h2>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Minimum supported client</td>
+<td>WindowsÂ 10 [desktop apps | Windows Store apps]</td>
+</tr>
+<tr>
+<td>Minimum supported server</td>
+<td>WindowsÂ 10 [desktop apps | Windows Store apps]</td>
+</tr>
+<tr>
+<td>Header</td>
+<td>d2d1effects_2.h</td>
+</tr>
+<tr>
+<td>Library</td>
+<td>d2d1.lib, dxguid.lib</td>
+</tr>
+</tbody>
+</table>
+<h2>Related topics</h2>
+<ul>
+<li><a href="/windows/desktop/api/d2d1_1/nn-d2d1_1-id2d1effect">ID2D1Effect interface</a></li>
+</ul>
+</body>

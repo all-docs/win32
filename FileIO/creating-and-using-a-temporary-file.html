@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creating and Using a Temporary File</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Example code that shows how to create a temporary file for data manipulation purposes by using the GetTempFileName and GetTempPath2 functions.
+ms.assetid: 6254c67d-5d34-499d-b1a4-8cac526dd294
+title: Creating and Using a Temporary File
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Creating and Using a Temporary File</h1>
+<p>Applications can obtain unique file and path names for temporary files by using the <a href="/windows/desktop/api/FileAPI/nf-fileapi-gettempfilenamea"><strong>GetTempFileName</strong></a> and <a href="/windows/desktop/api/FileAPI/nf-fileapi-gettemppath2a"><strong>GetTempPath2</strong></a> functions. The <strong>GetTempFileName</strong> function generates a unique file name, and the <strong>GetTempPath2</strong> function retrieves the path to a directory where temporary files should be created.</p>
+<p>The following procedure describes how an application creates a temporary file for data manipulation purposes.</p>
+<p><strong>To create and use a temporary file</strong></p>
+<ol>
+<li>The application opens the user-provided source text file by using <a href="/windows/desktop/api/FileAPI/nf-fileapi-createfilea"><strong>CreateFile</strong></a>.</li>
+<li>The application retrieves a temporary file path and file name by using the <a href="/windows/desktop/api/FileAPI/nf-fileapi-gettemppath2a"><strong>GetTempPath2</strong></a> and <a href="/windows/desktop/api/FileAPI/nf-fileapi-gettempfilenamea"><strong>GetTempFileName</strong></a> functions, and then uses <a href="/windows/desktop/api/FileAPI/nf-fileapi-createfilea"><strong>CreateFile</strong></a> to create the temporary file.</li>
+<li>The application reads blocks of text data into a buffer, converts the buffer contents to uppercase using the <a href="/windows/win32/api/winuser/nf-winuser-charupperbuffa">CharUpperBuffA</a> function, and writes the converted buffer to the temporary file.</li>
+<li>When all of the source file is written to the temporary file, the application closes both files, and renames the temporary file to &quot;allcaps.txt&quot; by using the <a href="/windows/desktop/api/WinBase/nf-winbase-movefileexa"><strong>MoveFileEx</strong></a> function.</li>
+</ol>
+<p>Each of the previous steps is checked for success before moving to the next step, and a failure description is displayed if an error occurs. The application will terminate immediately after displaying the error message.</p>
+<p>Note that text file manipulation was chosen for ease of demonstration only and can be replaced with any desired data manipulation procedure required. The data file can be of any data type, not only text.</p>
+<p>The <a href="/windows/desktop/api/FileAPI/nf-fileapi-gettemppath2a"><strong>GetTempPath2</strong></a> function retrieves a fully qualified path string from an environment variable but does not check in advance for the existence of the path or adequate access rights to that path, which is the responsibility of the application developer. For more information, see <a href="/windows/desktop/api/FileAPI/nf-fileapi-gettemppath2a"><strong>GetTempPath2</strong></a>. In the following example, an error is regarded as a terminal condition and the application exits after sending a descriptive message to standard output. However, many other options exist, such as prompting the user for a temporary directory or simply attempting to use the current directory.</p>
+<blockquote>
+<p>[!Note]<br />
+The <a href="/windows/desktop/api/FileAPI/nf-fileapi-gettempfilenamea"><strong>GetTempFileName</strong></a> function does not require that the <a href="/windows/desktop/api/FileAPI/nf-fileapi-gettemppath2a"><strong>GetTempPath2</strong></a> function be used.</p>
+</blockquote>
+<p>Â </p>
+<p>The following C++ example shows how to create a temporary file for data manipulation purposes.</p>
+<pre lang="C++"><code>//
+//  This application opens a file specified by the user and uses
+//  a temporary file to convert the file to upper case letters.
+//  Note that the given source file is assumed to be an ASCII text file
+//  and the new file created is overwritten each time the application is
+//  run.
+//
+
+#include &lt;windows.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;stdio.h&gt;
+
+#define BUFSIZE 1024
+
+void PrintError(LPCTSTR errDesc);
+
+int _tmain(int argc, TCHAR *argv[])
+{
+    HANDLE hFile     = INVALID_HANDLE_VALUE;
+    HANDLE hTempFile = INVALID_HANDLE_VALUE; 
+
+    BOOL fSuccess  = FALSE;
+    DWORD dwRetVal = 0;
+    UINT uRetVal   = 0;
+
+    DWORD dwBytesRead    = 0;
+    DWORD dwBytesWritten = 0; 
+
+    TCHAR szTempFileName[MAX_PATH];  
+    TCHAR lpTempPathBuffer[MAX_PATH];
+    char  chBuffer[BUFSIZE]; 
+
+    LPCTSTR errMsg;
+
+    if(argc != 2)
+    {
+        _tprintf(TEXT(&quot;Usage: %s &lt;file&gt;\n&quot;), argv[0]);
+        return -1;
+    }
+
+    //  Opens the existing file. 
+    hFile = CreateFile(argv[1],               // file name 
+                       GENERIC_READ,          // open for reading 
+                       0,                     // do not share 
+                       NULL,                  // default security 
+                       OPEN_EXISTING,         // existing file only 
+                       FILE_ATTRIBUTE_NORMAL, // normal file 
+                       NULL);                 // no template 
+    if (hFile == INVALID_HANDLE_VALUE) 
+    { 
+        PrintError(TEXT(&quot;First CreateFile failed&quot;));
+        return (1);
+    } 
+
+     //  Gets the temp path env string (no guarantee it's a valid path).
+    dwRetVal = GetTempPath2(MAX_PATH,          // length of the buffer
+                           lpTempPathBuffer); // buffer for path 
+    if (dwRetVal &gt; MAX_PATH || (dwRetVal == 0))
+    {
+        PrintError(TEXT(&quot;GetTempPath2 failed&quot;));
+        if (!CloseHandle(hFile))
+        {
+            PrintError(TEXT(&quot;CloseHandle(hFile) failed&quot;));
+            return (7);
+        }
+        return (2);
+    }
+
+    //  Generates a temporary file name. 
+    uRetVal = GetTempFileName(lpTempPathBuffer, // directory for tmp files
+                              TEXT(&quot;DEMO&quot;),     // temp file name prefix 
+                              0,                // create unique name 
+                              szTempFileName);  // buffer for name 
+    if (uRetVal == 0)
+    {
+        PrintError(TEXT(&quot;GetTempFileName failed&quot;));
+        if (!CloseHandle(hFile))
+        {
+            PrintError(TEXT(&quot;CloseHandle(hFile) failed&quot;));
+            return (7);
+        }
+        return (3);
+    }
+
+    //  Creates the new file to write to for the upper-case version.
+    hTempFile = CreateFile((LPTSTR) szTempFileName, // file name 
+                           GENERIC_WRITE,        // open for write 
+                           0,                    // do not share 
+                           NULL,                 // default security 
+                           CREATE_ALWAYS,        // overwrite existing
+                           FILE_ATTRIBUTE_NORMAL,// normal file 
+                           NULL);                // no template 
+    if (hTempFile == INVALID_HANDLE_VALUE) 
+    { 
+        PrintError(TEXT(&quot;Second CreateFile failed&quot;));
+        if (!CloseHandle(hFile))
+        {
+            PrintError(TEXT(&quot;CloseHandle(hFile) failed&quot;));
+            return (7);
+        }
+        return (4);
+    } 
+
+    //  Reads BUFSIZE blocks to the buffer and converts all characters in 
+    //  the buffer to upper case, then writes the buffer to the temporary 
+    //  file. 
+    do 
+    {
+        if (ReadFile(hFile, chBuffer, BUFSIZE, &amp;dwBytesRead, NULL)) 
+        {
+            //  Replaces lower case letters with upper case
+            //  in place (using the same buffer). The return
+            //  value is the number of replacements performed,
+            //  which we aren't interested in for this demo.
+            CharUpperBuffA(chBuffer, dwBytesRead); 
+
+            fSuccess = WriteFile(hTempFile, 
+                                 chBuffer, 
+                                 dwBytesRead,
+                                 &amp;dwBytesWritten, 
+                                 NULL); 
+            if (!fSuccess) 
+            {
+                PrintError(TEXT(&quot;WriteFile failed&quot;));
+                return (5);
+            }
+        } 
+        else
+        {
+            PrintError(TEXT(&quot;ReadFile failed&quot;));
+            return (6);
+        }
+    //  Continues until the whole file is processed.
+    } while (dwBytesRead == BUFSIZE); 
+
+    //  The handles to the files are no longer needed, so
+    //  they are closed prior to moving the new file.
+    if (!CloseHandle(hFile)) 
+    {
+       PrintError(TEXT(&quot;CloseHandle(hFile) failed&quot;));
+       return (7);
+    }
+    
+    if (!CloseHandle(hTempFile)) 
+    {
+       PrintError(TEXT(&quot;CloseHandle(hTempFile) failed&quot;));
+       return (8);
+    }
+
+    //  Moves the temporary file to the new text file, allowing for differnt
+    //  drive letters or volume names.
+    fSuccess = MoveFileEx(szTempFileName, 
+                          TEXT(&quot;AllCaps.txt&quot;), 
+                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED);
+    if (!fSuccess)
+    { 
+        PrintError(TEXT(&quot;MoveFileEx failed&quot;));
+        return (9);
+    }
+    else 
+        _tprintf(TEXT(&quot;All-caps version of %s written to AllCaps.txt\n&quot;), argv[1]);
+    return (0);
+}
+
+//  ErrorMessage support function.
+//  Retrieves the system error message for the GetLastError() code.
+//  Note: caller must use LocalFree() on the returned LPCTSTR buffer.
+LPCTSTR ErrorMessage(DWORD error) 
+{ 
+    LPVOID lpMsgBuf;
+
+    FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER 
+                   | FORMAT_MESSAGE_FROM_SYSTEM 
+                   | FORMAT_MESSAGE_IGNORE_INSERTS,
+                  NULL,
+                  error,
+                  MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                  (LPTSTR) &amp;lpMsgBuf,
+                  0,
+                  NULL);
+
+    return((LPCTSTR)lpMsgBuf);
+}
+
+//  PrintError support function.
+//  Simple wrapper function for error output.
+void PrintError(LPCTSTR errDesc)
+{
+        LPCTSTR errMsg = ErrorMessage(GetLastError());
+        _tprintf(TEXT(&quot;\n** ERROR ** %s: %s\n&quot;), errDesc, errMsg);
+        LocalFree((LPVOID)errMsg);
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

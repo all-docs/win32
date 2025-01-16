@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Alternatives to Dynamic Annotation</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Alternatives to Dynamic Annotation
+description: Alternatives to Dynamic Annotation
+ms.assetid: d8019c65-620b-4aa2-a631-cc32f34e5510
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Alternatives to Dynamic Annotation</h1>
+<p>There are other ways to provide customized <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> support for UI elements, and in some cases, they are the correct solution. Prior to Dynamic Annotation, these alternative techniques were the only options available to developers. They include implementing all of the <strong>IAccessible</strong> interface and programmatic techniques.</p>
+<h2>Implementing All of the IAccessible Interface</h2>
+<p>One alternative technique is to implement all of the <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface. This approach is often necessary for custom controls or radically different UI elements; however, the development and test costs are significant enough that it should be avoided unless truly necessary. If the goal is to modify a single property, the cost is difficult to justify.</p>
+<h2>Programmatic Techniques</h2>
+<p>Another option is to use subclassing and wrapping techniques to modify the information being exposed for a specific property. This is the technique that Dynamic Annotation is intended to replace. To override a single property by using subclassing and wrapping, the developer must perform the following steps:</p>
+<ol>
+<li>Subclass the HWND of the <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> object.</li>
+<li>Intercept the <a href="wm-getobject.html"><strong>WM_GETOBJECT</strong></a> message for the correct IParam/OBJID value.</li>
+<li>Forward the <a href="wm-getobject.html"><strong>WM_GETOBJECT</strong></a> message to the base class using the <a href="../winmsg/callwndproc.html"><em>CallWndProc</em></a> callback function. If zero is returned, call <a href="/windows/desktop/api/Oleacc/nf-oleacc-createstdaccessibleobject"><strong>CreateStdAccessibleObject</strong></a>; otherwise, call <a href="/windows/desktop/api/Oleacc/nf-oleacc-lresultfromobject"><strong>LresultFromObject</strong></a> on the returned value to obtain the control's native <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface pointer.</li>
+<li>Create a wrapper class, which implements <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> and wraps the <strong>IAccessible</strong> interface pointer returned from the previous step. This wrapper class sends all methods and properties to the original <strong>IAccessible</strong> interface pointer, except those that are to be overridden. This involves writing forwarding code for all of the <strong>IAccessible</strong> interface's 21 properties and methods, regardless of how many are actually overridden.</li>
+</ol>
+<p>Also, developers must verify the following conditions:</p>
+<ul>
+<li>The overridden method or property must only handle the required child IDs, and forward all others to the original <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface pointer.</li>
+<li>Wrapping must also forward <a href="/previous-versions/windows/desktop/api/oaidl/nn-oaidl-ienumvariant"><strong>IEnumVARIANT</strong></a> and <a href="/windows/desktop/api/oleidl/nn-oleidl-iolewindow"><strong>IOleWindow</strong></a> interfaces only if the original object supports them.</li>
+<li>Reference counting must be handled correctly, especially if other interfaces are supported.</li>
+<li><a href="idispatch-interface.html"><strong>IDispatch</strong></a> return values must be handled correctly, especially with the <a href="/previous-versions/windows/desktop/api/oaidl/nf-oaidl-itypeinfo-invoke"><strong>ITypeInfo::Invoke</strong></a> method, which must be called with an interface pointer to the wrapper interface, not a pointer to the original <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface.</li>
+</ul>
+<p>These techniques require a considerable amount of work, even if only one or two properties need to be overridden. The majority of the resulting code is concerned with subclassing and wrapping, and only a small fraction is actually providing the overridden information.</p>
+<p>However, there are scenarios in which these techniques are needed. For example, if you are making structural changes to create a placeholder UI element, then you should use these techniques rather than Dynamic Annotation.</p>
+<h2>Fixing Names Derived from Labels</h2>
+<p>Some Microsoft Win32 common controls, such as the edit box control, are nearly always used with a label (an LTEXT entry in the resource file) or a group box (GROUPBOX in the resource file). Microsoft Active Accessibility automatically derives the name property of the control from its label. For such controls, the window text (shown in Microsoft Visual Studio as the Name or ID property) is ignored, because it is usually autogenerated and seldom very descriptive; for example, &quot;IDC_EDIT1&quot;.</p>
+<p>If the user interface of the application is not designed correctly, Microsoft Active Accessibility might not be able to set the name correctly. To be associated with a control, the label or group box must be placed immediately before the dynamic control in the tab order.</p>
+<p>Tab order can be changed by using the tool in Visual Studio (on the <strong>Format</strong> menu when the resource editor is open) or by directly editing the resource file.</p>
+<p>The following example shows a resource file's description of a dialog box that contains two labeled edit boxes.</p>
+<pre lang="C++"><code>IDD_INPUTNAME DIALOGEX 22, 17, 312, 118
+STYLE DS_SETFONT | DS_MODALFRAME | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;Enter your name&quot;
+FONT 8, &quot;System&quot;, 0, 0, 0x0
+BEGIN
+    DEFPUSHBUTTON   &quot;OK&quot;,IDOK,179,35,30,11,WS_GROUP
+    LTEXT           &quot;First Name:&quot;,IDC_STATIC,8,16,43,8
+    LTEXT           &quot;Last Name:&quot;,IDC_STATIC,8,33,43,8
+    EDITTEXT        IDC_EDITFIRSTNAME,53,15,120,12,ES_AUTOHSCROLL
+    EDITTEXT        IDC_EDITLASTNAME,53,34,120,12,ES_AUTOHSCROLL
+END
+</code></pre>
+<p>In this example, the labels and controls are not listed in the correct tab order. As a result, Microsoft Active Accessibility assigns the name &quot;Last Name&quot; to the first-name edit box, and no name at all to the last-name edit box.</p>
+<p>The following example shows the correct resource listing. Note also that shortcut keys have been designated in the labels.</p>
+<pre lang="C++"><code>IDD_INPUTNAME DIALOGEX 22, 17, 312, 118
+STYLE DS_SETFONT | DS_MODALFRAME | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;Enter your name&quot;
+FONT 8, &quot;System&quot;, 0, 0, 0x0
+BEGIN
+    LTEXT           &quot;&amp;First Name:&quot;,IDC_STATIC,8,16,43,8
+    EDITTEXT        IDC_EDITFIRSTNAME,53,15,120,12,ES_AUTOHSCROLL
+    LTEXT           &quot;&amp;Last Name:&quot;,IDC_STATIC,8,33,43,8
+    EDITTEXT        IDC_EDITLASTNAME,53,34,120,12,ES_AUTOHSCROLL
+    DEFPUSHBUTTON   &quot;OK&quot;,IDOK,179,35,30,11,WS_GROUP
+END
+</code></pre>
+<p>When controls have supplementary labels, such as for minimum and maximum values on a trackbar, these labels should be placed after the control in the tab order. The main label of the control must appear immediately before the control itself.</p>
+<h2>Naming Controls Without Labels</h2>
+<p>It is not always possible or desirable to have a visible label for every control. However, you can still provide a name for the control by adding an invisible label. As always, the invisible label must immediately precede the control in the tab order.</p>
+<p>If you are using the Resource Editor in Microsoft Visual StudioÂ .NET, you can set the Visible property to False. To make the label invisible when editing the resource file (.rc), add NOT WS_VISIBLE or to the style part of the label control, as shown in the following example.</p>
+<pre lang="C++"><code>    LTEXT           &quot;&amp;FullName:&quot;,IDC_STATIC,111,23,44,8,NOT WS_VISIBLE
+</code></pre>
+<p>Note that any designated shortcut key works even though the label is invisible.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

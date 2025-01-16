@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Developer audience, and sample code</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Developer audience, and sample code
+description: This topic describes the groups of developers for whom the Antimalware Scan Interface is designed.
+ms.topic: article
+ms.date: 12/17/2024</h2>
+<h1>Developer audience, and sample code</h1>
+<p>The Antimalware Scan Interface is designed for use by two groups of developers.</p>
+<ul>
+<li>Application developers who want to make requests to antimalware products from within their apps.</li>
+<li>Third-party creators of antimalware products who want their products to offer the best features to applications.</li>
+</ul>
+<h2>Application developers</h2>
+<p>AMSI is designed in particular to combat &quot;fileless malware&quot;. Application types that can optimally leverage AMSI technology include script engines, applications that need memory buffers to be scanned before using them, and applications that process files that can contain non-PE executable code (such as Microsoft Word and Excel macros, or PDF documents). However, the usefulness of AMSI technology is not limited to those examples.</p>
+<p>There are two ways in which you can interface with AMSI in your application.</p>
+<ul>
+<li>By using the AMSI Win32 APIs. See <a href="/windows/desktop/amsi/antimalware-scan-interface-functions">Antimalware Scan Interface (AMSI) functions</a>.</li>
+<li>By using the AMSI COM interfaces. See <a href="/windows/desktop/api/amsi/nn-amsi-iamsistream"><strong>IAmsiStream</strong> interface</a>.</li>
+</ul>
+<p>For sample code showing how to consume AMSI within your COM application, see the <a href="https://github.com/Microsoft/Windows-classic-samples/tree/master/Samples/AmsiStream">IAmsiStream interface sample application</a>.</p>
+<h2>Third-party creators of antimalware products</h2>
+<p>As a creator of antimalware products, you can choose to author and register your own in-process COM server (a DLL) to function as an AMSI provider. That AMSI provider must implement the <a href="/windows/desktop/api/amsi/nn-amsi-iantimalwareprovider"><strong>IAntimalwareProvider</strong> interface</a>, and it must run in-process.</p>
+<p>Note that, after Windows 10, version 1709 (the Fall 2017 Creators' Update), your AMSI provider DLL may not work if it depends upon other DLLs in its path to be loaded at the same time. To prevent DLL hijacking, we recommend that your provider DLL load its dependencies explicitly (with a full path) using secure <a href="/windows/desktop/api/libloaderapi/nf-libloaderapi-loadlibraryw"><strong>LoadLibrary</strong></a> calls, or equivalent. We recommend this instead of relying on the <strong>LoadLibrary</strong> search behavior.</p>
+<p>The section below shows how to register your AMSI provider. For full sample code showing how to author your own AMSI provider DLL, see the <a href="https://github.com/Microsoft/Windows-classic-samples/tree/master/Samples/AmsiProvider">IAntimalwareProvider interface sample application</a>.</p>
+<h3>Register your provider DLL with AMSI</h3>
+<p>To begin with, you need to ensure that these Windows Registry keys exist.</p>
+<ul>
+<li>HKLM\SOFTWARE\Microsoft\AMSI\Providers</li>
+<li>HKLM\SOFTWARE\Classes\CLSID</li>
+</ul>
+<p>An AMSI provider is an in-process COM server. Consequently, it needs to register itself with COM. COM classes are registered in <code>HKLM\SOFTWARE\Classes\CLSID</code>.</p>
+<p>The code below shows how to register an AMSI provider, whose GUID (for this example) we will assume is <code>2E5D8A62-77F9-4F7B-A90C-2744820139B2</code>.</p>
+<pre lang="cpp"><code>#include &lt;strsafe.h&gt;
+...
+HRESULT SetKeyStringValue(_In_ HKEY key, _In_opt_ PCWSTR subkey, _In_opt_ PCWSTR valueName, _In_ PCWSTR stringValue)
+{
+    LONG status = RegSetKeyValue(key, subkey, valueName, REG_SZ, stringValue, (wcslen(stringValue) + 1) * sizeof(wchar_t));
+    return HRESULT_FROM_WIN32(status);
+}
+
+STDAPI DllRegisterServer()
+{
+    wchar_t modulePath[MAX_PATH];
+    if (GetModuleFileName(g_currentModule, modulePath, ARRAYSIZE(modulePath)) &gt;= ARRAYSIZE(modulePath))
+    {
+        return E_UNEXPECTED;
+    }
+
+    // Create a standard COM registration for our CLSID.
+    // The class must be registered as &quot;Both&quot; threading model,
+    // and support multithreaded access.
+    wchar_t clsidString[40];
+    if (StringFromGUID2(__uuidof(SampleAmsiProvider), clsidString, ARRAYSIZE(clsidString)) == 0)
+    {
+        return E_UNEXPECTED;
+    }
+
+    wchar_t keyPath[200];
+    HRESULT hr = StringCchPrintf(keyPath, ARRAYSIZE(keyPath), L&quot;Software\\Classes\\CLSID\\%ls&quot;, clsidString);
+    if (FAILED(hr)) return hr;
+
+    hr = SetKeyStringValue(HKEY_LOCAL_MACHINE, keyPath, nullptr, L&quot;SampleAmsiProvider&quot;);
+    if (FAILED(hr)) return hr;
+
+    hr = StringCchPrintf(keyPath, ARRAYSIZE(keyPath), L&quot;Software\\Classes\\CLSID\\%ls\\InProcServer32&quot;, clsidString);
+    if (FAILED(hr)) return hr;
+
+    hr = SetKeyStringValue(HKEY_LOCAL_MACHINE, keyPath, nullptr, modulePath);
+    if (FAILED(hr)) return hr;
+
+    hr = SetKeyStringValue(HKEY_LOCAL_MACHINE, keyPath, L&quot;ThreadingModel&quot;, L&quot;Both&quot;);
+    if (FAILED(hr)) return hr;
+
+    // Register this CLSID as an anti-malware provider.
+    hr = StringCchPrintf(keyPath, ARRAYSIZE(keyPath), L&quot;Software\\Microsoft\\AMSI\\Providers\\%ls&quot;, clsidString);
+    if (FAILED(hr)) return hr;
+
+    hr = SetKeyStringValue(HKEY_LOCAL_MACHINE, keyPath, nullptr, L&quot;SampleAmsiProvider&quot;);
+    if (FAILED(hr)) return hr;
+
+    return S_OK;
+}
+</code></pre>
+<p>If your DLL implements the <a href="/windows/desktop/api/olectl/nf-olectl-dllregisterserver">DllRegisterServer function</a>, as the example above does, then you can register it by using the Windows-supplied executable <code>regsvr32.exe</code>. From an elevated command prompt, issue a command of this form.</p>
+<pre lang="cmd"><code>C:&gt;C:\Windows\System32\regsvr32.exe SampleAmsiProvider.dll
+</code></pre>
+<p>In this example, the command creates the following entries.</p>
+<p><strong>HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{2E5D8A62-77F9-4F7B-A90C-2744820139B2}</strong></p>
+<p>    <strong>(Default)Â Â Â  REG_SZÂ Â Â  Sample AMSI Provider implementation</strong></p>
+<p><strong>HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{2E5D8A62-77F9-4F7B-A90C-2744820139B2}\InprocServer32</strong></p>
+<p>    <strong>(Default)Â Â Â  REG_EXPAND_SZÂ Â Â  %ProgramFiles%\TestProvider\SampleAmsiProvider.dll</strong></p>
+<p>    <strong>ThreadingModelÂ Â Â  REG_SZÂ Â Â  Both</strong></p>
+<p>In addition to regular COM registration, you also need to enroll the provider with AMSI. You do that by adding an entry to the following key.</p>
+<p><strong>HKLM\SOFTWARE\Microsoft\AMSI\Providers</strong></p>
+<p>For example,</p>
+<p><strong>HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\AMSI\Providers\{2E5D8A62-77F9-4F7B-A90C-2744820139B2}</strong></p>
+<h2>Known issues</h2>
+<h3>Process didn't meet signing level requirements</h3>
+<p>If you have a non-Microsoft antimalware service that's <a href="/windows/win32/api/processthreadsapi/ns-processthreadsapi-process_protection_level_information">Windows Protected Process Light (PPL)</a> or <a href="/windows/win32/services/protecting-anti-malware-services-">Antimalware Protected Process Light (Anti-malware PPL)</a> that tries to load in an AMSI provider, you might see the following information in the Code Integrity event log:</p>
+<pre lang="properties"><code> 
+Log Name: Microsoft-Windows-CodeIntegrity/Operational 
+
+Source: Microsoft-Windows-CodeIntegrity 
+
+Event ID: 3033 
+
+Description: 
+
+Code Integrity determined that a process (\Device\HarddiskVolume3\&lt;Folder&gt;\&lt;Folder w/ the ISV name&gt;\&lt;Folder w/ the product name&gt;\&lt;ProcessName&gt;.exe) attempted to load \Device\HarddiskVolume3\&lt;Folder&gt;\&lt;Folder w/ the ISV name&gt;\&lt;Folder w/ the product name&gt;\&lt;Your Amsi Provider&gt;.dll that did not meet the Custom 3 / Antimalware signing level requirements. 
+
+</code></pre>
+<p>To view the Code Integrity event log, follow these steps:</p>
+<ol>
+<li>
+<p>Open Event Viewer.</p>
+</li>
+<li>
+<p>In the navigation pane, expand <strong>Applications and Services Logs</strong> &gt; <strong>Microsoft</strong> &gt; <strong>Windows</strong> &gt; <strong>Code Integrity</strong>, and then select <strong>Operational</strong>.</p>
+</li>
+</ol>
+<p>Or if you have System Audit Integrity auditing enabled, look for this:</p>
+<ul>
+<li>Log Name: Security</li>
+<li>Source: Microsoft Windows Security</li>
+<li>Event ID: <code>5038</code></li>
+</ul>
+<h3>A file hash isn't valid</h3>
+<p>AMSI API's are designed to work with non-protected processes. ISV's are unable to sign their AMSI registered DLL's to be allowed to load into ELAM/PPL secured processes. In such cases, you might see the following information in the Windows Security event log:</p>
+<pre lang="properties"><code>
+Description: 
+
+Code integrity determined that the image hash of a file is not valid.  The file could be corrupt due to unauthorized modification, or the invalid hash could indicate a potential disk device error. 
+
+File Name: \Device\HarddiskVolume3\&lt;Folder&gt; \&lt;Folder w/ the ISV name&gt; \&lt;Folder w/ the product name&gt;\&lt;Your Amsi Provider&gt;.dll 
+
+</code></pre>
+<p>To view the Windows Security event log, follow these steps:</p>
+<ol>
+<li>
+<p>Open Event Viewer.</p>
+</li>
+<li>
+<p>In the Navigation pane, expand <strong>Windows Logs</strong>, and then select <strong>Security</strong>.</p>
+</li>
+</ol>
+<p>Workaround:</p>
+<p>You can filter out events by following these steps:</p>
+<ol>
+<li>
+<p>To filter out an event, such as Event ID 3033 or 5038, open Event Viewer.</p>
+</li>
+<li>
+<p>In the navigation pane, expand <strong>Applications and Services Logs</strong> &gt; <strong>Microsoft</strong> &gt; <strong>Windows</strong> &gt; <strong>Code Integrity</strong>, and then select <strong>Operational</strong>.</p>
+</li>
+<li>
+<p>Right-click <strong>Operational</strong>, and then select <strong>Filter Current Log...</strong>.</p>
+</li>
+<li>
+<p>In the <strong>&lt;All Event IDs&gt;</strong> box, type <code>-3033</code> (or <code>-5038</code>), and then select <strong>OK</strong>.</p>
+</li>
+</ol>
+<p>Or, in Event Viewer, you can expand Windows Logs, right-click Security, select <strong>Filter Current Log...</strong>, and then specify <code>-3033</code> or <code>-5038</code>.</p>
+<blockquote>
+<p>[!TIP]
+If you are using Windows Event Forwarding (WEF), you can filter details what event ids or descriptions are forwarded. For more information, see <a href="https://techcommunity.microsoft.com/blog/askds/advanced-xml-filtering-in-the-windows-event-viewer/399761">Tech Community Blog: Advanced XML filtering in the Windows Event Viewer</a></p>
+</blockquote>
+<h3>Filter out Events 3033 and 5038 for your SIEM</h3>
+<p>If your organization is using a SIEM server, make sure to filter out Event ID 3033 and/or Event ID 5038 specific to AMSI so that you don't ingest information that isn't useful for your Security Operations Center (SOC) analysts. For more information, see <a href="/windows/security/operating-system-security/device-management/use-windows-event-forwarding-to-assist-in-intrusion-detection">Use Windows Event Forwarding to help with intrusion detection</a>.</p>
+</body>

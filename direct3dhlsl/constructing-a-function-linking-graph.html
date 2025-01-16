@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Constructing a function-linking-graph and linking it to compiled code</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Constructing a function-linking-graph and linking it to compiled code
+description: Here we show you how to construct function-linking-graphs (FLGs) for shaders and how to link those shaders with a shader library to produce shader blobs that the Direct3D runtime can use.
+ms.assetid: 82C3109E-8571-49D2-A8BF-298E30E1281B
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Constructing a function-linking-graph and linking it to compiled code</h1>
+<p>Here we show you how to construct function-linking-graphs (FLGs) for shaders and how to link those shaders with a shader library to produce shader blobs that the Direct3D runtime can use.</p>
+<p><strong>Objective:</strong> To construct a function-linking-graph and link it to compiled code.</p>
+<h2>Prerequisites</h2>
+<p>We assume that you are familiar with C++. You also need basic experience with graphics programming concepts.</p>
+<p>We also assume that you went through <a href="pachaging-a-shader-library.html">Packaging a shader library</a>.</p>
+<p><strong>Time to complete:</strong> 30 minutes.</p>
+<h2>Instructions</h2>
+<h3>1. Construct a function-linking-graph for the vertex shader.</h3>
+<p>Call the <a href="/windows/desktop/api/D3Dcompiler/nf-d3dcompiler-d3dcreatefunctionlinkinggraph"><strong>D3DCreateFunctionLinkingGraph</strong></a> function to create a function-linking-graph (<a href="/windows/desktop/api/d3d11shader/nn-d3d11shader-id3d11functionlinkinggraph"><strong>ID3D11FunctionLinkingGraph</strong></a>) to represent the vertex shader.</p>
+<p>Use an array of <a href="/windows/desktop/api/d3d11shader/ns-d3d11shader-d3d11_parameter_desc"><strong>D3D11_PARAMETER_DESC</strong></a> structures to define the input parameters for the vertex shader. The <a href="/windows/desktop/direct3d11/d3d10-graphics-programming-guide-input-assembler-stage">Input-Assembler Stage</a> feeds the input parameters to the vertex shader. The layout of the vertex shaderâ€™s input parameters matches the layout of the vertex shader in the compiled code. After you define the input parameters, call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-setinputsignature"><strong>ID3D11FunctionLinkingGraph::SetInputSignature</strong></a> method to define the input node (<a href="/windows/desktop/api/d3d11shader/nn-d3d11shader-id3d11linkingnode"><strong>ID3D11LinkingNode</strong></a>) for the vertex shader.</p>
+<pre lang="C++"><code>            ComPtr&lt;ID3D11FunctionLinkingGraph&gt; vertexShaderGraph;
+            DX::ThrowIfFailed(D3DCreateFunctionLinkingGraph(0, &amp;vertexShaderGraph));
+
+            // Define the main input node which will be fed by the Input Assembler pipeline stage.
+            static const D3D11_PARAMETER_DESC vertexShaderInputParameters[] =
+            {
+                {&quot;inputPos&quot;,  &quot;POSITION0&quot;, D3D_SVT_FLOAT, D3D_SVC_VECTOR, 1, 3, D3D_INTERPOLATION_LINEAR, D3D_PF_IN, 0, 0, 0, 0},
+                {&quot;inputTex&quot;,  &quot;TEXCOORD0&quot;, D3D_SVT_FLOAT, D3D_SVC_VECTOR, 1, 2, D3D_INTERPOLATION_LINEAR, D3D_PF_IN, 0, 0, 0, 0},
+                {&quot;inputNorm&quot;, &quot;NORMAL0&quot;,   D3D_SVT_FLOAT, D3D_SVC_VECTOR, 1, 3, D3D_INTERPOLATION_LINEAR, D3D_PF_IN, 0, 0, 0, 0}
+            };
+            ComPtr&lt;ID3D11LinkingNode&gt; vertexShaderInputNode;
+            LinkingThrowIfFailed(vertexShaderGraph-&gt;SetInputSignature(vertexShaderInputParameters, ARRAYSIZE(vertexShaderInputParameters), 
+                &amp;vertexShaderInputNode), vertexShaderGraph.Get());
+</code></pre>
+<p>Call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-callfunction"><strong>ID3D11FunctionLinkingGraph::CallFunction</strong></a> method to create a node for the main vertex shader function and make calls to <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-passvalue"><strong>ID3D11FunctionLinkingGraph::PassValue</strong></a> to pass values from the input node to the node for the main vertex shader function.</p>
+<pre lang="C++"><code>            // Create a node for the main VertexFunction call using the output of the helper functions.
+            ComPtr&lt;ID3D11LinkingNode&gt; vertexFunctionCallNode;
+            LinkingThrowIfFailed(vertexShaderGraph-&gt;CallFunction(&quot;&quot;, shaderLibrary.Get(), &quot;VertexFunction&quot;, &amp;vertexFunctionCallNode), 
+                vertexShaderGraph.Get());
+
+            // Define the graph edges from the input node and helper function nodes.
+            LinkingThrowIfFailed(vertexShaderGraph-&gt;PassValue(homogenizeCallNodeForPos.Get(), D3D_RETURN_PARAMETER_INDEX, 
+                vertexFunctionCallNode.Get(), 0), vertexShaderGraph.Get());
+            LinkingThrowIfFailed(vertexShaderGraph-&gt;PassValue(vertexShaderInputNode.Get(), 1, vertexFunctionCallNode.Get(), 1), 
+                vertexShaderGraph.Get());
+            LinkingThrowIfFailed(vertexShaderGraph-&gt;PassValue(homogenizeCallNodeForNorm.Get(), D3D_RETURN_PARAMETER_INDEX, 
+                vertexFunctionCallNode.Get(), 2), vertexShaderGraph.Get());
+</code></pre>
+<p>Use an array of <a href="/windows/desktop/api/d3d11shader/ns-d3d11shader-d3d11_parameter_desc"><strong>D3D11_PARAMETER_DESC</strong></a> structures to define the output parameters for the vertex shader. The vertex shader feeds its output parameters to the pixel shader. The layout of the vertex shaderâ€™s output parameters matches the layout of the pixel shader in the compiled code. After you define the output parameters, call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-setoutputsignature"><strong>ID3D11FunctionLinkingGraph::SetOutputSignature</strong></a> method to define the output node (<a href="/windows/desktop/api/d3d11shader/nn-d3d11shader-id3d11linkingnode"><strong>ID3D11LinkingNode</strong></a>) for the vertex shader.</p>
+<pre lang="C++"><code>            // Define the main output node which will feed the Pixel Shader pipeline stage.
+            static const D3D11_PARAMETER_DESC vertexShaderOutputParameters[] =
+            {
+                {&quot;outputTex&quot;,  &quot;TEXCOORD0&quot;,   D3D_SVT_FLOAT, D3D_SVC_VECTOR, 1, 2, D3D_INTERPOLATION_UNDEFINED, D3D_PF_OUT, 0, 0, 0, 0},
+                {&quot;outputNorm&quot;, &quot;NORMAL0&quot;,     D3D_SVT_FLOAT, D3D_SVC_VECTOR, 1, 3, D3D_INTERPOLATION_UNDEFINED, D3D_PF_OUT, 0, 0, 0, 0},
+                {&quot;outputPos&quot;,  &quot;SV_POSITION&quot;, D3D_SVT_FLOAT, D3D_SVC_VECTOR, 1, 4, D3D_INTERPOLATION_UNDEFINED, D3D_PF_OUT, 0, 0, 0, 0}
+            };
+            ComPtr&lt;ID3D11LinkingNode&gt; vertexShaderOutputNode;
+            LinkingThrowIfFailed(vertexShaderGraph-&gt;SetOutputSignature(vertexShaderOutputParameters, ARRAYSIZE(vertexShaderOutputParameters), 
+                &amp;vertexShaderOutputNode), vertexShaderGraph.Get());
+</code></pre>
+<p>Make calls to <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-passvalue"><strong>ID3D11FunctionLinkingGraph::PassValue</strong></a> to pass values from the node for the main vertex shader function to the output node.</p>
+<pre lang="C++"><code>            LinkingThrowIfFailed(vertexShaderGraph-&gt;PassValue(vertexFunctionCallNode.Get(), 0, vertexShaderOutputNode.Get(), 2), 
+                vertexShaderGraph.Get());
+            LinkingThrowIfFailed(vertexShaderGraph-&gt;PassValue(vertexFunctionCallNode.Get(), 1, vertexShaderOutputNode.Get(), 0), 
+                vertexShaderGraph.Get());
+            LinkingThrowIfFailed(vertexShaderGraph-&gt;PassValue(vertexFunctionCallNode.Get(), 2, vertexShaderOutputNode.Get(), 1), 
+                vertexShaderGraph.Get());
+</code></pre>
+<p>Call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-createmoduleinstance"><strong>ID3D11FunctionLinkingGraph::CreateModuleInstance</strong></a> method to finalize the vertex shader graph.</p>
+<pre lang="C++"><code>            // Finalize the vertex shader graph.
+            ComPtr&lt;ID3D11ModuleInstance&gt; vertexShaderGraphInstance;
+            LinkingThrowIfFailed(vertexShaderGraph-&gt;CreateModuleInstance(&amp;vertexShaderGraphInstance, nullptr), vertexShaderGraph.Get());
+</code></pre>
+<h3>2. Link the vertex shader</h3>
+<p>Call the <a href="/windows/desktop/api/D3Dcompiler/nf-d3dcompiler-d3dcreatelinker"><strong>D3DCreateLinker</strong></a> function to create a linker (<a href="/windows/desktop/api/d3d11shader/nn-d3d11shader-id3d11linker"><strong>ID3D11Linker</strong></a>) that you can use to link the instance of the shader library that you created in <a href="pachaging-a-shader-library.html">Packaging a shader library</a> with the instance of the vertex shader graph that you created in the preceding step. Call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11linker-uselibrary"><strong>ID3D11Linker::UseLibrary</strong></a> method to specify the shader library to use for linking. Call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11linker-link"><strong>ID3D11Linker::Link</strong></a> method to link the shader library with the vertex shader graph and to produce a pointer to the <a href="/previous-versions/windows/desktop/legacy/ff728743(v=vs.85)"><strong>ID3DBlob</strong></a> interface that you can use to access the compiled vertex shader code. You can then pass this compiled vertex shader code to the <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11device-createvertexshader"><strong>ID3D11Device::CreateVertexShader</strong></a> method to create the vertex shader object and to the <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11device-createinputlayout"><strong>ID3D11Device::CreateInputLayout</strong></a> method to create the input-layout object.</p>
+<pre lang="C++"><code>            // Create a linker and hook up the module instance.
+            ComPtr&lt;ID3D11Linker&gt; linker;
+            DX::ThrowIfFailed(D3DCreateLinker(&amp;linker));
+            DX::ThrowIfFailed(linker-&gt;UseLibrary(shaderLibraryInstance.Get()));
+
+            // Link the vertex shader.
+            ComPtr&lt;ID3DBlob&gt; errorBlob;
+            if (FAILED(linker-&gt;Link(vertexShaderGraphInstance.Get(), &quot;main&quot;, (&quot;vs&quot; + m_shaderModelSuffix).c_str(), 0, &amp;vertexShaderBlob, 
+                &amp;errorBlob)))
+            {
+                throw errorBlob;
+            }
+
+
+    ComPtr&lt;ID3D11VertexShader&gt; vertexShader;
+    DX::ThrowIfFailed(
+        device-&gt;CreateVertexShader(
+            vertexShaderBlob-&gt;GetBufferPointer(),
+            vertexShaderBlob-&gt;GetBufferSize(),
+            nullptr,
+            &amp;vertexShader
+            )
+        );
+    context-&gt;VSSetShader(vertexShader.Get(), nullptr, 0);
+    D3D11_INPUT_ELEMENT_DESC inputLayoutDesc[] =
+    {
+        { &quot;POSITION&quot;, 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { &quot;TEXCOORD&quot;, 0, DXGI_FORMAT_R32G32_FLOAT,    0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { &quot;NORMAL&quot;,   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 20, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+    };
+    ComPtr&lt;ID3D11InputLayout&gt; inputLayout;
+    DX::ThrowIfFailed(device-&gt;CreateInputLayout(inputLayoutDesc, ARRAYSIZE(inputLayoutDesc), vertexShaderBlob-&gt;GetBufferPointer(), vertexShaderBlob-&gt;GetBufferSize(), &amp;inputLayout));
+    context-&gt;IASetInputLayout(inputLayout.Get());
+</code></pre>
+<h3>3. Construct a function-linking-graph for the pixel shader.</h3>
+<p>Call the <a href="/windows/desktop/api/D3Dcompiler/nf-d3dcompiler-d3dcreatefunctionlinkinggraph"><strong>D3DCreateFunctionLinkingGraph</strong></a> function to create a function-linking-graph (<a href="/windows/desktop/api/d3d11shader/nn-d3d11shader-id3d11functionlinkinggraph"><strong>ID3D11FunctionLinkingGraph</strong></a>) to represent the pixel shader.</p>
+<p>Use an array of <a href="/windows/desktop/api/d3d11shader/ns-d3d11shader-d3d11_parameter_desc"><strong>D3D11_PARAMETER_DESC</strong></a> structures to define the input parameters for the pixel shader. The vertex shader stage feeds the input parameters to the pixel shader. The layout of the pixel shaderâ€™s input parameters matches the layout of the pixel shader in the compiled code. After you define the input parameters, call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-setinputsignature"><strong>ID3D11FunctionLinkingGraph::SetInputSignature</strong></a> method to define the input node (<a href="/windows/desktop/api/d3d11shader/nn-d3d11shader-id3d11linkingnode"><strong>ID3D11LinkingNode</strong></a>) for the pixel shader.</p>
+<pre lang="C++"><code>            ComPtr&lt;ID3D11FunctionLinkingGraph&gt; pixelShaderGraph;
+            DX::ThrowIfFailed(D3DCreateFunctionLinkingGraph(0, &amp;pixelShaderGraph));
+
+            // Define the main input node which will be fed by the vertex shader pipeline stage.
+            static const D3D11_PARAMETER_DESC pixelShaderInputParameters[] =
+            {
+                {&quot;inputTex&quot;,  &quot;TEXCOORD0&quot;,   D3D_SVT_FLOAT, D3D_SVC_VECTOR, 1, 2, D3D_INTERPOLATION_UNDEFINED, D3D_PF_IN, 0, 0, 0, 0},
+                {&quot;inputNorm&quot;, &quot;NORMAL0&quot;,     D3D_SVT_FLOAT, D3D_SVC_VECTOR, 1, 3, D3D_INTERPOLATION_UNDEFINED, D3D_PF_IN, 0, 0, 0, 0},
+                {&quot;inputPos&quot;,  &quot;SV_POSITION&quot;, D3D_SVT_FLOAT, D3D_SVC_VECTOR, 1, 4, D3D_INTERPOLATION_UNDEFINED, D3D_PF_IN, 0, 0, 0, 0}
+            };
+            ComPtr&lt;ID3D11LinkingNode&gt; pixelShaderInputNode;
+            LinkingThrowIfFailed(pixelShaderGraph-&gt;SetInputSignature(pixelShaderInputParameters, ARRAYSIZE(pixelShaderInputParameters), 
+                &amp;pixelShaderInputNode), pixelShaderGraph.Get());
+</code></pre>
+<p>Call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-callfunction"><strong>ID3D11FunctionLinkingGraph::CallFunction</strong></a> method to create a node for the main pixel shader function and make calls to <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-passvalue"><strong>ID3D11FunctionLinkingGraph::PassValue</strong></a> to pass values from the input node to the node for the main pixel shader function.</p>
+<pre lang="C++"><code>            // Create a node for the main ColorFunction call and connect it to the pixel shader inputs.
+            ComPtr&lt;ID3D11LinkingNode&gt; colorValueNode;
+            LinkingThrowIfFailed(pixelShaderGraph-&gt;CallFunction(&quot;&quot;, shaderLibrary.Get(), &quot;ColorFunction&quot;, &amp;colorValueNode), 
+                pixelShaderGraph.Get());
+
+            // Define the graph edges from the input node.
+            LinkingThrowIfFailed(pixelShaderGraph-&gt;PassValue(pixelShaderInputNode.Get(), 0, colorValueNode.Get(), 0), 
+                pixelShaderGraph.Get());
+            LinkingThrowIfFailed(pixelShaderGraph-&gt;PassValue(pixelShaderInputNode.Get(), 1, colorValueNode.Get(), 1), 
+                pixelShaderGraph.Get());
+</code></pre>
+<p>Use an array of <a href="/windows/desktop/api/d3d11shader/ns-d3d11shader-d3d11_parameter_desc"><strong>D3D11_PARAMETER_DESC</strong></a> structures to define the output parameters for the pixel shader. The pixel shader feeds its output parameters to the <a href="/windows/desktop/direct3d11/d3d10-graphics-programming-guide-output-merger-stage">Output-Merger Stage</a>. After you define the output parameters, call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-setoutputsignature"><strong>ID3D11FunctionLinkingGraph::SetOutputSignature</strong></a> method to define the output node (<a href="/windows/desktop/api/d3d11shader/nn-d3d11shader-id3d11linkingnode"><strong>ID3D11LinkingNode</strong></a>) for the pixel shader and make calls to <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-passvalue"><strong>ID3D11FunctionLinkingGraph::PassValue</strong></a> to pass values from a pixel shader function node to the output node.</p>
+<pre lang="C++"><code>            // Define the main output node which will feed the Output Merger pipeline stage.
+            D3D11_PARAMETER_DESC pixelShaderOutputParameters[] =
+            {
+                {&quot;outputColor&quot;, &quot;SV_TARGET&quot;, D3D_SVT_FLOAT, D3D_SVC_VECTOR, 1, 4, D3D_INTERPOLATION_UNDEFINED, D3D_PF_OUT, 0, 0, 0, 0}
+            };
+            ComPtr&lt;ID3D11LinkingNode&gt; pixelShaderOutputNode;
+            LinkingThrowIfFailed(pixelShaderGraph-&gt;SetOutputSignature(pixelShaderOutputParameters, ARRAYSIZE(pixelShaderOutputParameters), 
+                &amp;pixelShaderOutputNode), pixelShaderGraph.Get());
+            LinkingThrowIfFailed(pixelShaderGraph-&gt;PassValue(fillAlphaCallNode.Get(), D3D_RETURN_PARAMETER_INDEX, pixelShaderOutputNode.Get(), 0), 
+                pixelShaderGraph.Get());
+</code></pre>
+<p>Call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-createmoduleinstance"><strong>ID3D11FunctionLinkingGraph::CreateModuleInstance</strong></a> method to finalize the pixel shader graph.</p>
+<pre lang="C++"><code>            // Finalize the pixel shader graph.
+            ComPtr&lt;ID3D11ModuleInstance&gt; pixelShaderGraphInstance;
+            LinkingThrowIfFailed(pixelShaderGraph-&gt;CreateModuleInstance(&amp;pixelShaderGraphInstance, nullptr), pixelShaderGraph.Get());
+</code></pre>
+<h3>4. Link the pixel shader</h3>
+<p>Call the <a href="/windows/desktop/api/D3Dcompiler/nf-d3dcompiler-d3dcreatelinker"><strong>D3DCreateLinker</strong></a> function to create a linker (<a href="/windows/desktop/api/d3d11shader/nn-d3d11shader-id3d11linker"><strong>ID3D11Linker</strong></a>) that you can use to link the instance of the shader library that you created in <a href="pachaging-a-shader-library.html">Packaging a shader library</a> with the instance of the pixel shader graph that you created in the preceding step. Call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11linker-uselibrary"><strong>ID3D11Linker::UseLibrary</strong></a> method to specify the shader library to use for linking. Call the <a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11linker-link"><strong>ID3D11Linker::Link</strong></a> method to link the shader library with the pixel shader graph and to produce a pointer to the <a href="/previous-versions/windows/desktop/legacy/ff728743(v=vs.85)"><strong>ID3DBlob</strong></a> interface that you can use to access the compiled pixel shader code. You can then pass this compiled pixel shader code to the <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11device-createpixelshader"><strong>ID3D11Device::CreatePixelShader</strong></a> method to create the pixel shader object.</p>
+<pre lang="C++"><code>            // Create a linker and hook up the module instance.
+            ComPtr&lt;ID3D11Linker&gt; linker;
+            DX::ThrowIfFailed(D3DCreateLinker(&amp;linker));
+            DX::ThrowIfFailed(linker-&gt;UseLibrary(shaderLibraryInstance.Get()));
+
+            // Link the pixel shader.
+            ComPtr&lt;ID3DBlob&gt; errorBlob;
+            if (FAILED(linker-&gt;Link(pixelShaderGraphInstance.Get(), &quot;main&quot;, (&quot;ps&quot; + m_shaderModelSuffix).c_str(), 0, &amp;pixelShaderBlob, &amp;errorBlob)))
+            {
+                throw errorBlob;
+            }
+
+
+    ComPtr&lt;ID3D11PixelShader&gt; pixelShader;
+    DX::ThrowIfFailed(
+        device-&gt;CreatePixelShader(
+            pixelShaderBlob-&gt;GetBufferPointer(),
+            pixelShaderBlob-&gt;GetBufferSize(),
+            nullptr,
+            &amp;pixelShader
+            )
+        );
+    context-&gt;PSSetShader(pixelShader.Get(), nullptr, 0);
+</code></pre>
+<h2>Summary</h2>
+<p>We used the <a href="/windows/desktop/api/d3d11shader/nn-d3d11shader-id3d11functionlinkinggraph"><strong>ID3D11FunctionLinkingGraph</strong></a> methods to construct the vertex and pixel shader graphs and to specify the shader structure programmatically.</p>
+<p>These graph constructions consist of sequences of precompiled function calls that pass values to each other. FLG nodes (<a href="/windows/desktop/api/d3d11shader/nn-d3d11shader-id3d11linkingnode"><strong>ID3D11LinkingNode</strong></a>) represent input and output shader nodes and invocations of precompiled library functions. The order in which you register the function-call nodes defines the sequence of invocations. You must specify the input node (<a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-setinputsignature"><strong>ID3D11FunctionLinkingGraph::SetInputSignature</strong></a>) first and the output node last (<a href="/windows/desktop/api/d3d11shader/nf-d3d11shader-id3d11functionlinkinggraph-setoutputsignature"><strong>ID3D11FunctionLinkingGraph::SetOutputSignature</strong></a>). FLG edges define how values are passed from one node to another. The data types of passed values must be the same; there is no implicit type conversion. Shape and swizzling rules follow the HLSL behavior. Values can only be passed forward in this sequence.</p>
+<p>We also used <a href="/windows/desktop/api/d3d11shader/nn-d3d11shader-id3d11linker"><strong>ID3D11Linker</strong></a> methods to link the shader library with the shader graphs and to produce shader blobs for the Direct3D runtime to use.</p>
+<p>Congratulations! You are now ready to use shader linking in your own apps.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-shader-linking.html">Using shader linking</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

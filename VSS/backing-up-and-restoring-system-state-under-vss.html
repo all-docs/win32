@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Backing Up and Restoring System State in Windows Server 2003 R2 and Windows Server 2003 SP1</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: NoteÂ Â This topic only applies to Windows ServerÂ 2003Â R2 and Windows ServerÂ 2003 with Service PackÂ 1 (SP1).
+ms.assetid: a192d9a7-1c65-4251-acb1-4df03ebfe910
+title: Backing Up and Restoring System State in Windows Server 2003 R2 and Windows Server 2003 SP1
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Backing Up and Restoring System State in Windows Server 2003 R2 and Windows Server 2003 SP1</h1>
+<blockquote>
+<p>[!Note]<br />
+This topic only applies to Windows ServerÂ 2003Â R2 and Windows ServerÂ 2003 with Service PackÂ 1 (SP1). For information about other operating system versions, see <a href="locating-additional-system-files.html">Backing Up and Restoring System State</a>.</p>
+</blockquote>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+Microsoft does not provide developer or IT professional technical support for implementing online system state restores on Windows (all releases).</p>
+</blockquote>
+<p>When performing a VSS backup or restore, the Windows system state is defined as being a collection of several key operating system elements and their files. These elements should always be treated by backup and restore operations as a unit.</p>
+<p>In Windows ServerÂ 2003Â R2 and Windows ServerÂ 2003 with SP1, there is no Windows API designed to treat these objects as one, so it is recommended that requesters have their own system state object so that they can process these components in a consistent manner.</p>
+<p>Because VSS runs on versions of Windows where <a href="vssgloss-s.html"><em>System File Protection</em></a> (WFP) protects system state files from corruption, special steps are needed to back up and restore system state.</p>
+<p>System state consists of the following:</p>
+<ul>
+<li>All files protected by WFP, boot files including ntldr, ntdetect, and performance counter configurations</li>
+<li>The Active Directory (ADSI) (on systems that are domain controllers)</li>
+<li>The System Volume Folder (SYSVOL) that is replicated by the File Replication Service (FRS) (on systems that are domain controllers)</li>
+<li>Certificate server (on systems that provide Certification Authority)</li>
+<li>Cluster database (on systems that are a node of a Windows cluster)</li>
+<li>Registry service</li>
+<li>COM+ class registration database</li>
+</ul>
+<p>The system state can be backed up in any order.</p>
+<p>However, the restoration of the system state should replace boot files first and commit the system section (hive) of the registry as a final step in the process, and might occur in the following order:</p>
+<ol>
+<li>Restore the boot files.</li>
+<li>COM+ class registration database</li>
+<li>Restore SYSVOL, Certificate Server, and Cluster databases (if needed).</li>
+<li>Restore Active Directory (if needed).</li>
+<li>Restore the registry.</li>
+</ol>
+<p>Some system services, such as the Certification Authority, have conventional VSS writers and follow the VSS backup and restore algorithms. Others, such as the registry, require custom backup or restore operations; for more information, see <a href="custom-backups-and-restores.html">Custom Backups and Restores</a>.</p>
+<h2>VSS Backup and Restores of Boot and System Files</h2>
+<p>The boot and system files should be backed up and restored only as a single entity.</p>
+<p>A requester can safely use shadow-copied versions of these files, and should be sure that the system volume and boot device are <a href="vssgloss-s.html"><em>shadow copied</em></a>.</p>
+<p>The system and boot files include:</p>
+<ul>
+<li>The core boot files: <!-- raw HTML omitted --> NtLdr.exe<br />
+Boot.ini<br />
+NtDetect.com<br />
+NtBootDD.sys (if present)
+<!-- raw HTML omitted -->
+</li>
+<li>The WFP service catalog file must be backed up prior to backing up the WFP files, and it is found under: <!-- raw HTML omitted --> %SystemRoot%\System32\CatRoot\{F750E6C3-38EE-11D1-85E5-00C04FC295EE}
+<!-- raw HTML omitted -->
+</li>
+<li>All files protected by <a href="vssgloss-s.html"><em>System File Protection</em></a> and enumerated by <a href="/windows/win32/api/sfc/nf-sfc-sfcgetnextprotectedfile"><strong>SfcGetNextProtectedFile</strong></a> (see VSS Restore Operations of WFP Protected Files)</li>
+<li>The Performance Counter Configuration files: <!-- raw HTML omitted --> %SystemRoot%\System32\Perf?00?.dat<br />
+%SystemRoot%\System32\Perf?00?.bak
+<!-- raw HTML omitted -->
+</li>
+<li>If present, the Internet Information Server (IIS) metabase file should be included in backup and restore operations because it contains state that is used by Microsoft Exchange and other network applications. This file can be found at: <!-- raw HTML omitted --> %SystemRoot%\System32\InetSrv\Metabase.bin
+<!-- raw HTML omitted -->
+</li>
+<li>If the IIS metabase file is backed up, keys to enable applications to read certain encrypted entries should be restored as part of the system state. The files can be found under: <!-- raw HTML omitted --> %SystemRoot%\System32\Microsoft\Protect\*<br />
+%AllUsersProfile%\Microsoft\Crypto\RSA\MachineKeys\*
+<!-- raw HTML omitted -->
+</li>
+<li>When backing up boot and system files, it may become necessary to determine the DOS boot device by doing the following:
+<ol>
+<li>Find the system partition under <strong>HKEY_LOCAL_MACHINE</strong>\<strong>System</strong>\<strong>Setup</strong>\<strong>SystemPartition</strong>.</li>
+<li>Pass the System Root environment variable (%SystemRoot%) to the mount manager to obtain the NT device name.</li>
+</ol>
+</li>
+</ul>
+<h2>VSS Restore Operations of WFP Protected Files</h2>
+<p>The WFP service is designed to prevent accidental or piecemeal replacement of system files. Therefore, special steps need to be undertaken to restore WFP data.</p>
+<p>The means the WFP writer should specify the <strong>VSS_RME_RESTORE_AT_REBOOT</strong> restore method when defining its Writer Metadata Document. If a requester determines that the WFP writer has failed to specify this restore method, it indicates a writer error.</p>
+<p>A requester should implement a restore method of <strong>VSS_RME_RESTORE_AT_REBOOT</strong> using the Win32 function <a href="/windows/win32/api/winbase/nf-winbase-movefileexa"><strong>MoveFileEx</strong></a> with the <strong>MOVEFILE_DELAY_UNTIL_REBOOT</strong> parameter to replace system files. The restored files are not copied into the actual system file directories until after system reboot. The overwriting of protected system files will occur only if the value of the following <strong>REG_WORD</strong> registry entry is set to 1:</p>
+<p><strong>HKEY_LOCAL_MACHINE</strong>\<strong>System</strong>\<strong>CurrentControlSet</strong>\<strong>Control</strong>\<strong>Session Manager</strong>\<strong>AllowProtectedRenames</strong> = 1</p>
+<p>This value must be set before any boot where protected files are to be replaced via <a href="/windows/win32/api/winbase/nf-winbase-movefileexa"><strong>MoveFileEx</strong></a> and is deleted after reboot.</p>
+<p>The system dllcache directory should also be backed up or restored, with boot volume backup and restore, and is located by examining the <strong>REG_EXPAND_SZ</strong> registry entry:</p>
+<p><strong>HKEY_LOCAL_MACHINE</strong>\<strong>Software</strong>\<strong>Microsoft</strong>\<strong>Windows NT</strong>\<strong>CurrentVersion</strong>\<strong>WinLogon</strong>\<strong>SfcDllCache</strong><!-- raw HTML omitted --> <!-- raw HTML omitted --></p>
+<p>Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Data type</p>
+<!-- raw HTML omitted -->
+<p>The contents of the system dllcache directory are rebuilt by using the System File Checker (SFC) from the command prompt:</p>
+<ul>
+<li>The <strong>/SCANONCE</strong> option scans all protected files at the next system boot.</li>
+<li>The <strong>/SCANNOW</strong> option scans all protected files immediately.</li>
+</ul>
+<p>All protected files will be scanned, and any versions that are not valid will be replaced in both the directory and dllcache location.</p>
+<p>There are four files that are part of the WFP that cannot be restored with the WFP files:</p>
+<!-- raw HTML omitted -->
+<p>These files help in the process of restoring the WFP files and as such there is a circular dependency. Currently, there is no way to restore these files except to reinstall Windows.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

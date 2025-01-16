@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Building the DVD Filter Graph</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Building the DVD Filter Graph
+ms.assetid: 1d2f8284-2deb-4207-b067-24a54d6b286c
+title: Building the DVD Filter Graph
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Building the DVD Filter Graph</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>As with any DirectShow application, a DVD playback application starts by building a filter graph. DirectShow provides the following components for DVD playback:</p>
+<ul>
+<li><a href="dvd-graph-builder.html">DVD Graph Builder</a>. A helper object that constructs the filter graph. It exposes the <a href="/windows/desktop/api/Strmif/nn-strmif-idvdgraphbuilder"><strong>IDvdGraphBuilder</strong></a> interface.</li>
+<li><a href="dvd-navigator-filter.html">DVD Navigator</a> filter. A DirectShow filter that handles DVD playback, navigation, and other commands.</li>
+</ul>
+<p>DVD playback also requires an MPEG-2 decoder. Hardware and software MPEG-2 decoders are available from third parties. First, create an instance of the DVD Graph Builder object.</p>
+<pre lang="C++"><code>IDvdGraphBuilder *pBuild = NULL;
+hr = CoCreateInstance(CLSID_DvdGraphBuilder, NULL, 
+    CLSCTX_INPROC_SERVER, IID_IDvdGraphBuilder, (void **)&amp;pBuild);
+</code></pre>
+<p>At this point, you can select and configure the video renderer before you build the rest of the graph. This step, which is optional, is described in more detail in the next section. If you omit this step, the DVD Graph Builder selects a default renderer. Next, build the graph by calling the <a href="/windows/desktop/api/Strmif/nf-strmif-idvdgraphbuilder-renderdvdvideovolume"><strong>IDvdGraphBuilder::RenderDvdVideoVolume</strong></a> method.</p>
+<pre lang="C++"><code>AM_DVD_RENDERSTATUS buildStatus;
+hr = pBuild-&gt;RenderDvdVideoVolume(L&quot;Z:\\video_ts&quot;, 0, &amp;buildStatus);
+</code></pre>
+<p>The first parameter is the name of a directory that contains the DVD files. On a DVD disc, these files reside in a directory named VIDEO_TS. If the first parameter is <strong>NULL</strong>, the DVD Graph Builder uses the first drive that contains a DVD volume.</p>
+<p>The second parameter contains various optional flags for choosing the type of decoder (hardware or software) and other options.</p>
+<p>The third parameter is an <a href="/windows/win32/api/strmif/ns-strmif-am_dvd_renderstatus"><strong>AM_DVD_RENDERSTATUS</strong></a> structure that receives status information. If the <a href="/windows/desktop/api/Strmif/nf-strmif-idvdgraphbuilder-renderdvdvideovolume"><strong>RenderDvdVideoVolume</strong></a> method returns S_FALSE, it means the call partially succeeded (or partially failed, if you're a pessimist). For example, the method might fail to render the subpicture stream, even though the other streams rendered successfully. If the <strong>RenderDvdVideoVolume</strong> method returns an error code or the value S_FALSE, you can examine the <strong>AM_DVD_RENDERSTATUS</strong> structure for details about the error.</p>
+<p>Next, get a pointer to the Filter Graph Manager by calling <a href="/windows/desktop/api/Strmif/nf-strmif-idvdgraphbuilder-getfiltergraph"><strong>IDvdGraphBuilder::GetFiltergraph</strong></a>. This method returns a pointer to the Filter Graph Manager's <a href="/windows/desktop/api/Strmif/nn-strmif-igraphbuilder"><strong>IGraphBuilder</strong></a> interface.</p>
+<pre lang="C++"><code>IGraphBuilder *pGraph = NULL;
+hr =  pBuild-&gt;GetFiltergraph(&amp;m_pGraph);
+</code></pre>
+<p>Use the <a href="/windows/desktop/api/Strmif/nf-strmif-idvdgraphbuilder-getdvdinterface"><strong>IDvdGraphBuilder::GetDvdInterface</strong></a> method to retrieve DVD-related interfaces, including the following:</p>
+<ul>
+<li><a href="/windows/desktop/api/Strmif/nn-strmif-idvdcontrol2"><strong>IDvdControl2</strong></a>. Controls playback and DVD commands</li>
+<li><a href="/windows/desktop/api/Strmif/nn-strmif-idvdinfo2"><strong>IDvdInfo2</strong></a>. Returns information about the DVD Navigator's current state.</li>
+<li><a href="/previous-versions/windows/desktop/api/il21dec/nn-il21dec-iamline21decoder"><strong>IAMLine21Decoder</strong></a>. Controls closed caption display. Closed caption display is enabled by default. To disable it, call <a href="/previous-versions/windows/desktop/api/il21dec/nf-il21dec-iamline21decoder-setservicestate"><strong>IAMLine21Decoder::SetServiceState</strong></a> with the AM_L21_CCSTATE_Off flag.</li>
+<li><a href="/windows/desktop/api/Control/nn-control-ibasicaudio"><strong>IBasicAudio</strong></a>. Controls audio volume and balance.</li>
+</ul>
+<p>For example, the following code returns the <a href="/windows/desktop/api/Strmif/nn-strmif-idvdcontrol2"><strong>IDvdControl2</strong></a> interface.</p>
+<pre lang="C++"><code>IDvdControl2 *pDvdControl = NULL;
+hr = pBuild-&gt;GetDvdInterface(IID_IDvdControl2, (void**)&amp;pDvdControl);
+</code></pre>
+<p>The recommended way to build the DVD playback filter graph is to have a <a href="dvd-graph-builder.html">DVD Graph Builder</a> object do it for you automatically. This approach is demonstrated below and in the DVD sample application. If you need to build your DVD filter graph manually, you can do so by following the basic rules of graph building discussed elsewhere in the DirectShow documentation. Generally, you should not manually add, remove, connect, or disconnect individual filters in the graph created by the DVD Graph Builder, because doing so might confuse the cleanup code.</p>
+<p>Configuring the Video Renderer</p>
+<p>DirectShow provides several video renderer filters. Before you build the graph, you can chose which video renderer you prefer. Select the renderer by calling <a href="/windows/desktop/api/Strmif/nf-strmif-idvdgraphbuilder-getdvdinterface"><strong>IDvdGraphBuilder::GetDvdInterface</strong></a> and requesting an interface that is specific to that renderer:</p>
+<ul>
+<li>Overlay Mixer Filter: <a href="/windows/desktop/api/Strmif/nn-strmif-iddrawexclmodevideo"><strong>IDDrawExclModeVideo</strong></a>.</li>
+<li>Video Mixing Renderer 7 (VMR-7): <a href="/windows/desktop/api/Strmif/nn-strmif-ivmrfilterconfig"><strong>IVMRFilterConfig</strong></a>.</li>
+<li>Video Mixing Renderer 9 (VMR-9): <a href="/previous-versions/windows/desktop/api/Vmr9/nn-vmr9-ivmrfilterconfig9"><strong>IVMRFilterConfig9</strong></a>.</li>
+<li>Enhanced Video Renderer (EVR): <a href="/windows/desktop/api/evr/nn-evr-ievrfilterconfig"><strong>IEVRFilterConfig</strong></a>.</li>
+</ul>
+<p>If you request any of these interfaces before building the filter graph, the DVD Graph Builder creates the corresponding video renderer. Later, when you build the graph, the DVD Graph Builder will try to use that renderer. But if it cannot build the graph using the renderer you selected, it may switch to another renderer. For example, your MPEG-2 decoder might not be compatible with the VMR filter, in which case the DVD Graph Builder would default to the Overlay Mixer.</p>
+<p>These interfaces also give you a chance to configure the renderer before it is connected to the decoder. For example, you can set the VMR to use windowless mode instead of the default windowed mode. For more information about video renderers, see the topic <a href="about-video-rendering-in-directshow.html">About Video Rendering in DirectShow</a>.</p>
+<p>On Windows XP and later, the DVD Graph Builder always uses the <a href="video-mixing-renderer-filter-7.html">Video Mixing Renderer 7</a> (VMR-7), unless:</p>
+<ul>
+<li>The caller queries interfaces found only the <a href="overlay-mixer-filter.html">Overlay Mixer</a>, such as <a href="/windows/desktop/api/Mpconfig/nn-mpconfig-imixerpinconfig2"><strong>IMixerPinConfig2</strong></a>. This sends a hint to the DVD Graph Builder that the application wants to use the Overlay Mixer and not the VMR. Windows Media Player also has a dialog box option to force the use of the Overlay Mixer.</li>
+<li>The installed decoder is not VMR-compatible. During graph building, the new <a href="/windows/desktop/api/Strmif/nn-strmif-iamdecodercaps"><strong>IAMDecoderCaps</strong></a> interface is used to check for the decoder's VMR support. If that is not present, the DVD Graph Builder will use the Overlay Mixer.</li>
+<li>While using a hardware decoder, the decoder cannot connect to the <a href="video-port-manager.html">Video Port Manager</a> (VPM). If a hardware decoder cannot use the VPM, then it cannot use the VMR, and so the DVD Graph Builder then tries to build a graph using the Overlay Mixer.</li>
+<li>The display card is known to have insufficient resources and/or capabilities to support the VMR but does not correctly report this in the driver. (Some known cases are specifically excluded by the DVD Graph Builder.)</li>
+<li>The connection between the decoder and the VMR fails for any reason, usually due to a lack of VRAM to create the necessary surfaces. In these cases, the DVD Graph Builder switches off VMR use and tries to use the Overlay Mixer to build a graph.</li>
+</ul>
+<p>Windowed Mode</p>
+<p>In windowed mode (Overlay Mixer or VMR), the renderer creates its own video window. To make this window a child of the application window, call <a href="/windows/desktop/api/Control/nf-control-ivideowindow-put_owner"><strong>IVideoWindow::put_Owner</strong></a> with a handle to the application. Also call <a href="/windows/desktop/api/Control/nf-control-ivideowindow-put_windowstyle"><strong>IVideoWindow::put_WindowStyle</strong></a> to set the WS_CHILD and WS_CLIPSIBLINGS styles on the renderer's video window. To get mouse messages from the renderer's video window, call <a href="/windows/desktop/api/Control/nf-control-ivideowindow-put_messagedrain"><strong>IVideoWindow::put_MessageDrain</strong></a> with a handle to the application window. This method sets up a &quot;message drain&quot; â€” the video window forwards any mouse messages it receives to the message drain window.</p>
+<pre lang="C++"><code>pVideoWindow-&gt;put_Owner((OAHWND)hwnd);
+pVideoWindow-&gt;put_WindowStyle(WS_CHILD | WS_CLIPSIBLINGS);
+pVideoWindow-&gt;put_MessageDrain((OAHWND)hwnd) ;
+</code></pre>
+<p>The message drain makes selecting DVD menu buttons somewhat complicated. Assuming the video window does not fill the application's entire client area, some mouse events will fall outside the video window. When you get a mouse event from <em>inside</em> the video window, you should process it for DVD menu navigation. Mouse events from <em>outside</em> the video window should not be processed. With the message drain, there is no way to distinguish between the two. Furthermore, the coordinates for mouse events from the video window are relative to the video window's client area; but mouse events from outside the video window are relative to the application's client area.</p>
+<p>Windowless Mode</p>
+<p>Windowless mode avoids the problems with mouse messages altogether. You do not need a message drain, because the VMR (or EVR) does not create its own window in windowless mode. Instead, it draws directly onto your application window. If the destination rectangle is smaller than the application client area, the DVD Navigator takes this into account when it calculates the DVD button positions. Therefore, when you get a mouse message, you can pass the coordinates directly to the DVD Navigator, as described in the section Menu Navigation.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="dvd-applications.html">DVD Applications</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

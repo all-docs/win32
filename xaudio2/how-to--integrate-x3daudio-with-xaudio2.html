@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to: Integrate X3DAudio with XAudio2</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic shows how to integrate X3DAudio with XAudio2.
+ms.assetid: a8f41f0d-b284-aefa-923b-471b13b4a3ec
+title: 'How to: Integrate X3DAudio with XAudio2'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to: Integrate X3DAudio with XAudio2</h1>
+<p>This topic shows how to integrate X3DAudio with XAudio2. You can use X3DAudio to provide the volume and pitch values for XAudio2 voices and the parameters for the XAudio2 built in reverb effect. This topic assumes that you have created an audio graph as described in <a href="how-to--build-a-basic-audio-processing-graph.html">How to: Build a Basic Audio Processing Graph</a>. If you have not already created an audio graph, <a href="/windows/desktop/api/x3daudio/nf-x3daudio-x3daudioinitialize"><strong>X3DAudioInitialize</strong></a> will fail.</p>
+<p><strong>To initialize X3DAudio</strong></p>
+<ol>
+<li>
+<p>Initialize X3DAudio by calling <a href="/windows/desktop/api/x3daudio/nf-x3daudio-x3daudioinitialize"><strong>X3DAudioInitialize</strong></a>.</p>
+<p>The <a href="/windows/desktop/api/x3daudio/nf-x3daudio-x3daudioinitialize"><strong>X3DAudioInitialize</strong></a> function takes flags indicating the speaker setup, the speed of sound in user-defined world units per second, and a handle to return an instance of the X3DAudio engine. Call <a href="/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2masteringvoice-getchannelmask"><strong>IXAudio2MasteringVoice::GetChannelMask</strong></a> to get the output format's channel mask.</p>
+<pre><code>DWORD dwChannelMask;       
+pMasteringVoice-&gt;GetChannelMask( &amp;dwChannelMask );       
+
+X3DAUDIO_HANDLE X3DInstance;
+X3DAudioInitialize( dwChannelMask, X3DAUDIO_SPEED_OF_SOUND, X3DInstance );
+</code></pre>
+</li>
+<li>
+<p>Create instances of the <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_listener"><strong>X3DAUDIO_LISTENER</strong></a> and <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_emitter"><strong>X3DAUDIO_EMITTER</strong></a> structures.</p>
+<p>The <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_listener"><strong>X3DAUDIO_LISTENER</strong></a> structure represents the position of whatever is hearing the sound. Generally, this is the position of the camera or a position close to it. The <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_emitter"><strong>X3DAUDIO_EMITTER</strong></a> structure represents the position of the thing making the sound. There will be one <strong>X3DAUDIO_EMITTER</strong> structure for each sound that is being tracked.</p>
+<p>Members of the structures that will not be updated in a game loop should be initialized here. Most members of the structures can simply be initialized to zero. However, some members of <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_emitter"><strong>X3DAUDIO_EMITTER</strong></a> need to be set to be initialized to non-zero values. The ChannelCount member of the <strong>X3DAUDIO_EMITTER</strong> needs to be initialized to the number of channels in the voice the emitter represents. Also, the CurveDistanceScaler member of <strong>X3DAUDIO_EMITTER</strong> must be in the range FLT_MIN to FLT_MAX.</p>
+<pre><code>X3DAUDIO_LISTENER Listener = {};
+
+X3DAUDIO_EMITTER Emitter = {};
+Emitter.ChannelCount = 1;
+Emitter.CurveDistanceScaler = Emitter.DopplerScaler = 1.0f;
+</code></pre>
+</li>
+</ol>
+<blockquote>
+<p>The ChannelCount here assumes we are playing a mono-channel sound which is the easist to set up. For sound sources with more than 1 channel, you must also set the emitter <code>ChannelRadius</code> and <code>pChannelAzimuths</code> values.</p>
+</blockquote>
+<ol start="3">
+<li>
+<p>Create an instance of the <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_dsp_settings"><strong>X3DAUDIO_DSP_SETTINGS</strong></a> structure.</p>
+<p>The <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_dsp_settings"><strong>X3DAUDIO_DSP_SETTINGS</strong></a> structure is used to return results calculated by <a href="/windows/desktop/api/x3daudio/nf-x3daudio-x3daudiocalculate"><strong>X3DAudioCalculate</strong></a>. The <strong>X3DAudioCalculate</strong> function does not allocate memory for any of its parameters. This means that you need to allocate arrays for the <strong>X3DAUDIO_DSP_SETTINGS</strong> structure's pMatrixCoefficients and pDelayTimes members if you intend to use them. In addition, you need to set the SrcChannelCount and DstChannelCount members to the number of channels in the emitter's source and destination voices.</p>
+<pre><code>X3DAUDIO_DSP_SETTINGS DSPSettings = {};
+FLOAT32 * matrix = new FLOAT32[deviceDetails.OutputFormat.Format.nChannels];
+DSPSettings.SrcChannelCount = 1;
+DSPSettings.DstChannelCount = deviceDetails.OutputFormat.Format.nChannels;
+DSPSettings.pMatrixCoefficients = matrix;
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+Use <a href="/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2voice-getvoicedetails"><strong>IXAudio2Voice::GetVoiceDetails</strong></a> on the mastering voice to obtain the number of InputChannels for <strong>nChannels</strong>. For DirectX SDK versions of XAUDIO2 prior to Windows 8, use IXAudio2::GetDeviceDetails.</p>
+</blockquote>
+<p>Â </p>
+</li>
+</ol>
+<p>Perform these steps once every two to three frames to calculate new settings and apply them. In this example, a source voice is sending directly to the mastering voice and to a submix voice with a reverb effect applied to it.</p>
+<p><strong>To use X3DAudio to calculate and apply new 3D audio settings</strong></p>
+<ol>
+<li>
+<p>Update the <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_listener"><strong>X3DAUDIO_LISTENER</strong></a> and <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_emitter"><strong>X3DAUDIO_EMITTER</strong></a> structures with their current position, velocity, and orientation.</p>
+<pre><code>Emitter.OrientFront = EmitterOrientFront;
+Emitter.OrientTop = EmitterOrientTop;
+Emitter.Position = EmitterPosition;
+Emitter.Velocity = EmitterVelocity;
+Listener.OrientFront = ListenerOrientFront;
+Listener.OrientTop = ListenerOrientTop;
+Listener.Position = ListenerPosition;
+Listener.Velocity = ListenerVelocity;
+</code></pre>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/x3daudio/nf-x3daudio-x3daudiocalculate"><strong>X3DAudioCalculate</strong></a> to calculate new settings for the voices.</p>
+<p>The parameters for <a href="/windows/desktop/api/x3daudio/nf-x3daudio-x3daudiocalculate"><strong>X3DAudioCalculate</strong></a> will be the updated <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_listener"><strong>X3DAUDIO_LISTENER</strong></a> and <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_emitter"><strong>X3DAUDIO_EMITTER</strong></a> structures. The flags will indicate what values <strong>X3DAudioCalculate</strong> should calculate, and which <a href="/windows/desktop/api/x3daudio/ns-x3daudio-x3daudio_dsp_settings"><strong>X3DAUDIO_DSP_SETTINGS</strong></a> structure will hold the results of the calculations performed.</p>
+<pre><code>X3DAudioCalculate(X3DInstance, &amp;Listener, &amp;Emitter,
+    X3DAUDIO_CALCULATE_MATRIX | X3DAUDIO_CALCULATE_DOPPLER | X3DAUDIO_CALCULATE_LPF_DIRECT | X3DAUDIO_CALCULATE_REVERB,
+    &amp;DSPSettings );
+</code></pre>
+</li>
+<li>
+<p>Use <a href="/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2voice-setoutputmatrix"><strong>IXAudio2Voice::SetOutputMatrix</strong></a> and <a href="/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2sourcevoice-setfrequencyratio"><strong>IXAudio2SourceVoice::SetFrequencyRatio</strong></a> to apply the volume and pitch values to the source voice.</p>
+<pre><code>pSFXSourceVoice-&gt;SetOutputMatrix( pMasterVoice, 1, deviceDetails.OutputFormat.Format.nChannels, DSPSettings.pMatrixCoefficients ) ;
+pSFXSourceVoice-&gt;SetFrequencyRatio(DSPSettings.DopplerFactor);
+</code></pre>
+</li>
+<li>
+<p>Use <a href="/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2voice-setoutputmatrix"><strong>IXAudio2Voice::SetOutputMatrix</strong></a> to apply the calculated reverb level to the submix voice.</p>
+<pre><code>pSFXSourceVoice-&gt;SetOutputMatrix(pSubmixVoice, 1, 1, &amp;DSPSettings.ReverbLevel);
+</code></pre>
+</li>
+<li>
+<p>Use <a href="/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2voice-setfilterparameters"><strong>IXAudio2Voice::SetFilterParameters</strong></a> to apply the calculated low pass filter direct coefficient to the source voice.</p>
+<pre><code>XAUDIO2_FILTER_PARAMETERS FilterParameters = { LowPassFilter, 2.0f * sinf(X3DAUDIO_PI/6.0f * DSPSettings.LPFDirectCoefficient), 1.0f };
+pSFXSourceVoice-&gt;SetFilterParameters(&amp;FilterParameters);
+</code></pre>
+</li>
+</ol>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="x3daudio.html">X3DAudio</a></p>
+<!-- raw HTML omitted -->
+<p><a href="x3daudio-overview.html">X3DAudio Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="programming-guide.html">XAudio2 Programming Guide</a></p>
+<!-- raw HTML omitted -->
+<p><a href="volume-and-pitch-control.html">XAudio2 Volume and Pitch Control</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

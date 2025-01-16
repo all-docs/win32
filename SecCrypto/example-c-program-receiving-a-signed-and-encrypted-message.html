@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Receiving a Signed and Encrypted Message</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: 'The following example works in conjunction with the program in Example C Program: Sending and Receiving a Signed and Encrypted Message. It reads the signed and encrypted message, then decrypts and verifies the message.'
+ms.assetid: 65ca30ba-a184-46ef-808c-e2fedcc86079
+title: 'Example C Program: Receiving a Signed and Encrypted Message'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Receiving a Signed and Encrypted Message</h1>
+<p>The following example works in conjunction with the program in <a href="example-c-program-sending-and-receiving-a-signed-and-encrypted-message.html">Example C Program: Sending and Receiving a Signed and Encrypted Message</a>. It reads the signed and encrypted message, then decrypts and verifies the message.</p>
+<p>To decrypt and verify the message, the <a href="../secgloss/p-gly.html"><em>private key</em></a> of the message's intended receiver must be available. The certificate of the signer is included in the message <a href="../secgloss/b-gly.html"><em>BLOB</em></a> read in from the file.</p>
+<p>This example illustrates the following tasks:</p>
+<ul>
+<li>Opening and closing system certificate stores.</li>
+<li>Reading a <a href="/previous-versions/windows/desktop/legacy/aa381414(v=vs.85)"><strong>CERT_NAME_BLOB</strong></a> from a file.</li>
+<li>Initializing data structures needed to decrypt and verify a message.</li>
+<li>Calling a CryptoAPI function to find the required size of a buffer, allocating the buffer of the required size, and calling the CryptoAPI function again to fill the buffer. For more information, see <a href="retrieving-data-of-unknown-length.html">Retrieving Data of Unknown Length</a>.</li>
+</ul>
+<p>This example uses the following CryptoAPI functions:</p>
+<ul>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certopenstore"><strong>CertOpenStore</strong></a></li>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptdecryptandverifymessagesignature"><strong>CryptDecryptAndVerifyMessageSignature</strong></a></li>
+<li><a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certclosestore"><strong>CertCloseStore</strong></a></li>
+</ul>
+<p>This example uses <a href="myhandleerror.html"><strong>MyHandleError</strong></a> to exit the program gracefully in case of any failure. The code <strong>MyHandleError</strong> is included with the sample and can also be found along with other auxiliary functions under <a href="general-purpose-functions.html">General Purpose Functions</a>.</p>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+// Example C Program: 
+// Reads a signed and encrypted message, then decrypts and verifies 
+// the message.
+#pragma comment(lib, &quot;crypt32.lib&quot;)
+
+#include &lt;stdio.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Wincrypt.h&gt;
+
+#define MY_ENCODING_TYPE (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+
+//-------------------------------------------------------------------
+//    This example uses the function MyHandleError, a simple error
+//    handling function, to print an error message to the standard  
+//    error (stderr) file and exit the program. 
+//    For most applications, replace this function with one 
+//    that does more extensive error reporting.
+
+void MyHandleError(LPTSTR psz)
+{
+    _ftprintf(stderr, TEXT(&quot;An error occurred in the program. \n&quot;));
+    _ftprintf(stderr, TEXT(&quot;%s\n&quot;), psz);
+    _ftprintf(stderr, TEXT(&quot;Error number %x.\n&quot;), GetLastError());
+    _ftprintf(stderr, TEXT(&quot;Program terminating. \n&quot;));
+    exit(1);
+} // End of MyHandleError
+
+BYTE* DecryptAndVerify(DWORD cbBlob, BYTE *pbBlob)
+{
+    //---------------------------------------------------------------
+    //  Declare and initialize local variables.
+
+    HCERTSTORE hCertStore;
+    CRYPT_DECRYPT_MESSAGE_PARA DecryptPara;
+    CRYPT_VERIFY_MESSAGE_PARA VerifyPara;
+    DWORD dwSignerIndex = 0;
+    BYTE *pbDecrypted;
+    DWORD cbDecrypted;
+
+    //---------------------------------------------------------------
+    //   Open the certificate store.
+
+    if ( !(hCertStore = CertOpenStore(
+        CERT_STORE_PROV_SYSTEM,
+        0,
+        NULL,
+        CERT_SYSTEM_STORE_CURRENT_USER,
+        L&quot;my&quot;)))
+    {
+        MyHandleError(TEXT(&quot;The MY store could not be opened.&quot;));
+    }
+
+    //---------------------------------------------------------------
+    //   Initialize the needed data structures.
+
+    DecryptPara.cbSize = sizeof(CRYPT_DECRYPT_MESSAGE_PARA);
+    DecryptPara.dwMsgAndCertEncodingType = MY_ENCODING_TYPE;
+    DecryptPara.cCertStore = 1;
+    DecryptPara.rghCertStore = &amp;hCertStore;
+
+    VerifyPara.cbSize = sizeof(CRYPT_VERIFY_MESSAGE_PARA);
+    VerifyPara.dwMsgAndCertEncodingType = MY_ENCODING_TYPE;
+    VerifyPara.hCryptProv = 0;
+    VerifyPara.pfnGetSignerCertificate = NULL;
+    VerifyPara.pvGetArg = NULL;
+    pbDecrypted = NULL;
+    cbDecrypted = 0;
+
+    //---------------------------------------------------------------
+    //     Call CryptDecryptAndVerifyMessageSignature a first time
+    //     to determine the needed size of the buffer to hold the 
+    //     decrypted message. 
+    //     Note: The sixth parameter is NULL in this call to 
+    //     get the required size of the bytes string to contain the 
+    //     decrypted message.
+
+    if(!(CryptDecryptAndVerifyMessageSignature(
+        &amp;DecryptPara,
+        &amp;VerifyPara,
+        dwSignerIndex,
+        pbBlob,
+        cbBlob,
+        NULL,           
+        &amp;cbDecrypted,
+        NULL,
+        NULL)))
+    {
+        MyHandleError(TEXT(&quot;Failed getting size.&quot;));
+    }
+
+    //---------------------------------------------------------------
+    //    Allocate memory for the buffer to hold the decrypted
+    //    message.
+
+    if(!(pbDecrypted = (BYTE *)malloc(cbDecrypted)))
+    {
+        MyHandleError(TEXT(&quot;Memory allocation failed.&quot;));
+    }
+
+    if(!(CryptDecryptAndVerifyMessageSignature(
+        &amp;DecryptPara,
+        &amp;VerifyPara,
+        dwSignerIndex,
+        pbBlob,
+        cbBlob,
+        pbDecrypted,
+        &amp;cbDecrypted,
+        NULL,
+        NULL)))
+    {
+        pbDecrypted = NULL;
+    }
+
+    //---------------------------------------------------------------
+    //  Close the certificate store.
+
+    CertCloseStore(hCertStore, 0);
+
+    //---------------------------------------------------------------
+    //    Return the decrypted string or NULL.
+
+    return pbDecrypted;
+
+} // End of DecryptandVerify.
+
+BYTE* ReadBlob(DWORD *pcbBlob)
+{
+    FILE *hInputFile;
+    BYTE *pbBlob;
+
+    // Open the input file and read in the signed and encrypted BLOB.
+    // This file would be created by a program such as the example 
+    // program &quot;Example C Program: Sending and Receiving a Signed and 
+    // Encrypted Message&quot; in the Platform Software Development Kit (SDK).
+    // Change the path name for this file if it is not in the same
+    // directory as the executable.
+
+    if( !(hInputFile= _tfopen(TEXT(&quot;sandvout.txt&quot;), TEXT(&quot;rb&quot;))))
+    {
+        MyHandleError(TEXT(&quot;Input file was not opened.\n&quot;));
+    }
+
+    fread(
+        pcbBlob,
+        sizeof(DWORD),
+        1,
+        hInputFile);
+
+    if(ferror(hInputFile))
+    {
+        MyHandleError(TEXT(&quot;The size of the BLOB was not read.\n&quot;));
+    }
+
+    if(!(pbBlob = (BYTE *) malloc(*pcbBlob)))
+    {
+        MyHandleError(TEXT(&quot;Memory allocation failed.&quot;));
+    }
+
+    fread(
+        pbBlob,
+        *pcbBlob,
+        1,
+        hInputFile);
+
+    if(ferror(hInputFile))
+    {
+        MyHandleError(TEXT(&quot;The bytes of the BLOB were not read.\n&quot;));
+    }
+
+    fclose(hInputFile);
+
+    return pbBlob;
+}  // End of ReadBlob.
+
+//-------------------------------------------------------------------
+//   Main calls ReadBlob to read in the signed and encrypted message.
+//   It then calls DecryptAndVerify which, if successful, decrypts
+//   and verifies the message. 
+//   The function main prints the returned, decrypted message
+//   if the verification and decryption are successful.
+
+//   Note: The file with the signed and encrypted file must be
+//   available, and the user running this program must have access to
+//   the private key of the intended message receiver.
+
+//   Also note that this program does not use CryptAcquireContext.
+   
+void main()
+{
+    BYTE *pReturnMessage;
+    BYTE *pbBlob;
+    DWORD cbBlob;
+
+    if((pbBlob = ReadBlob(&amp;cbBlob)) == NULL)
+    {
+        MyHandleError(TEXT(&quot;Read BLOB did not return the BLOB. &quot;));
+    }
+
+    if(pReturnMessage = DecryptAndVerify(cbBlob, pbBlob))
+    {
+        _tprintf(TEXT
+                (&quot;    The returned, verified message is -&gt;\n%s\n&quot;), 
+            pReturnMessage);
+        _tprintf(TEXT(&quot;    The program executed without error.\n&quot;));
+    }
+    else
+    {
+        _tprintf(TEXT(&quot;Verification failed.\n&quot;));
+    }
+
+} // End of main.
+
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Diffie-Hellman Client Code for Creating the Master Key</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example shows typical Diffie-Hellman/Schannel client-side code for creating a master key.
+ms.assetid: 37b35cd6-b3c9-4a75-83a9-129bcf7a84a3
+title: Diffie-Hellman Client Code for Creating the Master Key
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Diffie-Hellman Client Code for Creating the Master Key</h1>
+<p>The following example shows typical <a href="../secgloss/d-gly.html"><em>Diffie-Hellman</em></a>/Schannel client-side code for creating a <a href="../secgloss/m-gly.html"><em>master key</em></a>.</p>
+<pre lang="C++"><code>//--------------------------------------------------------------------
+//   Define and initialize local variables.
+
+HCRYPTPROV hProv      = &lt;protocol engine's key container&gt;;
+HCRYPTKEY  hClientDHKey;  // handle to the client's DH key
+HCRYPTKEY  hMasterKey;
+ALG_ID     Algid;
+PBYTE      pbServerPub = &lt;pointer to Server Public Key&gt;;
+DWORD      cbServerPub = &lt;size of Server Public Key&gt;;
+BYTE       rgbServerBlob[&lt;max BLOB size&gt;];
+DWORD      cbServerBlob;
+PBYTE      pbG = &lt;pointer to generator G from Server&gt;;
+DWORD      cbG = &lt;size of generator G from Server&gt;;
+PBYTE      pbP = &lt;pointer to prime P from Server&gt;;
+DWORD      cbP = &lt;size of prime P from Server&gt;;
+CRYPT_DATA_BLOB Data;
+BYTE       rgbClientPubBlob[size of the client public key BLOB];
+DWORD      cbClientPubBlob;
+
+//--------------------------------------------------------------------
+// Generate and set the parameters on the client DH key
+// Schannel specifies the key size and [regen flag when generating
+// a client DH key.
+
+CryptGenKey(
+      hProv, 
+      CALG_DH_EPHEM, 
+      ((cbP * 8) &lt;&lt; 16)|CRYPT_PREGEN, 
+      &amp;hClientDHKey);
+
+Data.pbData = pbP;
+Data.cbData = cbP;
+CryptSetKeyParam(
+         hClientDHKey, 
+         KP_P, 
+         (BYTE*)&amp;Data, 
+         0);
+
+Data.pbData = pbG;
+Data.cbData = cbG;
+CryptSetKeyParam(
+          hClientDHKey, 
+          KP_G, 
+          (BYTE*)&amp;Data, 
+          0);
+
+//--------------------------------------------------------------------
+// Create the client private DH key
+
+CryptSetKeyParam(
+     hClientDHKey, 
+     KP_X, 
+     NULL, 
+     0);
+
+//--------------------------------------------------------------------
+// Build PUBLICKEYBLOB around the server's public key
+{
+     BLOBHEADER *pBlobHeader = (BLOBHEADER *)rgbServerBlob;
+     DHPUBKEY   *pDHPubKey   = (DHPUBKEY *)(pBlobHeader + 1);
+     BYTE       *pData       = (BYTE *)(pDHPubKey + 1);
+
+     pBlobHeader-&gt;bType    = PUBLICKEYBLOB;
+     pBlobHeader-&gt;bVersion = CUR_BLOB_VERSION;
+     pBlobHeader-&gt;reserved = 0;
+     pBlobHeader-&gt;aiKeyAlg = CALG_DH_EPHEM;
+
+     pDHPubKey-&gt;magic = 0x31484400;
+     pDHPubKey-&gt;bitlen = dwServerPub * 8;
+
+     ReverseMemCopy(pData, pbServerPub, cbServerPub);
+     cbServerBlob = sizeof(BLOBHEADER) + sizeof(DHPUBKEY) + 
+       cbServerPub;
+}
+
+//--------------------------------------------------------------------
+// Import the server's public key and get an agreed key
+
+CryptImportKey(
+        hProv, 
+        rgbServerBlob, 
+        cbServerBlob, 
+        hClientDHKey, 
+        0, 
+        &amp;hMasterKey);
+
+//--------------------------------------------------------------------
+// Select the master key type.
+
+switch(&lt;protocol being used&gt;)
+{
+    case &lt;SSL 3.0&gt;:
+        Algid = CALG_SSL3_MASTER;
+        break;
+
+    case &lt;TLS 1.0&gt;:
+        Algid = CALG_TLS1_MASTER;
+        break;
+}
+
+//--------------------------------------------------------------------
+// Convert the agreed key to the appropriate master key
+
+CryptSetKeyParam(
+        hMasterKey, 
+        KP_ALGID, 
+        (BYTE*)&amp;Algid, 
+        0);
+
+//--------------------------------------------------------------------
+// Export the client Diffie-Hellman public key.
+
+cbClientPubBlob = sizeof(rgbClientPubBlob);
+CryptExportKey(
+           hClientDHKey, 
+           0, 
+           PUBLICKEYBLOB,
+           0, 
+           rgbClientPubBlob, 
+           &amp; cbClientPubBlob);
+
+CryptDestroyKey(hClientDHKey);
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

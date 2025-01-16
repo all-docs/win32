@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Porting from Direct3D 11 to Direct3D 12</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Porting from Direct3D 11 to Direct3D 12
+description: This section provides some guidance on porting from a custom Direct3D 11 graphics engine to Direct3D 12.
+ms.assetid: 9EB4AC6B-AFDD-4673-8EB3-54272C151784
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Porting from Direct3D 11 to Direct3D 12</h1>
+<p>This section provides some guidance on porting from a custom Direct3D 11 graphics engine to Direct3D 12.</p>
+<ul>
+<li><a href="#device-creation">Device creation</a></li>
+<li><a href="#committed-resources">Committed resources</a></li>
+<li><a href="#reserved-resources">Reserved resources</a></li>
+<li><a href="#uploading-data">Uploading data</a></li>
+<li><a href="#shaders-and-shader-objects">Shaders and shader objects</a></li>
+<li><a href="#submitting-work-to-the-gpu">Submitting work to the GPU</a></li>
+<li><a href="#cpugpu-synchronization">CPU/GPU Synchronization</a></li>
+<li><a href="#resource-binding">Resource Binding</a></li>
+<li><a href="#resource-state">Resource state</a></li>
+<li><a href="#swapchains">Swapchains</a></li>
+<li><a href="#fixed-function-rendering">Fixed function rendering</a></li>
+<li><a href="#odds-and-ends">Odds and ends</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Device creation</h2>
+<p>Both Direct3D 11 and Direct3D 12 share a similar device creation pattern. Existing Direct3D 12 drivers are all <strong>D3D_FEATURE_LEVEL_11_0</strong> or better, so you can ignore the older feature levels and associated limitations.</p>
+<p>Also keep in mind that with Direct3D 12, you should explicitly enumerate device information using DXGI interfaces. In Direct3D 11, you could <em>chain back</em> to the DXGI device from the Direct3D device, and this is not supported for Direct3D 12.</p>
+<p>Creating a WARP software device on Direct3D 12 is done by providing an explicit adapter obtained from <strong>IDXGIFactory4::EnumWarpAdapter</strong>. The WARP device for Direct3D 12 is available only on systems with the <strong>Graphics Tools</strong> optional feature enabled.</p>
+<blockquote>
+<p>[!NOTE]
+There is no equivalent to <strong>D3D11CreateDeviceAndSwapChain</strong>. Even with Direct3D 11, we discourage the use of this function as it's often better to create the device and swapchain in distinct steps.</p>
+</blockquote>
+<h2>Committed resources</h2>
+<p>Objects created with the following interfaces in Direct3D 11, translate to what are called &quot;committed resources&quot; in Direct3D 12. A committed resource is a resource which has both virtual address space and physical pages associated with it. This is a concept of the Microsoft Windows Device Driver 2 (WDD2) Memory Model, on which Direct3D 12 is based.</p>
+<p>Direct3D 11 resources:</p>
+<ul>
+<li><a href="/windows/win32/api/d3d11/nn-d3d11-id3d11resource"><strong>ID3D11Resource</strong></a></li>
+<li><a href="/windows/win32/api/d3d11/nn-d3d11-id3d11buffer"><strong>ID3D11Buffer</strong></a> and <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11device-createbuffer"><strong>ID3D11Device::CreateBuffer</strong></a></li>
+<li><a href="/windows/win32/api/d3d11/nn-d3d11-id3d11texture1d"><strong>ID3D11Texture1D</strong></a> and <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11device-createtexture1d"><strong>ID3D11Device:CreateTexture1D</strong></a></li>
+<li><a href="/windows/win32/api/d3d11/nn-d3d11-id3d11texture2d"><strong>ID3D11Texture2D</strong></a> and <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11device-createtexture2d"><strong>ID3D11Device::CreateTexture2D</strong></a></li>
+<li><a href="/windows/win32/api/d3d11/nn-d3d11-id3d11texture3d"><strong>ID3D11Texture3D</strong></a> and <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11device-createtexture3d"><strong>ID3D11Device::CreateTexture3D</strong></a></li>
+</ul>
+<p>In Direct3D 12 these are all represented by <a href="/windows/win32/api/d3d12/nn-d3d12-id3d12resource"><strong>ID3D12Resource</strong></a> and <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-createcommittedresource"><strong>ID3D12Device::CreateCommittedResource</strong></a>.</p>
+<h2>Reserved resources</h2>
+<p>Reserved resources are resources where only virtual address space has been allocated, physical memory is not allocated until there is a call to <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-createheap"><strong>ID3D12Device::CreateHeap</strong></a>. This is essentially the same concept as tiled resources in Direct3D 11.</p>
+<p>The flags (<a href="/windows/win32/api/d3d11/ne-d3d11-d3d11_resource_misc_flag"><strong>D3D11_RESOURCE_MISC_FLAG</strong></a>) used in Direct3D 11 to set up tiled resources, then map them to physical memory.</p>
+<ul>
+<li>D3D11_RESOURCE_MISC_TILED</li>
+<li>D3D11_RESOURCE_MISC_TILE_POOL</li>
+</ul>
+<h2>Uploading data</h2>
+<p>In Direct3D 11 there is the appearance of a single timeline (calls following a sequence, such as data initialized with <a href="/windows/win32/api/d3d11/ns-d3d11-d3d11_subresource_data"><strong>D3D11_SUBRESOURCE_DATA</strong></a>, then a call is made to <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-updatesubresource"><strong>ID3D11DeviceContext::UpdateSubresource</strong></a>, and then a call to <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-map"><strong>ID3D11DeviceContext::Map</strong></a>). The number of copies created of the data is not obvious to a Direct3D 11 developer.</p>
+<p>In Direct3D 12 there are two timelines, the GPU timeline (set up by calls to <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copytextureregion"><strong>CopyTextureRegion</strong></a>, and <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copybufferregion"><strong>CopyBufferRegion</strong></a> from mappable memory) and the CPU timeline (determined by calls to <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12resource-map"><strong>Map</strong></a>). Helper functions are provided (in the d3dx12.h file) called <a href="updatesubresources1.html"><strong>Updatesubresources</strong></a> that use a shared timeline. There are several variations of this helper function, one that uses <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-getcopyablefootprints"><strong>ID3D12Device::GetCopyableFootprints</strong></a>, another that uses a heap-allocating mechanism, and another that uses a stack-allocating mechanism. These helper functions copy resources to both the GPU and CPU, via an intermediate staging area of memory.</p>
+<p>Typically the GPU and CPU each have their own copy of a resource tied to their own timeline. The shared timeline approach similarly maintains two copies.</p>
+<h2>Shaders and shader objects</h2>
+<p>In Direct3D 11 there is a lot of creation of shader and state objects, and setting the state of those objects, using the <a href="/windows/win32/api/d3d11/nn-d3d11-id3d11device"><strong>ID3D11Device</strong></a> creation methods and the <a href="/windows/win32/api/d3d11/nn-d3d11-id3d11devicecontext"><strong>ID3D11DeviceContext</strong></a> set methods. Typically a large number of calls are made to these methods, which are then combined at draw time by the driver to set the correct pipeline state.</p>
+<p>In Direct3D 12 this setting of pipeline state has been combined into a single object (<a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-createcomputepipelinestate"><strong>CreateComputePipelineState</strong></a> for a compute engine, and <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-creategraphicspipelinestate"><strong>CreateGraphicsPipelineState</strong></a> for a graphics engine), which is then attached to a command list before the draw call with a call to <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-setpipelinestate"><strong>SetPipelineState</strong></a>.</p>
+<p>These calls replace all the individual calls to set shaders, input layout, blend state, rasterizer state, depth stencil state, and so on, in Direct3D 11</p>
+<ul>
+<li>Device 11 methods: <code>CreateInputLayout</code>, <code>CreateXShader</code>, <code>CreateDepthStencilState</code>, and <code>CreateRasterizerState</code>.</li>
+<li>Device Context 11 methods:  <code>IASetInputLayout</code>, <code>xxSetShader</code>, <code>OMSetBlendState</code>, <code>OMSetDepthStencilState</code>, and <code>RSSetState</code>.</li>
+</ul>
+<p>While Direct3D 12 can support older compiled shader blobs, shaders should be built using either Shader Model 5.1 with the FXC/D3DCompile APIs, or using Shader Model 6 using the DXIL DXC compiler. You should validate Shader Model 6 support with <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-checkfeaturesupport"><strong>CheckFeatureSupport</strong></a> and <strong>D3D12_FEATURE_SHADER_MODEL</strong>.</p>
+<h2>Submitting work to the GPU</h2>
+<p>in Direct3D 11 there is little control over actually how work is submitted, it is largely handled by the driver, though some control is enabled through the <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-flush"><strong>ID3D11DeviceContext::Flush</strong></a> and <a href="/windows/win32/api/dxgi1_2/nf-dxgi1_2-idxgiswapchain1-present1"><strong>IDXGISwapChain1::Present1</strong></a> calls.</p>
+<p>In Direct3D 12 work submission is very explicit and controlled by the app. The primary construct for submitting work is the <a href="/windows/win32/api/d3d12/nn-d3d12-id3d12graphicscommandlist"><strong>ID3D12GraphicsCommandList</strong></a>, which is used to record all the apps commands (and is quite similar in concept to the ID3D11 deferred context). Backing store for a command list is provided by the <a href="/windows/win32/api/d3d12/nn-d3d12-id3d12commandallocator"><strong>ID3D12CommandAllocator</strong></a>, which enables the app to manage the memory utilization of the command list by actually exposing the memory that the Direct3D 12 driver is going to use to store the command list.</p>
+<p>Finally the <a href="/windows/win32/api/d3d12/nn-d3d12-id3d12commandqueue"><strong>ID3D12CommandQueue</strong></a> is a first-in first-out queue, that stores the correct order of the command lists for submission to the GPU. Only when one command list has completed execution on the GPU, will the next command list from the queue be submitted by the driver.</p>
+<p>In Direct3D 11 there is no explicit concept of a command queue. In the common setup for Direct3D 12, the currently open <strong>D3D12_COMMAND_LIST_TYPE_DIRECT</strong> command list for the current frame can be considered analogous to the Direct3D 11 immediate context. This provides many of the same functions.</p>
+<table>
+<thead>
+<tr>
+<th>D3D11DeviceContext</th>
+<th>ID3D12GraphicsCommand List</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ClearDepthStencilView</td>
+<td>ClearDepthStencilView</td>
+</tr>
+<tr>
+<td>ClearRenderTargetView</td>
+<td>ClearRenderTargetView</td>
+</tr>
+<tr>
+<td>ClearUnorderedAccess*</td>
+<td>ClearUnorderedAccess*</td>
+</tr>
+<tr>
+<td>Draw, DrawInstanced</td>
+<td>DrawInstanced</td>
+</tr>
+<tr>
+<td>DrawIndexed, DrawIndexedInstanced</td>
+<td>DrawIndexedInstanced</td>
+</tr>
+<tr>
+<td>Dispatch</td>
+<td>Dispatch</td>
+</tr>
+<tr>
+<td>IASetInputLayout, xxSetShader, etc.</td>
+<td>SetPipelineState</td>
+</tr>
+<tr>
+<td>OMSetBlendState</td>
+<td>OMSetBlendFactor</td>
+</tr>
+<tr>
+<td>OMSetDepthStencilState</td>
+<td>OMSetStencilRef</td>
+</tr>
+<tr>
+<td>OMSetRenderTargets</td>
+<td>OMSetRenderTargets</td>
+</tr>
+<tr>
+<td>RSSetViewports</td>
+<td>RSSetViewports</td>
+</tr>
+<tr>
+<td>RSSetScissorRects</td>
+<td>RSSetScissorRects</td>
+</tr>
+<tr>
+<td>IASetPrimitiveTopology</td>
+<td>IASetPrimitiveTopology</td>
+</tr>
+<tr>
+<td>IASetVertexBuffers</td>
+<td>IASetVertexBuffers</td>
+</tr>
+<tr>
+<td>IASetIndexBuffer</td>
+<td>IASetIndexBuffer</td>
+</tr>
+<tr>
+<td>ResolveSubresource</td>
+<td>ResolveSubresource</td>
+</tr>
+<tr>
+<td>CopySubresourceRegion</td>
+<td>CopyBufferRegion</td>
+</tr>
+<tr>
+<td>UpdateSubresource</td>
+<td>CopyTextureRegion</td>
+</tr>
+<tr>
+<td>CopyResource</td>
+<td>CopyResource</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>[!NOTE]
+A command list created with <strong>D3D12_COMMAND_LIST_TYPE_BUNDLE</strong> is simliar to a deferred context. Direct3D 12 also supports the ability to access some features of an <em>immediate context</em> simultaneous to rendering via <strong>D3D12_COMMAND_LIST_TYPE_COPY</strong> and <strong>D3D12_COMMAND_LIST_TYPE_COMPUTE</strong> command list types.</p>
+</blockquote>
+<h2>CPU/GPU Synchronization</h2>
+<p>In Direct3D 11 CPU/GPU synchronization was largely automatic, and there was no need for the app to maintain the status of physical memory.</p>
+<p>in Direct3D 12 the app must manage the two timelines (CPU and GPU) explicitly. This requires that information needs to be maintained, by the app, on what resources are required by the GPU, and for how long. This also means that the app is responsible for ensuring the contents of resources (committed resources, heaps, command allocators, for example) do not change until the GPU has finished using them.</p>
+<p>The main object for synchronizing the timelines is the <a href="/windows/win32/api/d3d12/nn-d3d12-id3d12fence"><strong>ID3D12Fence</strong></a> object. The operation of fences is fairly simple, they enable the GPU to signal when it has completed a task. The GPU and CPU can both signal, and can both wait on fences.</p>
+<p>Typically the approach is that when submitting a command list for execution, a fence signal is transmitted by the GPU on completion (when it has finished reading the data), enabling the CPU to reuse or destroy the resources.</p>
+<p>In Direct3D 11 the <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-map"><strong>ID3D11DeviceContext::Map</strong></a> flag D3D11_MAP_WRITE_DISCARD essentially treated each resource as an endless supply of memory the app could write to (a process known as &quot;renaming&quot;). In Direct3D 12 again the process is explicit: additional memory needs to be allocated, and fences should be used to sync the operations. Ring buffers (consisting of large buffers) might be a good technique for this, refer to the ring buffer scenario in <a href="fence-based-resource-management.html">Fence-Based Resource Management</a>.</p>
+<p><img src="images/ring-buffer-1.png" alt="using a ring buffer" /></p>
+<h2>Resource Binding</h2>
+<p>Views in Direct3D 11 (shader resource views, render target views, and so on), have largely been replaced in Direct3D 12 with the concept of a descriptor. The creation methods still exist in Direct3D 12 (such as <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-createshaderresourceview"><strong>CreateShaderResourceView</strong></a> and <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12device-createrendertargetview"><strong>CreateRenderTargetView</strong></a>), which are called after the descriptor heap has been created, to write the data into the heap. Binding in Direct3D 12 is now handled by descriptor handles described in a root signature, and submitted using the <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-setgraphicsrootdescriptortable"><strong>SetGraphicsRootDescriptorTable</strong></a> or <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-setcomputerootdescriptortable"><strong>SetComputeRootDescriptorTable</strong></a> methods.</p>
+<p>Root signatures details mappings between the root signature slot number and descriptor tables, where the descriptor table can contain references to resources available to vertex shaders, pixel shaders, and the other shaders, such as constant buffers, shader resource views and samplers. This flexibility disconnects the HLSL register space from the API binding space in Direct3D 12, unlike Direct3D 11 where there is a one to one mapping between these.</p>
+<p>One of the implications of this system is that the app is responsible for renaming descriptor tables, which enables developers to understand the performance cost of changing even a single descriptor per draw call.</p>
+<p>A new feature of Direct3D 12 is that an app can control which descriptors are shared between which shader stages. In Direct3D 11 resources such as UAVs are shared between all shader stages. By enabling descriptors to be disabled for certain shader stages, the registers used by descriptors that have been disabled are available to be used by descriptors which are enabled for a particular shader stage.</p>
+<p>The following table shows an example root signature.</p>
+<table>
+<thead>
+<tr>
+<th>Root Parameter Slot</th>
+<th>Descriptor Table Entry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>VS Descriptor Range b0-b13</td>
+</tr>
+<tr>
+<td>1</td>
+<td>VS Descriptor Range t0-t127</td>
+</tr>
+<tr>
+<td>2</td>
+<td>VS Descriptor Range s0-s16</td>
+</tr>
+<tr>
+<td>3</td>
+<td>PS Descriptor Range b0-b13</td>
+</tr>
+<tr>
+<td>...</td>
+<td></td>
+</tr>
+<tr>
+<td>14</td>
+<td>DS Descriptor Range s0-16</td>
+</tr>
+<tr>
+<td>15</td>
+<td>Shared Descriptor Range u0-u63</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Resource state</h2>
+<p>In Direct3D 11 resource state is not maintained by the app, but by the driver.</p>
+<p>In Direct3D 12 maintaining resource state becomes the responsibility of the app, to enable full parallelism in the recording of command lists: the app must handle the recording timelines for command lists (which can be done in parallel), and the execution timelines which must be sequential.</p>
+<p>A resource state transition is handled by the <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier"><strong>ResourceBarrier</strong></a> method. Primarily the app must inform the driver when resource usage is changing. For example if a resource is being used as a render target, and then it is to be used as input to a vertex shader on the next draw call, then this might require a short stall in GPU operation to complete the render target operation before handling the vertex shader.</p>
+<p>This system enables fine grain synchronization (the GPU stalls) of the graphics pipeline, as well as cache flushes and possibly some memory layout changes (such as render target view to depth stencil view decompression).</p>
+<p>This is known as a transition barrier. There are other kinds of barriers, in Direct3D 11 the <a href="/windows/win32/api/d3d11_2/nf-d3d11_2-id3d11devicecontext2-tiledresourcebarrier"><strong>ID3D11DeviceContext2::TiledResourceBarrier</strong></a> enabled the same physical memory to be used by two different tiled resources. In Direct3D 12 this is referred to as an &quot;aliasing barrier&quot;. Aliasing barriers can be used for both tiled and placed resources in Direct3D 12. Additionally there is the UAV barrier. In Direct3D 11 all UAV dispatch and draw operations are required to be serialized, even though these operations can be pipelined or work in parallel. For Direct3D 12 this restriction is removed by the addition of a UAV barrier. A UAV barrier ensures that UAV operations are sequential, so if a second operation requires that the first complete, the second will be forced to wait by the addition of the barrier. The default operation for UAVs is simply that the operations will proceed as quickly as possible.</p>
+<p>Clearly there are performance gains if a workload can be parallelized.</p>
+<h2>Swapchains</h2>
+<p>The DXGI swap chain is the basis for swap chains in both Direct3D 11 and 12. There are some minor differences, in Direct3D 11 the three types of swap chain are SEQUENTIAL, DISCARD, and FLIP_SEQUENTIAL. For Direct3D 12 there are just two types: FLIP_SEQUENTIAL and FLIP_DISCARD. As noted above, you should be explicitly creating your swapchain via <strong>IDXGIFactory4</strong>, or later, and using the same interface for any adapter enumeration.</p>
+<p>In Direct3D 11 there is automatic backbuffer rotation: only one render target view is needed for back buffer 0. In Direct3D 12 buffer rotation is explicit, there needs to be a render target view for each back buffer. Use the <a href="/windows/win32/api/dxgi1_4/nf-dxgi1_4-idxgiswapchain3-getcurrentbackbufferindex"><strong>IDXGISwapChain3::GetCurrentBackBufferIndex</strong></a> method to select which one to render to. Again this additional flexibility enables greater parallelization.</p>
+<blockquote>
+<p>[!NOTE]
+While there are numerous ways to set up your application, generally applications have one <strong>ID3D12CommandAllocator</strong> per swap-chain buffer. This allows the application to proceed to building up a set of commands for the next frame while the GPU renders the previous.</p>
+</blockquote>
+<h2>Fixed function rendering</h2>
+<p>In Direct3D 11 there were a few methods that simplified various higher level operations, such as <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-generatemips"><strong>GenerateMips</strong></a> (creating full mip chains) and <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-drawauto"><strong>DrawAuto</strong></a> (using stream output as shader input without further input from the app). These methods are not available in Direct3D 12, the app needs to handle these operations by creating shaders to perform them.</p>
+<h2>Odds and ends</h2>
+<p>The following table shows a number of features that are similar between Direct3D 11 and 12, but are not identical.</p>
+<table>
+<thead>
+<tr>
+<th>Direct3D 11</th>
+<th>Direct3D 12</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/win32/api/d3d11/nn-d3d11-id3d11query"><strong>ID3D11Query</strong></a></td>
+<td><a href="/windows/win32/api/d3d12/nn-d3d12-id3d12queryheap"><strong>ID3D12QueryHeap</strong></a> allows queries to be grouped together, reducing the cost.</td>
+</tr>
+<tr>
+<td><a href="/windows/win32/api/d3d11/nn-d3d11-id3d11predicate"><strong>ID3D11Predicate</strong></a></td>
+<td>Predication is now enabled by having data in a fully transparent buffer. The Direct3D 11 <a href="/windows/win32/api/d3d11/nn-d3d11-id3d11predicate"><strong>ID3D11Predicate</strong></a> object is replaced by <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12resource-map"><strong>ID3D12Resource::Map</strong></a>, which must follow a call to <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resolvequerydata"><strong>ResolveQueryData</strong></a> and a GPU sync operation using a fence to wait for the data to be ready. Refer to <a href="predication.html">Predication</a>.</td>
+</tr>
+<tr>
+<td>UAV/SO hidden counter</td>
+<td>The app is responsible for allocation and management of SO/UAV counters. Refer to <a href="stream-output-counters.html">Stream Output Counters</a> and <a href="uav-counters.html">UAV Counters</a>.</td>
+</tr>
+<tr>
+<td>Resource dynamic MinLOD (minium level of detail)</td>
+<td>This has been moved to the SRV descriptor static MinLOD.</td>
+</tr>
+<tr>
+<td>Draw*Indirect/<a href="/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-dispatchindirect"><strong>DispatchIndirect</strong></a></td>
+<td>Drawing indirect methods are all merged into the one <a href="/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-executeindirect"><strong>ExecuteIndirect</strong></a> method.</td>
+</tr>
+<tr>
+<td>DepthStencil formats are interleaved</td>
+<td>DepthStencil formats are planar. For example a format of 24 bits of depth, 8 bits of stencil would be stored in the format 24/8/24/8... etc in Direct3D 11, but as 24/24/24... followed by 8/8/8... in Direct3D 12. Note that each plane is its own subresource in D3D12 (refer to <a href="subresources.html">Subresources</a>).</td>
+</tr>
+<tr>
+<td><a href="/windows/win32/api/d3d11_2/nf-d3d11_2-id3d11devicecontext2-resizetilepool"><strong>ResizeTilePool</strong></a></td>
+<td>Reserved resources can be mapped to multiple heaps. When a tile pool would have been grown in D3D11, an additional heap can be allocated in D3D12 instead.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="https://www.youtube.com/watch?v=BV64mdOCgZo">DirectX advanced learning video tutorials : DirectX 11 to DirectX 12 porting guide</a></p>
+<!-- raw HTML omitted -->
+<p><a href="directx-12-getting-started.html">Understanding Direct3D 12</a></p>
+<!-- raw HTML omitted -->
+<p><a href="direct3d-12-interop.html">Working with Direct3D 11, Direct3D 10 and Direct2D</a></p>
+<!-- raw HTML omitted -->
+</body>

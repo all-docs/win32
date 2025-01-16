@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to sign an app package using SignTool</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: How to sign an app package using SignTool
+description: Learn how to use SignTool to sign your Windows app packages so they can be deployed.
+ms.assetid: 93541EB4-3419-45D1-AA63-563E6C6D3055
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to sign an app package using SignTool</h1>
+<blockquote>
+<p>[!Note]<br />
+For signing a Windows app package, see <a href="/windows/msix/package/sign-app-package-using-signtool">Sign an app package using SignTool</a>.</p>
+</blockquote>
+<p>Learn how to use <a href="/windows-hardware/drivers/devtest/signtool"><strong>SignTool</strong></a> to sign your Windows app packages so they can be deployed. <a href="/windows-hardware/drivers/devtest/signtool"><strong>SignTool</strong></a> is part of the Windows Software Development Kit (SDK).</p>
+<p>All Windows app packages must be digitally signed before they can be deployed. While Microsoft Visual Studio 2012 and later can sign an app package during its creation, packages that you create by using the <a href="make-appx-package--makeappx-exe-.html">app packager (MakeAppx.exe)</a> tool from the Windows SDK aren't signed.</p>
+<blockquote>
+<p>[!Note]<br />
+You can only use <a href="/windows-hardware/drivers/devtest/signtool"><strong>SignTool</strong></a> to sign your Windows app packages on Windows 8 and later or Windows Server 2012 and later. You can't use <strong>SignTool</strong> to sign app packages on down-level operating systems such as Windows 7 or Windows Server 2008 R2.</p>
+</blockquote>
+<h2>What you need to know</h2>
+<h3>Technologies</h3>
+<ul>
+<li><a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/ms537361(v=vs.85)">Introduction to Code Signing</a></li>
+<li><a href="/previous-versions/windows/apps/hh464929(v=win.10)">App packages and deployment</a></li>
+<li><a href="/windows/desktop/SecCrypto/tools-to-sign-files-and-check-signatures">Tools to Sign Files and Check Signatures</a></li>
+</ul>
+<h3>Prerequisites</h3>
+<ul>
+<li>
+<p><a href="/windows-hardware/drivers/devtest/signtool"><strong>SignTool</strong></a>, which is part of the Windows SDK</p>
+</li>
+<li>
+<p>A valid code signing certificate, for example, a Personal Information Exchange (.pfx) file created with the <a href="/windows-hardware/drivers/devtest/makecert"><strong>MakeCert.exe</strong></a> and <a href="/windows-hardware/drivers/devtest/pvk2pfx"><strong>Pvk2Pfx.exe</strong></a> tools</p>
+<p>For info about creating a valid code signing certificate, see <a href="how-to-create-a-package-signing-certificate.html">How to create an app package signing certificate</a>.</p>
+</li>
+<li>
+<p>A packaged Windows app, for example, an .appx file created by using the <a href="make-appx-package--makeappx-exe-.html">app packager (MakeAppx.exe)</a> tool</p>
+</li>
+</ul>
+<p><strong>Additional considerations</strong></p>
+<p>The certificate that you use to sign the app package must meet these criteria:</p>
+<ul>
+<li>
+<p>The subject name of the certificate must match the <strong>Publisher</strong> attribute that is contained in the <a href="/uwp/schemas/appxpackage/appxmanifestschema/element-identity"><strong>Identity</strong></a> element of the AppxManifest.xml file that is stored within the package. The publisher name is part of the identity of a packaged Windows app, so you have to make the subject name of the certificate match the publisher name of the app. This allows the identity of signed packages to be checked against the digital signature. For info about signing errors that can arise from signing an app package using <a href="/windows-hardware/drivers/devtest/signtool"><strong>SignTool</strong></a>, see the Remarks section of <a href="how-to-create-a-package-signing-certificate.html">How to create an app package signing certificate</a>.</p>
+</li>
+<li>
+<p>The certificate must be valid for code signing. This means that both of these items must be true:</p>
+<ul>
+<li>The Extended Key Usage (EKU) field of the certificate must either be unset or contain the EKU value for code signing (1.3.6.1.5.5.7.3.3).</li>
+<li>The Key Usage (KU) field of the certificate must either be unset or contain the usage bit for digital signature (0x80).</li>
+</ul>
+</li>
+<li>
+<p>The certificate contains a private key.</p>
+</li>
+<li>
+<p>The certificate is valid. It is active, hasn't expired, and hasn't been revoked.</p>
+</li>
+</ul>
+<h2>Instructions</h2>
+<h3>Step 1: Determine the hash algorithm to use</h3>
+<p>When you sign the app package, you must use the same hash algorithm that you used when you created the app package. If you used default settings to create the app package, the hash algorithm used is SHA256.</p>
+<p>If you used the app packager with a specific hash algorithm to create the app package, use the same algorithm to sign the package. To determine the hash algorithm to use for signing a package, you can extract the package contents and inspect the AppxBlockMap.xml file. The <strong>HashMethod</strong> attribute of the <a href="/uwp/schemas/blockmapschema/element-blockmap"><strong>BlockMap</strong></a> element indicates the hash algorithm that was used when creating the app package. For example:</p>
+<pre lang="syntax"><code>&lt;BlockMap xmlns=&quot;http://schemas.microsoft.com/appx/2010/blockmap&quot; 
+HashMethod=&quot;https://www.w3.org/2001/04/xmlenc#sha256&quot;&gt;
+</code></pre>
+<p>The preceding <a href="/uwp/schemas/blockmapschema/element-blockmap"><strong>BlockMap</strong></a> element indicates that the SHA256 algorithm was used. This table lists the mapping of the currently available algorithms:</p>
+<table>
+<thead>
+<tr>
+<th><strong>HashMethod</strong> value</th>
+<th><em>hashAlgorithm</em> to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://www.w3.org/2001/04/xmlenc#sha256">https://www.w3.org/2001/04/xmlenc#sha256</a></td>
+<td>SHA256 (.appx default)</td>
+</tr>
+<tr>
+<td><a href="https://www.w3.org/2001/04/xmldsig-more#sha384">https://www.w3.org/2001/04/xmldsig-more#sha384</a></td>
+<td>SHA384</td>
+</tr>
+<tr>
+<td><a href="https://www.w3.org/2001/04/xmlenc#sha512">https://www.w3.org/2001/04/xmlenc#sha512</a></td>
+<td>SHA512</td>
+</tr>
+</tbody>
+</table>
+<h3>Step 2: Run SignTool.exe to sign the package</h3>
+<p><strong>To sign the package with a signing certificate from a .pfx file</strong></p>
+<ul>
+<li>
+<pre lang="syntax"><code>SignTool sign /fd hashAlgorithm /a /f signingCert.pfx /p password filepath.appx
+</code></pre>
+</li>
+</ul>
+<p><a href="/windows-hardware/drivers/devtest/signtool"><strong>SignTool</strong></a> defaults the /fd <em>hashAlgorithm</em> parameter to SHA1 if it's not specified, and SHA1 isn't valid for signing app packages. So, you must specify this parameter when you sign an app package. To sign an app package that was created with the default SHA256 hash, you specify the /fd <em>hashAlgorithm</em> parameter as SHA256:</p>
+<pre lang="syntax"><code>SignTool sign /fd SHA256 /a /f signingCert.pfx /p password filepath.appx
+</code></pre>
+<p>You can omit the /p <em>password</em> parameter if you use a .pfx file that isn't password protected. You can also use other certificate selection options that are supported by <a href="/windows-hardware/drivers/devtest/signtool"><strong>SignTool</strong></a> to sign app packages. For more info about these options, see <a href="/windows/desktop/SecCrypto/signtool">SignTool</a>.</p>
+<blockquote>
+<p>[!Note]<br />
+You can't use the <a href="/windows-hardware/drivers/devtest/signtool"><strong>SignTool</strong></a> time stamp operation on a signed app package; the operation isn't supported.</p>
+</blockquote>
+<p>If you want to time stamp the app package, you must do it during the sign operation. For example:</p>
+<pre lang="syntax"><code>SignTool sign /fd hashAlgorithm /a /f signingCert.pfx /p password /tr timestampServerUrl 
+filepath.appx
+</code></pre>
+<p>Make the /tr <em>timestampServerUrl</em> parameter equal to the URL for an RFC 3161 time stamp server.</p>
+<h2>Remarks</h2>
+<p>This section discusses troubleshooting signing errors for app packages.</p>
+<h3>Troubleshooting app package signing errors</h3>
+<p>In addition to the signing errors that <a href="/windows-hardware/drivers/devtest/signtool"><strong>SignTool</strong></a> can return, <strong>SignTool</strong> can also return errors that are specific to the signing of app packages. These errors usually appear as internal errors:</p>
+<pre lang="syntax"><code>SignTool Error: An unexpected internal error has occurred.
+Error information: &quot;Error: SignerSign() failed.&quot; (-2147024885 / 0x8007000B) 
+</code></pre>
+<p>If the error code starts with 0x8008, such as 0x80080206 APPX_E_CORRUPT_CONTENT), it indicates that the package being signed is invalid. In this case, before you can sign the package, you must rebuild the package. For the full list of 0x8008* errors, see <a href="/windows/desktop/com/com-error-codes-4"><strong>COM Error Codes (Security and Setup)</strong></a>.</p>
+<p>More commonly, the error is 0x8007000b (ERROR_BAD_FORMAT). In this case, you can find more specific error information in the event log:</p>
+<p><strong>To search the event log</strong></p>
+<ol>
+<li>Run Eventvwr.msc.</li>
+<li>Open the event log: Event Viewer (Local) &gt; Applications and Services Logs &gt; Microsoft &gt; Windows &gt; AppxPackagingOM &gt; Microsoft-Windows-AppxPackaging/Operational</li>
+<li>Look for the most recent error event.</li>
+</ol>
+<p>The internal error usually corresponds to one of these:</p>
+<table>
+<thead>
+<tr>
+<th>Event ID</th>
+<th>Example event string</th>
+<th>Suggestion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>150</td>
+<td>error 0x8007000B: The app manifest publisher name (CN=Contoso) must match the subject name of the signing certificate (CN=Contoso, C=US).</td>
+<td>The app manifest publisher name must exactly match the subject name of the signing. <strong>Note:</strong> These names are specified in quotes and are both case and whitespace sensitive.<!-- raw HTML omitted --> You can update the <strong>Publisher</strong> attribute string that is defined for the <a href="/uwp/schemas/appxpackage/appxmanifestschema/element-identity"><strong>Identity</strong></a> element in the AppxManifest.xml file to match the subject name of the intended signing certificate. Or, select a different signing certificate with a subject name that matches the app manifest publisher name. The manifest publisher name and the certificate subject name are both listed in the event message.</td>
+</tr>
+<tr>
+<td>151</td>
+<td>error 0x8007000B: The signature hash method specified (SHA512) must match the hash method used in the app package block map (SHA256).</td>
+<td>The hashAlgorithm specified in the /fd parameter is incorrect (see Step 1: Determine the hash algorithm to use). Rerun <!-- raw HTML omitted --><!-- raw HTML omitted -->SignTool<!-- raw HTML omitted --><!-- raw HTML omitted --> with the hashAlgorithm that matches the app package block map.</td>
+</tr>
+<tr>
+<td>152</td>
+<td>error 0x8007000B: The app package contents must validate against its block map.</td>
+<td>The app package is corrupt and needs to be rebuilt to generate a new block map. For more info about creating an app package, see creating an app package with <!-- raw HTML omitted -->app packager<!-- raw HTML omitted --> or <!-- raw HTML omitted -->Creating an app package with Visual Studio 2012<!-- raw HTML omitted -->.</td>
+</tr>
+</tbody>
+</table>
+<h2>Security Considerations</h2>
+<p>After the package is signed, the certificate that you used to sign the package must still be trusted by the computer on which the package is to be deployed. By adding a certificate to <a href="/windows-hardware/drivers/install/local-machine-and-current-user-certificate-stores">local machine certificate stores</a>, you affect the certificate trust of all users on the computer. We recommend that you install any code signing certificates that you want for testing app packages to the Trusted People certificate store, and promptly remove those certificates when no longer necessary. If you create your own test certificates for signing app packages, we also recommend that you restrict the privileges associated with the test certificate. For more info about creating test certificates for signing app packages, see <a href="how-to-create-a-package-signing-certificate.html">How to create an app package signing certificate</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Samples</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/AppxPackingCreateAppx">Create app package sample</a></p>
+<!-- raw HTML omitted -->
+<p><strong>Concepts</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/hardware/design/dn653556(v=vs.85)">Code-Signing Best Practices</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/br230260(v=vs.110)">Signing a package in Visual Studio 2012</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/SecCrypto/signtool">SignTool</a></p>
+<!-- raw HTML omitted -->
+<p><a href="make-appx-package--makeappx-exe-.html">App packager (MakeAppx.exe)</a></p>
+<!-- raw HTML omitted -->
+<p><a href="how-to-create-a-package-signing-certificate.html">How to create an app package signing certificate</a></p>
+<!-- raw HTML omitted -->
+</body>

@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Color font support (preview)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Color font support (preview)
+description: This topic describes color fonts, their support in DirectWrite and Direct2D, and how to use them in your app (preview).
+ms.topic: article
+ms.date: 09/20/2023</h2>
+<h1>Color font support (preview)</h1>
+<blockquote>
+<p>[!NOTE]
+<strong>Some information relates to pre-released product, which may be substantially modified before it's commercially released. Microsoft makes no warranties, express or implied, with respect to the information provided here.</strong></p>
+</blockquote>
+<p>This topic describes color fonts, their support in DirectWrite and Direct2D, and how to use them in your app. For an introductory topic, also see <a href="color-fonts.html">Color font support</a>.</p>
+<h2>Using color fonts with DirectWrite and Direct2D</h2>
+<p>The easiest way to enable color is to call the <strong>DrawGlyphRunWithColorSupport</strong> method instead of
+<strong>DrawGlyphRun</strong>. Direct2D exposes this method through the <strong>ID2D1DeviceContext7</strong> interface.
+DirectWrite exposes it through the <strong>IDWriteBitmapRenderTarget3</strong> interface.</p>
+<p>At a lower level, enabling color involves translating the monochrome <em>base glyph run</em> to a sequence
+of <em>color glyph runs</em>. Each color glyph run must then be rendered using the appropriate method,
+depending on its <em>glyph image format</em>. The translation is performed by the factory object's
+<em>TranslateColorGlyphRun</em> method. It and related APIs are described in the following sections.</p>
+<h3>Using TranslateColorGlyphRun</h3>
+<p>The <strong>TranslateColorGlyphRun</strong> factory method translates a monochrome <em>base glyph run</em> into a sequence
+of <em>color glyph runs</em>. There are multiple ways of representing color glyphs, known as <em>glyph image
+formats</em> and identified by the <strong>DWRITE_GLYPH_IMAGE_FORMATS</strong> enumeration. When calling
+<strong>TranslateColorGlyphRun</strong>, you specify the combination of glyph image formats that you support.
+The <strong>TranslateColorGlyphRun</strong> returns a <em>glyph run enumerator</em> object
+(<strong>IDWriteColorGlyphRunEnumerator1</strong> interface), which you use to iterate over the sequence of
+color glyph runs, represented by the <strong>DWRITE_COLOR_GLYPH_RUN1</strong> structure. Each color glyph run has a
+glyph image format. You branch on the color run's glyph image format to determine how to
+render the color run.</p>
+<p>If the base glyph run doesn't have color glyphs in any of the requested glyph image formats, then the
+<strong>TranslateColorGlyphRun</strong> method returns <strong>DWRITE_E_NOCOLOR</strong>, in which case you should render
+the base glyph run as a monochrome glyph run.</p>
+<p>Otherwise, the base glyph run might contain a mix of color glyphs in different glyph image formats as
+well as monochrome glyphs. For each base glyph, the <strong>TranslateColorGlyphRun</strong> method determines the
+available glyph image format (if any) that best matches the requested formats. The base glyph run is
+split into subranges based on the matching glyph image format. Glyphs that don't support any of the
+requested formats are treated as monochrome glyphs.</p>
+<p>The glyph image formats fall into four general categories:</p>
+<ul>
+<li>Monochrome glyphs (<strong>DWRITE_GLYPH_IMAGE_FORMATS_TRUETYPE</strong> or <strong>DWRITE_GLYPH_IMAGE_FORMATS_CFF</strong>)</li>
+<li>Layers of solid-color glyphs (<strong>DWRITE_GLYPH_IMAGE_FORMATS_COLR</strong>)</li>
+<li>Color bitmaps embedded in the font (<strong>DWRITE_GLYPH_IMAGE_FORMATS_PNG</strong>,
+<strong>DWRITE_GLYPH_IMAGE_FORMATS_JPEG</strong>, <strong>DWRITE_GLYPH_IMAGE_FORMATS_TIFF</strong>, and
+<strong>DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8</strong>)</li>
+<li>Vector graphics encoded in the font as SVG (<strong>DWRITE_GLYPH_IMAGE_FORMATS_SVG</strong>)</li>
+<li>Vector graphics as a tree of <em>paint</em> elements (<strong>DWRITE_GLYPH_IMAGE_FORMATS_COLR_PAINT_TREE</strong>)</li>
+</ul>
+<p>The following subsections describe each of these approaches.</p>
+<h3>Monochrome glyphs</h3>
+<p>The <strong>DWRITE_GLYPH_IMAGE_FORMATS_TRUETYPE</strong> and <strong>DWRITE_GLYPH_IMAGE_FORMATS_CFF</strong> glyph image formats
+represent monochrome glyphs, which you can render using the <strong>DrawGlyphRun</strong> method. The two formats
+correspond to different ways of representing glyph outlines in the font. An enumerated
+<strong>DWRITE_COLOR_GLYPH_RUN1</strong> structure can specify these formats for one of two reasons:</p>
+<ul>
+<li>One or more of the base glyphs don't support any of the requested glyph image formats, and so
+should be rendered as monochrome glyphs.</li>
+<li>The best matching glyph image format for a glyph was <strong>DWRITE_GLYPH_IMAGE_FORMATS_COLR</strong>. Glyphs
+in this image format are rendered by enumerating a monochrome run in a specified color for each
+layer, as described in the next section.</li>
+</ul>
+<p>In the first case, you should render the enumerated glyph run by using the app-defined
+foreground brush. That's indicated by setting the <em>paletteIndex</em> member of the
+<strong>DWRITE_COLOR_GLYPH_RUN</strong> structure to <strong>DWRITE_NO_PALETTE_INDEX</strong> (0xFFFF). If the <em>paletteIndex</em>
+member has any other value, then you should render the text in the specified color.</p>
+<h3>Layers of solid color glyphs</h3>
+<p>The <strong>DWRITE_GLYPH_IMAGE_FORMATS_COLR</strong> value specifies a color format that supports version 0 of the
+OpenType COLR table. In that format, a color glyph is rendered by drawing multiple monochrome glyphs
+on top of each other, each in a specified color.</p>
+<p>The calling pattern used with this image format is different than with all other glyph image
+formats. That's because what gets rendered finally is just a series of ordinary,
+monochrome glyph runs—just with different glyph IDs and different colors than were specified initially.
+Because the enumerated color glyph runs are rendered as ordinary monochrome glyph runs,
+their glyph image formats are either <strong>DWRITE_GLYPH_IMAGE_FORMATS_TRUETYPE</strong> or
+<strong>DWRITE_GLYPH_IMAGE_FORMATS_CFF</strong>.</p>
+<p>For example, suppose the base glyph run specifies a smiley face glyph. If we were to render the base glyph
+run using <strong>DrawGlyphRun</strong>, then the visual result would be a monochrome representation of a smiley face
+(the base glyph ID). The COLR table in the font maps this base glyph ID to an array of <em>layer
+records</em>, each of which specifies a <em>replacement glyph ID</em> and an index into a font-defined color
+palette. The <strong>IDWriteColorGlyphRunEnumerator</strong> object returned by <strong>TranslateColorGlyphRun</strong> enumerates
+one color glyph run for each of those layer records. Each color glyph run has a position, and a single
+glyph ID (the replacement glyph ID for the layer), and a color (derived from the palette entry
+index). You would draw the enumerated color glyph runs in the specified colors at the specified
+coordinates to produce the desired visual result. In the smiley face example, that might comprise a
+filled-circle glyph rendered in yellow followed by an eyes-and-mouth glyph rendered in black.</p>
+<h3>Color bitmaps embedded in the font</h3>
+<p>The <strong>DWRITE_GLYPH_IMAGE_FORMATS</strong> enumeration includes values for several bitmap formats: PNG, JPEG,
+TIFF, and premultiplied BGRA32 format. A font might represent color glyphs by embedding bitmaps in any
+of those formats in the font. A font might include bitmaps or multiple sizes to support different font
+sizes and DPI scales; though that comes at an obvious cost in terms of file size.</p>
+<p>If your app requests bitmap image formats, then <strong>TranslateColorGlyphRun</strong> checks whether the font has
+color bitmaps for the specified input glyphs in the specified formats. If it does, then the enumerated
+color glyph runs specify the base glyph IDs and the matching image format. There are no
+replacement glyph IDs in this case, like there are with <strong>DWRITE_GLYPH_IMAGE_FORMATS_COLR</strong>. However,
+the base glyph run might still be split into multiple color runs if different input glyphs have color
+bitmaps in different image formats; or if some glyphs have color representations, and others are
+monochrome only.</p>
+<p>An app using Direct2D can render the enumerated color glyph runs in these formats by calling the
+<strong>ID2DDeviceContext3::DrawColorBitmapGlyphRun</strong> method.</p>
+<p>A lower-level app can call <strong>IDWriteFontFace3::GetGlyphImageData</strong> to get the raw bitmap data
+for each glyph in the returned image format. The app is then responsible itself for decoding and
+rendering the bitmaps. Direct2D's internal implementation of <strong>DrawColorBitmapGlyphRun</strong> calls
+<strong>GetGlyphImageData</strong> to get the bitmaps for each glyph.</p>
+<h3>Vector graphics encoded in the font as SVG</h3>
+<p>The <strong>DWRITE_GLYPH_IMAGE_FORMATS_SVG</strong> value specifies a glyph image format in which color glyphs are
+represented as vector graphics embedded in the font in Scaled Vector Graphics (SVG) format. The
+embedded SVG might be stored with gzip compression.</p>
+<p>The calling pattern used with SVG is similar to that with the bitmap formats, and unlike the calling
+pattern for <strong>DWRITE_GLYPH_IMAGE_FORMATS_COLR</strong>. If the app requests SVG format, and specified
+glyph IDs have SVG representations, then the enumerated color glyph runs specify the base glyph IDs
+and the SVG image format.</p>
+<p>An app using Direct2D can render enumerated color glyph runs in this format by calling the
+<strong>ID2DDeviceContext3::DrawSvgGlyphRun</strong> method.</p>
+<p>A lower-level app can call <strong>IDWriteFontFace3::GetGlyphImageData</strong> to get the raw SVG data for
+each glyph. The app is then responsible for parsing and rendering the SVG itself. Direct2D's
+internal implementation of <strong>DrawSvgGlyphRun</strong> calls <strong>GetGlyphImageData</strong> to get the SVG data for each
+glyph.</p>
+<h3>Vector graphics as a tree of &quot;paint&quot; elements</h3>
+<p>In version 1 of the OpenType COLR table, color glyphs are represented by a tree of <em>paint elements</em>.
+There are different types of paint elements for geometries (represented as glyphs), transforms,
+solid and gradient fills, and composition. The <strong>DWRITE_GLYPH_IMAGE_FORMATS_COLR</strong> format
+supports layering only solid-color glyphs on top of each other. So a different glyph image format is
+required to support COLR version 1 and greater, and that's <strong>DWRITE_GLYPH_IMAGE_FORMATS_COLR_PAINT_TREE</strong>. When
+using this glyph image format, the app must also specify the maximum <em>paint feature level</em>
+(<strong>DWRITE_PAINT_FEATURE_LEVEL</strong>) that it supports. That enables future versions of the COLR table to be
+supported without having to define additional glyph image formats.</p>
+<p>The calling pattern used with this glyph image format is similar to that used with SVG. If the
+app requests the COLR-paint format, and the specified glyph IDs have COLR representations, then
+the enumerated color glyph runs specify the base glyph IDs and the COLR-paint image format.</p>
+<p>An app using Direct2D can render enumerated color glyph runs in this format by calling the
+<strong>ID2DDeviceContext7::DrawPaintGlyphRun</strong> method. An app using DirectWrite's bitmap render target
+API can call <strong>IDWriteBitmapRenderTarget3::DrawPaintGlyphRun</strong>.</p>
+<p>A lower-level app can use the color paint APIs described in the next section to get the tree of
+paint elements for each glyph, and render it. Direct2D's and DirectWrite's implementations of
+<strong>DrawPaintGlyphRun</strong> internally use these lower-level APIs.</p>
+<h3>Color paint APIs</h3>
+<p>A glyph in the <strong>DWRITE_GLYPH_IMAGE_FORMATS_COLR_PAINT_TREE</strong> image format is represented as a tree of
+<em>paint elements</em>. The OpenType COLR table spec describes a directed acyclic graph of paint records,
+but the subgraph for a specific glyph is always a tree. An app can use a <em>paint reader</em> object
+(<strong>IDWritePaintReader</strong> interface) to read the tree of paint elements for a glyph.</p>
+<p>Each paint element has a <em>paint type</em> (<strong>DWRITE_PAINT_TYPE</strong> enumeration). There are different paint
+types for graphical elements such as geometries (represented as glyphs), transforms, and solid and
+gradient fills. Paint reader methods return information about a paint element by filling in a
+<strong>DWRITE_PAINT_ELEMENT</strong> structure, which comprises a paint type and a union.</p>
+<p>Additional paint types might be added in future versions of the COLR specification. To allow for that,
+an app must specify the maximum <em>paint feature level</em> (<strong>DWRITE_PAINT_FEATURE_LEVEL</strong>) that it supports
+when creating a paint reader object, or when calling <strong>TranslateColorGlyphRun</strong>. Only paint elements of
+types supported by the specified feature level are returned by paint reader methods. In addition,
+methods that take an output parameter of type <strong>DWRITE_PAINT_ELEMENT</strong> also take a size parameter,
+since the structure size might change if/when additional paint types are defined.</p>
+<p>The algorithm for rendering a color glyph is to recursively render the paint elements, each
+according to its type. The following paint types are defined:</p>
+<table>
+<thead>
+<tr>
+<th>Paint Type</th>
+<th>Rendering Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DWRITE_PAINT_TYPE_NONE</strong></td>
+<td>No action</td>
+</tr>
+<tr>
+<td><strong>DWRITE_PAINT_TYPE_LAYERS</strong></td>
+<td>Render the child paint elements in bottom-up order.</td>
+</tr>
+<tr>
+<td><strong>DWRITE_PAINT_TYPE_SOLID_GLYPH</strong></td>
+<td>Fill the specified glyph shape with the specified color.</td>
+</tr>
+<tr>
+<td><strong>DWRITE_PAINT_TYPE_SOLID</strong></td>
+<td>Fill the current clip with the specified color.</td>
+</tr>
+<tr>
+<td><strong>DWRITE_PAINT_TYPE_LINEAR_GRADIENT</strong></td>
+<td>Fill the current clip with the specified gradient.</td>
+</tr>
+<tr>
+<td><strong>DWRITE_PAINT_TYPE_RADIAL_GRADIENT</strong></td>
+<td>Fill the current clip with the specified gradient.</td>
+</tr>
+<tr>
+<td><strong>DWRITE_PAINT_TYPE_SWEEP_GRADIENT</strong></td>
+<td>Fill the current clip with the specified gradient.</td>
+</tr>
+<tr>
+<td><strong>DWRITE_PAINT_TYPE_GLYPH</strong></td>
+<td>Fill the specified glyph shape with child paint element.</td>
+</tr>
+<tr>
+<td><strong>DWRITE_PAINT_TYPE_COLOR_GLYPH</strong></td>
+<td>Render the child paint element.</td>
+</tr>
+<tr>
+<td><strong>DWRITE_PAINT_TYPE_TRANSFORM</strong></td>
+<td>Render the child paint element with the specified transform.</td>
+</tr>
+<tr>
+<td><strong>DWRITE_PAINT_TYPE_COMPOSITE</strong></td>
+<td>Render the two child paint elements and compose them using the specified composite mode.</td>
+</tr>
+</tbody>
+</table>
+<p>For more information about paint types, see the
+<a href="/typography/opentype/spec/colr">OpenType COLR Table</a> specification.
+Some paint types in the DirectWrite API correspond to multiple paint formats in the COLR table.
+That's because the API hides some complexities, such as differences in how some paint elements are
+encoded in variable versus non-variable fonts.</p>
+<h2>Code examples</h2>
+<p>Some of the code examples below use types (such as <strong>ComPtr</strong>) from the <a href="/cpp/windows/windows-runtime-cpp-template-library-wrl">Windows Runtime C++ Template Library (WRL)</a>. <a href="/windows/uwp/cpp-and-winrt-apis/">C++/WinRT</a> is Microsoft's recommended replacement for WRL.</p>
+<p>Other code examples use the <a href="https://github.com/Microsoft/wil">Windows Implementation Libraries (WIL)</a>. A convenient way to install WIL is to go to Visual Studio, click <strong>Project</strong> &gt; <strong>Manage NuGet Packages...</strong> &gt; <strong>Browse</strong>, type or paste <strong>Microsoft.Windows.ImplementationLibrary</strong> in the search box, select the item in search results, and then click <strong>Install</strong> to install the package for that project.</p>
+<h3>Rendering color glyph runs using Direct2D</h3>
+<p>This section shows a sample <strong>TextRenderer::DrawGlyphRun</strong> method that implements the <strong>DrawGlyphRun</strong>
+method of the <strong>IDWriteTextRenderer</strong> interface. The <strong>IDWriteTextRenderer</strong> callback interface is used
+by <strong>IDWriteTextLayout::Draw</strong> to render glyph runs, underlines, and so on. The use of a callback
+interface enables the text layout API to be decoupled from the specific graphics engine. For
+example, it's possible to implement <strong>IDWriteTextRenderer</strong> in terms of Direct2D, or in terms of
+<strong>IDWriteBitmapRenderTarget</strong>, or in some other way. This example uses Direct2D.</p>
+<p>The example includes only the <strong>DrawGlyphRun</strong> method. The rest of the <strong>TextRenderer</strong> class is omitted
+for brevity, but the example assumes that the class implements the <strong>IDWriteTextRenderer</strong> interface, and
+has the following member variables:</p>
+<pre lang="cpp"><code>wil::com_ptr&lt;IDWriteFactory4&gt; m_dwriteFactory;
+wil::com_ptr&lt;ID2D1DeviceContext4&gt; m_deviceContext;
+wil::com_ptr&lt;ID2D1Brush&gt; m_foregroundBrush;
+</code></pre>
+<p>The example method renders color glyphs in one of two ways. The easy way is to call
+<strong>ID2D1DeviceContext7::DrawGlyphRunWithColorSupport</strong>. However, the example also includes a fallback
+code path in case the available version of Direct2D doesn't implement the <strong>ID2D1DeviceContext7</strong>
+interface. The fallback code path uses <strong>TranslateColorGlyphRun</strong>.</p>
+<pre lang="cpp"><code>// Implementation of IDWriteTextRenderer::DrawGlyphRun.
+HRESULT STDMETHODCALLTYPE TextRenderer::DrawGlyphRun(
+    _In_opt_ void* clientDrawingContext,
+    FLOAT baselineOriginX,
+    FLOAT baselineOriginY,
+    DWRITE_MEASURING_MODE measuringMode,
+    _In_ DWRITE_GLYPH_RUN const* glyphRun,
+    _In_ DWRITE_GLYPH_RUN_DESCRIPTION const* glyphRunDescription,
+    _In_opt_ IUnknown* clientDrawingEffect
+) noexcept
+{
+    D2D_POINT_2F baselineOrigin{ baselineOriginX, baselineOriginY };
+
+    // If a brush is specified via the clientDrawingEffect parameter, then use it as
+    // the foreground brush for this glyph run. Otherwise, use the brush specified
+    // by the m_foregroundBrush member.
+    wil::com_ptr&lt;ID2D1Brush&gt; foregroundBrush;
+    if (clientDrawingEffect != nullptr)
+    {
+        foregroundBrush = wil::try_com_query&lt;ID2D1Brush&gt;(clientDrawingEffect);
+    }
+    if (foregroundBrush == nullptr)
+    {
+        foregroundBrush = m_foregroundBrush;
+    }
+
+    // If available, use the ID2D1DeviceContext7 interface to draw
+    // the glyph run with color the &quot;easy&quot; way.
+    if (auto deviceContext7 = m_deviceContext.try_query&lt;ID2D1DeviceContext7&gt;())
+    {
+        // Note: Direct2D drawing methods return void. If a drawing
+        // operation fails, then an error is returned by EndDraw.
+        deviceContext7-&gt;DrawGlyphRunWithColorSupport(
+            baselineOrigin,
+            glyphRun,
+            foregroundBrush.get(),
+            measuringMode,
+            /*colorPaletteIndex*/ 0
+        );
+        return S_OK;
+    }
+
+    // If we fall through to here, then we're using an older version of
+    // Direct2D that doesn't implement the ID2D1DeviceContext7 interface.
+    // We'll need to call TranslateColorGlyphRun. First determine the
+    // world to device transform.
+    D2D_MATRIX_3X2_F transform;
+    m_deviceContext-&gt;GetTransform(&amp;transform);
+    float dpiX, dpiY;
+    m_deviceContext-&gt;GetDpi(&amp;dpiX, &amp;dpiY);
+    transform = transform * D2D1::Matrix3x2F::Scale(dpiX, dpiY);
+
+    // Combination of image formats we support. Do *not* include
+    // DWRITE_GLYPH_IMAGE_FORMATS_COLR_PAINT_TREE, because this code
+    // path is for an older version of Direct2D which doesn't support
+    // the ID2D1DeviceContext7 interface.
+    constexpr DWRITE_GLYPH_IMAGE_FORMATS desiredGlyphImageFormats =
+        DWRITE_GLYPH_IMAGE_FORMATS_TRUETYPE |
+        DWRITE_GLYPH_IMAGE_FORMATS_CFF |
+        DWRITE_GLYPH_IMAGE_FORMATS_COLR |
+        DWRITE_GLYPH_IMAGE_FORMATS_SVG |
+        DWRITE_GLYPH_IMAGE_FORMATS_PNG |
+        DWRITE_GLYPH_IMAGE_FORMATS_JPEG |
+        DWRITE_GLYPH_IMAGE_FORMATS_TIFF |
+        DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8;
+
+    // Perform color translation.
+    wil::com_ptr&lt;IDWriteColorGlyphRunEnumerator1&gt; colorRunEnumerator;
+    HRESULT hr = m_dwriteFactory-&gt;TranslateColorGlyphRun(
+        baselineOrigin,
+        glyphRun,
+        glyphRunDescription,
+        desiredGlyphImageFormats,
+        measuringMode,
+        reinterpret_cast&lt;DWRITE_MATRIX const*&gt;(&amp;transform),
+        /*colorPaletteIndex*/ 0,
+        /*out*/ &amp; colorRunEnumerator
+    );
+
+    // Handle DWRITE_E_NOCOLOR, which is returned if the base glyph run doesn't
+    // have any color glyphs in the desired glyph image formats. In that case,
+    // just render the base glyph run as a monochrome glyph run.
+    if (hr == DWRITE_E_NOCOLOR)
+    {
+        // Note: Direct2D drawing methods return void. If a drawing
+        // operation fails, then an error is returned by EndDraw.
+        m_deviceContext-&gt;DrawGlyphRun(
+            baselineOrigin,
+            glyphRun,
+            foregroundBrush.get(),
+            measuringMode
+        );
+        return S_OK;
+    }
+
+    // Any other failure HRESULT from TranslateColorGlyphRun is an error.
+    RETURN_IF_FAILED(hr);
+
+    // Solid color brush to be lazily created if needed.
+    wil::com_ptr&lt;ID2D1SolidColorBrush&gt; solidBrush;
+
+    // Use the returned enumerator object to iterate over the color glyph runs.
+    for (;;)
+    {
+        // Advanced to the first or next run.
+        BOOL haveRun;
+        RETURN_IF_FAILED(colorRunEnumerator-&gt;MoveNext(&amp;haveRun));
+        if (!haveRun)
+            break;
+
+        // Retrieve a pointer to the color glyph run structure.
+        DWRITE_COLOR_GLYPH_RUN1 const* colorGlyphRun;
+        RETURN_IF_FAILED(colorRunEnumerator-&gt;GetCurrentRun(&amp;colorGlyphRun));
+
+        // Determine the brush to use for this color glyph run.
+        wil::com_ptr&lt;ID2D1Brush&gt; runBrush;
+        if (colorGlyphRun-&gt;paletteIndex == DWRITE_NO_PALETTE_INDEX)
+        {
+            // Special palette index meaning use the text foreground brush.
+            runBrush = foregroundBrush;
+        }
+        else
+        {
+            // Use the specified color from the font's color palette.
+            // Lazily create the solid color brush, or set its color if already created.
+            if (solidBrush == nullptr)
+            {
+                RETURN_IF_FAILED(m_deviceContext-&gt;CreateSolidColorBrush(
+                    colorGlyphRun-&gt;runColor,
+                    &amp;solidBrush
+                    ));
+            }
+            else
+            {
+                solidBrush-&gt;SetColor(colorGlyphRun-&gt;runColor);
+            }
+
+            // Use the solid color brush as the current run's brush.
+            runBrush = solidBrush;
+        }
+
+        // Branch depending on the run's glyph image format.
+        switch (colorGlyphRun-&gt;glyphImageFormat)
+        {
+        case DWRITE_GLYPH_IMAGE_FORMATS_NONE:
+            // do nothing
+            break;
+
+        case DWRITE_GLYPH_IMAGE_FORMATS_PNG:
+        case DWRITE_GLYPH_IMAGE_FORMATS_JPEG:
+        case DWRITE_GLYPH_IMAGE_FORMATS_TIFF:
+        case DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8:
+            // Note: Direct2D drawing methods return void. If a drawing
+            // operation fails, then an error is returned by EndDraw.
+            m_deviceContext-&gt;DrawColorBitmapGlyphRun(
+                colorGlyphRun-&gt;glyphImageFormat,
+                baselineOrigin,
+                &amp;colorGlyphRun-&gt;glyphRun,
+                colorGlyphRun-&gt;measuringMode,
+                D2D1_COLOR_BITMAP_GLYPH_SNAP_OPTION_DEFAULT
+            );
+            break;
+
+        case DWRITE_GLYPH_IMAGE_FORMATS_SVG:
+            // Note: Direct2D drawing methods return void. If a drawing
+            // operation fails, then an error is returned by EndDraw.
+            m_deviceContext-&gt;DrawSvgGlyphRun(
+                baselineOrigin,
+                &amp;colorGlyphRun-&gt;glyphRun,
+                runBrush.get(),
+                /*SVG style*/ nullptr,
+                /*colorPaletteIndex*/ 0,
+                colorGlyphRun-&gt;measuringMode
+            );
+            break;
+
+        default:
+            // Treat any other format as a monochrome glyph run.
+            // This is used for monochrome glyphs, or for each layer
+            // of a glyph in DWRITE_GLYPH_IMAGE_FORMATS_COLR.
+            m_deviceContext-&gt;DrawGlyphRun(
+                baselineOrigin,
+                &amp;colorGlyphRun-&gt;glyphRun,
+                colorGlyphRun-&gt;glyphRunDescription,
+                runBrush.get(),
+                colorGlyphRun-&gt;measuringMode
+            );
+            break;
+        }
+    }
+    return S_OK;
+}
+</code></pre>
+<h3>Using Color Paint APIs</h3>
+<p>A color glyph in the <strong>DWRITE_GLYPH_IMAGE_FORMATS_COLR_PAINT_TREE</strong> format is represented as a visual
+tree of graphical elements called <em>paint elements</em>. The example in this section demonstrates how to
+use the <strong>IDWritePaintReader</strong> interface to traverse the tree of paint elements for a glyph.</p>
+<p>The <strong>DumpPaintTree</strong> sample function in this section doesn't render a color glyph, but outputs a
+textual representation of its paint tree. Following is an example of the output:</p>
+<pre lang="console"><code>  - glyphIndex: 35
+  - clipBox: { 0, -1, 0.5, -0.5 }
+  - attributes: DWRITE_PAINT_ATTRIBUTES_USES_PALETTE
+  - paintTree:
+    DWRITE_PAINT_TYPE_COMPOSITE:
+      - mode: DWRITE_COLOR_COMPOSITE_SRC_OVER
+      - children (source, destination):
+        DWRITE_PAINT_TYPE_SOLID_GLYPH:
+          - glyphIndex: 84
+          - color: { 0.501961, 0.501961, 0.501961, 0.400024 }
+        DWRITE_PAINT_TYPE_COLOR_GLYPH:
+          - glyphIndex: 88
+          - clipBox: { 0.1, -0.9, 0.9, -0.1 }
+          - child:
+            DWRITE_PAINT_TYPE_COLOR_GLYPH:
+              - glyphIndex: 20
+              - clipBox: { 0, -1, 1, -0 }
+              - child:
+                DWRITE_PAINT_TYPE_GLYPH:
+                  - glyphIndex: 82
+                  - child:
+                    DWRITE_PAINT_TYPE_RADIAL_GRADIENT:
+                      - center0: (0.166, -0.768)
+                      - radius0: 0
+                      - center1: (0.166, -0.768)
+                      - radius1: 0.256
+                      - extendMode: D2D1_EXTEND_MODE_MIRROR (2)
+                      - gradientStops:
+                        D2D1_GRADIENT_STOP:
+                          - position: 0
+                          - color: { 0, 0.501961, 0, 1 }
+                        D2D1_GRADIENT_STOP:
+                          - position: 0.5
+                          - color: { 1, 1, 1, 1 }
+                        D2D1_GRADIENT_STOP:
+                          - position: 1
+                          - color: { 1, 0, 0, 1 }
+</code></pre>
+<p>For convenience, the sample defines <strong>Indent</strong> and <strong>PropName</strong> helper types with associated stream
+output operators. It also defines stream output operators for various API types. These helper types
+and operators are shown at the end of this section.</p>
+<p>The <strong>DumpPaintTree</strong> function creates an <strong>IDWritePaintReader</strong> object, sets the current glyph, outputs
+the glyph properties, and then calls the recursive <strong>DumpPaintElement</strong> function to output the tree of
+paint elements.</p>
+<pre lang="cpp"><code>void DumpPaintTree(std::ostream&amp; out, IDWriteFontFace7* fontFace, uint32_t glyphIndex)
+{
+    wil::com_ptr&lt;IDWritePaintReader&gt; paintReader;
+    THROW_IF_FAILED(fontFace-&gt;CreatePaintReader(
+        DWRITE_GLYPH_IMAGE_FORMATS_COLR_PAINT_TREE,
+        DWRITE_PAINT_FEATURE_LEVEL_COLR_V1,
+        &amp;paintReader
+    ));
+
+    DWRITE_PAINT_ELEMENT paintElement;
+    D2D_RECT_F clipBox;
+    DWRITE_PAINT_ATTRIBUTES attributes;
+    THROW_IF_FAILED(paintReader-&gt;SetCurrentGlyph(glyphIndex, &amp;paintElement, &amp;clipBox, &amp;attributes));
+
+    out &lt;&lt; PropName{ &quot;glyphIndex&quot; } &lt;&lt; glyphIndex &lt;&lt; '\n'
+        &lt;&lt; PropName{ &quot;clipBox&quot; } &lt;&lt; clipBox &lt;&lt; '\n'
+        &lt;&lt; PropName{ &quot;attributes&quot; } &lt;&lt; attributes &lt;&lt; '\n'
+        &lt;&lt; PropName{ &quot;paintTree&quot; } &lt;&lt; '\n';
+    DumpPaintElement(out, Indent{ 1 }, paintReader.get(), paintElement);
+}
+</code></pre>
+<p>The recursive <strong>DumpPaintElement</strong> function outputs a description of the specified paint element and
+its children. The <strong>DWRITE_PAINT_ELEMENT</strong> structure is a tagged union. The <strong>DumpPaintElement</strong>
+branches on its <strong>paintType</strong> member to determine what to write.</p>
+<pre lang="cpp"><code>void DumpPaintElement(std::ostream&amp; out, Indent indent, IDWritePaintReader* reader, DWRITE_PAINT_ELEMENT&amp; element)
+{
+    // Helper to write gradient information, for gradient paint types.
+    auto WriteGradient = [&amp;](D2D1_EXTEND_MODE extendMode, uint32_t gradientStopCount)
+    {
+        out &lt;&lt; indent &lt;&lt; PropName{ &quot;extendMode&quot; } &lt;&lt; extendMode &lt;&lt; '\n';
+        out &lt;&lt; indent &lt;&lt; PropName{ &quot;gradientStops&quot; } &lt;&lt; '\n';
+        DumpGradientStops(out, indent + 1, reader, gradientStopCount);
+    };
+
+    // Helper to recursively call DumpPaintElement for a child paint element.
+    auto Recurse = [&amp;]()
+    {
+        DumpPaintElement(out, indent + 1, reader, element);
+    };
+
+    // Helper to write the specified number of children.
+    // The number of children is specified by the caller, because it depends on
+    // the paint type. See the documentation for the DWRITE_PAINT_ELEMENT structure
+    // for more information.
+    auto WriteChildren = [&amp;](uint32_t childCount)
+    {
+        if (childCount != 0)
+        {
+            HR(reader-&gt;MoveToFirstChild(&amp;element));
+            Recurse();
+
+            for (uint32_t i = 1; i &lt; childCount; i++)
+            {
+                HR(reader-&gt;MoveToNextSibling(&amp;element));
+                Recurse();
+            }
+
+            HR(reader-&gt;MoveToParent());
+        }
+    };
+
+    // Write information about the paint element, depending on its type.
+    switch (element.paintType)
+    {
+    case DWRITE_PAINT_TYPE_NONE:
+        out &lt;&lt; indent &lt;&lt; &quot;DWRITE_PAINT_TYPE_NONE\n&quot;;
+        break;
+
+    case DWRITE_PAINT_TYPE_LAYERS:
+    {
+        out &lt;&lt; indent &lt;&lt; &quot;DWRITE_PAINT_TYPE_LAYERS:\n&quot;;
+        auto const&amp; paint = element.paint.layers;
+        // Write the children.
+        // A layers paint element has a variable number of children.
+        WriteChildren(paint.childCount);
+        break;
+    }
+
+    case DWRITE_PAINT_TYPE_SOLID_GLYPH:
+    {
+        auto const&amp; paint = element.paint.solidGlyph;
+        // Write the properties.
+        // A solid glyph paint element has no children.
+        out &lt;&lt; indent &lt;&lt; &quot;DWRITE_PAINT_TYPE_SOLID_GLYPH:\n&quot;
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;glyphIndex&quot; } &lt;&lt; paint.glyphIndex &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;color&quot; } &lt;&lt; paint.color.value &lt;&lt; '\n';
+        break;
+    }
+
+    case DWRITE_PAINT_TYPE_SOLID:
+    {
+        auto const&amp; paint = element.paint.solid;
+        // Write the properties.
+        // A solid paint element has no children.
+        out &lt;&lt; indent &lt;&lt; &quot;DWRITE_PAINT_TYPE_SOLID:\n&quot;
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;color&quot; } &lt;&lt; paint.value &lt;&lt; '\n';
+        break;
+    }
+
+    case DWRITE_PAINT_TYPE_LINEAR_GRADIENT:
+    {
+        auto const&amp; paint = element.paint.linearGradient;
+        // Write the properties, including gradient stops.
+        // A linear gradient paint element has no children.
+        out &lt;&lt; indent &lt;&lt; &quot;DWRITE_PAINT_TYPE_LINEAR_GRADIENT:\n&quot;
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;p0&quot; } &lt;&lt; D2D_POINT_2F{ paint.x0, paint.y0 } &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;p1&quot; } &lt;&lt; D2D_POINT_2F{ paint.x1, paint.y1 } &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;p2&quot; } &lt;&lt; D2D_POINT_2F{ paint.x2, paint.y2 } &lt;&lt; '\n';
+        WriteGradient(static_cast&lt;D2D1_EXTEND_MODE&gt;(paint.extendMode), paint.gradientStopCount);
+        break;
+    }
+
+    case DWRITE_PAINT_TYPE_RADIAL_GRADIENT:
+    {
+        auto const&amp; paint = element.paint.radialGradient;
+        // Write the properties, including gradient stops.
+        // A radial gradient paint element has no children.
+        out &lt;&lt; indent &lt;&lt; &quot;DWRITE_PAINT_TYPE_RADIAL_GRADIENT:\n&quot;
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;center0&quot; } &lt;&lt; D2D_POINT_2F{ paint.x0, paint.y0 } &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;radius0&quot; } &lt;&lt; paint.radius0 &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;center1&quot; } &lt;&lt; D2D_POINT_2F{ paint.x1, paint.y1 } &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;radius1&quot; } &lt;&lt; paint.radius1 &lt;&lt; '\n';
+        WriteGradient(static_cast&lt;D2D1_EXTEND_MODE&gt;(paint.extendMode), paint.gradientStopCount);
+        break;
+    }
+
+    case DWRITE_PAINT_TYPE_SWEEP_GRADIENT:
+    {
+        auto const&amp; paint = element.paint.sweepGradient;
+        // Write the properties, including gradient stops.
+        // A sweep gradient paint element has no children.
+        out &lt;&lt; indent &lt;&lt; &quot;DWRITE_PAINT_TYPE_SWEEP_GRADIENT:\n&quot;
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;center&quot; } &lt;&lt; D2D_POINT_2F{ paint.centerX, paint.centerY } &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;startAngle&quot; } &lt;&lt; paint.startAngle &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;endAngle&quot; } &lt;&lt; paint.endAngle &lt;&lt; '\n';
+        WriteGradient(static_cast&lt;D2D1_EXTEND_MODE&gt;(paint.extendMode), paint.gradientStopCount);
+        break;
+    }
+
+    case DWRITE_PAINT_TYPE_GLYPH:
+    {
+        auto const&amp; paint = element.paint.glyph;
+        // Write the properties and the child element.
+        // A glyph paint element always has one child, which represents the fill
+        // for the glyph shape.
+        out &lt;&lt; indent &lt;&lt; &quot;DWRITE_PAINT_TYPE_GLYPH:\n&quot;
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;glyphIndex&quot; } &lt;&lt; paint.glyphIndex &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;child&quot; } &lt;&lt; '\n';
+        WriteChildren(1);
+        break;
+    }
+
+    case DWRITE_PAINT_TYPE_COLOR_GLYPH:
+    {
+        auto const&amp; paint = element.paint.colorGlyph;
+        // Write the properties and the child element.
+        // A color glyph paint element always has one child, which is the root
+        // of the paint tree for the glyph specified by glyphIndex.
+        out &lt;&lt; indent &lt;&lt; &quot;DWRITE_PAINT_TYPE_COLOR_GLYPH:\n&quot;
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;glyphIndex&quot; } &lt;&lt; paint.glyphIndex &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;clipBox&quot; } &lt;&lt; paint.clipBox &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;child&quot; } &lt;&lt; '\n';
+        WriteChildren(1);
+        break;
+    }
+
+    case DWRITE_PAINT_TYPE_TRANSFORM:
+    {
+        DWRITE_MATRIX const&amp; paint = element.paint.transform;
+        // Write the properties and the child element.
+        // A transform paint element always has one child, which represents the
+        // transformed content.
+        out &lt;&lt; indent &lt;&lt; &quot;DWRITE_PAINT_TYPE_TRANSFORM:\n&quot;
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;transform&quot; } &lt;&lt; paint &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;child&quot; } &lt;&lt; '\n';
+        WriteChildren(1);
+        break;
+    }
+
+    case DWRITE_PAINT_TYPE_COMPOSITE:
+    {
+        auto const&amp; paint = element.paint.composite;
+        // Write the properties and the child elements.
+        // A composite paint element always has two children, which represent
+        // the source and destination of the composite operation.
+        out &lt;&lt; indent &lt;&lt; &quot;DWRITE_PAINT_TYPE_COMPOSITE:\n&quot;
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;mode&quot; } &lt;&lt; paint.mode &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;children (source, destination)&quot; } &lt;&lt; '\n';
+        WriteChildren(2);
+        break;
+    }
+
+    default:
+        out &lt;&lt; indent &lt;&lt; &quot;Unknown paint type: &quot; &lt;&lt; element.paintType &lt;&lt; '\n';
+        break;
+    }
+}
+</code></pre>
+<p>The <strong>DumpPaintElement</strong> function calls the following <strong>DumpGradientStops</strong> function to output the array
+of gradient stops for a paint element:</p>
+<pre lang="cpp"><code>void DumpGradientStops(std::ostream&amp; out, Indent indent, IDWritePaintReader* reader, uint32_t gradientStopCount)
+{
+    std::vector&lt;D2D1_GRADIENT_STOP&gt; stops;
+    stops.resize(gradientStopCount);
+    HR(reader-&gt;GetGradientStops(0, gradientStopCount, /*out*/ stops.data()));
+
+    for (auto&amp; stop : stops)
+    {
+        out &lt;&lt; indent &lt;&lt; &quot;D2D1_GRADIENT_STOP:\n&quot;
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;position&quot; } &lt;&lt; stop.position &lt;&lt; '\n'
+            &lt;&lt; indent &lt;&lt; PropName{ &quot;color&quot; } &lt;&lt; stop.color &lt;&lt; '\n';
+    }
+}
+</code></pre>
+<p>The <strong>Indent</strong> helper type represents the indent level. Its associated stream operator outputs four
+spaces for each level of indent:</p>
+<pre lang="cpp"><code>struct Indent { int value; };
+std::ostream&amp; operator&lt;&lt;(std::ostream&amp; out, Indent const&amp; indent)
+{
+    for (int i = 0; i &lt; indent.value; i++)
+    {
+        out &lt;&lt; &quot;    &quot;;
+    }
+    return out;
+}
+Indent operator+(Indent lhs, int rhs)
+{
+    return Indent{ lhs.value + rhs };
+}
+</code></pre>
+<p>The <strong>PropName</strong> helper type represents a property name:</p>
+<pre lang="cpp"><code>struct PropName { char const* name; };
+std::ostream&amp; operator&lt;&lt;(std::ostream&amp; out, PropName const&amp; value)
+{
+    return out &lt;&lt; &quot;  - &quot; &lt;&lt; value.name &lt;&lt; &quot;: &quot;;
+}
+</code></pre>
+<p>For convenience, the sample uses the following stream output operators:</p>
+<pre lang="cpp"><code>std::ostream&amp; operator&lt;&lt;(std::ostream&amp; out, DWRITE_COLOR_F const&amp; value)
+{
+    return out &lt;&lt; &quot;{ &quot; &lt;&lt; value.r &lt;&lt; &quot;, &quot; &lt;&lt; value.g &lt;&lt; &quot;, &quot; &lt;&lt; value.b &lt;&lt; &quot;, &quot; &lt;&lt; value.a &lt;&lt; &quot; }&quot;;
+}
+
+std::ostream&amp; operator&lt;&lt;(std::ostream&amp; out, D2D_POINT_2F const&amp; value)
+{
+    return out &lt;&lt; '(' &lt;&lt; value.x &lt;&lt; &quot;, &quot; &lt;&lt; value.y &lt;&lt; ')';
+}
+
+std::ostream&amp; operator&lt;&lt;(std::ostream&amp; out, D2D_RECT_F const&amp; value)
+{
+    return out &lt;&lt; &quot;{ &quot;
+        &lt;&lt; value.left &lt;&lt; &quot;, &quot;
+        &lt;&lt; value.top &lt;&lt; &quot;, &quot;
+        &lt;&lt; value.right &lt;&lt; &quot;, &quot;
+        &lt;&lt; value.bottom
+        &lt;&lt; &quot; }&quot;;
+}
+
+std::ostream&amp; operator&lt;&lt;(std::ostream&amp; out, DWRITE_MATRIX const&amp; value)
+{
+    return out &lt;&lt; &quot;{ &quot;
+        &lt;&lt; value.m11 &lt;&lt; &quot;, &quot;
+        &lt;&lt; value.m12 &lt;&lt; &quot;, &quot;
+        &lt;&lt; value.m21 &lt;&lt; &quot;, &quot;
+        &lt;&lt; value.m22 &lt;&lt; &quot;, &quot;
+        &lt;&lt; value.dx &lt;&lt; &quot;, &quot;
+        &lt;&lt; value.dy &lt;&lt; &quot; }&quot;;
+}
+
+std::ostream&amp; operator&lt;&lt;(std::ostream&amp; out, D2D1_EXTEND_MODE value)
+{
+    switch (value)
+    {
+    case D2D1_EXTEND_MODE_CLAMP: return out &lt;&lt; &quot;D2D1_EXTEND_MODE_CLAMP (0)&quot;;
+    case D2D1_EXTEND_MODE_WRAP: return out &lt;&lt; &quot;D2D1_EXTEND_MODE_WRAP (1)&quot;;
+    case D2D1_EXTEND_MODE_MIRROR: return out &lt;&lt; &quot;D2D1_EXTEND_MODE_MIRROR (2)&quot;;
+    default: return out &lt;&lt; (int)value;
+    }
+}
+
+std::ostream&amp; operator&lt;&lt;(std::ostream&amp; out, DWRITE_PAINT_ATTRIBUTES value)
+{
+    switch (value)
+    {
+    case DWRITE_PAINT_ATTRIBUTES_USES_PALETTE:
+        return out &lt;&lt; &quot;DWRITE_PAINT_ATTRIBUTES_USES_PALETTE&quot;;
+
+    case DWRITE_PAINT_ATTRIBUTES_USES_TEXT_COLOR:
+        return out &lt;&lt; &quot;DWRITE_PAINT_ATTRIBUTES_USES_TEXT_COLOR&quot;;
+
+    case DWRITE_PAINT_ATTRIBUTES_USES_PALETTE | DWRITE_PAINT_ATTRIBUTES_USES_TEXT_COLOR:
+        return out &lt;&lt; &quot;DWRITE_PAINT_ATTRIBUTES_USES_PALETTE | DWRITE_PAINT_ATTRIBUTES_USES_TEXT_COLOR&quot;;
+
+    default:
+        return out &lt;&lt; (int)value;
+    }
+}
+
+std::ostream&amp; operator&lt;&lt;(std::ostream&amp; out, DWRITE_COLOR_COMPOSITE_MODE value)
+{
+    switch (value)
+    {
+    case DWRITE_COLOR_COMPOSITE_CLEAR: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_CLEAR&quot;;
+    case DWRITE_COLOR_COMPOSITE_SRC: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_SRC&quot;;
+    case DWRITE_COLOR_COMPOSITE_DEST: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_DEST&quot;;
+    case DWRITE_COLOR_COMPOSITE_SRC_OVER: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_SRC_OVER&quot;;
+    case DWRITE_COLOR_COMPOSITE_DEST_OVER: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_DEST_OVER&quot;;
+    case DWRITE_COLOR_COMPOSITE_SRC_IN: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_SRC_IN&quot;;
+    case DWRITE_COLOR_COMPOSITE_DEST_IN: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_DEST_IN&quot;;
+    case DWRITE_COLOR_COMPOSITE_SRC_OUT: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_SRC_OUT&quot;;
+    case DWRITE_COLOR_COMPOSITE_DEST_OUT: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_DEST_OUT&quot;;
+    case DWRITE_COLOR_COMPOSITE_SRC_ATOP: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_SRC_ATOP&quot;;
+    case DWRITE_COLOR_COMPOSITE_DEST_ATOP: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_DEST_ATOP&quot;;
+    case DWRITE_COLOR_COMPOSITE_XOR: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_XOR&quot;;
+    case DWRITE_COLOR_COMPOSITE_PLUS: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_PLUS&quot;;
+
+    case DWRITE_COLOR_COMPOSITE_SCREEN: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_SCREEN&quot;;
+    case DWRITE_COLOR_COMPOSITE_OVERLAY: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_OVERLAY&quot;;
+    case DWRITE_COLOR_COMPOSITE_DARKEN: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_DARKEN&quot;;
+    case DWRITE_COLOR_COMPOSITE_LIGHTEN: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_LIGHTEN&quot;;
+    case DWRITE_COLOR_COMPOSITE_COLOR_DODGE: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_COLOR_DODGE&quot;;
+    case DWRITE_COLOR_COMPOSITE_COLOR_BURN: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_COLOR_BURN&quot;;
+    case DWRITE_COLOR_COMPOSITE_HARD_LIGHT: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_HARD_LIGHT&quot;;
+    case DWRITE_COLOR_COMPOSITE_SOFT_LIGHT: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_SOFT_LIGHT&quot;;
+    case DWRITE_COLOR_COMPOSITE_DIFFERENCE: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_DIFFERENCE&quot;;
+    case DWRITE_COLOR_COMPOSITE_EXCLUSION: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_EXCLUSION&quot;;
+    case DWRITE_COLOR_COMPOSITE_MULTIPLY: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_MULTIPLY&quot;;
+
+    case DWRITE_COLOR_COMPOSITE_HSL_HUE: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_HSL_HUE&quot;;
+    case DWRITE_COLOR_COMPOSITE_HSL_SATURATION: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_HSL_SATURATION&quot;;
+    case DWRITE_COLOR_COMPOSITE_HSL_COLOR: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_HSL_COLOR&quot;;
+    case DWRITE_COLOR_COMPOSITE_HSL_LUMINOSITY: return out &lt;&lt; &quot;DWRITE_COLOR_COMPOSITE_HSL_LUMINOSITY&quot;;
+    default: return out &lt;&lt; (int)value;
+    }
+}
+</code></pre>
+<h2>Related topics</h2>
+<p><a href="color-fonts.html">Color font support</a></p>
+</body>

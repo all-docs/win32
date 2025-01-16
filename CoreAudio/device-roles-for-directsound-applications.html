@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Device Roles for DirectSound Applications</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Device Roles for DirectSound Applications
+ms.assetid: 7d82d67f-aad8-4e5b-ac65-87d75774e613
+title: Device Roles for DirectSound Applications
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Device Roles for DirectSound Applications</h1>
+<blockquote>
+<p>[!Note]<br />
+The <a href="mmdevice-api.html">MMDevice API</a> supports device roles. However, the user interface in Windows Vista does not implement support for this feature. User interface support for device roles might be implemented in a future version of Windows. For more information, see <a href="device-roles-in-windows-vista.html">Device Roles in Windows Vista</a>.</p>
+</blockquote>
+<p>Â </p>
+<p>The DirectSound API does not provide a means for an application to select the <a href="audio-endpoint-devices.html">audio endpoint device</a> that the user has assigned to a particular <a href="device-roles.html">device role</a>. However, in Windows Vista, the core audio APIs can be used in conjunction with a DirectSound application to enable device selection based on device role. With the help of the core audio APIs, the application can identify the audio endpoint device that is assigned to a particular role, get the DirectSound device GUID for the endpoint device, and call the <strong>DirectSoundCreate</strong> or <strong>DirectSoundCaptureCreate</strong> function to create an <strong>IDirectSound</strong> or <strong>IDirectSoundCapture</strong> interface instance that encapsulates the endpoint device. For more information about DirectSound, see the Windows SDK documentation.</p>
+<p>The following code example shows how to obtain the DirectSound device GUID for the rendering or capture device that is currently assigned to a particular device role:</p>
+<pre lang="C++"><code>//-----------------------------------------------------------
+// Get the DirectSound or DirectSoundCapture device GUID for
+// an audio endpoint device. If flow = eRender, the function
+// gets the DirectSound device GUID for the rendering device
+// with the specified device role. If flow = eCapture, the
+// function gets the DirectSoundCapture device GUID for the
+// capture device with the specified device role.
+//-----------------------------------------------------------
+#define EXIT_ON_ERROR(hr)  \
+              if (FAILED(hr)) { goto Exit; }
+#define SAFE_RELEASE(punk)  \
+              if ((punk) != NULL)  \
+                { (punk)-&gt;Release(); (punk) = NULL; }
+
+HRESULT GetDirectSoundGuid(EDataFlow flow, ERole role, GUID* pDevGuid)
+{
+    HRESULT hr = S_OK;
+    IMMDeviceEnumerator *pEnumerator = NULL;
+    IMMDevice *pDevice = NULL;
+    IPropertyStore *pProps = NULL;
+
+    PROPVARIANT var;
+    PropVariantInit(&amp;var);
+
+    if (pDevGuid == NULL)
+    {
+        return E_POINTER;
+    }
+
+    // Get a device enumerator for the audio endpoint
+    // devices in the system.
+    hr = CoCreateInstance(__uuidof(MMDeviceEnumerator),
+                          NULL, CLSCTX_INPROC_SERVER,
+                          __uuidof(IMMDeviceEnumerator),
+                          (void**)&amp;pEnumerator);
+    EXIT_ON_ERROR(hr)
+
+    // Get the endpoint device with the specified dataflow
+    // direction (eRender or eCapture) and device role.
+    hr = pEnumerator-&gt;GetDefaultAudioEndpoint(flow, role,
+                                              &amp;pDevice);
+    EXIT_ON_ERROR(hr)
+
+    hr = pDevice-&gt;OpenPropertyStore(STGM_READ, &amp;pProps);
+    EXIT_ON_ERROR(hr)
+
+    // Get the DirectSound or DirectSoundCapture device GUID
+    // (in WCHAR string format) for the endpoint device.
+    hr = pProps-&gt;GetValue(PKEY_AudioEndpoint_GUID, &amp;var);
+    EXIT_ON_ERROR(hr)
+
+    // Convert the WCHAR string to a GUID structure.
+    hr = CLSIDFromString(var.pwszVal, pDevGuid);
+    EXIT_ON_ERROR(hr)
+
+Exit:
+    PropVariantClear(&amp;var);
+    SAFE_RELEASE(pEnumerator);
+    SAFE_RELEASE(pDevice);
+    SAFE_RELEASE(pProps);
+    return hr;
+}
+</code></pre>
+<p>In the preceding code example, the GetDirectSoundGuid function accepts a data-flow direction (eRender or eCapture) and a device role (eConsole, eMultimedia, or eCommunications) as input parameters. The third parameter is a pointer through which the function writes a device GUID that the application can supply as an input parameter to the <strong>DirectSoundCreate</strong> or <strong>DirectSoundCaptureCreate</strong> function.</p>
+<p>The preceding code example obtains the DirectSound device GUID by:</p>
+<ul>
+<li>Creating an <a href="/windows/desktop/api/Mmdeviceapi/nn-mmdeviceapi-immdevice"><strong>IMMDevice</strong></a> interface instance that represents the audio endpoint device that has the specified data-flow direction and device role.</li>
+<li>Opening the property store of the audio endpoint device.</li>
+<li>Getting the <a href="pkey-audioendpoint-guid.html"><strong>PKEY_AudioEndpoint_GUID</strong></a> property from the property store. The property value is a string representation of the DirectSound device GUID for the audio endpoint device.</li>
+<li>Calling the <a href="https://www.bing.com/search?q=**CLSIDFromString**"><strong>CLSIDFromString</strong></a> function to convert the string representation of the device GUID to a GUID structure. For more information about <strong>CLSIDFromString</strong>, see the Windows SDK documentation.</li>
+</ul>
+<p>After obtaining a device GUID from the GetDirectSoundGuid function, the application can call <strong>DirectSoundCreate</strong> or <strong>DirectSoundCaptureCreate</strong> with this GUID to create the DirectSound rendering or capture device that encapsulates the audio endpoint device. When DirectSound creates a device in this way, it always assigns the device's audio stream to the default sessionâ€”the process-specific audio session that is identified by the session GUID value GUID_NULL.</p>
+<p>If the application requires DirectSound to assign the stream to a cross-process audio session or to a session with a non-<strong>NULL</strong> session GUID, it should call the <a href="/windows/desktop/api/Mmdeviceapi/nf-mmdeviceapi-immdevice-activate"><strong>IMMDevice::Activate</strong></a> method to create an <strong>IDirectSound</strong> or <strong>IDirectSoundCapture</strong> object instead of using the technique shown in the preceding code example. For a code example that shows how to use the <strong>Activate</strong> method to specify a cross-process audio session or a non-<strong>NULL</strong> session GUID for a stream, see <a href="device-roles-for-directshow-applications.html">Device Roles for DirectShow Applications</a>. The code example in that section shows how to create a DirectShow filter, but, with minor modifications, the code can be adapted to create a DirectSound device.</p>
+<p>The GetDirectSoundGuid function in the preceding code example calls the <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> function to create an enumerator for the audio endpoint devices in the system. Unless the calling program previously called either the <a href="/windows/desktop/api/objbase/nf-objbase-coinitialize"><strong>CoInitialize</strong></a> or <a href="/windows/desktop/api/combaseapi/nf-combaseapi-coinitializeex"><strong>CoInitializeEx</strong></a> function to initialize the COM library, the <strong>CoCreateInstance</strong> call will fail. For more information about <strong>CoCreateInstance</strong>, <strong>CoInitialize</strong>, and <strong>CoInitializeEx</strong>, see the Windows SDK documentation.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="interoperability-with-legacy-audio-apis.html">Interoperability with Legacy Audio APIs</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

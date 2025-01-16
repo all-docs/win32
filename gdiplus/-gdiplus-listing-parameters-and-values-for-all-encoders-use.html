@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Listing Parameters and Values for All Encoders</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following console application lists all the parameters supported by the various encoders installed on the computer.
+ms.assetid: c80ad013-0b92-461f-8714-4b6d0cb6de0d
+title: Listing Parameters and Values for All Encoders
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Listing Parameters and Values for All Encoders</h1>
+<p>The following console application lists all the parameters supported by the various encoders installed on the computer. The main function calls <a href="/windows/desktop/api/Gdiplusimagecodec/nf-gdiplusimagecodec-getimageencoders"><strong>GetImageEncoders</strong></a> to discover which encoders are available. For each available encoder, the main function calls the helper function ShowAllEncoderParameters.</p>
+<p>The ShowAllEncoderParameters function calls the <a href="/windows/desktop/api/Gdiplusheaders/nf-gdiplusheaders-image-getencoderparameterlist"><strong>Image::GetEncoderParameterList</strong></a> method to discover which parameters are supported by a given encoder. For each supported parameter, the function lists the category, data type, and number of values. The ShowAllEncoderParameters function relies on two helper functions: EncoderParameterCategoryFromGUID and ValueTypeFromULONG.</p>
+<pre><code>#include &lt;windows.h&gt;
+#include &lt;gdiplus.h&gt;
+#include &lt;strsafe.h&gt;
+using namespace Gdiplus;
+
+// Helper functions
+void ShowAllEncoderParameters(ImageCodecInfo*);
+HRESULT EncoderParameterCategoryFromGUID(GUID guid, WCHAR* category, UINT maxChars);
+HRESULT ValueTypeFromULONG(ULONG index, WCHAR* strValueType, UINT maxChars);
+
+INT main()
+{
+   // Initialize GDI+
+   GdiplusStartupInput gdiplusStartupInput;
+   ULONG_PTR gdiplusToken;
+   GdiplusStartup(&amp;gdiplusToken, &amp;gdiplusStartupInput, NULL);
+
+   UINT  num;        // Number of image encoders
+   UINT  size;       // Size of the image encoder array in bytes
+
+   ImageCodecInfo* pImageCodecInfo;
+
+   // How many encoders are there?
+   // How big (in bytes) is the array of all ImageCodecInfo objects?
+   GetImageEncodersSize(&amp;num, &amp;size);
+
+   // Create a buffer large enough to hold the array of ImageCodecInfo
+   // objects that will be returned by GetImageEncoders.
+   pImageCodecInfo = (ImageCodecInfo*)(malloc(size));
+
+   // GetImageEncoders creates an array of ImageCodecInfo objects
+   // and copies that array into a previously allocated buffer. 
+   // The third argument, imageCodecInfos, is a pointer to that buffer. 
+   GetImageEncoders(num, size, pImageCodecInfo);
+    
+   // For each ImageCodecInfo object in the array, show all parameters.
+   for(UINT j = 0; j &lt; num; ++j)
+   { 
+      ShowAllEncoderParameters(&amp;(pImageCodecInfo[j]));
+   }
+
+   GdiplusShutdown(gdiplusToken);
+   return 0;
+}
+
+
+/////////////////////////////////////////////////
+// Helper functions
+
+VOID ShowAllEncoderParameters(ImageCodecInfo* pImageCodecInfo)
+{
+   CONST MAX_CATEGORY_LENGTH = 50;
+   CONST MAX_VALUE_TYPE_LENGTH = 50;
+   WCHAR strParameterCategory[MAX_CATEGORY_LENGTH] = L&quot;&quot;;
+   WCHAR strValueType[MAX_VALUE_TYPE_LENGTH] = L&quot;&quot;;
+
+   wprintf(L&quot;\n\n%s\n&quot;, pImageCodecInfo-&gt;MimeType);
+
+   // Create a Bitmap (inherited from Image) object so that we can call
+   // GetParameterListSize and GetParameterList.
+   Bitmap bitmap(1, 1);
+
+   // How big (in bytes) is the encoder's parameter list?
+   UINT listSize = 0; 
+   listSize = bitmap.GetEncoderParameterListSize(&amp;pImageCodecInfo-&gt;Clsid);
+   printf(&quot;  The parameter list requires %d bytes.\n&quot;, listSize);
+
+   if(listSize == 0)
+      return;
+
+   // Allocate a buffer large enough to hold the parameter list.
+   EncoderParameters* pEncoderParameters = NULL;
+   pEncoderParameters = (EncoderParameters*)malloc(listSize);
+
+   if(pEncoderParameters == NULL)
+      return;
+
+   // Get the parameter list for the encoder.
+   bitmap.GetEncoderParameterList(
+      &amp;pImageCodecInfo-&gt;Clsid, listSize, pEncoderParameters);
+
+   // pEncoderParameters points to an EncoderParameters object, which
+   // has a Count member and an array of EncoderParameter objects.
+   // How many EncoderParameter objects are in the array?
+   printf(&quot;  There are %d EncoderParameter objects in the array.\n&quot;, 
+      pEncoderParameters-&gt;Count);
+
+   // For each EncoderParameter object in the array, list the
+   // parameter category, data type, and number of values.
+   for(UINT k = 0; k &lt; pEncoderParameters-&gt;Count; ++k)
+   {
+      EncoderParameterCategoryFromGUID(
+         pEncoderParameters-&gt;Parameter[k].Guid, strParameterCategory, MAX_CATEGORY_LENGTH);
+
+      ValueTypeFromULONG(
+         pEncoderParameters-&gt;Parameter[k].Type, strValueType, MAX_VALUE_TYPE_LENGTH);
+
+      printf(&quot;    Parameter[%d]\n&quot;, k);
+      wprintf(L&quot;      The category is %s.\n&quot;, strParameterCategory);
+      wprintf(L&quot;      The data type is %s.\n&quot;, strValueType);
+
+      printf(&quot;      The number of values is %d.\n&quot;,
+      pEncoderParameters-&gt;Parameter[k].NumberOfValues); 
+   } // for
+
+   free(pEncoderParameters);
+} // ShowAllEncoderParameters
+
+
+HRESULT EncoderParameterCategoryFromGUID(GUID guid, WCHAR* category, UINT maxChars)
+{
+   HRESULT hr = E_FAIL;
+
+   if(guid == EncoderCompression)
+      hr = StringCchCopyW(category, maxChars, L&quot;Compression&quot;);
+   else if(guid == EncoderColorDepth)
+      hr = StringCchCopyW(category, maxChars, L&quot;ColorDepth&quot;);
+   else if(guid == EncoderScanMethod)
+      hr = StringCchCopyW(category, maxChars, L&quot;ScanMethod&quot;);
+   else if(guid == EncoderVersion)
+      hr = StringCchCopyW(category, maxChars, L&quot;Version&quot;);
+   else if(guid == EncoderRenderMethod)
+      hr = StringCchCopyW(category, maxChars, L&quot;RenderMethod&quot;);
+   else if(guid == EncoderQuality)
+      hr = StringCchCopyW(category, maxChars, L&quot;Quality&quot;);
+   else if(guid == EncoderTransformation)
+      hr = StringCchCopyW(category, maxChars, L&quot;Transformation&quot;);
+   else if(guid == EncoderLuminanceTable)
+      hr = StringCchCopyW(category, maxChars, L&quot;LuminanceTable&quot;);
+   else if(guid == EncoderChrominanceTable)
+      hr = StringCchCopyW(category, maxChars, L&quot;ChrominanceTable&quot;);
+   else if(guid == EncoderSaveFlag)
+      hr = StringCchCopyW(category, maxChars, L&quot;SaveFlag&quot;);
+   else
+      hr = StringCchCopyW(category, maxChars, L&quot;Unknown category&quot;);
+
+   return hr;
+} // EncoderParameterCategoryFromGUID
+
+
+HRESULT ValueTypeFromULONG(ULONG index, WCHAR* strValueType, UINT maxChars)
+{
+   HRESULT hr = E_FAIL;
+
+   WCHAR* valueTypes[] = {
+      L&quot;Nothing&quot;,                  // 0
+      L&quot;ValueTypeByte&quot;,            // 1
+      L&quot;ValueTypeASCII&quot;,           // 2
+      L&quot;ValueTypeShort&quot;,           // 3
+      L&quot;ValueTypeLong&quot;,            // 4
+      L&quot;ValueTypeRational&quot;,        // 5
+      L&quot;ValueTypeLongRange&quot;,       // 6
+      L&quot;ValueTypeUndefined&quot;,       // 7
+      L&quot;ValueTypeRationalRange&quot;};  // 8
+
+   hr = StringCchCopyW(strValueType, maxChars, valueTypes[index]);
+   return hr;
+
+} // ValueTypeFromULONG
+</code></pre>
+<p>When you run the preceding console application, you get an output similar to the following:</p>
+<pre><code>image/bmp
+  The parameter list requires 0 bytes.
+
+image/jpeg
+  The parameter list requires 172 bytes.
+  There are 4 EncoderParameter objects in the array.
+    Parameter[0]
+      The category is Transformation.
+      The data type is Long.
+      The number of values is 5.
+    Parameter[1]
+      The category is Quality.
+      The data type is LongRange.
+      The number of values is 1.
+    Parameter[2]
+      The category is LuminanceTable.
+      The data type is Short.
+      The number of values is 0.
+    Parameter[3]
+      The category is ChrominanceTable.
+      The data type is Short.
+      The number of values is 0.
+
+image/gif
+  The parameter list requires 0 bytes.
+
+image/tiff
+  The parameter list requires 160 bytes.
+  There are 3 EncoderParameter objects in the array.
+    Parameter[0]
+      The category is Compression.
+      The data type is Long.
+      The number of values is 5.
+    Parameter[1]
+      The category is ColorDepth.
+      The data type is Long.
+      The number of values is 5.
+    Parameter[2]
+      The category is SaveFlag.
+      The data type is Long.
+      The number of values is 1.
+
+image/png
+  The parameter list requires 0 bytes.
+</code></pre>
+<p>You can draw the following conclusions by examining the preceding program output:</p>
+<ul>
+<li>The JPEG encoder supports the Transformation, Quality, LuminanceTable, and ChrominanceTable parameter categories.</li>
+<li>The TIFF encoder supports the Compression, ColorDepth, and SaveFlag parameter categories.</li>
+</ul>
+<p>You can also see the number of acceptable values for each parameter category. For example, you can see that the ColorDepth parameter category (TIFF codec) has five values of type <strong>ULONG</strong>. The following code lists those five values. Assume that <strong>pEncoderParameters</strong> is a pointer to an <a href="/windows/win32/api/gdiplusimaging/nl-gdiplusimaging-encoderparameters"><strong>EncoderParameters</strong></a> object that represents the TIFF encoder.</p>
+<pre><code>ULONG* pUlong = (ULONG*)(pEncoderParameters-&gt;Parameter[1].Value);
+ULONG numVals = pEncoderParameters-&gt;Parameter[1].NumberOfValues;
+printf(&quot;\nThe allowable values for ColorDepth are\n&quot;);
+
+for(ULONG k = 0; k &lt; numVals; ++k)
+{
+   printf(&quot;  %u\n&quot;, pUlong[k]);
+}
+            
+</code></pre>
+<p>The preceding code produces the following output:</p>
+<pre><code>The allowable values for ColorDepth are
+  1
+  4
+  8
+  24
+  32
+            
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+In some cases, the values in an <a href="/windows/win32/api/gdiplusimaging/nl-gdiplusimaging-encoderparameter"><strong>EncoderParameter</strong></a> object are the numeric values of elements of the <a href="/windows/desktop/api/Gdiplusenums/ne-gdiplusenums-encodervalue"><strong>EncoderValue</strong></a> enumeration. However, the numbers in the preceding list do not relate to the <strong>EncoderValue</strong> enumeration. The numbers mean 1 bit per pixel, 2 bits per pixel, and so on.</p>
+</blockquote>
+<p>Â </p>
+<p>If you write code similar to the preceding example to investigate the allowable values for the other parameter categories, you will obtain a result similar to the following.</p>
+<table>
+<thead>
+<tr>
+<th>JPEG encoder parameter</th>
+<th>Allowable values</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Transformation</td>
+<td>EncoderValueTransformRotate90 EncoderValueTransformRotate180<!-- raw HTML omitted -->Â  EncoderValueTransformRotate270<!-- raw HTML omitted -->Â  EncoderValueTransformFlipHorizontal<!-- raw HTML omitted -->Â  EncoderValueTransformFlipVertical<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Quality</td>
+<td>0 through 100</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<table>
+<thead>
+<tr>
+<th>TIFF encoder parameter</th>
+<th>Allowable values</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compression</td>
+<td>EncoderValueCompressionLZW EncoderValueCompressionCCITT3<!-- raw HTML omitted -->Â  EncoderValueCompressionCCITT4<!-- raw HTML omitted -->Â  EncoderValueCompressionRle<!-- raw HTML omitted -->Â  EncoderValueCompressionNone<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>ColorDepth</td>
+<td>1, 4, 8, 24, 32</td>
+</tr>
+<tr>
+<td>SaveFlag</td>
+<td>EncoderValueMultiFrame</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+If the width and height of a JPEG image are multiples of 16, you can apply any of the transformations allowed by the EncoderTransformation parameter category (for example, 90-degree rotation) without loss of information.</p>
+</blockquote>
+<p>Â </p>
+<p>Â </p>
+<p>Â </p>
+</body>

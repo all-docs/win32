@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Security Considerations for Requesters</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The VSS infrastructure requires VSS requesters, such as backup applications, to be able to function both as COM clients and as a server.
+ms.assetid: b01145c6-76ba-4a81-bca6-59c4ca488dac
+title: Security Considerations for Requesters
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Security Considerations for Requesters</h1>
+<p>The VSS infrastructure requires VSS requesters, such as backup applications, to be able to function both as COM clients and as a server.</p>
+<p>When acting as a server, a requester exposes a set of COM callback interfaces that can be invoked from external processes (such as writers or the VSS service). Therefore, requesters need to securely manage which COM clients are able to make incoming COM calls into its process.</p>
+<p>Similarly, requesters can act as a COM client for the COM APIs supplied by a VSS writer or by the VSS service. The requester-specific security settings must allow outgoing COM calls from the requester to these other processes.</p>
+<p>The simplest mechanism for managing a requester's security issues involves proper selection of the user account under which it runs.</p>
+<p>A requester typically needs to run under a user that is a member of either the Administrators group or the Backup Operators group, or run as the Local System account.</p>
+<p>By default, when a requester is acting as a COM client, if it does not run under these accounts, any COM call is automatically rejected with <strong>E_ACCESSDENIED</strong>, without even getting to the COM method implementation.</p>
+<h2>Disabling COM Exception Handling</h2>
+<p>When developing a requester, set the COM COMGLB_EXCEPTION_DONOT_HANDLE global options flag to disable COM exception handling. It is important to do this because COM exception handling can mask fatal errors in a VSS application. The error that is masked can leave the process in an unstable and unpredictable state, which can lead to corruptions and hangs. For more information about this flag, see <a href="/windows/win32/api/objidlbase/nn-objidlbase-iglobaloptions">IGlobalOptions</a>.</p>
+<h2>Setting Requester Default COM Access Check Permission</h2>
+<p>Requesters need to be aware that when their process acts as a server (for example, allowing writers to modify the Backup Components Document), they must allow incoming calls from other VSS participants, such as writers or the VSS service.</p>
+<p>However, by default, a Windows process will allow only COM clients that are running under the same logon session (the SELF SID) or running under the Local System account. This is a potential problem because these defaults are not adequate for the VSS infrastructure. For example, writers might run as a &quot;Backup Operator&quot; user account that is neither in the same logon session as the requester process nor a Local System account.</p>
+<p>To handle this type of problem, every COM server process can exercise further control over whether an RPC or COM client is allowed to perform a COM method implemented by the server (a requester in this case) by using <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a> to set a process-wide &quot;Default COM Access Check Permission&quot;.</p>
+<p>Requesters can explicitly do the following:</p>
+<ul>
+<li>
+<p>Allow all processes access to call into the requester process.</p>
+<p>This option may be adequate for the vast majority of requesters, and is used by other COM serversâ€”for example, all SVCHOST-based Windows services are already using this option, as are all COM+ Services by default.</p>
+<p>Allowing all processes to perform incoming COM calls is not necessarily a security weakness. A requester acting as a COM server, like all other COM servers, always retains the option to authorize its clients on every COM method implemented in its process.</p>
+<p>Note that internal COM callbacks implemented by VSS are secured by default.</p>
+<p>To allow all processes COM access to a requester, you can pass a <strong>NULL</strong> security descriptor as the first parameter of <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a>. (Note that <strong>CoInitializeSecurity</strong> must be called at most once for the entire process.)</p>
+<p>The following code example shows how a requester should call <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a> in WindowsÂ 8 and Windows ServerÂ 2012 and later, in order to be compatible with VSS for remote file shares (RVSS):</p>
+<pre lang="syntax"><code>// Initialize COM security.
+   hr = CoInitializeSecurity(
+        NULL,                          //  PSECURITY_DESCRIPTOR         pSecDesc,
+        -1,                            //  LONG                         cAuthSvc,
+        NULL,                          //  SOLE_AUTHENTICATION_SERVICE *asAuthSvc,
+        NULL,                          //  void                        *pReserved1,
+        RPC_C_AUTHN_LEVEL_PKT_PRIVACY, //  DWORD                        dwAuthnLevel,
+        RPC_C_IMP_LEVEL_IMPERSONATE,   //  DWORD                        dwImpLevel,
+        NULL,                          //  void                        *pAuthList,
+        EOAC_STATIC,                   //  DWORD                        dwCapabilities,
+        NULL                           //  void                        *pReserved3
+        );
+</code></pre>
+<p>When explicitly setting a requester's COM level security with <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a>, you should do the following:</p>
+<ul>
+<li>Set the authentication level to at least <strong>RPC_C_AUTHN_LEVEL_PKT_INTEGRITY</strong>. For better security, consider using <strong>RPC_C_AUTHN_LEVEL_PKT_PRIVACY</strong>.</li>
+<li>Set the impersonation level to <strong>RPC_C_IMP_LEVEL_IMPERSONATE</strong>.</li>
+<li>Set the cloaking security capabilities to <strong>EOAC_STATIC</strong>. For more information about cloaking security, see <a href="../com/cloaking.html">Cloaking</a>.</li>
+</ul>
+<p>The following code example shows how a requester should call <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a> in WindowsÂ 7 and Windows ServerÂ 2008Â R2 and earlier (or in WindowsÂ 8 and Windows ServerÂ 2012 and later, if RVSS compatibility is not needed):</p>
+<pre lang="syntax"><code>// Initialize COM security.
+   hr = CoInitializeSecurity(
+        NULL,                          //  PSECURITY_DESCRIPTOR         pSecDesc,
+        -1,                            //  LONG                         cAuthSvc,
+        NULL,                          //  SOLE_AUTHENTICATION_SERVICE *asAuthSvc,
+        NULL,                          //  void                        *pReserved1,
+        RPC_C_AUTHN_LEVEL_PKT_PRIVACY, //  DWORD                        dwAuthnLevel,
+        RPC_C_IMP_LEVEL_IDENTIFY,      //  DWORD                        dwImpLevel,
+        NULL,                          //  void                        *pAuthList,
+        EOAC_NONE,                     //  DWORD                        dwCapabilities,
+        NULL                           //  void                        *pReserved3
+        );
+</code></pre>
+<p>When explicitly setting a requester's COM level security with <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a>, you should do the following:</p>
+<ul>
+<li>Set the authentication level to at least <strong>RPC_C_AUTHN_LEVEL_CONNECT</strong>. For better security, consider using <strong>RPC_C_AUTHN_LEVEL_PKT_PRIVACY</strong>.</li>
+<li>Set the impersonation level to <strong>RPC_C_IMP_LEVEL_IDENTIFY</strong> unless the requester process needs to allow impersonation for specific RPC or COM calls that are unrelated to VSS.</li>
+</ul>
+</li>
+<li>
+<p>Allow only specified processes access to call into the requester process.</p>
+<p>A COM server (such as a requester) that is calling <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a> with a non-<strong>NULL</strong> security descriptor as the first parameter can use the descriptor to configure itself to accept incoming calls only from users that belong to a specific set of accounts.</p>
+<p>A requester must ensure that COM clients running under valid users are authorized to call into its process. A requester that specifies a Security Descriptor in the first parameter must allow the following users to perform incoming calls into the requester process:</p>
+<ul>
+<li>
+<p>Local System</p>
+</li>
+<li>
+<p>Local Service</p>
+<p><strong>WindowsÂ XP:</strong> This value is not supported until Windows ServerÂ 2003.</p>
+</li>
+<li>
+<p>Network Service</p>
+<p><strong>WindowsÂ XP:</strong> This value is not supported until Windows ServerÂ 2003.</p>
+</li>
+<li>
+<p>Members of the local Administrators group</p>
+</li>
+<li>
+<p>Members of the local Backup Operators group</p>
+</li>
+<li>
+<p>Special users that are specified in the registry location below, with &quot;1&quot; as their REG_DWORD value</p>
+</li>
+</ul>
+</li>
+</ul>
+<h2>Explicitly Controlling User Account Access to a Requester</h2>
+<p>There are cases where restricting access to a requester to processes running as Local System, or under the local Administrators or local Backup Operators groups, may be too restrictive.</p>
+<p>For example, a specified requester process might not ordinarily need to be run under an Administrator or Backup Operator account. For security reasons, it would be best not to artificially promote the processes privileges to support VSS.</p>
+<p>In these cases, the <strong>HKEY_LOCAL_MACHINE</strong>\<strong>SYSTEM</strong>\<strong>CurrentControlSet</strong>\<strong>Services</strong>\<strong>VSS</strong>\<strong>VssAccessControl</strong> registry key must be modified to instruct VSS that a specified user is safe to run a VSS requester.</p>
+<p>Under this key, you must create a subkey that has the same name as the account that is to be granted or denied access. This subkey must be set to one of the values in the following table.</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Deny the user access to your writer and requester.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Grant the user access to your writer.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Grant the user access to your requester.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Grant the user access to your writer and requester.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The following example grants access to the &quot;MyDomain\MyUser&quot; account:</p>
+<pre><code>HKEY_LOCAL_MACHINE
+Â Â Â SYSTEM
+Â Â Â Â Â Â CurrentControlSet
+Â Â Â Â Â Â Â Â Â Services
+Â Â Â Â Â Â Â Â Â Â Â Â VSS
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â VssAccessControl
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â MyDomain\MyUser = 2&lt;dl&gt;
+&lt;dt&gt;
+
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Data type
+&lt;/dt&gt;
+&lt;dd&gt;Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â REG_DWORD&lt;/dd&gt;
+&lt;/dl&gt;
+</code></pre>
+<p>This mechanism can also be used to explicitly restrict an otherwise permitted user from running a VSS requester. The following example will restrict access from the &quot;ThatDomain\Administrator&quot; account:</p>
+<pre><code>HKEY_LOCAL_MACHINE
+Â Â Â SYSTEM
+Â Â Â Â Â Â CurrentControlSet
+Â Â Â Â Â Â Â Â Â Services
+Â Â Â Â Â Â Â Â Â Â Â Â VSS
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â VssAccessControl
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â ThatDomain\Administrator = 0&lt;dl&gt;
+&lt;dt&gt;
+
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Data type
+&lt;/dt&gt;
+&lt;dd&gt;Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â REG_DWORD&lt;/dd&gt;
+&lt;/dl&gt;
+</code></pre>
+<p>The user ThatDomain\Administrator would not be able to run a VSS requester.</p>
+<h2>Performing a File Backup of the System State</h2>
+<p>If a requester performs system-state backup by backing up individual files instead of using a volume image for the backup, it must call the <a href="/windows/win32/api/fileapi/nf-fileapi-findfirstfilenamew"><strong>FindFirstFileNameW</strong></a> and <a href="/windows/win32/api/fileapi/nf-fileapi-findnextfilenamew"><strong>FindNextFileNameW</strong></a> functions to enumerate hard links on files that are located in the following directories:</p>
+<ul>
+<li>Windows\system32\WDI\perftrack\</li>
+<li>Windows\WINSXS\</li>
+</ul>
+<p>These directories can only be accessed by members of the Administrators group. For this reason, such a requester must run under the system account or a user account that is a member of the Administrators group.</p>
+<p><strong>WindowsÂ XP and Windows ServerÂ 2003:</strong> The <a href="/windows/win32/api/fileapi/nf-fileapi-findfirstfilenamew"><strong>FindFirstFileNameW</strong></a> and <a href="/windows/win32/api/fileapi/nf-fileapi-findnextfilenamew"><strong>FindNextFileNameW</strong></a> functions are not supported until WindowsÂ Vista and Windows ServerÂ 2008.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

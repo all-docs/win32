@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementing a Folder View</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Implementing a Folder View
+description: Windows Shell provides a default implementation of the folder view, colloquially known as DefView, so that you can avoid much of the work of implementing your own namespace extension.
+ms.assetid: 8c6712d8-c3cb-4450-8277-3a8675622651
+keywords:</p>
+<ul>
+<li>folder view object</li>
+<li>IShellView</li>
+<li>IShellBrowser,folder view objects
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Implementing a Folder View</h1>
+<p>Windows Shell provides a default implementation of the folder view, colloquially known as DefView, so that you can avoid much of the work of implementing your own namespace extension. Because some view features cannot be achieved through custom views, it is often recommended that the default system folder view object is used in place of a custom view. For more information, see <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shcreateshellfolderview"><strong>SHCreateShellFolderView</strong></a>. The remainder of this topic discusses implementing a custom folder view that cannot support newer view features.</p>
+<p>Unlike the tree view, Windows Explorer does not manage the contents of a folder view. Instead, the folder view window hosts a child window that is provided by the folder object. The folder object is responsible for creating a folder view object to display the folder's contents in the child window.</p>
+<p>The key to implementing a folder view object is the <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellview"><strong>IShellView</strong></a> interface. This interface is used by Windows Explorer to communicate with the folder view object. Before displaying a folder view, Windows Explorer calls the folder object's <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellfolder-createviewobject"><strong>IShellFolder::CreateViewObject</strong></a> method with <em>riid</em> set to IID_IShellView. Create a folder view object and return its <strong>IShellView</strong> interface. The folder view object must then create a child window of the folder view window and use the child window to display information about the folder's contents.</p>
+<p>In addition to controlling how data is displayed, extensions can also customize a number of the features of Windows Explorer. For instance, an extension can add items to the toolbar or menu bar, or display information on the status bar.</p>
+<ul>
+<li><a href="#the-folder-view-object">The Folder View Object</a></li>
+<li><a href="#initializing-the-folder-view-object">Initializing the Folder View Object</a></li>
+<li><a href="#displaying-the-folder-view">Displaying the Folder View</a></li>
+<li><a href="#implementing-ishellview">Implementing IShellView</a>
+<ul>
+<li><a href="#addpropertysheetpages">AddPropertySheetPages</a></li>
+<li><a href="#getcurrentinfo">GetCurrentInfo</a></li>
+<li><a href="#refresh">Refresh</a></li>
+<li><a href="#saveviewstate">SaveViewState</a></li>
+<li><a href="#translateacelerator">TranslateAcelerator</a></li>
+</ul>
+</li>
+<li><a href="#using-ishellbrowser-to-communicate-with-windows-explorer">Using IShellBrowser to Communicate with Windows Explorer</a>
+<ul>
+<li><a href="#modifying-the-windows-explorer-menu-bar">Modifying the Windows Explorer Menu Bar</a></li>
+<li><a href="#modifying-the-windows-explorer-toolbar">Modifying the Windows Explorer Toolbar</a></li>
+<li><a href="#modifying-the-windows-explorer-status-bar">Modifying the Windows Explorer Status Bar</a></li>
+<li><a href="#storing-view-specific-information">Storing View-specific Information</a></li>
+</ul>
+</li>
+</ul>
+<h2>The Folder View Object</h2>
+<p>A folder view object is a Component Object Model (COM) object that exposes an <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellview"><strong>IShellView</strong></a> interface. This object is responsible for:</p>
+<ul>
+<li>Creating a child window of the folder view window and using it to display the contents of the folder.</li>
+<li>Handling communication with Windows Explorer.</li>
+<li>Adding folder-specific commands to the Windows Explorer menu bar and toolbar and handling those commands when they are selected.</li>
+<li>Managing user interaction with the folder view window, such as displaying shortcut menus or handling drag-and-drop operations.</li>
+</ul>
+<p>This document discusses the first three topics. Because user interaction with the folder view takes place within your child window, your folder view object is responsible for handling it as it would for any other window.</p>
+<p>Windows Explorer requests a folder view object by calling your folder object's <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellfolder-createviewobject"><strong>IShellFolder::CreateViewObject</strong></a> with <em>riid</em> set to IID_IShellView. The procedure for creating a folder view is:</p>
+<ol>
+<li>Your folder object creates a new instance of your folder view object and returns a pointer to its <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellview"><strong>IShellView</strong></a> interface.</li>
+<li>Windows Explorer initializes the folder view object by calling the <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-createviewwindow"><strong>IShellView::CreateViewWindow</strong></a> method. Create a child window of the folder view window and return its handle to Windows Explorer.</li>
+<li>The folder view object uses the Windows Explorer<a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellbrowser"><strong>IShellBrowser</strong></a> interface to customize the Windows Explorer toolbar, menu bar, and status bar.</li>
+<li>The folder view object displays the contents of the folder in the child window.</li>
+<li>The folder view object handles user interaction with the folder view and any folder-specific toolbar or menu bar items.</li>
+</ol>
+<h2>Initializing the Folder View Object</h2>
+<p>Windows Explorer initializes the folder view object by calling the <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-createviewwindow"><strong>IShellView::CreateViewWindow</strong></a> method. The method's parameters provide the folder view object with the information it needs to create the child window that will be used to display the folder's contents:</p>
+<ul>
+<li>A pointer to the previous folder view object's <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellview"><strong>IShellView</strong></a> interface. This parameter can be set to <strong>NULL</strong>.</li>
+<li>A <a href="/windows/desktop/api/shobjidl_core/ns-shobjidl_core-foldersettings"><strong>FOLDERSETTINGS</strong></a> structure that contains the previous folder view's settings.</li>
+<li>A pointer to the Windows Explorer<a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellbrowser"><strong>IShellBrowser</strong></a> interface.</li>
+<li>A <a href="/previous-versions//ms536136(v=vs.85)">RECT</a> structure with the dimensions of the folder view window.</li>
+</ul>
+<p>The <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-createviewwindow"><strong>IShellView::CreateViewWindow</strong></a> method is called before the previous folder view object is destroyed. The <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellview"><strong>IShellView</strong></a> interface pointer thus allows you to communicate with the previous folder view object. This interface is primarily useful if the previous folder belonged to your extension and used the same display scheme. If so, you can communicate with the previous folder view object for such purposes as exchanging private settings.</p>
+<p>A simple way to determine whether the <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellview"><strong>IShellView</strong></a> pointer belongs to your extension is to have all your folder view objects expose a private interface. Call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)">IShellView::QueryInterface</a> to request the private interface, and examine the return value to determine whether the folder view object is one of yours. You can then use a private method on that interface to exchange information.</p>
+<p>The <a href="/windows/desktop/api/shobjidl_core/ns-shobjidl_core-foldersettings"><strong>FOLDERSETTINGS</strong></a> structure contains the previous folder view's display settings. The primary setting is the viewing mode: large icon, small icon, list, or details. There is also a flag that contains the settings of a variety of display options, such as whether the view should be left-aligned. Your folder display should follow these settings to the extent possible, to give users a consistent experience as they go from one folder to another. You should store this structure and update it as the settings change. Windows Explorer calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-getcurrentinfo"><strong>IShellView::GetCurrentInfo</strong></a> to obtain the most recent value of this structure before it opens the next folder view.</p>
+<p>The <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellbrowser"><strong>IShellBrowser</strong></a> interface is exposed by Windows Explorer. This interface is a companion to <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellview"><strong>IShellView</strong></a> and allows a folder view object to communicate with Windows Explorer. There is no other way to retrieve this interface pointer, so your folder view object should store it for later use. In particular, you will need to call <a href="/windows/win32/api/oleidl/nf-oleidl-iolewindow-getwindow">IShellBrowser::GetWindow</a> to retrieve the parent folder view window that you will use to create your child window. Note that the IShellBrowser::GetWindow method is not included in the <strong>IShellBrowser</strong> documentation because it is inherited from <a href="/windows/win32/api/oleidl/nn-oleidl-iolewindow">IOleWindow</a>. After storing the interface pointer, remember to call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-addref">IShellBrowser::AddRef</a> to increment the interface's reference count. When you no longer need the interface, call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release">IShellBrowser::Release</a>.</p>
+<p>To create your child window:</p>
+<ol>
+<li>Examine the <a href="/windows/desktop/api/shobjidl_core/ns-shobjidl_core-foldersettings"><strong>FOLDERSETTINGS</strong></a> and <a href="/previous-versions//ms536136(v=vs.85)">RECT</a> structures.</li>
+<li>If needed, obtain private settings from the previous folder view object.</li>
+<li>Call <a href="/windows/win32/api/oleidl/nf-oleidl-iolewindow-getwindow">IShellBrowser::GetWindow</a> to retrieve the parent folder view window.</li>
+<li>Create a child of the folder view window obtained in the previous step and return it to Windows Explorer.</li>
+</ol>
+<h2>Displaying the Folder View</h2>
+<p>Once you have created the child window and returned it to Windows Explorer, you can display the folder's contents. Typically, extensions display their information by having the child window host either a <a href="../controls/list-view-control-reference.html">list view control</a> or a <strong>WebBrowser control</strong>. The list view control allows you to replicate the Windows ExplorerÂ <a href="web-view.html">classic view</a>. The WebBrowser control allows you to use a Dynamic HTML (DHTML) document to display your information, much like the Windows Explorer Web view. For further information, refer to the documentation of those controls.</p>
+<p>The folder view window always exists, even if it does not have focus. You should therefore maintain three states for your child window:</p>
+<ul>
+<li>Activated with focus. The folder view has been created and has focus. Set the menu bar or toolbar items that are appropriate for a focused state.</li>
+<li>Activated without focus. The folder view has been created and is active, but it does not have focus. Set the menu bar or toolbar items that are appropriate for a nonfocused state. Omit any items that apply to the selection of items within the folder view.</li>
+<li>Deactivated. The folder view is about to be destroyed. Remove all folder-specific menu items.</li>
+</ul>
+<p>Windows Explorer notifies your folder view object when the window state changes by calling <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-uiactivate"><strong>IShellView::UIActivate</strong></a>. In turn, the folder view object should notify Windows Explorer when a user activates the folder view window by calling <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-onviewwindowactive"><strong>IShellBrowser::OnViewWindowActive</strong></a>. For further discussion of this interface, see <a href="#using-ishellbrowser-to-communicate-with-windows-explorer">Using IShellBrowser to Communicate with Windows Explorer</a>.</p>
+<p>While the folder view is active, you need to process any Windows messages, such as <a href="../winmsg/wm-size.html">WM_SIZE</a>, that belong to your child window. Your window procedure will also receive <a href="../menurc/wm-command.html">WM_COMMAND</a> messages for any items you have added to the Windows Explorer menu bar or toolbar.</p>
+<p>After creating the folder view, Windows Explorer calls the folder view object's <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellview"><strong>IShellView</strong></a> interface to pass it a variety of information. Your object must modify its display accordingly. When the folder view is about to be destroyed, Windows Explorer notifies the folder view object by calling its <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-destroyviewwindow"><strong>IShellView::DestroyViewWindow</strong></a> method.</p>
+<h2>Implementing IShellView</h2>
+<p>After the folder object has been created, Windows Explorer calls various <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellview"><strong>IShellView</strong></a> methods to either request information or notify the object of a change in the state of Windows Explorer. This section outlines how to implement those <strong>IShellView</strong> methods. The remaining methods are used for more specialized purposes, such as the File Open common dialog box. For details, see the <strong>IShellView</strong> documentation.</p>
+<h3>AddPropertySheetPages</h3>
+<p>When a user selects <strong>Folder Options</strong> from the Windows Explorer<strong>Tools</strong> menu, a property sheet is displayed that allows the user to modify the folder options. Windows Explorer calls your folder view object's <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-addpropertysheetpages"><strong>IShellView::AddPropertySheetPages</strong></a> method to allow you to add a page to this property sheet.</p>
+<p>Windows Explorer passes a pointer to an <a href="/windows/win32/api/prsht/nc-prsht-lpfnaddpropsheetpage">AddPropSheetPageProc</a> callback function in the <em>lpfn</em> parameter of <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-addpropertysheetpages"><strong>IShellView::AddPropertySheetPages</strong></a>. Call <a href="/windows/win32/api/prsht/nf-prsht-createpropertysheetpagea">CreatePropertySheetPage</a> to create the page, and then call the AddPropSheetPageProc to add it to the property sheet. For further discussion of how to handle property sheets, see <a href="../controls/property-sheets.html">Property Sheets</a>.</p>
+<h3>GetCurrentInfo</h3>
+<p>When the user switches from one folder to another, Windows Explorer attempts to maintain a similar folder view. For instance, if the previous folder view showed large icons, the next should as well. When Windows Explorer calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-createviewwindow"><strong>IShellView::CreateViewWindow</strong></a> to initialize your folder view object, the method receives a <a href="/windows/desktop/api/shobjidl_core/ns-shobjidl_core-foldersettings"><strong>FOLDERSETTINGS</strong></a> structure. This structure contains information that allows you to make your folder view display consistent with the previous folder view.</p>
+<p>To help ensure that the next view is consistent with the current view, store the <a href="/windows/desktop/api/shobjidl_core/ns-shobjidl_core-foldersettings"><strong>FOLDERSETTINGS</strong></a> structure. If the view changes, for instance from large to small icons, update the structure accordingly. Prior to switching views, Windows Explorer will call <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-getcurrentinfo"><strong>IShellView::GetCurrentInfo</strong></a> to request the current <strong>FOLDERSETTINGS</strong> values to pass them to the next folder view object.</p>
+<h3>Refresh</h3>
+<p>The user can ensure that the folder view reflects the current state of the folder by selecting <strong>Refresh</strong> from the <strong>View</strong> menu or pressing the F5 key. When the user does so, Windows Explorer calls the <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-refresh"><strong>IShellView::Refresh</strong></a> method. Your folder view object should immediately update the folder view display.</p>
+<h3>SaveViewState</h3>
+<p>Windows Explorer calls the <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-saveviewstate"><strong>IShellView::SaveViewState</strong></a> method to prompt your folder view object to save its view state. You can then recover the state the next time the folder is viewed. The preferred way to save a view state is by calling the <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-getviewstatestream"><strong>IShellBrowser::GetViewStateStream</strong></a> method. This method returns an <a href="/windows/win32/api/objidl/nn-objidl-istream">IStream</a> interface that your folder view object can use to save its state. When you create another folder view, you can call the same <strong>IShellBrowser::GetViewStateStream</strong> method to obtain an IStream pointer that allows you to read the settings saved by previous folder views.</p>
+<h3>TranslateAcelerator</h3>
+<p>When the user presses a shortcut key, Windows Explorer passes the message to the folder view object by calling <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-translateaccelerator"><strong>IShellView::TranslateAccelerator</strong></a>. Return S_FALSE to have Windows Explorer process the message. If your folder view object has processed the message, return S_OK.</p>
+<p>When the folder view window has focus, Windows Explorer calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-translateaccelerator"><strong>IShellView::TranslateAccelerator</strong></a> before it processes the message. Because most of the messages are typically associated with Windows Explorer menu bar or toolbar commands, your folder view object should normally return S_FALSE. Windows Explorer can then process the message normally. Return S_OK only if the message is folder-specific and you do not want Windows Explorer to do any further processing. If the folder view does not have focus, Windows Explorer processes the message first. It calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-translateacceleratorsb"><strong>IShellBrowser::TranslateAcceleratorSB</strong></a> only if it does not handle the message.</p>
+<h2>Using IShellBrowser to Communicate with Windows Explorer</h2>
+<p>The <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellbrowser"><strong>IShellBrowser</strong></a> interface is used by the folder view object to communicate with Windows Explorer for a variety of purposes, including:</p>
+<ul>
+<li><a href="#modifying-the-windows-explorer-menu-bar">Modifying the Windows Explorer Menu Bar</a></li>
+<li><a href="#modifying-the-windows-explorer-toolbar">Modifying the Windows Explorer Toolbar</a></li>
+<li><a href="#modifying-the-windows-explorer-status-bar">Modifying the Windows Explorer Status Bar</a></li>
+<li><a href="#storing-view-specific-information">Storing View-specific Information</a></li>
+</ul>
+<h3>Modifying the Windows Explorer Menu Bar</h3>
+<p>The Windows Explorer menu bar allows the user to launch a variety of commands. By default, the menu bar only supports commands that are specific to Windows Explorer. The related <a href="../menurc/wm-command.html">WM_COMMAND</a> messages are processed by Windows Explorer and are not passed to your folder view object. However, you can modify the menu bar to include one or more folder-specific menu items with <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellbrowser"><strong>IShellBrowser</strong></a>. Windows Explorer passes the associated WM_COMMAND messages of those items to your folder object's window procedure for processing. You can also remove or disable any standard commands that do not apply to your application.</p>
+<p>Folder view objects typically modify the menu bar before the folder view is first displayed. They must return the menu bar to its original state when the folder view is destroyed. You might also need to modify the menu bar each time your folder view gains or loses focus.</p>
+<p>Because Windows Explorer calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-uiactivate"><strong>IShellView::UIActivate</strong></a> each time the folder view window's state changes, menu bar modification is normally included in that method's implementation. The basic procedure for modifying the Windows Explorer menu bar is:</p>
+<ol>
+<li>Call <a href="/windows/win32/api/winuser/nf-winuser-createmenu">CreateMenu</a> to create a menu handle.</li>
+<li>Pass that menu handle to Windows Explorer by calling <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-insertmenussb"><strong>IShellBrowser::InsertMenusSB</strong></a>. Windows Explorer will fill in its menu information.</li>
+<li>Modify the menu as needed.</li>
+<li>Call <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-setmenusb"><strong>IShellBrowser::SetMenuSB</strong></a> to have Windows Explorer display the modified menu bar.</li>
+</ol>
+<p>Windows Explorer has six pop-up menus on its menu bar. As with all OLE containers, the Windows Explorer menu is divided into six groups: File, Edit, Container, Object, Window, and Help. The following table lists the Windows Explorer pop-up menus and their associated group, along with the menu IDs.</p>
+<table>
+<thead>
+<tr>
+<th>Pop-up menu</th>
+<th>ID</th>
+<th>Group</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>File</td>
+<td>FCIDM_MENU_FILE</td>
+<td>File</td>
+</tr>
+<tr>
+<td>Edit</td>
+<td>FCIDM_MENU_EDIT</td>
+<td>File</td>
+</tr>
+<tr>
+<td>View</td>
+<td>FCIDM_MENU_VIEW</td>
+<td>Container</td>
+</tr>
+<tr>
+<td>Favorites</td>
+<td>FCIDM_MENU_FAVORITES</td>
+<td>Container</td>
+</tr>
+<tr>
+<td>Tools</td>
+<td>FCIDM_MENU_TOOLS</td>
+<td>Container</td>
+</tr>
+<tr>
+<td>Help</td>
+<td>FCIDM_MENU_HELP</td>
+<td>Window</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>When you pass the menu handle to Windows Explorer by calling <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-insertmenussb"><strong>IShellBrowser::InsertMenusSB</strong></a>, you must also pass a pointer to an <a href="/windows/win32/api/oleidl/ns-oleidl-olemenugroupwidths">OLEMENUGROUPWIDTHS</a> structure whose members have been initialized to zero.</p>
+<p>When <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-insertmenussb"><strong>IShellBrowser::InsertMenusSB</strong></a> returns, Windows Explorer will have added its menu items. You can then use the returned menu handle with standard Windows menu functions such as <a href="/windows/win32/api/winuser/nf-winuser-insertmenuitema">InsertMenuItem</a> to:</p>
+<ul>
+<li>Add items to the Windows Explorer pop-up menus.</li>
+<li>Modify or delete existing items in the Windows Explorer pop-up menus.</li>
+<li>Add new pop-up menus.</li>
+</ul>
+<p>Use the IDs listed in the table to identify the various Windows Explorer pop-up menus.</p>
+<blockquote>
+<p>[!Note]<br />
+To avoid conflicts with Windows Explorer command IDs, the IDs of any menu items that you add must fall between FCIDM_SHVIEWFIRST and FCIDM_SHVIEWLAST. These two values are defined in Shlobj.h.</p>
+</blockquote>
+<p>Â </p>
+<p>Once you have finished modifying the menu, call <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-setmenusb"><strong>IShellBrowser::SetMenuSB</strong></a> to have Windows Explorer display the new menu bar.</p>
+<p>After the folder view is initially displayed, Windows Explorer calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-uiactivate"><strong>IShellView::UIActivate</strong></a> each time the folder view gains or loses focus. If you have any menu items that are sensitive to the state of the folder view, you should modify the menu accordingly, each time the state changes. For instance, you might have a menu item that acts on an item in the folder view that has been selected by the user. You should disable or remove this menu item when the folder view loses focus.</p>
+<p>When Windows Explorer calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-uiactivate"><strong>IShellView::UIActivate</strong></a> to indicate that the folder view is being deactivated, restore the menu bar to its original state by calling <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-removemenussb"><strong>IShellBrowser::RemoveMenusSB</strong></a>.</p>
+<h3>Modifying the Windows Explorer Toolbar</h3>
+<p>In addition to modifying the Windows Explorer menu bar, you can also add buttons to the toolbar. As with the menu bar, toolbar modification is usually part of the <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-uiactivate"><strong>IShellView::UIActivate</strong></a> implementation. The procedure for adding buttons to the Windows Explorer toolbar is:</p>
+<ol>
+<li>Add the button's bitmap to the toolbar's image list.</li>
+<li>Define the button's text string.</li>
+<li>Add the button to the toolbar.</li>
+</ol>
+<p>To add a bitmap to a toolbar's image list, send the toolbar a <a href="../controls/tb-addbitmap.html">TB_ADDBITMAP</a> message by calling <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-sendcontrolmsg"><strong>IShellBrowser::SendControlMsg</strong></a>. To specify the toolbar control, set the method's <em>id</em> parameter to <strong>FCW_TOOLBAR</strong>. Set <em>wParam</em> to the number of button images in the bitmap, and <em>lParam</em> to the address of a <a href="/windows/win32/api/commctrl/ns-commctrl-tbaddbitmap">TBADDBITMAP</a> structure. The image index is returned in the <em>pret</em> parameter.</p>
+<p>There are two ways to define a string for the button:</p>
+<ul>
+<li>Assign the string to the <strong>iString</strong> member of the button's <a href="/windows/win32/api/commctrl/ns-commctrl-tbbutton">TBBUTTON</a> structure.</li>
+<li>Call <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-sendcontrolmsg"><strong>IShellBrowser::SendControlMsg</strong></a> to send the toolbar control a <a href="../controls/tb-addstring.html">TB_ADDSTRING</a> message. The <em>wParam</em> parameter should be set to zero and the <em>lParam</em> parameter to the string. The string index is returned in the <em>pret</em> parameter.</li>
+</ul>
+<p>To add the button to the toolbar, fill in a <a href="/windows/win32/api/commctrl/ns-commctrl-tbbutton">TBBUTTON</a> structure and pass it to <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-settoolbaritems"><strong>IShellBrowser::SetToolbarItems</strong></a>. As with the menu, your command ID must fall between FCIDM_SHVIEWFIRST and FCIDM_SHVIEWLAST. The toolbar will then append the button to the right of the existing buttons.</p>
+<p>For instance, the following code fragment adds one standard button to the Windows Explorer toolbar with a command ID of IDB_MYBUTTON.</p>
+<pre><code>TBADDBITMAP tbadbm;
+int iButtonIndex;
+TBBUTTON tbb;
+
+tbadbm.hInst = g_hInstance;    // The module's instance handle
+tbadbm.nID = IDB_BUTTONIMAGE;  // The bitmap's resource ID
+
+psb-&gt;SendControlMsg(FCW_TOOLBAR, TB_ADDBITMAP, 1,
+                    reinterpret_cast&lt;LPARAM&gt;(&amp;tbadbm), &amp;iButtonIndex);
+
+psb-&gt;SendControlMsg(FCW_TOOLBAR, TB_ADDSTRING, NULL,
+                    reinterpret_cast&lt;LPARAM&gt;(szLabel), &amp;iStringIndex);
+
+ZeroMemory(&amp;tbb, sizeof(TBBUTTON));
+tbb.iBitmap = iButtonIndex;
+tbb.iCommand = IDB_MYBUTTON;
+tbb.iString = iStringIndex;
+tbb.fsState = TBSTATE_ENABLED;
+tbb.fsStyle = TBSTYLE_BUTTON;
+
+psb-&gt;SetToolbarItems(&amp;tbb, 1, FCT_MERGE);
+</code></pre>
+<p>For further discussion of how to handle toolbar controls, see <a href="../controls/toolbar-control-reference.html">Toolbar Controls</a>.</p>
+<h3>Modifying the Windows Explorer Status Bar</h3>
+<p>You can use the Windows Explorer status bar to display a variety of useful information. There are two ways to use the status bar:</p>
+<ul>
+<li>Use <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-setstatustextsb"><strong>IShellBrowser::SetStatusTextSB</strong></a> to display a text string on the status bar.</li>
+<li>Send messages directly to the status bar control with <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-sendcontrolmsg"><strong>IShellBrowser::SendControlMsg</strong></a>.</li>
+</ul>
+<p>The first method is straightforward but sufficient for many purposes. For greater flexibility, you can send messages directly to the status bar control by calling <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-sendcontrolmsg"><strong>IShellBrowser::SendControlMsg</strong></a> with the <em>id</em> parameter set to <strong>FCW_STATUS</strong>. For further discussion of status bar controls, see <a href="../controls/status-bars.html">Status Bars</a>.</p>
+<h3>Storing View-specific Information</h3>
+<p>When a view is about to be destroyed, it is often useful to store information such as the view's state or settings. Windows Explorer prompts you to do this task by calling <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellview-saveviewstate"><strong>IShellView::SaveViewState</strong></a>. The preferred way to save view-specific information is to call <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellbrowser-getviewstatestream"><strong>IShellBrowser::GetViewStateStream</strong></a>. This method provides you with an <a href="/windows/win32/api/objidl/nn-objidl-istream">IStream</a> interface that you can use to store the information. You are free to use any suitable data format.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

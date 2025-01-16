@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reading an Object's Security Descriptor</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Reading an Object's Security Descriptor
+description: The following code example uses the IADs interfaces to enumerate the properties of a directory object's security descriptor, DACL, and the ACEs of the DACL.
+ms.assetid: a8d0a6aa-9fbd-4392-b28b-f2eadef3935c
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Reading an Object's Security Descriptor AD</li>
+<li>Active Directory, example code Visual Basic , reading an object's security descriptor
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Reading an Object's Security Descriptor</h1>
+<p>The following code example uses the <a href="/windows/desktop/api/iads/nn-iads-iads"><strong>IADs</strong></a> interfaces to enumerate the properties of a directory object's security descriptor, DACL, and the ACEs of the DACL.</p>
+<p>The following code example uses the <a href="/windows/desktop/api/iads/nf-iads-iads-get"><strong>IADs.Get</strong></a> method to retrieve the <strong>nTSecurityDescriptor</strong> property of the directory object. The C++ version of this method returns a <strong>VARIANT</strong> that contains an <a href="/windows/win32/api/oaidl/nn-oaidl-idispatch"><strong>IDispatch</strong></a> pointer. The code example then calls <strong>QueryInterface</strong> on that <strong>IDispatch</strong> pointer to get an <a href="/windows/desktop/api/iads/nn-iads-iadssecuritydescriptor"><strong>IADsSecurityDescriptor</strong></a> interface to the object's security descriptor.</p>
+<p>The code example then uses <a href="/windows/desktop/api/iads/nn-iads-iadssecuritydescriptor"><strong>IADsSecurityDescriptor</strong></a> methods to retrieve data from the security descriptor. Be aware that the data, available through <strong>IADsSecurityDescriptor</strong>, depends on the access rights of the caller. The <a href="/windows/desktop/ADSI/iadssecuritydescriptor-property-methods"><strong>IADsSecurityDescriptor.DiscretionaryAcl</strong></a> and <strong>IADsSecurityDescriptor.Owner</strong> properties will fail if the caller does not have <strong>READ_CONTROL</strong> access to the object. Similarly, a call to the <strong>get_SystemAcl</strong> method would fail if the caller does not have the <strong>SE_SECURITY_NAME</strong> privilege enabled.</p>
+<pre lang="VB"><code>Dim rootDSE As IADs
+Dim dsobject As IADs
+Dim sd As IADsSecurityDescriptor
+Dim dacl As IADsAccessControlList
+Dim ace As IADsAccessControlEntry
+ 
+Private Sub Form_Load()
+
+On Error GoTo Cleanup
+
+' Bind to the Users container in the local domain.
+Set rootDSE = GetObject(&quot;LDAP://rootDSE&quot;)
+Set dsobject = GetObject(&quot;LDAP://cn=users,&quot; &amp; rootDSE.Get(&quot;defaultNamingContext&quot;))
+ 
+' Read the security descriptor on the Users container.
+Set sd = dsobject.Get(&quot;ntSecurityDescriptor&quot;)
+Debug.Print &quot;****SECURITY DESCRIPTOR PROPERTIES****&quot;
+Debug.Print &quot;Revision: &quot; &amp; sd.Revision
+
+SDParseControlMasks (sd.Control)
+Debug.Print &quot;Owner: &quot; &amp; sd.Owner
+Debug.Print &quot;Owner Defaulted: &quot; &amp; sd.OwnerDefaulted
+Debug.Print &quot;Group: &quot; &amp; sd.Group
+Debug.Print &quot;Group Defaulted: &quot; &amp; sd.GroupDefaulted
+Debug.Print &quot;System ACL Defaulted: &quot; &amp; sd.SaclDefaulted
+Debug.Print &quot;Discretionary ACL Defaulted: &quot; &amp; sd.DaclDefaulted
+Debug.Print &quot;****DACL PROPERTIES****&quot;
+
+Set dacl = sd.DiscretionaryAcl
+AceCount = 0
+For Each ace In dacl
+    AceCount = AceCount + 1
+    Debug.Print &quot;**** Properties of ACE &quot; &amp; AceCount &amp; &quot; ****&quot;
+    Debug.Print &quot;Trustee: &quot; &amp; ace.Trustee
+
+    SDParseAccessMask (ace.AccessMask)
+
+    AceType = ace.AceType
+    If (AceType = &amp;H5) Then
+        Debug.Print &quot;ACE Type: ADS_ACETYPE_ACCESS_ALLOWED_OBJECT&quot;
+    ElseIf (AceType = &amp;H6) Then
+        Debug.Print &quot;ACE Type: ADS_ACETYPE_ACCESS_DENIED_OBJECT&quot;
+    ElseIf (AceType = &amp;H0) Then
+        Debug.Print &quot;ACE Type: ADS_ACETYPE_ACCESS_ALLOWED&quot;
+    ElseIf (AceType = &amp;H1) Then
+        Debug.Print &quot;ACE Type: ADS_ACETYPE_ACCESS_DENIED&quot;
+    Else
+        Debug.Print &quot;ACE Type: UNKNOWN TYPE: &quot; &amp; Hex(AceType)
+    End If
+
+    AceFlags = ace.Flags
+    If (AceFlags And &amp;H1) Then
+        Debug.Print &quot;Flags: ADS_FLAG_OBJECT_TYPE_PRESENT&quot;
+        Debug.Print &quot;ObjectType: &quot; &amp; ace.ObjectType
+    End If
+
+    If (AceFlags And &amp;H2) Then
+        Debug.Print &quot;Flags: ADS_FLAG_INHERITED_OBJECT_TYPE_PRESENT&quot;
+        Debug.Print &quot;InheritedObjectType: &quot; &amp; ace.InheritedObjectType
+    End If
+Next ace
+
+Cleanup:
+    Set rootDSE = Nothing
+    Set dsobject = Nothing
+    Set sd = Nothing
+    Set dacl = Nothing
+    Set ace = Nothing
+
+End Sub
+ 
+' SDParseControlMasks
+' Print flags set in the security descriptor Control.
+Sub SDParseControlMasks(lCtrl As Long)
+    Debug.Print &quot;Control Mask: &quot;
+    If (lCtrl And &amp;H1) Then Debug.Print &quot;  SE_OWNER_DEFAULTED&quot;
+    If (lCtrl And &amp;H2) Then Debug.Print &quot;  SE_GROUP_DEFAULTED&quot;
+    If (lCtrl And &amp;H4) Then Debug.Print &quot;  SE_DACL_PRESENT&quot;
+    If (lCtrl And &amp;H8) Then Debug.Print &quot;  SE_DACL_DEFAULTED&quot;
+    If (lCtrl And &amp;H10) Then Debug.Print &quot;  SE_SACL_PRESENT&quot;
+    If (lCtrl And &amp;H20) Then Debug.Print &quot;  SE_SACL_DEFAULTED&quot;
+    If (lCtrl And &amp;H400) Then Debug.Print &quot;  SE_DACL_AUTO_INHERITED&quot;
+    If (lCtrl And &amp;H800) Then Debug.Print &quot;  SE_SACL_AUTO_INHERITED&quot;
+    If (lCtrl And &amp;H1000) Then Debug.Print &quot;  SE_DACL_PROTECTED&quot;
+    If (lCtrl And &amp;H2000) Then Debug.Print &quot;  SE_SACL_PROTECTED&quot;
+    If (lCtrl And &amp;H8000) Then Debug.Print &quot;  SE_SELF_RELATIVE&quot;
+End Sub
+ 
+' SDParseControlMasks
+' Print the access rights in an access mask.
+Sub SDParseAccessMask(lMask As Long)
+    Debug.Print &quot;AccessMask: &quot;
+    If (lMask And &amp;H10000) Then Debug.Print &quot;  ADS_RIGHT_DELETE&quot;
+    If (lMask And &amp;H20000) Then Debug.Print &quot;  ADS_RIGHT_READ_CONTROL&quot;
+    If (lMask And &amp;H40000) Then Debug.Print &quot;  ADS_RIGHT_WRITE_DAC&quot;
+    If (lMask And &amp;H80000) Then Debug.Print &quot;  ADS_RIGHT_WRITE_OWNER&quot;
+    If (lMask And &amp;H80000000) Then Debug.Print &quot;  ADS_RIGHT_GENERIC_READ&quot;
+    If (lMask And &amp;H40000000) Then Debug.Print &quot;  ADS_RIGHT_GENERIC_WRITE&quot;
+    If (lMask And &amp;H20000000) Then Debug.Print &quot;  ADS_RIGHT_GENERIC_EXECUTE&quot;
+    If (lMask And &amp;H10000000) Then Debug.Print &quot;  ADS_RIGHT_GENERIC_ALL&quot;
+    If (lMask And &amp;H1) Then Debug.Print &quot;  ADS_RIGHT_DS_CREATE_CHILD&quot;
+    If (lMask And &amp;H2) Then Debug.Print &quot;  ADS_RIGHT_DS_DELETE_CHILD&quot;
+    If (lMask And &amp;H4) Then Debug.Print &quot;  ADS_RIGHT_ACTRL_DS_LIST&quot;
+    If (lMask And &amp;H8) Then Debug.Print &quot;  ADS_RIGHT_DS_SELF&quot;
+    If (lMask And &amp;H10) Then Debug.Print &quot;  ADS_RIGHT_DS_READ_PROP&quot;
+    If (lMask And &amp;H20) Then Debug.Print &quot;  ADS_RIGHT_DS_WRITE_PROP&quot;
+    If (lMask And &amp;H40) Then Debug.Print &quot;  ADS_RIGHT_DS_DELETE_TREE&quot;
+    If (lMask And &amp;H80) Then Debug.Print &quot;  ADS_RIGHT_DS_LIST_OBJECT&quot;
+    If (lMask And &amp;H100) Then Debug.Print &quot;  ADS_RIGHT_DS_CONTROL_ACCESS&quot;
+End Sub
+</code></pre>
+<pre lang="C++"><code>HRESULT ReadSecurityDescriptor( IADs *pObject ) 
+{
+HRESULT hr = E_FAIL;
+VARIANT var,varACE;
+VARIANT_BOOL boolVal;
+IADsSecurityDescriptor *pSD = NULL;
+IADsAccessControlList *pACL = NULL;
+IADsAccessControlEntry *pACE = NULL;
+IEnumVARIANT *pEnum = NULL;
+IDispatch *pDisp = NULL;
+LPUNKNOWN pUnk = NULL;
+ULONG lFetch;
+BSTR szObjectType = NULL;
+BSTR szTrustee = NULL;
+BSTR szProp = NULL;
+long lRev,lControl;
+long lAceType, lAccessMask, lTypeFlag;
+DWORD dwAces = 0;
+ 
+if (NULL == pObject)
+    return hr;
+ 
+VariantClear(&amp;var);
+ 
+// Get the nTSecurityDescriptor.
+// Type should be VT_DISPATCH - an IDispatch pointer to the security descriptor object.
+hr = pObject-&gt;Get(CComBSTR(&quot;nTSecurityDescriptor&quot;), &amp;var);
+if ( FAILED(hr) || var.vt != VT_DISPATCH ) {
+    wprintf(L&quot;get nTSecurityDescriptor failed: 0x%x\n&quot;, hr);
+    goto Cleanup;
+}
+ 
+hr = V_DISPATCH( &amp;var )-&gt;QueryInterface(IID_IADsSecurityDescriptor,(void**)&amp;pSD);
+if ( FAILED(hr) ) {
+    wprintf(L&quot;QueryInterface for IADsSecurityDescriptor failed: 0x%x\n&quot;, hr);
+    goto Cleanup;
+}
+ 
+wprintf(L&quot;****SECURITY DESCRIPTOR PROPERTIES****\n&quot;);
+          
+// Get properties using IADsSecurityDescriptor property methods.
+hr = pSD-&gt;get_Revision(&amp;lRev);
+wprintf(L&quot;Revision: %d\n&quot;, lRev);
+          
+// Print the control mask bits.
+hr = pSD-&gt;get_Control(&amp;lControl);
+wprintf(L&quot;Control Mask: \n&quot;);
+SDParseControlMasks(lControl);
+ 
+hr = pSD-&gt;get_Owner(&amp;szProp);
+wprintf(L&quot;Owner: %s\n&quot;, szProp);
+if (szProp)
+    SysFreeString(szProp);
+ 
+hr = pSD-&gt;get_OwnerDefaulted(&amp;boolVal);
+wprintf(L&quot;Owner Defaulted: %s\n&quot;, boolVal ? L&quot;True&quot; : L&quot;False&quot;);
+ 
+hr = pSD-&gt;get_Group(&amp;szProp);
+wprintf(L&quot;Group: %s\n&quot;, szProp);
+if (szProp)
+    SysFreeString(szProp);
+ 
+hr = pSD-&gt;get_GroupDefaulted(&amp;boolVal);
+wprintf(L&quot;Group Defaulted: %s\n&quot;, boolVal ? L&quot;True&quot; : L&quot;False&quot;);
+ 
+hr = pSD-&gt;get_SaclDefaulted(&amp;boolVal);
+wprintf(L&quot;System ACL Defaulted: %s\n&quot;, boolVal ? L&quot;True&quot; : L&quot;False&quot;);
+ 
+hr = pSD-&gt;get_DaclDefaulted(&amp;boolVal);
+wprintf(L&quot;Discretionary ACL Defaulted: %s\n&quot;, boolVal ? L&quot;True&quot; : L&quot;False&quot;);
+ 
+// Get the DACL.
+wprintf(L&quot;****DACL PROPERTIES****\n&quot;);
+hr = pSD-&gt;get_DiscretionaryAcl(&amp;pDisp);
+if (SUCCEEDED(hr)) 
+{
+    hr = pDisp-&gt;QueryInterface(IID_IADsAccessControlList, (void**)&amp;pACL);
+    if (SUCCEEDED(hr)) 
+    {
+        hr = pACL-&gt;get__NewEnum( &amp;pUnk );
+        if (SUCCEEDED(hr)) 
+        {
+            hr = pUnk-&gt;QueryInterface( IID_IEnumVARIANT, (void**) &amp;pEnum );
+        }
+    }
+}
+if ( FAILED(hr) ) {
+    wprintf(L&quot;Could not get DACL: 0x%x\n&quot;, hr);
+    goto Cleanup;
+}
+ 
+// Loop to read all ACEs on the object.
+hr = pEnum-&gt;Next( 1, &amp;varACE, &amp;lFetch );
+while ( (hr == S_OK) &amp;&amp; (lFetch == 1) &amp;&amp; (varACE.vt==VT_DISPATCH))
+{
+    // QueryInterface for an IADsAccessControlEntry to use to read the ACE.
+    hr = V_DISPATCH(&amp;varACE)-&gt;QueryInterface( 
+                           IID_IADsAccessControlEntry, (void**)&amp;pACE );
+    if ( FAILED(hr) ) {
+        wprintf(L&quot;QI for IADsAccessControlEntry failed: 0x%x\n&quot;, hr);
+        break;
+    }
+ 
+    wprintf(L&quot;**** Properties of ACE %u ****\n&quot;, ++dwAces);
+ 
+    // Get the trustee that the ACE applies to and print it.
+    hr = pACE-&gt;get_Trustee(&amp;szTrustee);
+    if (SUCCEEDED(hr))
+    {
+        wprintf(L&quot;Trustee: %s\n&quot;, szTrustee);
+        if (szTrustee)
+            SysFreeString(szTrustee);
+    }
+ 
+    // Get the AceMask.
+    hr = pACE-&gt;get_AccessMask(&amp;lAccessMask);
+    if (SUCCEEDED(hr))
+    {
+        wprintf(L&quot;AccessMask: \n&quot;);
+        SDParseAccessMask(lAccessMask);
+    }
+ 
+    // Get the AceType.
+    hr = pACE-&gt;get_AceType(&amp;lAceType);
+    if (SUCCEEDED(hr))
+    {
+        if (lAceType == ADS_ACETYPE_ACCESS_ALLOWED_OBJECT)
+            wprintf(L&quot;ACE Type: ADS_ACETYPE_ACCESS_ALLOWED_OBJECT\n&quot;);
+        else if (lAceType == ADS_ACETYPE_ACCESS_DENIED_OBJECT)
+            wprintf(L&quot;ACE Type: ADS_ACETYPE_ACCESS_DENIED_OBJECT\n&quot;);
+        else if (lAceType == ADS_ACETYPE_ACCESS_ALLOWED)
+            wprintf(L&quot;ACE Type: ADS_ACETYPE_ACCESS_ALLOWED\n&quot;);
+        else if (lAceType == ADS_ACETYPE_ACCESS_DENIED)
+            wprintf(L&quot;ACE Type: ADS_ACETYPE_ACCESS_DENIED\n&quot;);
+        else
+            wprintf(L&quot;ACE Type: UNKNOWN TYPE: %x\n&quot;, lAceType);
+    }
+ 
+    // Get the flags. Based on flags, get objecttype and inheritedobjecttype.
+    hr = pACE-&gt;get_Flags(&amp;lTypeFlag);
+    if (SUCCEEDED(hr))
+    {
+        // If the object type GUID is present, print it.
+        if (lTypeFlag &amp; ADS_FLAG_OBJECT_TYPE_PRESENT)
+        {
+            wprintf(L&quot;Flags: ADS_FLAG_OBJECT_TYPE_PRESENT\n&quot;);
+            hr = pACE-&gt;get_ObjectType(&amp;szObjectType);
+            if (SUCCEEDED(hr))
+            {
+                wprintf(L&quot;ObjectType: %s\n&quot;, szObjectType);
+                if (szObjectType)
+                    SysFreeString(szObjectType);
+            }
+        }
+ 
+        // If the inherited object type GUID is present, print it.
+        if (lTypeFlag &amp; ADS_FLAG_INHERITED_OBJECT_TYPE_PRESENT)
+        {
+            wprintf(L&quot;Flags: ADS_FLAG_INHERITED_OBJECT_TYPE_PRESENT\n&quot;);
+            hr = pACE-&gt;get_InheritedObjectType(&amp;szObjectType);
+            if (SUCCEEDED(hr))
+            {
+                wprintf(L&quot;InheritedObjectType: %s\n&quot;, szObjectType);
+                if (szObjectType)
+                    SysFreeString(szObjectType);
+            }
+        }
+    }
+ 
+    // Cleanup the enumerated ACE item.
+    if (pACE)
+        pACE-&gt;Release();
+ 
+    // Cleanup the VARIANT for the ACE item.
+    VariantClear(&amp;varACE);
+ 
+    // Get the next ACE.
+    hr = pEnum-&gt;Next( 1, &amp;varACE, &amp;lFetch );
+ 
+} // End of While loop
+ 
+Cleanup:
+if (pEnum)
+    pEnum-&gt;Release();
+if (pUnk)
+    pUnk-&gt;Release();
+if (pACL)
+    pACL-&gt;Release();
+if (pDisp)
+    pDisp-&gt;Release();
+if (pSD)
+    pSD-&gt;Release();
+VariantClear(&amp;var);
+return hr;
+}
+ 
+// ******************************************************************
+//  SDParseControlMasks
+//  Function to print Control flags.
+// ******************************************************************
+int SDParseControlMasks( long lCtrl )
+{
+int iReturn = TRUE;
+ 
+if (lCtrl &amp; SE_OWNER_DEFAULTED)
+    wprintf(L&quot;  SE_OWNER_DEFAULTED\n&quot;);
+ 
+if (lCtrl &amp; SE_GROUP_DEFAULTED)
+    wprintf(L&quot;  SE_GROUP_DEFAULTED\n&quot;);
+ 
+if (lCtrl &amp; SE_DACL_PRESENT)
+    wprintf(L&quot;  SE_DACL_PRESENT\n&quot;);
+ 
+if (lCtrl &amp; SE_DACL_DEFAULTED)
+    wprintf(L&quot;  SE_DACL_DEFAULTED\n&quot;);
+ 
+if (lCtrl &amp; SE_SACL_PRESENT)
+    wprintf(L&quot;  SE_SACL_PRESENT\n&quot;);
+ 
+if (lCtrl &amp; SE_SACL_DEFAULTED)
+    wprintf(L&quot;  SE_SACL_DEFAULTED\n&quot;);
+ 
+if (lCtrl &amp; SE_DACL_AUTO_INHERIT_REQ)
+    wprintf(L&quot;  SE_DACL_AUTO_INHERIT_REQ\n&quot;);
+ 
+if (lCtrl &amp; SE_SACL_AUTO_INHERIT_REQ)
+    wprintf(L&quot;  SE_SACL_AUTO_INHERIT_REQ\n&quot;);
+ 
+if (lCtrl &amp; SE_DACL_AUTO_INHERITED)
+    wprintf(L&quot;  SE_DACL_AUTO_INHERITED\n&quot;);
+ 
+if (lCtrl &amp; SE_SACL_AUTO_INHERITED)
+    wprintf(L&quot;  SE_SACL_AUTO_INHERITED\n&quot;);
+ 
+if (lCtrl &amp; SE_DACL_PROTECTED)
+    wprintf(L&quot;  SE_DACL_PROTECTED\n&quot;);
+ 
+if (lCtrl &amp; SE_SACL_PROTECTED)
+    wprintf(L&quot;  SE_SACL_PROTECTED\n&quot;);
+ 
+if (lCtrl &amp; SE_SELF_RELATIVE)
+    wprintf(L&quot;  SE_OWNER_DEFAULTED\n&quot;);
+ 
+return iReturn;
+ 
+}
+ 
+// ******************************************************************
+//  SDParseAccessMask
+//  Function to print AccessMask flags.
+// ******************************************************************
+int SDParseAccessMask( long lCtrl )
+{
+    int iReturn = TRUE;
+ 
+if (lCtrl &amp; ADS_RIGHT_DELETE)
+    wprintf(L&quot;  ADS_RIGHT_DELETE\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_READ_CONTROL)
+    wprintf(L&quot;  ADS_RIGHT_READ_CONTROL\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_WRITE_DAC)
+    wprintf(L&quot;  ADS_RIGHT_WRITE_DAC\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_WRITE_OWNER)
+    wprintf(L&quot;  ADS_RIGHT_WRITE_OWNER\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_GENERIC_READ)
+    wprintf(L&quot;  ADS_RIGHT_GENERIC_READ\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_GENERIC_WRITE)
+    wprintf(L&quot;  ADS_RIGHT_GENERIC_WRITE\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_GENERIC_EXECUTE)
+    wprintf(L&quot;  ADS_RIGHT_GENERIC_EXECUTE\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_GENERIC_ALL)
+    wprintf(L&quot;  ADS_RIGHT_GENERIC_ALL\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_DS_CREATE_CHILD)
+    wprintf(L&quot;  ADS_RIGHT_DS_CREATE_CHILD\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_DS_DELETE_CHILD)
+    wprintf(L&quot;  ADS_RIGHT_DS_DELETE_CHILD\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_ACTRL_DS_LIST)
+    wprintf(L&quot;  ADS_RIGHT_ACTRL_DS_LIST\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_DS_SELF)
+    wprintf(L&quot;  ADS_RIGHT_DS_SELF\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_DS_READ_PROP)
+    wprintf(L&quot;  ADS_RIGHT_DS_READ_PROP\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_DS_WRITE_PROP)
+    wprintf(L&quot;  ADS_RIGHT_DS_WRITE_PROP\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_DS_DELETE_TREE)
+    wprintf(L&quot;  ADS_RIGHT_DS_DELETE_TREE\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_DS_LIST_OBJECT)
+    wprintf(L&quot;  ADS_RIGHT_DS_LIST_OBJECT\n&quot;);
+ 
+if (lCtrl &amp; ADS_RIGHT_DS_CONTROL_ACCESS)
+    wprintf(L&quot;  ADS_RIGHT_DS_CONTROL_ACCESS\n&quot;);
+ 
+return iReturn;
+ 
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

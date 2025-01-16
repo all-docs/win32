@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Programming Considerations for Transactional NTFS</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Describes various programming considerations for Transactional NTFS.
+ms.assetid: a1ef1ce1-42f6-4627-ab64-e7f41fa23e94
+title: Programming Considerations for Transactional NTFS
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Programming Considerations for Transactional NTFS</h1>
+<p>For a description of various programming considerations for Transactional NTFS, see the following sections:</p>
+<ul>
+<li><a href="#which-file-changes-are-transacted">Which File Changes Are Transacted</a></li>
+<li><a href="#compression">Compression</a></li>
+<li><a href="#creating-a-file-or-directory">Creating a File or Directory</a></li>
+<li><a href="#deleting-a-file">Deleting a File</a></li>
+<li><a href="#deleting-a-directory">Deleting a Directory</a></li>
+<li><a href="#directory-locking-issues">Directory Locking Issues</a></li>
+<li><a href="#directory-enumeration">Directory Enumeration</a></li>
+<li><a href="#memory-mapped-files">Memory-Mapped Files</a></li>
+<li><a href="#named-streams">Named Streams</a></li>
+<li><a href="#renaming-a-file-or-directory">Renaming a File or Directory</a></li>
+<li><a href="#reparse-points">Reparse Points</a></li>
+<li><a href="#error-codes">Error Codes</a></li>
+<li><a href="#encrypted-file-system">Encrypted File System</a></li>
+<li><a href="#file-io-functions-and-transactional-ntfs">File I/O Functions and Transactional NTFS</a>
+<ul>
+<li><a href="#transacted-functions">Transacted Functions</a></li>
+<li><a href="#file-io-functions-changed-by-txf">File I/O Functions Changed By TxF</a></li>
+</ul>
+</li>
+</ul>
+<h2>Which File Changes Are Transacted</h2>
+<p>Most file changes, such as changes to file contents, streams, reparse points, attributes, and the file system namespace, are transacted. When one of these changes is made on a transacted file handle, the change is isolated from other transactions, and the change is undone if the transaction is rolled back.</p>
+<p>Changes that do not affect file contents, metadata, or the file system namespace, such as changes to compression or defragmentation, are not transacted. These changes are not isolated from other transactions, and they are not undone if the transaction is rolled back.</p>
+<h2>Compression</h2>
+<p>The compression state of a file opened in a transaction cannot be changed.</p>
+<h2>Creating a File or Directory</h2>
+<p>A file or directory that is created in a transaction is not visible to anything outside the current transaction. Outside this transaction, any attempt to create a file with the same name fails with the error <strong>ERROR_TRANSACTIONAL_CONFLICT</strong>, effectively reserving the file name for when the transaction commits or is rolled back.</p>
+<h2>Deleting a File</h2>
+<p>A file or directory that is deleted by calling the <a href="/windows/desktop/api/WinBase/nf-winbase-deletefiletransacteda"><strong>DeleteFileTransacted</strong></a> function remains visible to all outside readers.</p>
+<blockquote>
+<p>[!Note]<br />
+All transacted handles to the file must be closed before the end of the transaction. If the handles are not properly closed, the delete does not occur. All open handles to the file must be closed before performing the commit for the delete operation to be considered part of the transaction. This is because the system does not actually delete a file until the last handle to it is closed, even when the operation is not transacted, as part of the Windows file I/O subsystem.</p>
+</blockquote>
+<h2>Deleting a Directory</h2>
+<p>A directory that is deleted by calling the <a href="/windows/desktop/api/WinBase/nf-winbase-removedirectorytransacteda"><strong>RemoveDirectoryTransacted</strong></a> function remains visible to all outside readers.</p>
+<blockquote>
+<p>[!Note]<br />
+The same constraints exist for open handles on transacted directory operations as on files. For more information, see <a href="#deleting-a-file">Deleting a File</a>.</p>
+</blockquote>
+<h2>Directory Locking Issues</h2>
+<p>If a file is modified in a transaction, all directory components of the path to the file are referred to as <em>pinned against rename</em> until the transaction ends. That is, the system prevents you from renaming them until the transaction is committed or rolled back. An attempt to rename a directory that is an ancestor to a file that has been modified in an ongoing transaction will fail with the error <strong>ERROR_CANT_BREAK_TRANSACTIONAL_DEPENDENCY</strong>.</p>
+<h2>Directory Enumeration</h2>
+<p>The contents of a directory can be changed while an enumeration is in progress as a result of using APIs that enumerate, for example the <a href="/windows/desktop/api/WinBase/nf-winbase-findfirstfiletransacteda"><strong>FindFirstFileTransacted</strong></a> and <a href="/windows/desktop/api/FileAPI/nf-fileapi-findnextfilea"><strong>FindNextFile</strong></a> functions.</p>
+<p>Changes to a directory outside a transaction are not isolated from the transaction and are immediately visible within the transaction. For example, if a non-transacted writer adds a file to a directory, the new file is immediately visible inside the transaction such that calling the <a href="/windows/desktop/api/WinBase/nf-winbase-findfirstfiletransacteda"><strong>FindFirstFileTransacted</strong></a> or <a href="/windows/desktop/api/FileAPI/nf-fileapi-findnextfilea"><strong>FindNextFile</strong></a> function will return the new file.</p>
+<p>Changes made to a directory inside a transaction are isolated until the transaction commits. For example, a file created in the directory as part of the transaction. A non-transacted reader calling the <a href="/windows/desktop/api/FileAPI/nf-fileapi-findfirstfilea"><strong>FindFirstFile</strong></a> or <a href="/windows/desktop/api/FileAPI/nf-fileapi-findnextfilea"><strong>FindNextFile</strong></a> function will not see the newly created file until the transaction commits.</p>
+<h2>Memory-Mapped Files</h2>
+<p>The client must call the <a href="/windows/desktop/api/memoryapi/nf-memoryapi-flushviewoffile"><strong>FlushViewOfFile</strong></a> function, close the file-mapping object, and close the file handle before committing the associated transaction on a memory-mapped file.</p>
+<h2>Named Streams</h2>
+<p>Named streams are fully transactional, but locking is done at the file level, not the stream level. Writers from outside a transaction that attempt to modify any stream within a locked file receive the error <strong>ERROR_SHARING_VIOLATION</strong>.</p>
+<p>You cannot rename a secondary stream in a transaction.</p>
+<h2>Renaming a File or Directory</h2>
+<p>To rename a file as a transacted operation, call <a href="/windows/desktop/api/WinBase/nf-winbase-movefiletransacteda"><strong>MoveFileTransacted</strong></a> to move the file.</p>
+<h2>Reparse Points</h2>
+<p>Changes to reparse points are transacted, which means that if a new reparse point gets assigned to a file in a transaction, it is not visible to the other transactions. Similarly, changes or removal of an existing reparse point are not visible until commit.</p>
+<h2>Error Codes</h2>
+<p>The Kernel Transaction Manager (KTM) uses the system error codes in the range from 6700 through 6799. Transactional NTFS (TxF) uses Windows error codes in the range from 6800 through 6899. For more information, see WinError.h and System Error Codes (6000-8199).</p>
+<h2>Encrypted File System</h2>
+<p>TxF does not support operations on EFS files. You cannot open an EFS-encrypted file for transactions. Calling the <a href="/windows/desktop/api/WinBase/nf-winbase-createfiletransacteda"><strong>CreateFileTransacted</strong></a> function on an EFS file will fail with the error <strong>ERROR_EFS_NOT_ALLOWED_IN_TRANSACTION</strong>. Similarly, calling the <a href="/windows/desktop/api/WinBase/nf-winbase-encryptfilea"><strong>EncryptFile</strong></a> function on a file in a transaction will fail with the error <strong>ERROR_EFS_NOT_ALLOWED_IN_TRANSACTION</strong>.</p>
+<h2>File I/O Functions and Transactional NTFS</h2>
+<p>TxF provides new transacted functions that take a file name, and changes the behavior of existing file I/O API functions that take a file handle.</p>
+<h3>Transacted Functions</h3>
+<p>If you do not call one of the following transacted functions in place of its non-transacted version, the operation will not be transacted:</p>
+<ul>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-copyfiletransacteda"><strong>CopyFileTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-createdirectorytransacteda"><strong>CreateDirectoryTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-createfiletransacteda"><strong>CreateFileTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-createhardlinktransacteda"><strong>CreateHardLinkTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-createsymboliclinktransacteda"><strong>CreateSymbolicLinkTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-deletefiletransacteda"><strong>DeleteFileTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-findfirstfilenametransactedw"><strong>FindFirstFileNameTransactedW</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-findfirstfiletransacteda"><strong>FindFirstFileTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-findfirststreamtransactedw"><strong>FindFirstStreamTransactedW</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-getcompressedfilesizetransacteda"><strong>GetCompressedFileSizeTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-getfileattributestransacteda"><strong>GetFileAttributesTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-getfullpathnametransacteda"><strong>GetFullPathNameTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-getlongpathnametransacteda"><strong>GetLongPathNameTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-movefiletransacteda"><strong>MoveFileTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-removedirectorytransacteda"><strong>RemoveDirectoryTransacted</strong></a></li>
+<li><a href="/windows/desktop/api/WinBase/nf-winbase-setfileattributestransacteda"><strong>SetFileAttributesTransacted</strong></a></li>
+</ul>
+<p>For example, the <a href="/windows/desktop/api/FileAPI/nf-fileapi-createfilea"><strong>CreateFile</strong></a> function now has a transacted version: <a href="/windows/desktop/api/WinBase/nf-winbase-createfiletransacteda"><strong>CreateFileTransacted</strong></a>.</p>
+<h3>File I/O Functions Changed By TxF</h3>
+<p>The following table lists the functions whose behavior is affected by Transactional NTFS. For example, the behavior of the <a href="/windows/desktop/api/FileAPI/nf-fileapi-readfile"><strong>ReadFile</strong></a> function will vary depending on whether the <em>hFile</em> parameter was created by the <a href="/windows/desktop/api/FileAPI/nf-fileapi-createfilea"><strong>CreateFile</strong></a> function or the <a href="/windows/desktop/api/WinBase/nf-winbase-createfiletransacteda"><strong>CreateFileTransacted</strong></a> function.</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/handleapi/nf-handleapi-closehandle"><strong>CloseHandle</strong></a><!-- raw HTML omitted --></td>
+<td>Applications should close all handles bound to a transaction before the transaction is committed. An application must close a transacted handle opened with <strong>FILE_FLAG_DELETE_ON_CLOSE</strong> before committing the transaction in order for the delete operation to occur.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/winbase/nf-winbase-createfilemappinga"><strong>CreateFileMapping</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction associated with <em>hFile</em>, then the file-mapping object that this function creates will be associated with the same transaction. Modifications made through views of this file-mapping object are transacted. Applications must call <a href="/windows/desktop/api/memoryapi/nf-memoryapi-flushviewoffile"><strong>FlushViewOfFile</strong></a>, unmap all views, and close all handles to the file-mapping object before committing transacted changes.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/FileAPI/nf-fileapi-findnextfilea"><strong>FindNextFile</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction bound to the file enumeration handle, then the files that are returned are subject to transaction isolation rules.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/win32/api/winioctl/ni-winioctl-fsctl_set_compression"><strong>FSCTL_SET_COMPRESSION</strong></a><!-- raw HTML omitted --></td>
+<td>You cannot change the compression state of a file opened by <a href="/windows/desktop/api/WinBase/nf-winbase-createfiletransacteda"><strong>CreateFileTransacted</strong></a>.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/FileAPI/nf-fileapi-getfileinformationbyhandle"><strong>GetFileInformationByHandle</strong></a> and <a href="/windows/desktop/api/WinBase/nf-winbase-getfileinformationbyhandleex"><strong>GetFileInformationByHandleEx</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction bound to the file handle, then the function returns information for the isolated file view.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/FileAPI/nf-fileapi-getfilesize"><strong>GetFileSize</strong></a> and <a href="/windows/desktop/api/FileAPI/nf-fileapi-getfilesizeex"><strong>GetFileSizeEx</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction bound to the file handle, then the function returns information for the isolated file view.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/FileAPI/nf-fileapi-getvolumeinformationa"><strong>GetVolumeInformation</strong></a><!-- raw HTML omitted --></td>
+<td>If the volume supports file system transactions, the function returns <strong>FILE_SUPPORTS_TRANSACTIONS</strong> in <em>lpFileSystemFlags</em>.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/memoryapi/nf-memoryapi-mapviewoffile"><strong>MapViewOfFile</strong></a> and <a href="/windows/desktop/api/memoryapi/nf-memoryapi-mapviewoffileex"><strong>MapViewOfFileEx</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction associated with the file handle used to create the file-mapping object that is being mapped, then the associated view is transacted. If the view is used to make transacted changes to a file, then the user must call <a href="/windows/desktop/api/memoryapi/nf-memoryapi-flushviewoffile"><strong>FlushViewOfFile</strong></a>, close the file-mapping object, and close the file handle before committing the associated transaction.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/WinBase/nf-winbase-readdirectorychangesw"><strong>ReadDirectoryChangesW</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction bound to the directory handle, then the notifications reflect the isolated view of the directory. Changes to files outside the transacted view of the directory are not included in the notifications.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/FileAPI/nf-fileapi-readfile"><strong>ReadFile</strong></a>, <a href="/windows/desktop/api/FileAPI/nf-fileapi-readfileex"><strong>ReadFileEx</strong></a>, and <a href="/windows/desktop/api/FileAPI/nf-fileapi-readfilescatter"><strong>ReadFileScatter</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction bound to the file handle, then the function returns data from the transacted view of the file. A transacted read handle is guaranteed to show the same view of a file for the duration of the handle.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/FileAPI/nf-fileapi-setendoffile"><strong>SetEndOfFile</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction bound to the handle, then the change in the end-of-file position is transacted.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/FileAPI/nf-fileapi-setfileinformationbyhandle"><strong>SetFileInformationByHandle</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction bound to the handle, then the changes made will be transacted for the information classes <strong>FileBasicInfo</strong>, <strong>FileRenameInfo</strong>, <strong>FileAllocationInfo</strong>, <strong>FileEndOfFileInfo</strong>, and <strong>FileDispositionInfo</strong>.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/WinBase/nf-winbase-setfileshortnamea"><strong>SetFileShortName</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction bound to the handle, then the change in the file's short name is transacted.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/fileapi/nf-fileapi-setfiletime"><strong>SetFileTime</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction bound to the handle, then the change in file time is transacted.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="/windows/desktop/api/FileAPI/nf-fileapi-writefile"><strong>WriteFile</strong></a>, <a href="/windows/desktop/api/FileAPI/nf-fileapi-writefileex"><strong>WriteFileEx</strong></a>, and <a href="/windows/desktop/api/FileAPI/nf-fileapi-writefilegather"><strong>WriteFileGather</strong></a><!-- raw HTML omitted --></td>
+<td>If there is a transaction bound to the file handle, then the file write is transacted.<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+</body>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Render Targets, Devices, and Resources</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Render Targets, Devices, and Resources
+description: Render Targets, Devices, and Resources
+ms.assetid: cf48c2ce-16ad-4e61-8900-501c7c27da23
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Render Targets, Devices, and Resources</h1>
+<p>A <em>render target</em> is simply the location where your program will draw. Typically, the render target is a window (specifically, the client area of the window). It could also be a bitmap in memory that is not displayed. A render target is represented by the <a href="/windows/desktop/api/d2d1/nn-d2d1-id2d1rendertarget"><strong>ID2D1RenderTarget</strong></a> interface.</p>
+<p>A <em>device</em> is an abstraction that represents whatever actually draws the pixels. A hardware device uses the GPU for faster performance, whereas a software device uses the CPU. The application does not create the device. Instead, the device is created implicitly when the application creates the render target. Each render target is associated with a particular device, either hardware or software.</p>
+<p><img src="images/graphics09.png" alt="a diagram that shows the relation between a render target and a device." /></p>
+<p>A <em>resource</em> is an object that the program uses for drawing. Here are some examples of resources that are defined in Direct2D:</p>
+<ul>
+<li><strong>Brush</strong>. Controls how lines and regions are painted. Brush types include solid-color brushes and gradient brushes.</li>
+<li><strong>Stroke style</strong>. Controls the appearance of a lineâ€”for example, dashed or solid.</li>
+<li><strong>Geometry</strong>. Represents a collection of lines and curves.</li>
+<li><strong>Mesh</strong>. A shape formed out of triangles. Mesh data can be consumed directly by the GPU, unlike geometry data, which must be converted before rendering.</li>
+</ul>
+<p>Render targets are also considered a type of resource.</p>
+<p>Some resources benefit from hardware acceleration. A resource of this type is always associated with a particular device, either hardware (GPU) or software (CPU). This type of resource is called <em>device-dependent</em>. Brushes and meshes are examples of device-dependent resources. If the device becomes unavailable, the resource must be re-created for a new device.</p>
+<p>Other resources are kept in CPU memory, regardless of what device is used. These resources are <em>device-independent</em>, because they are not associated with a particular device. It is not necessary to re-create device-independent resources when the device changes. Stroke styles and geometries are device-independent resources.</p>
+<p>The Windows documentation for each resource states whether the resource is device-dependent or device-independent. Every resource type is represented by an interface that derives from <a href="/windows/desktop/api/d2d1/nn-d2d1-id2d1resource"><strong>ID2D1Resource</strong></a>. For example, brushes are represented by the <a href="/windows/desktop/api/d2d1/nn-d2d1-id2d1brush"><strong>ID2D1Brush</strong></a> interface.</p>
+<h2>The Direct2D Factory Object</h2>
+<p>The first step when using Direct2D is to create an instance of the Direct2D factory object. In computer programming, a <em>factory</em> is an object that creates other objects. The Direct2D factory creates the following types of objects:</p>
+<ul>
+<li>Render targets.</li>
+<li>Device-independent resources, such as stroke styles and geometries.</li>
+</ul>
+<p>Device-dependent resources, such as brushes and bitmaps, are created by the render target object.</p>
+<p><img src="images/graphics10.png" alt="a diagram that shows the direct2d factory." /></p>
+<p>To create the Direct2D factory object, call the <a href="/windows/desktop/api/d2d1/nf-d2d1-d2d1createfactory"><strong>D2D1CreateFactory</strong></a> function.</p>
+<pre lang="C++"><code>ID2D1Factory *pFactory = NULL;
+
+HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &amp;pFactory);
+</code></pre>
+<p>The first parameter is a flag that specifies creation options. The <strong>D2D1_FACTORY_TYPE_SINGLE_THREADED</strong> flag means that you will not call Direct2D from multiple threads. To support calls from multiple threads, specify <strong>D2D1_FACTORY_TYPE_MULTI_THREADED</strong>. If your program uses a single thread to call into Direct2D, the single-threaded option is more efficient.</p>
+<p>The second parameter to the <a href="/windows/desktop/api/d2d1/nf-d2d1-d2d1createfactory"><strong>D2D1CreateFactory</strong></a> function receives a pointer to the <a href="/windows/desktop/api/d2d1/nn-d2d1-id2d1factory"><strong>ID2D1Factory</strong></a> interface.</p>
+<p>You should create the Direct2D factory object before the first <a href="/windows/desktop/gdi/wm-paint"><strong>WM_PAINT</strong></a> message. The <a href="/windows/desktop/winmsg/wm-create"><strong>WM_CREATE</strong></a> message handler is a good place to create the factory:</p>
+<pre lang="C++"><code>    case WM_CREATE:
+        if (FAILED(D2D1CreateFactory(
+                D2D1_FACTORY_TYPE_SINGLE_THREADED, &amp;pFactory)))
+        {
+            return -1;  // Fail CreateWindowEx.
+        }
+        return 0;
+</code></pre>
+<h2>Creating Direct2D Resources</h2>
+<p>The Circle program uses the following device-dependent resources:</p>
+<ul>
+<li>A render target that is associated with the application window.</li>
+<li>A solid-color brush to paint the circle.</li>
+</ul>
+<p>Each of these resources is represented by a COM interface:</p>
+<ul>
+<li>The <a href="/windows/desktop/api/d2d1/nn-d2d1-id2d1hwndrendertarget"><strong>ID2D1HwndRenderTarget</strong></a> interface represents the render target.</li>
+<li>The <a href="/windows/desktop/api/d2d1/nn-d2d1-id2d1solidcolorbrush"><strong>ID2D1SolidColorBrush</strong></a> interface represents the brush.</li>
+</ul>
+<p>The Circle program stores pointers to these interfaces as member variables of the <code>MainWindow</code> class:</p>
+<pre lang="C++"><code>ID2D1HwndRenderTarget   *pRenderTarget;
+ID2D1SolidColorBrush    *pBrush;
+</code></pre>
+<p>The following code creates these two resources.</p>
+<pre lang="C++"><code>HRESULT MainWindow::CreateGraphicsResources()
+{
+    HRESULT hr = S_OK;
+    if (pRenderTarget == NULL)
+    {
+        RECT rc;
+        GetClientRect(m_hwnd, &amp;rc);
+
+        D2D1_SIZE_U size = D2D1::SizeU(rc.right, rc.bottom);
+
+        hr = pFactory-&gt;CreateHwndRenderTarget(
+            D2D1::RenderTargetProperties(),
+            D2D1::HwndRenderTargetProperties(m_hwnd, size),
+            &amp;pRenderTarget);
+
+        if (SUCCEEDED(hr))
+        {
+            const D2D1_COLOR_F color = D2D1::ColorF(1.0f, 1.0f, 0);
+            hr = pRenderTarget-&gt;CreateSolidColorBrush(color, &amp;pBrush);
+
+            if (SUCCEEDED(hr))
+            {
+                CalculateLayout();
+            }
+        }
+    }
+    return hr;
+}
+</code></pre>
+<p>To create a render target for a window, call the <a href="/previous-versions/windows/desktop/legacy/dd371275(v=vs.85)"><strong>ID2D1Factory::CreateHwndRenderTarget</strong></a> method on the Direct2D factory.</p>
+<ul>
+<li>The first parameter specifies options that are common to any type of render target. Here, we pass in default options by calling the helper function <a href="/windows/desktop/api/d2d1helper/nf-d2d1helper-rendertargetproperties"><strong>D2D1::RenderTargetProperties</strong></a>.</li>
+<li>The second parameter specifies the handle to the window plus the size of the render target, in pixels.</li>
+<li>The third parameter receives an <a href="/windows/desktop/api/d2d1/nn-d2d1-id2d1hwndrendertarget"><strong>ID2D1HwndRenderTarget</strong></a> pointer.</li>
+</ul>
+<p>To create the solid-color brush, call the <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-createsolidcolorbrush(constd2d1_color_f__id2d1solidcolorbrush)"><strong>ID2D1RenderTarget::CreateSolidColorBrush</strong></a> method on the render target. The color is given as a <a href="/windows/desktop/Direct2D/d2d1-color-f"><strong>D2D1_COLOR_F</strong></a> value. For more information about colors in Direct2D, see <a href="using-color-in-direct2d.html">Using Color in Direct2D</a>.</p>
+<p>Also, notice that if the render target already exists, the <code>CreateGraphicsResources</code> method returns <strong>S_OK</strong> without doing anything. The reason for this design will become clear in the next topic.</p>
+<h2>Next</h2>
+<p><a href="drawing-with-direct2d.html">Drawing with Direct2D</a></p>
+<p>Â </p>
+<p>Â </p>
+</body>

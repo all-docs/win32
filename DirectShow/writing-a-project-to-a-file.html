@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Writing a Project to a File</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Writing a Project to a File
+ms.assetid: 84499e4f-4f45-4aa6-aa89-d95c3b6b47d0
+title: Writing a Project to a File
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Writing a Project to a File</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>[This API is not supported and may be altered or unavailable in the future.]</p>
+<p>This article describes how to write a <a href="directshow-editing-services.html">DirectShow Editing Services</a> project to a file. First it describes how to write a file with the basic render engine. Then it describes smart recompression with the smart render engine.</p>
+<p>For an overview of how DirectShow Editing Services renders projects, see <a href="about-the-render-engines.html">About the Render Engines</a>.</p>
+<p><strong>Using the Basic Render Engine</strong></p>
+<p>Start by building the front end of the graph, as follows:</p>
+<ol>
+<li>Create the render engine.</li>
+<li>Specify the timeline.</li>
+<li>Set the render range. (Optional)</li>
+<li>Build the front end of the graph.</li>
+</ol>
+<p>The following code example shows these steps.</p>
+<pre lang="C++"><code>IRenderEngine *pRender = NULL; 
+hr = CoCreateInstance(CLSID_RenderEngine, NULL, CLSCTX_INPROC,
+    IID_IRenderEngine, (void**) &amp;pRender);
+
+hr = pRender-&gt;SetTimelineObject(pTL);
+hr = pRender-&gt;ConnectFrontEnd( );
+</code></pre>
+<p>Next, add multiplexer and file-writing filters to the filter graph. The easiest way to do this is with the <a href="capture-graph-builder.html">Capture Graph Builder</a>, a DirectShow component for building capture graphs. The capture graph builder exposes the <a href="/windows/desktop/api/Strmif/nn-strmif-icapturegraphbuilder2"><strong>ICaptureGraphBuilder2</strong></a> interface. Perform the following steps:</p>
+<ol>
+<li>Create an instance of the capture graph builder.</li>
+<li>Obtain a pointer to the graph and pass it to the graph builder.</li>
+<li>Specify the name and media type of the output file. This step also obtains a pointer to the mux filter, which is required later.</li>
+</ol>
+<p>The following code example shows these steps.</p>
+<pre lang="C++"><code>CoCreateInstance(CLSID_CaptureGraphBuilder2, NULL, CLSCTX_INPROC, 
+    IID_ICaptureGraphBuilder2, (void **)&amp;pBuilder);
+
+// Get a pointer to the graph front end.
+IGraphBuilder *pGraph;
+pRender-&gt;GetFilterGraph(&amp;pGraph);
+pBuilder-&gt;SetFiltergraph(pGraph);
+
+// Create the file-writing section.
+IBaseFilter *pMux;
+pBuilder-&gt;SetOutputFileName(&amp;MEDIASUBTYPE_Avi, 
+    OLESTR(&quot;Output.avi&quot;), &amp;pMux, NULL);
+</code></pre>
+<p>Finally, connect the output pins on the front end to the mux filter.</p>
+<ol>
+<li>Retrieve the number of groups.</li>
+<li>For each pin, obtain a pointer to the pin.</li>
+<li>Optionally, create an instance of a compression filter to compress the stream. The type of compressor will depend on the media type of the group. You can use the <a href="system-device-enumerator.html">System Device Enumerator</a> to enumerate the available compression filters. For more information, see <a href="enumerating-devices-and-filters.html">Enumerating Devices and Filters</a>.</li>
+<li>Optionally, set compression parameters such as the key-frame rate. This step is discussed in detail later in the article.</li>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>ICaptureGraphBuilder2::RenderStream</strong></a>. This method takes pointers to the pin, the compression filter (if any), and the multiplexer.</li>
+</ol>
+<p>The following code example shows how to connect the output pins.</p>
+<pre lang="C++"><code>long NumGroups;
+pTimeline-&gt;GetGroupCount(&amp;NumGroups);
+
+// Loop through the groups and get the output pins.
+for (i = 0; i &lt; NumGroups; i++)
+{
+    IPin *pPin;
+    if (pRender-&gt;GetGroupOutputPin(i, &amp;pPin) == S_OK) 
+    {
+        IBaseFilter *pCompressor;
+        // Create a compressor filter. (Not shown.)
+        // Set compression parameters. (Not shown.)
+
+        // Connect the pin.
+        pBuilder-&gt;RenderStream(NULL, NULL, pPin, pCompressor, pMux);
+        pCompressor-&gt;Release();
+        pPin-&gt;Release();
+    }
+}
+</code></pre>
+<p>To set compression parameters (step 4, previously), use the <a href="/windows/desktop/api/Strmif/nn-strmif-iamvideocompression"><strong>IAMVideoCompression</strong></a> interface. This interface is exposed on the output pins of compression filters. Enumerate the compression filter's pins, and query each output pin for <strong>IAMVideoCompression</strong>. (For information about enumerating pins, see <a href="enumerating-pins.html">Enumerating Pins</a>.) Be sure to release all the interface pointers that you obtained during this step.</p>
+<p>After you build the filter graph, call the <a href="/windows/desktop/api/Control/nf-control-imediacontrol-run"><strong>IMediaControl::Run</strong></a> method on the filter graph manager. As the filter graph runs, it writes the data to a file. Use event notification to wait for playback to complete. (See <a href="responding-to-events.html">Responding to Events</a>.) When playback finishes, you must explicitly call <a href="/windows/desktop/api/Control/nf-control-imediacontrol-stop"><strong>IMediaControl::Stop</strong></a> to stop the filter graph. Otherwise, the file is not written correctly.</p>
+<p><strong>Using the Smart Render Engine</strong></p>
+<p>To get the benefits of smart recompression, use the smart render engine in place of the basic render engine. The steps in building the graph are almost the same. The major difference is that compression is handled in the front end of the graph, not in the file-writing section.</p>
+<blockquote>
+<p>[!IMPORTANT]
+Do not use the smart render engine to read or write Windows Media files.</p>
+</blockquote>
+<p>Â </p>
+<p>Each video group has a property that specifies the compression format for that group. The compression format must exactly match the group's uncompressed format in height, width, bit depth, and frame rate. The smart render engine uses the compression format when it constructs the graph. Before you set the compression format, make sure to set the uncompressed format for that group by calling <a href="iamtimelinegroup-setmediatype.html"><strong>IAMTimelineGroup::SetMediaType</strong></a>.</p>
+<p>To set a group's compression format, call the <a href="iamtimelinegroup-setsmartrecompressformat.html"><strong>IAMTimelineGroup::SetSmartRecompressFormat</strong></a> method. This method takes a pointer to an <a href="scompfmt0.html"><strong>SCompFmt0</strong></a> structure. The <strong>SCompFmt0</strong> structure has two members: <strong>nFormatId</strong>, which must be zero, and <strong>MediaType</strong>, which is an <a href="/windows/win32/api/strmif/ns-strmif-am_media_type"><strong>AM_MEDIA_TYPE</strong></a> structure. Initialize the <strong>AM_MEDIA_TYPE</strong> structure with the format information.</p>
+<blockquote>
+<p>[!Note]<br />
+If you want the final project to have the same format as one of your source files, you can get the AM_MEDIA_TYPE structure directly from the source file, using the media detector. See <a href="imediadet-get-streammediatype.html"><strong>IMediaDet::get_StreamMediaType</strong></a>.</p>
+</blockquote>
+<p>Â </p>
+<p>Cast the <a href="scompfmt0.html"><strong>SCompFmt0</strong></a> variable to a pointer of type <strong>long</strong>, as shown in the following example.</p>
+<pre lang="C++"><code>SCompFmt0 *pFormat = new SCompFmt0;
+memset(pFormat, 0, sizeof(SCompFmt0));
+pFormat-&gt;nFormatId = 0;
+
+// Initialize pFormat-&gt;MediaType. (Not shown.)
+
+pGroup-&gt;SetSmartRecompressFormat( (long*) pFormat );
+</code></pre>
+<p>The smart render engine automatically searches for a compatible compression filter. You can also specify a compression filter for a group by calling <a href="ismartrenderengine-setgroupcompressor.html"><strong>ISmartRenderEngine::SetGroupCompressor</strong></a>.</p>
+<p>To build the graph, use the same steps that were described for the Basic Render Engine in the previous section. The only differences are the following:</p>
+<ul>
+<li>Use the smart render engine, not the basic render engine. The class identifier is CLSID_SmartRenderEngine.</li>
+<li>Set compression parameters after you build the front end but before you render the output pins. Call the <a href="ismartrenderengine-getgroupcompressor.html"><strong>ISmartRenderEngine::GetGroupCompressor</strong></a> method to obtain a pointer to a group's compression filter. Then query for the <a href="/windows/desktop/api/Strmif/nn-strmif-iamvideocompression"><strong>IAMVideoCompression</strong></a> interface, as described previously.</li>
+<li>When you render the output pins, there is no need to insert a compression filter. The stream is already compressed.</li>
+</ul>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="rendering-a-project.html">Rendering a Project</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

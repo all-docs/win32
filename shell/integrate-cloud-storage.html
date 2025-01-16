@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Integrate a Cloud Storage Provider</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Shows how to register as a sync root provider and integrate a cloud storage provider into the root level of the Navigation Pane.
+ms.assetid: BB177EDC-8C88-4540-B2F8-994C1C8BA91C
+title: Integrate a Cloud Storage Provider
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Integrate a Cloud Storage Provider</h1>
+<p>When you have a cloud storage provider, there are a couple of steps you should take in order to provide a consistent and preferred experience for the user. These two things are registering as a sync root provider and integrating your application into the root level of the Navigation Pane.</p>
+<blockquote>
+<p>[!IMPORTANT]
+Integrating your cloud storage provider is only supported starting in WindowsÂ 10.</p>
+</blockquote>
+<p>Â </p>
+<p>The first thing is to register as a sync root provider. This lets the Windows Shell know about your application and that your application will be responsible for synchronizing files under your sync root. This will also let other applications know that you are synchronizing these files so that they can respond appropriately. Other applications can then use <a href="/uwp/api/Windows.Storage.StorageFile"><strong>StorageFile.Provider</strong></a> to get the <a href="/uwp/api/Windows.Storage.StorageProvider"><strong>DisplayName</strong></a> and <a href="/uwp/api/Windows.Storage.StorageProvider"><strong>Id</strong></a> of your application.</p>
+<p>In order to register as a sync root provider, you will need to create multiple registry entries. Before providing the list of key-value pairs, here are some placeholders that you should replace with your own application data.</p>
+<ul>
+<li><em>[storage provider ID]</em>: The name of your cloud storage provider. This name should be consistent regardless of the version of your application. An example of this is OneDrive.</li>
+<li><em>[Windows SID]</em>: The unique Windows SID that identifies the user. If your app supports multiple installations for multiple users on a single machine, this piece is required.</li>
+<li><em>[Account ID]</em>: The service provider identifier for this user's current account. Some providers require the ability to provide multiple synchronization roots for a user. One example of this is a work and a personal account. The <em>Account ID</em> enables you to have multiple accounts registered for one user. If your provider does support multiple synchronization roots per user, this piece is required.</li>
+</ul>
+<p>These placeholders are combined together to form the sync root id. You must place a <strong>!</strong> character between each of the placeholders when forming the sync root id. Here are the key-value pairs that need to be created.</p>
+<ul>
+<li><strong>HKLM\Software\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager\</strong><em>[storage provider ID]</em><strong>!</strong><em>[Windows SID]</em><strong>!</strong><em>[Account ID]</em><strong>\DisplayNameResource</strong> : Points to the resource where the Windows Shell or other applications can get a user-friendly name for your sync root.</li>
+<li><strong>HKLM\Software\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager\</strong><em>[storage provider ID]</em><strong>!</strong><em>[Windows SID]</em><strong>!</strong><em>[Account ID]</em><strong>\IconResource</strong> : Points to the resource where the Windows Shell or other applications can get an icon for your sync root.</li>
+<li><strong>HKLM\Software\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager\</strong><em>[storage provider ID]</em><strong>!</strong><em>[Windows SID]</em><strong>!</strong><em>[Account ID]</em><strong>\UserSyncRoots\</strong><em>[Windows SID]</em> : The location on disk where the sync root is located.</li>
+</ul>
+<p>Other than registering as a sync root provider, you also want users to have easy access to the data you provide. The File Explorer namespace is designed to provide a method for that easy access. Creating a namespace extension for your provider and incorporating it into the File Explorer window will allow users to interact with the root level of your services just like they are used to with other File Explorer items. This topic explains how to extend the File Explorer namespace so that your provider will appear at the root level in the Navigation Pane.</p>
+<p>The Navigation Pane of the File Explorer window is the portion of the window displayed on the left side. In the image below, you can see the namespace structure for this user. The root level on the Navigation Pane includes the objects for <strong>OneDrive</strong>, <strong>This PC</strong>, and <strong>Network</strong>. Following these steps will add your extension to the same level.</p>
+<p><img src="images/navigationpane.png" alt="navigation pane" /></p>
+<p>In order to add your extension to the Navigation Pane, you will need to have the following before editing the registry:</p>
+<ul>
+<li>
+<p>A file system folder that contains the data to display to the user.</p>
+</li>
+<li>
+<p>Name of your cloud service that will appear in the Navigation Pane. This could also be the name of the instance if your service supports multiple accounts.</p>
+</li>
+<li>
+<p>Identifiable icon for your application.</p>
+</li>
+<li>
+<p>A CLSID for your application. One way to generate a CLSID for your application is to use the Uuidgen.exe. See <a href="../com/clsid-key-hklm.html">CLSID Key</a> for more information about CLSID.</p>
+</li>
+</ul>
+<p>The following steps modify the registry in order to get the necessary information into the File Explorer namespace. The specific steps do three things.</p>
+<ul>
+<li>
+<p>Create keys in the registry for your CLSID that includes values for the name and icon for your extension as well as other information that defines its behavior.</p>
+</li>
+<li>
+<p>Configure your extension to be integrated into the Navigation Pane in the proper location and with the proper visibility.</p>
+</li>
+<li>
+<p>Configure your extension to have the expected behavior for an element in the navigation pane.</p>
+</li>
+</ul>
+<p>These instructions specifically use the <strong>reg.exe</strong> command, however you can use any registry editing tool of your choice. You can even integrate these steps into an installer that updates the registry programmatically.</p>
+<h2>Instructions</h2>
+<h3>Step 1: Add your CLSID and name your extension</h3>
+<p>Add the name of your extension to the registry under HKEY_CURRENT_USER. You will also be adding the unique identifier for this extension. It is possible to add more than one extension per user, but in that case you will need a unique name and identifier for each extension. This name and identifier must be consistent throughout the rest of these steps. In this example, the name is <em>MyCloudStorageApp</em>.</p>
+<blockquote>
+<p>[!IMPORTANT]
+The identifier provided (0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3) in these steps is just used as a sample. You will need to change this to your unique CLSID.</p>
+</blockquote>
+<p>Â </p>
+<p><strong>reg add HKCU\Software\Classes\CLSID\{0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3} /ve /t REG_SZ /d &quot;MyCloudStorageApp&quot; /f</strong></p>
+<h3>Step 2: Set the image for your icon</h3>
+<p>Provide the path to the icon that should be displayed in the Navigation Pane. In the example below, <em>1043</em> refers to the resource identifier for the icon in the indicated DLL.</p>
+<blockquote>
+<p>[!IMPORTANT]
+You need to update the image path. It should point to a generic path where your app installed an image.</p>
+</blockquote>
+<p>Â </p>
+<p><strong>reg add HKCU\Software\Classes\CLSID\{0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3}\DefaultIcon /ve /t REG_EXPAND_SZ /d %%SystemRoot%%\system32\imageres.dll,-1043 /f</strong></p>
+<h3>Step 3: Add your extension to the Navigation Pane and make it visible</h3>
+<p>Setting this value to 0x1 indicates that the extension should be pinned. This will make sure it is shown to users by default. The default configuration for a user is that only pinned items will be shown in the Navigation Pane. A user can change that setting by right-clicking in the Navigation Pane and selecting <strong>Show all folders</strong>. If you don't want to pin your extension, you can set this value to 0x0. That will not remove your extension, but merely prevent it from being displayed to the user by default.</p>
+<p><strong>reg add HKCU\Software\Classes\CLSID\{0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3} /v System.IsPinnedToNameSpaceTree /t REG_DWORD /d 0x1 /f</strong></p>
+<h3>Step 4: Set the location for your extension in the Navigation Pane</h3>
+<p>This is critical in order to make sure the Navigation Pane provides a consistent experience for the user.</p>
+<p><strong>reg add HKCU\Software\Classes\CLSID\{0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3} /v SortOrderIndex /t REG_DWORD /d 0x42 /f</strong></p>
+<h3>Step 5: Provide the dll that hosts your extension.</h3>
+<p>Use the shell32.dll to emulate default windows folders. Only change this if you have a specific reason to do so and are familiar with namespace extensions.</p>
+<p><strong>reg add HKCU\Software\Classes\CLSID\{0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3}\InProcServer32 /ve /t REG_EXPAND_SZ /d %%systemroot%%\system32\shell32.dll /f</strong></p>
+<h3>Step 6: Define the instance object</h3>
+<p>Indicate that your namespace extension should function like other file folder structures in File Explorer. For more information about shell instance objects, see <a href="/previous-versions/ms997573(v=msdn.10)">Creating Shell Extensions with Shell Instance Objects</a>.</p>
+<p><strong>reg add HKCU\Software\Classes\CLSID\{0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3}\Instance /v CLSID /t REG_SZ /d {0E5AAE11-A475-4c5b-AB00-C66DE400274E} /f</strong></p>
+<h3>Step 7: Provide the file system attributes of the target folder</h3>
+<p>This is required to make sure that the File Explorer provides a consistent and expected experience for users. This command sets <strong>FILE_ATTRIBUTE_DIRECTORY</strong> and <strong>FILE_ATTRIBUTE_READONLY</strong>, both of which are <a href="../fileio/file-attribute-constants.html"><strong>File Attribute Constants</strong></a>.</p>
+<p><strong>reg add HKCU\Software\Classes\CLSID\{0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3}\Instance\InitPropertyBag /v Attributes /t REG_DWORD /d 0x11 /f</strong></p>
+<h3>Step 8: Set the path for the sync root</h3>
+<p>Set the path for the sync root.</p>
+<p><strong>reg add HKCU\Software\Classes\CLSID\{0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3}\Instance\InitPropertyBag /v TargetFolderPath /t REG_EXPAND_SZ /d %%USERPROFILE%%\MyCloudStorageApp /f</strong></p>
+<h3>Step 9: Set appropriate shell flags</h3>
+<p>Set some flags necessary to pin your namespace extension to the File Explorer tree.</p>
+<p><strong>reg add HKCU\Software\Classes\CLSID\{0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3}\ShellFolder /v FolderValueFlags /t REG_DWORD /d 0x28 /f</strong></p>
+<h3>Step 10: Set the appropriate flags to control your shell behavior</h3>
+<p>Set the appropriate <a href="sfgao.html"><strong>SFGAO</strong></a> flags. The relevant flags are SFGAO_CANCOPY, SFGAO_CANLINK, SFGAO_STORAGE, SFGAO_HASPROPSHEET, SFGAO_STORAGEANCESTOR, SFGAO_FILESYSANCESTOR, SFGAO_FOLDER, SFGAO_FILESYSTEM, and SFGAO_HASSUBFOLDER.</p>
+<p><strong>reg add HKCU\Software\Classes\CLSID\{0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3}\ShellFolder /v Attributes /t REG_DWORD /d 0xF080004D /f</strong></p>
+<h3>Step 11: Register your extension in the namespace root</h3>
+<p>Configure the namespace extension to be a child of the desktop folder.</p>
+<p><strong>reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3} /ve /t REG_SZ /d MyCloudStorageApp /f</strong></p>
+<h3>Step 12: Hide your extension from the Desktop</h3>
+<p>It is important that your extension only appears on the Navigation Pane of the File Explorer. A namespace extension does not function like a normal shortcut. Therefore, you should not use this method to create a Desktop shortcut.</p>
+<p><strong>reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel /v {0672A6D1-A6E0-40FE-AB16-F25BADC6D9E3} /t REG_DWORD /d 0x1 /f</strong></p>
+<p>Â </p>
+<p>Â </p>
+</body>

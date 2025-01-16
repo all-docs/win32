@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Processing Data in the Encoder</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Processing Data in the Encoder
+ms.assetid: 7be4c5e7-db2c-4063-8e5c-af6ffb861aa5
+title: Processing Data in the Encoder
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Processing Data in the Encoder</h1>
+<p>After you have negotiated the input type and output type for the encoder MFT, as described in <a href="media-type-negotiation-on-the-encoder.html">Media Type Negotiation on the Encoder</a>, you can start processing media data samples. The data is passed in form of media samples (<a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfsample"><strong>IMFSample</strong></a> interface) and also received from the output as media samples.</p>
+<p>Before sending data to the encoder for processing, you must allocate a media sample and add one of more media buffers containing media data that needs to be encoded. Call <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processinput"><strong>IMFTransform::ProcessInput</strong></a> and pass a pointer to the allocated media sample. In addition to the media sample, <strong>ProcessInput</strong> also needs the input stream identifier. To get the stream identifier, call <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getstreamids"><strong>IMFTransform::GetStreamIDs</strong></a>. Because an encoder is designed to have only one and one output, these stream identifiers always have the value of 0.</p>
+<p>To get data from the encoder, call <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>IMFTransform::ProcessOutput</strong></a>. Before you call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfqualitymanager-notifyprocessoutput"><strong>ProcessOutput</strong></a>, you need to find out whether the encoder allocates the output media samples or you must do so explicitly. To do this, call <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getoutputstreaminfo"><strong>IMFTransform::GetOutputStreamInfo</strong></a>. This returns output media sample information in the <a href="/windows/desktop/api/mftransform/ns-mftransform-mft_output_stream_info"><strong>MFT_OUTPUT_STREAM_INFO</strong></a> structure. If the encoder allocates media samples, it returns the MFT_OUTPUT_STREAM_PROVIDES_SAMPLES flag in the <strong>dwFlags</strong> member and the <strong>cbSize</strong> member contains zero. If the encoder expects you to allocate the output buffer, create the output media sample and the associated media buffer based on the size returned in <strong>cbSize</strong>. When you call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-processsample"><strong>ProcessSample</strong></a>, pass a pointer to the newly created media sample. During the encoding session, the encoder fills the media buffers, pointed by the output media sample, with the encoded data.</p>
+<p>To start the encoding session, pass the input media sample to the encoder by calling <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processinput"><strong>ProcessInput</strong></a>. The encoder starts processing and the data and produces one or more output media samples that must be retrieved by <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>ProcessOutput</strong></a> as long as it returns MF_E_TRANSFORM_NEED_MORE_INPUT. If you call <strong>ProcessInput</strong> to pass more input as long as there is output data to be retrieved, <strong>ProcessInput</strong> fails with MF_E_NOTACCEPTING. The encoder does not accept any more input until the client calls <strong>ProcessOutput</strong> at least once.</p>
+<p>You should set accurate time stamps and durations for all input samples passed. Time stamps are not strictly required but help maintain audio/video synchronization. If you do not have the time stamps for your samples it is better to leave them out than to use uncertain values.</p>
+<h2>Encoder Processing Example</h2>
+<p>The following example code shows how to call <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>IMFTransform::ProcessOutput</strong></a> to get an encoded sample. For the complete context of this example, see <a href="encoder-example-code.html">Encoder Example Code</a>.</p>
+<pre lang="C++"><code>HRESULT CWmaEncoder::ProcessOutput(IMFSample **ppSample)
+{
+    if (m_pMFT == NULL)
+    {
+        return MF_E_NOT_INITIALIZED;
+    }
+
+    *ppSample = NULL;
+
+    IMFMediaBuffer* pBufferOut = NULL;
+    IMFSample* pSampleOut = NULL;
+
+    DWORD dwStatus;
+  
+    MFT_OUTPUT_STREAM_INFO mftStreamInfo = { 0 };
+    MFT_OUTPUT_DATA_BUFFER mftOutputData = { 0 };
+
+    HRESULT hr = m_pMFT-&gt;GetOutputStreamInfo(m_dwOutputID, &amp;mftStreamInfo);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //create a buffer for the output sample
+    hr = MFCreateMemoryBuffer(mftStreamInfo.cbSize, &amp;pBufferOut);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //Create the output sample
+    hr = MFCreateSample(&amp;pSampleOut);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    //Add the output buffer 
+    hr = pSampleOut-&gt;AddBuffer(pBufferOut);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+ 
+    //Set the output sample
+    mftOutputData.pSample = pSampleOut;
+
+    //Set the output id
+    mftOutputData.dwStreamID = m_dwOutputID;
+
+    //Generate the output sample
+    hr = m_pMFT-&gt;ProcessOutput(0, 1, &amp;mftOutputData, &amp;dwStatus);
+    if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
+    {
+        hr = S_OK;
+        goto done;
+    }
+
+    // TODO: Handle MF_E_TRANSFORM_STREAM_CHANGE
+
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    *ppSample = pSampleOut;
+    (*ppSample)-&gt;AddRef();
+
+done:
+    SafeRelease(&amp;pBufferOut);
+    SafeRelease(&amp;pSampleOut);
+    return hr;
+};
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="asf-multiplexer.html">ASF Multiplexer</a></p>
+<!-- raw HTML omitted -->
+<p><a href="instantiating-the-encoder-mft.html">Instantiating an Encoder MFT</a></p>
+<!-- raw HTML omitted -->
+<p><a href="windows-media-encoders.html">Windows Media Encoders</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

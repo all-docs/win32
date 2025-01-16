@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Customizing a Shortcut Menu Using Dynamic Verbs</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Shortcut menu handlers are also known as context menu handlers or verb handlers. A shortcut menu handler is a type of file type handler.
+ms.assetid: 7FC65C6F-3798-404c-B359-2BC75D3F54E7
+title: Customizing a Shortcut Menu Using Dynamic Verbs
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Customizing a Shortcut Menu Using Dynamic Verbs</h1>
+<p>Shortcut menu handlers are also known as context menu handlers or verb handlers. A shortcut menu handler is a type of file type handler.</p>
+<p>This topic is organized as follows:</p>
+<ul>
+<li><a href="#about-static-and-dynamic-verbs">About Static and Dynamic Verbs</a></li>
+<li><a href="#how-shortcut-menu-handlers-work-with-dynamic-verbs">How Shortcut Menu Handlers Work with Dynamic Verbs</a></li>
+<li><a href="#avoiding-collisions-due-to-unqualified-verb-names">Avoiding Collisions Due to Unqualified Verb Names</a></li>
+<li><a href="#registering-a-shortcut-menu-handler-with-a-dynamic-verb">Registering a Shortcut Menu Handler with a Dynamic Verb</a></li>
+<li><a href="#implementing-the-icontextmenu-interface">Implementing the IContextMenu Interface</a>
+<ul>
+<li><a href="#icontextmenugetcommandstring-method">IContextMenu::GetCommandString Method</a></li>
+<li><a href="#icontextmenuinvokecommand-method">IContextMenu::InvokeCommand Method</a></li>
+<li><a href="#icontextmenuquerycontextmenu-method">IContextMenu::QueryContextMenu Method</a></li>
+</ul>
+</li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>About Static and Dynamic Verbs</h2>
+<p>We strongly encourage you to implement a shortcut menu using one of the static verb methods. We recommend that you follow the instructions provided in the &quot;Customizing a Shortcut Menu using Static Verbs&quot; section of <a href="context-menu-handlers.html">Creating Context Menu Handlers</a>. To get dynamic behavior for static verbs in WindowsÂ 7 and later, see &quot;Getting Dynamic Behavior for Static Verbs&quot; in <a href="context-menu-handlers.html">Creating Context Menu Handlers</a>. For details on static verb implementation, and which dynamic verbs to avoid, see <a href="shortcut-choose-method.html">Choosing a Static or Dynamic Verb for your Shortcut Menu</a>.</p>
+<p>If you must extend the shortcut menu for a file type by registering a dynamic verb for the file type, then follow the instructions provided later in this topic.</p>
+<blockquote>
+<p>[!Note]<br />
+There are special considerations for 64-bit Windows when registering handlers that work in the context of 32-bit applications: when Shell verbs are invoked in the context of a 32-bit application, the WOW64 subsystem redirects file system access to some paths. If your .exe handler is stored in one of those paths, it is not accessible in this context. Therefore, as a work around, either store your .exe in a path that does not get redirected, or store a stub version of your .exe that launches the real version.</p>
+</blockquote>
+<p>Â </p>
+<h2>How Shortcut Menu Handlers Work with Dynamic Verbs</h2>
+<p>In addition to <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a>, shortcut menu handlers export the following additional interfaces to handle the messaging needed to implement owner-drawn menu items:</p>
+<ul>
+<li><a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a> (mandatory)</li>
+<li><a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-icontextmenu"><strong>IContextMenu</strong></a> (mandatory)</li>
+<li><a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-icontextmenu2"><strong>IContextMenu2</strong></a> (optional)</li>
+<li><a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-icontextmenu3"><strong>IContextMenu3</strong></a> (optional)</li>
+</ul>
+<p>For more information on owner-drawn menu items, see the <em>Creating Owner-Drawn Menu Items</em> section in <a href="../menurc/using-menus.html">Using Menus</a>.</p>
+<p>Shell uses the <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a> interface to initialize the handler. When the Shell calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellextinit-initialize"><strong>IShellExtInit::Initialize</strong></a>, it passes in a data object with the object's name and a pointer to an item identifier list (PIDL) of the folder that contains the file. The <em>hkeyProgID</em> parameter is the registry location under which the shortcut menu handle is registered. The <strong>IShellExtInit::Initialize</strong> method must extract the file name from the data object and store the name and the folder's pointer to an item identifier list (PIDL) for later use. For more information on handler initialization, see <a href="handlers.html">Implementing IShellExtInit</a>.</p>
+<p>When verbs are presented in a shortcut menu, they are first discovered, then presented to the user, and finally invoked. The following list describes these three steps in more detail:</p>
+<ol>
+<li>The Shell calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-querycontextmenu"><strong>IContextMenu::QueryContextMenu</strong></a>, which returns a set of verbs that can be based on the state of the items or the system.</li>
+<li>The system passes in an <strong>HMENU</strong> handle that the method can use to add items to the shortcut menu.</li>
+<li>If the user clicks one of the handler's items, the Shell calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-invokecommand"><strong>IContextMenu::InvokeCommand</strong></a>. The handler can then execute the appropriate command.</li>
+</ol>
+<h2>Avoiding Collisions Due to Unqualified Verb Names</h2>
+<p>Because verbs are registered per type, the same verb name can be used for verbs on different items. Doing so enables applications to refer to common verbs independent of the item type. While this functionality is useful, the use of unqualified names can result in collisions with multiple independent software vendors (ISVs) that choose the same verb name. To avoid this, always prefix verbs with the ISV name as follows:</p>
+<p><code>ISV_Name.verb</code></p>
+<p>Always use an application specific ProgID. Adopting the convention of mapping the file name extension to an ISV provided ProgID avoids potential collisions. However, because some item types do not use this mapping, there is a need for vendor-unique names. When adding a verb to an existing ProgID that might already have that verb registered, you must first remove the registry key for the old verb before adding your own verb. You must do so to avoid merging the verb information from the two verbs. Failure to do so results in unpredictable behavior.</p>
+<h2>Registering a Shortcut Menu Handler with a Dynamic Verb</h2>
+<p>Shortcut menu handlers are associated with either a file type or a folder. For file types, the handler is registered under the following subkey.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â Program ID
+Â Â Â Â Â Â shellex
+Â Â Â Â Â Â Â Â Â ContextMenuHandlers
+</code></pre>
+<p>To associate a shortcut menu handler with either a file type or a folder, first create a subkey under the <strong>ContextMenuHandlers</strong> subkey. Name the subkey for the handler, and set the subkey's default value to the string form of the handler's class identifier (CLSID) GUID.</p>
+<p>Then to associate a shortcut menu handler with different kinds of folders, register the handler the same way you would for a file type, but under the <em>FolderType</em> subkey as shown in the following example.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â FolderType
+Â Â Â Â Â Â shellex
+Â Â Â Â Â Â Â Â Â ContextMenuHandlers
+</code></pre>
+<p>For more information about which folder types you can register handlers for, see <a href="handlers.html">Registering Shell Extension Handlers</a>.</p>
+<p>If a file type has a shortcut menu associated with it, then double-clicking an object normally launches the default command, and the handler's <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-querycontextmenu"><strong>IContextMenu::QueryContextMenu</strong></a> method is not called. To specify that the handler's <strong>IContextMenu::QueryContextMenu</strong> method should be called when an object is double-clicked, create a subkey under the handler's <strong>CLSID</strong> subkey as shown here.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â CLSID
+Â Â Â Â Â Â {00000000-1111-2222-3333-444444444444}
+Â Â Â Â Â Â Â Â Â shellex
+Â Â Â Â Â Â Â Â Â Â Â Â MayChangeDefaultMenu
+</code></pre>
+<p>When an object associated with the handler is double-clicked, <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-querycontextmenu"><strong>IContextMenu::QueryContextMenu</strong></a> is called with the <strong>CMF_DEFAULTONLY</strong> flag set in the <em>uFlags</em> parameter.</p>
+<p>Shortcut menu handlers should set the <strong>MayChangeDefaultMenu</strong> subkey only if they might need to change the shortcut menu's default verb. Setting this subkey forces the system to load the handler's DLL when an associated item is double-clicked. If your handler does not change the default verb, you should not set this subkey because doing so causes the system to load your DLL unnecessarily.</p>
+<p>The following example illustrates registry entries that enable a shortcut menu handler for an .myp file type. The handler's <strong>CLSID</strong> subkey includes a <strong>MayChangeDefaultMenu</strong> subkey to guarantee that the handler is called when the user double-clicks a related object.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â .myp
+Â Â Â Â Â Â (Default) = MyProgram.1
+Â Â Â CLSID
+Â Â Â Â Â Â {00000000-1111-2222-3333-444444444444}
+Â Â Â Â Â Â Â Â Â InProcServer32
+Â Â Â Â Â Â Â Â Â Â Â Â (Default) = C:\MyDir\MyCommand.dll
+Â Â Â Â Â Â Â Â Â Â Â Â ThreadingModel = Apartment
+Â Â Â Â Â Â Â Â Â shellex
+Â Â Â Â Â Â Â Â Â Â Â Â MayChangeDefaultMenu
+Â Â Â MyProgram.1
+Â Â Â Â Â Â (Default) = MyProgram Application
+Â Â Â Â Â Â shellex
+Â Â Â Â Â Â Â Â Â ContextMenuHandler
+Â Â Â Â Â Â Â Â Â Â Â Â MyCommand = {00000000-1111-2222-3333-444444444444}
+</code></pre>
+<h2>Implementing the IContextMenu Interface</h2>
+<p><a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-icontextmenu"><strong>IContextMenu</strong></a> is the most powerful but also the most complicated method to implement. We strongly recommend that you implement a verb by using one of the static verb methods. For more information, see <a href="shortcut-choose-method.html">Choosing a Static or Dynamic Verb for your Shortcut Menu</a>. <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-icontextmenu"><strong>IContextMenu</strong></a> has three methods, <strong>GetCommandString</strong>, <strong>InvokeCommand</strong>, and <strong>QueryContextMenu</strong>, which are discussed here in detail.</p>
+<h3>IContextMenu::GetCommandString Method</h3>
+<p>The handler's <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-getcommandstring"><strong>IContextMenu::GetCommandString</strong></a> method is used to return the canonical name for a verb. This method is optional. In WindowsÂ XP and earlier versions of Windows, when Windows Explorer has a Status bar, this method is used to retrieve the help text that is displayed in the Status bar for a menu item.</p>
+<p>The <em>idCmd</em> parameter holds the identifier offset of the command that was defined when <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-querycontextmenu"><strong>IContextMenu::QueryContextMenu</strong></a> was called. If a help string is requested, <em>uFlags</em> will be set to <strong>GCS_HELPTEXTW</strong>. Copy the help string to the <em>pszName</em> buffer, casting it to a <strong>PWSTR</strong>. The verb string is requested by setting <em>uFlags</em> to <strong>GCS_VERBW</strong>. Copy the appropriate string to <em>pszName</em>, just as with the help string. The <strong>GCS_VALIDATEA</strong> and <strong>GCS_VALIDATEW</strong> flags are not used by shortcut menu handlers.</p>
+<p>The following example shows a simple implementation of <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-getcommandstring"><strong>IContextMenu::GetCommandString</strong></a> that corresponds to the <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-querycontextmenu"><strong>IContextMenu::QueryContextMenu</strong></a> example given in the <a href="#icontextmenuquerycontextmenu-method">IContextMenu::QueryContextMenu Method</a> section of this topic. Because the handler adds only one menu item, there is only one set of strings that can be returned. The method tests whether <em>idCmd</em> is valid and, if it is, returns the requested string.</p>
+<p>The <a href="/windows/win32/api/strsafe/nf-strsafe-stringcchcopya"><strong>StringCchCopy</strong></a> function is used to copy the requested string to <em>pszName</em> to ensure that the copied string does not exceed the size of the buffer specified by <em>cchName</em>. This example only implements support for the Unicode values of <em>uFlags</em>, because only those have been used in Windows Explorer since WindowsÂ 2000.</p>
+<pre lang="C++"><code>IFACEMETHODIMP CMenuExtension::GetCommandString(UINT idCommand, 
+                                                UINT uFlags, 
+                                                UINT *pReserved, 
+                                                PSTR pszName, 
+                                                UINT cchName)
+{
+    HRESULT hr = E_INVALIDARG;
+
+    if (idCommand == IDM_DISPLAY)
+    {
+        switch (uFlags)
+        {
+            case GCS_HELPTEXTW:
+                // Only useful for pre-Vista versions of Windows that 
+                // have a Status bar.
+                hr = StringCchCopyW(reinterpret_cast&lt;PWSTR&gt;(pszName), 
+                                    cchName, 
+                                    L&quot;Display File Name&quot;);
+                break; 
+
+            case GCS_VERBW:
+                // GCS_VERBW is an optional feature that enables a caller
+                // to discover the canonical name for the verb passed in
+                // through idCommand.
+                hr = StringCchCopyW(reinterpret_cast&lt;PWSTR&gt;(pszName), 
+                                    cchName, 
+                                    L&quot;DisplayFileName&quot;);
+                break; 
+        }
+    }
+    return hr;
+}
+</code></pre>
+<h3>IContextMenu::InvokeCommand Method</h3>
+<p>This method is called when a user clicks a menu item to tell the handler to run the associated command. The <em>pici</em> parameter points to a structure that contains the information required.</p>
+<p>Although <em>pici</em> is declared in Shlobj.h as a <a href="/windows/desktop/api/Shobjidl_core/ns-shobjidl_core-cminvokecommandinfo"><strong>CMINVOKECOMMANDINFO</strong></a> structure, in practice it often points to a <a href="/windows/desktop/api/Shobjidl_core/ns-shobjidl_core-cminvokecommandinfoex"><strong>CMINVOKECOMMANDINFOEX</strong></a> structure. This structure is an extended version of <strong>CMINVOKECOMMANDINFO</strong> and has several additional members that make it possible to pass Unicode strings.</p>
+<p>Check the <strong>cbSize</strong> member of <em>pici</em> to determine which structure was passed in. If it is a <a href="/windows/desktop/api/Shobjidl_core/ns-shobjidl_core-cminvokecommandinfoex"><strong>CMINVOKECOMMANDINFOEX</strong></a> structure and the <strong>fMask</strong> member has the <strong>CMIC_MASK_UNICODE</strong> flag set, cast <em>pici</em> to <strong>CMINVOKECOMMANDINFOEX</strong>. This enables your application to use the Unicode information contained in the last five members of the structure.</p>
+<p>The structure's <strong>lpVerb</strong> or <strong>lpVerbW</strong> member is used to identify the command to be executed. Commands are identified in one of the following two ways:</p>
+<ul>
+<li>By the command's verb string</li>
+<li>By the command's identifier offset</li>
+</ul>
+<p>To distinguish between these two cases, check the high-order word of <strong>lpVerb</strong> for the ANSI case or <strong>lpVerbW</strong> for the Unicode case. If the high-order word is nonzero, <strong>lpVerb</strong> or <strong>lpVerbW</strong> holds a verb string. If the high-order word is zero, the command offset is in the low-order word of <strong>lpVerb</strong>.</p>
+<p>The following example shows a simple implementation of <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-invokecommand"><strong>IContextMenu::InvokeCommand</strong></a> that corresponds to the <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-querycontextmenu"><strong>IContextMenu::QueryContextMenu</strong></a> and <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-getcommandstring"><strong>IContextMenu::GetCommandString</strong></a> examples given before and after this section. The method first determines which structure is being passed in. It then determines whether the command is identified by its offset or its verb. If <strong>lpVerb</strong> or <strong>lpVerbW</strong> holds a valid verb or offset, the method displays a message box.</p>
+<pre lang="C++"><code>STDMETHODIMP CShellExtension::InvokeCommand(LPCMINVOKECOMMANDINFO lpcmi)
+{
+    BOOL fEx = FALSE;
+    BOOL fUnicode = FALSE;
+
+    if(lpcmi-&gt;cbSize == sizeof(CMINVOKECOMMANDINFOEX))
+    {
+        fEx = TRUE;
+        if((lpcmi-&gt;fMask &amp; CMIC_MASK_UNICODE))
+        {
+            fUnicode = TRUE;
+        }
+    }
+
+    if( !fUnicode &amp;&amp; HIWORD(lpcmi-&gt;lpVerb))
+    {
+        if(StrCmpIA(lpcmi-&gt;lpVerb, m_pszVerb))
+        {
+            return E_FAIL;
+        }
+    }
+
+    else if( fUnicode &amp;&amp; HIWORD(((CMINVOKECOMMANDINFOEX *) lpcmi)-&gt;lpVerbW))
+    {
+        if(StrCmpIW(((CMINVOKECOMMANDINFOEX *)lpcmi)-&gt;lpVerbW, m_pwszVerb))
+        {
+            return E_FAIL;
+        }
+    }
+
+    else if(LOWORD(lpcmi-&gt;lpVerb) != IDM_DISPLAY)
+    {
+        return E_FAIL;
+    }
+
+    else
+    {
+        MessageBox(lpcmi-&gt;hwnd,
+                   &quot;The File Name&quot;,
+                   &quot;File Name&quot;,
+                   MB_OK|MB_ICONINFORMATION);
+    }
+
+    return S_OK;
+}
+</code></pre>
+<h3>IContextMenu::QueryContextMenu Method</h3>
+<p>The Shell calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-querycontextmenu"><strong>IContextMenu::QueryContextMenu</strong></a> to enable the shortcut menu handler to add its menu items to the menu. It passes in the <strong>HMENU</strong> handle in the <em>hmenu</em> parameter. The <em>indexMenu</em> parameter is set to the index to be used for the first menu item that is to be added.</p>
+<p>Any menu items that are added by the handler must have identifiers that fall between the values in the <em>idCmdFirst</em> and <em>idCmdLast</em> parameters. Typically, the first command identifier is set to <em>idCmdFirst</em>, which is incremented by one (1) for each additional command. This practice helps you avoid exceeding <em>idCmdLast</em> and maximizes the number of available identifiers in case the Shell calls more than one handler.</p>
+<p>An item identifier's <em>command offset</em> is the difference between the identifier and the value in <em>idCmdFirst</em>. Store the offset of each item that your handler adds to the shortcut menu because the Shell might use it to identify the item if it subsequently calls <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-getcommandstring"><strong>IContextMenu::GetCommandString</strong></a> or <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-invokecommand"><strong>IContextMenu::InvokeCommand</strong></a>.</p>
+<p>You should also assign a <a href="launch.html">verb</a> to each command you add. A verb is a string that can be used instead of the offset to identify the command when <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-invokecommand"><strong>IContextMenu::InvokeCommand</strong></a> is called. It is also used by functions such as <a href="/windows/desktop/api/Shellapi/nf-shellapi-shellexecuteexa"><strong>ShellExecuteEx</strong></a> to execute shortcut menu commands.</p>
+<p>There are three flags that can be passed in through the <em>uFlags</em> parameter that are relevant to shortcut menu handlers. They are described in the following table.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CMF_DEFAULTONLY</td>
+<td>The user has selected the default command, usually by double-clicking the object. <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-querycontextmenu"><strong>IContextMenu::QueryContextMenu</strong></a> should return control to the Shell without modifying the menu.</td>
+</tr>
+<tr>
+<td>CMF_NODEFAULT</td>
+<td>No item in the menu should be the default item. The method should add its commands to the menu.</td>
+</tr>
+<tr>
+<td>CMF_NORMAL</td>
+<td>The shortcut menu will be displayed normally. The method should add its commands to the menu.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Use either <a href="/windows/win32/api/winuser/nf-winuser-insertmenua"><strong>InsertMenu</strong></a> or <a href="/windows/win32/api/winuser/nf-winuser-insertmenuitema"><strong>InsertMenuItem</strong></a> to add menu items to the list. Then return an <strong>HRESULT</strong> value with the severity set to <strong>SEVERITY_SUCCESS</strong>. Set the code value to the offset of the largest command identifier that was assigned, plus one (1). For example, assume that <em>idCmdFirst</em> is set to 5 and you add three items to the menu with command identifiers of 5, 7, and 8. The return value should be <code>MAKE_HRESULT(SEVERITY_SUCCESS, 0, 8 - 5 + 1)</code>.</p>
+<p>The following example shows a simple implementation of <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-icontextmenu-querycontextmenu"><strong>IContextMenu::QueryContextMenu</strong></a> that inserts a single command. The identifier offset for the command is IDM_DISPLAY, which is set to zero. The <strong>m_pszVerb</strong> and <strong>m_pwszVerb</strong> variables are private variables used to store the associated language-independent verb string in both ANSI and Unicode formats.</p>
+<pre lang="C++"><code>#define IDM_DISPLAY 0
+
+STDMETHODIMP CMenuExtension::QueryContextMenu(HMENU hMenu,
+                                              UINT indexMenu,
+                                              UINT idCmdFirst,
+                                              UINT idCmdLast,
+                                              UINT uFlags)
+{
+    HRESULT hr;
+    
+    if(!(CMF_DEFAULTONLY &amp; uFlags))
+    {
+        InsertMenu(hMenu, 
+                   indexMenu, 
+                   MF_STRING | MF_BYPOSITION, 
+                   idCmdFirst + IDM_DISPLAY, 
+                   &quot;&amp;Display File Name&quot;);
+
+    
+        
+        hr = StringCbCopyA(m_pszVerb, sizeof(m_pszVerb), &quot;display&quot;);
+        hr = StringCbCopyW(m_pwszVerb, sizeof(m_pwszVerb), L&quot;display&quot;);
+
+        return MAKE_HRESULT(SEVERITY_SUCCESS, 0, USHORT(IDM_DISPLAY + 1));
+    }
+
+    return MAKE_HRESULT(SEVERITY_SUCCESS, 0, USHORT(0));
+}
+</code></pre>
+<p>For other verb implementation tasks, see <a href="context-menu-handlers.html">Creating Context Menu Handlers</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="context-menu.html">Shortcut (Context) Menus and Shortcut Menu Handlers</a></p>
+<!-- raw HTML omitted -->
+<p><a href="fa-verbs.html">Verbs and File Associations</a></p>
+<!-- raw HTML omitted -->
+<p><a href="shortcut-choose-method.html">Choosing a Static or Dynamic Verb for your Shortcut Menu</a></p>
+<!-- raw HTML omitted -->
+<p><a href="verbs-best-practices.html">Best Practices for Shortcut Menu Handlers and Multiple Selection Verbs</a></p>
+<!-- raw HTML omitted -->
+<p><a href="context-menu-handlers.html">Creating Shortcut Menu Handlers</a></p>
+<!-- raw HTML omitted -->
+<p><a href="context-menu-reference.html">Shortcut Menu Reference</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

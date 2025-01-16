@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Terminating a Process</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Terminating a process has the following results:Any remaining threads in the process are marked for termination.Any resources allocated by the process are freed.All kernel objects are closed.The process code is removed from memory.The process exit code is set.The process object is signaled.
+ms.assetid: af24d157-2719-4052-8029-1eb8010047cc
+title: Terminating a Process
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Terminating a Process</h1>
+<p>Terminating a process has the following results:</p>
+<ul>
+<li>Any remaining threads in the process are marked for termination.</li>
+<li>Any resources allocated by the process are freed.</li>
+<li>All kernel objects are closed.</li>
+<li>The process code is removed from memory.</li>
+<li>The process exit code is set.</li>
+<li>The process object is signaled.</li>
+</ul>
+<p>While open handles to kernel objects are closed automatically when a process terminates, the objects themselves exist until all open handles to them are closed. Therefore, an object will remain valid after a process that is using it terminates if another process has an open handle to it.</p>
+<p>The <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess"><strong>GetExitCodeProcess</strong></a> function returns the termination status of a process. While a process is executing, its termination status is STILL_ACTIVE. When a process terminates, its termination status changes from STILL_ACTIVE to the exit code of the process.</p>
+<p>When a process terminates, the state of the process object becomes signaled, releasing any threads that had been waiting for the process to terminate. For more about synchronization, see <a href="synchronizing-execution-of-multiple-threads.html">Synchronizing Execution of Multiple Threads</a>.</p>
+<p>When the system is terminating a process, it does not terminate any child processes that the process has created. Terminating a process does not generate notifications for WH_CBT hook procedures.</p>
+<p>Use the <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessshutdownparameters"><strong>SetProcessShutdownParameters</strong></a> function to specify certain aspects of the process termination at system shutdown, such as when a process should terminate relative to the other processes in the system.</p>
+<h2>How Processes are Terminated</h2>
+<p>A process executes until one of the following events occurs:</p>
+<ul>
+<li>Any thread of the process calls the <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess"><strong>ExitProcess</strong></a> function. Note that some implementation of the C run-time library (CRT) call <strong>ExitProcess</strong> if the primary thread of the process returns.</li>
+<li>The last thread of the process terminates.</li>
+<li>Any thread calls the <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess"><strong>TerminateProcess</strong></a> function with a handle to the process.</li>
+<li>For console processes, the default <a href="/windows/console/console-control-handlers">console control handler</a> calls <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess"><strong>ExitProcess</strong></a> when the console receives a CTRL+C or CTRL+BREAK signal.</li>
+<li>The user shuts down the system or logs off.</li>
+</ul>
+<p>Do not terminate a process unless its threads are in known states. If a thread is waiting on a kernel object, it will not be terminated until the wait has completed. This can cause the application to stop responding.</p>
+<p>The primary thread can avoid terminating other threads by directing them to call <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitthread"><strong>ExitThread</strong></a> before causing the process to terminate (for more information, see <a href="terminating-a-thread.html">Terminating a Thread</a>). The primary thread can still call <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess"><strong>ExitProcess</strong></a> afterwards to ensure that all threads are terminated.</p>
+<p>The exit code for a process is either the value specified in the call to <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess"><strong>ExitProcess</strong></a> or <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess"><strong>TerminateProcess</strong></a>, or the value returned by the main or <a href="/windows/win32/api/winbase/nf-winbase-winmain"><strong>WinMain</strong></a> function of the process. If a process is terminated due to a fatal exception, the exit code is the value of the exception that caused the termination. In addition, this value is used as the exit code for all the threads that were executing when the exception occurred.</p>
+<p>If a process is terminated by <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess"><strong>ExitProcess</strong></a>, the system calls the entry-point function of each attached DLL with a value indicating that the process is detaching from the DLL. DLLs are not notified when a process is terminated by <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess"><strong>TerminateProcess</strong></a>. For more information about DLLs, see <a href="../dlls/dynamic-link-libraries.html">Dynamic-Link Libraries</a>.</p>
+<p>If a process is terminated by <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess"><strong>TerminateProcess</strong></a>, all threads of the process are terminated immediately with no chance to run additional code. This means that the thread does not execute code in termination handler blocks. In addition, no attached DLLs are notified that the process is detaching. If you need to have one process terminate another process, the following steps provide a better solution:</p>
+<ul>
+<li>
+<p>Have both processes call the <a href="/windows/win32/api/winuser/nf-winuser-registerwindowmessagea"><strong>RegisterWindowMessage</strong></a> function to create a private message.</p>
+</li>
+<li>
+<p>One process can terminate the other process by broadcasting a private message using the <a href="/windows/win32/api/winuser/nf-winuser-broadcastsystemmessage"><strong>BroadcastSystemMessage</strong></a> function as follows:</p>
+<pre lang="syntax"><code> DWORD dwRecipients = BSM_APPLICATIONS;
+    UINT uMessage = PM_MYMSG;
+    WPARAM wParam = 0;
+    LPARAM lParam = 0;
+
+    BroadcastSystemMessage( 
+        BSF_IGNORECURRENTTASK, // do not send message to this process
+        &amp;dwRecipients,         // broadcast only to applications
+        uMessage,              // registered private message
+        wParam,                // message-specific value
+        lParam );              // message-specific value
+</code></pre>
+</li>
+<li>
+<p>The process receiving the private message calls <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess"><strong>ExitProcess</strong></a> to terminate its execution.</p>
+</li>
+</ul>
+<p>The execution of the <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess"><strong>ExitProcess</strong></a>, <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitthread"><strong>ExitThread</strong></a>, <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-createthread"><strong>CreateThread</strong></a>, <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-createremotethread"><strong>CreateRemoteThread</strong></a>, and <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa"><strong>CreateProcess</strong></a> functions is serialized within an address space. The following restrictions apply:</p>
+<ul>
+<li>During process startup and DLL initialization routines, new threads can be created, but they do not begin execution until DLL initialization is finished for the process.</li>
+<li>Only one thread at a time can be in a DLL initialization or detach routine.</li>
+<li>The <a href="/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess"><strong>ExitProcess</strong></a> function does not return until there are no threads are in their DLL initialization or detach routines.</li>
+</ul>
+<p>Â </p>
+<p>Â </p>
+</body>

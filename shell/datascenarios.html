@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Handling Shell Data Transfer Scenarios</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This document presents common Shell data transfer scenarios and discusses how to implement each one in your application.
+ms.assetid: 7fce555c-a93d-4414-9119-7ae9acdd4d89
+title: Handling Shell Data Transfer Scenarios
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Handling Shell Data Transfer Scenarios</h1>
+<p>The <a href="dataobject.html">Shell Data Object</a> document discussed the general approach that is used to transfer Shell data with drag-and-drop or the Clipboard. However, to implement Shell data transfer in your application, you must also understand how to apply these general principles and techniques to the variety of ways that Shell data can be transferred. This document presents common Shell data transfer scenarios and discusses how to implement each one in your application.</p>
+<ul>
+<li><a href="#general-guidelines">General Guidelines</a></li>
+<li><a href="#copying-file-names-from-the-clipboard-to-an-application">Copying File Names from the Clipboard to an Application</a>
+<ul>
+<li><a href="#extracting-the-file-names-from-the-data-object">Extracting the File Names from the Data Object</a></li>
+</ul>
+</li>
+<li><a href="#copying-the-contents-of-a-dropped-file-into-an-application">Copying the Contents of a Dropped File into an Application</a>
+<ul>
+<li><a href="/windows">Using the CFSTR_FILECONTENTS Format to Extract Data from a File</a></li>
+</ul>
+</li>
+<li><a href="#handling-optimized-move-operations">Handling Optimized Move Operations</a></li>
+<li><a href="#handling-delete-on-paste-operations">Handling Delete-on-Paste Operations</a></li>
+<li><a href="#transfering-data-to-and-from-virtual-folders">Transferring Data to and from Virtual Folders</a>
+<ul>
+<li><a href="#accepting-data-from-a-virtual-folder">Accepting Data from a Virtual Folder</a></li>
+<li><a href="#transferring-data-to-and-from-a-namespace-extension">Transferring Data to and from a NameSpace Extension</a></li>
+</ul>
+</li>
+<li><a href="#dropping-files-on-the-recycle-bin">Dropping Files on the Recycle Bin</a></li>
+<li><a href="#creating-and-importing-scrap-files">Creating and Importing Scrap Files</a>
+<ul>
+<li><a href="#round-trip-support">Round-trip Support</a></li>
+<li><a href="#cached-data-formats">Cached Data Formats</a></li>
+<li><a href="#delayed-rendering">Delayed Rendering</a></li>
+</ul>
+</li>
+<li><a href="#dragging-and-dropping-shell-objects-asynchronously">Dragging and Dropping Shell Objects Asynchronously</a>
+<ul>
+<li><a href="#using-iasyncoperationidataobjectasynccapability">Using IASyncOperation/IDataObjectAsyncCapability</a></li>
+</ul>
+</li>
+</ul>
+<blockquote>
+<p>[!Note]<br />
+Although each of these scenarios discusses a specific data transfer operation, many of them apply to a variety of related scenarios. For instance, the primary difference between most Clipboard and drag-and-drop transfers is in how the data object arrives at the target. Once the target has a pointer to the data object's <a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a> interface, the procedures for extracting information are largely the same for both types of data transfer. However, some of the scenarios are limited to a specific type of operation. Refer to the individual scenario for details.</p>
+</blockquote>
+<p>Â </p>
+<h2>General Guidelines</h2>
+<p>Each of the following sections discusses a single, fairly specific data transfer scenario. However, data transfers are often more complex and might involve aspects of several scenarios. You typically do not know, in advance, which scenario you will actually need to handle. Here are a few general guidelines to keep in mind.</p>
+<p>For data sources:</p>
+<ul>
+<li>The Shell Clipboard formats, with the exception of <a href="clipboard.html">CF_HDROP</a>, are not predefined. Each format you want to use must be registered by calling <a href="/windows/win32/api/winuser/nf-winuser-registerclipboardformata">RegisterClipboardFormat</a>.</li>
+<li>The formats in the data objects are provided in the order of preference from the source. Enumerate the data object and pick the first one you can consume.</li>
+<li>Include as many formats as you can support. You generally do not know where the data object will be dropped. This practice improves the odds that the data object will contain a format that the drop target can accept.</li>
+<li>Existing files should be offered with the <a href="clipboard.html">CF_HDROP</a> format.</li>
+<li>Offer file-like data with <a href="clipboard.html">CFSTR_FILECONTENTS</a>/<a href="clipboard.html">CFSTR_FILEDESCRIPTOR</a> formats. This approach allows the target to create a file from a data object without needing to know anything about the underlying data storage. You should normally present the data as an <a href="/windows/win32/api/objidl/nn-objidl-istream"><strong>IStream</strong></a> interface. This data transfer mechanism is more flexible than a global memory object and uses much less memory.</li>
+<li>Drag sources should offer the <a href="clipboard.html">CFSTR_SHELLIDLIST</a> format when dragging Shell items. Data objects for items can be acquired through either the <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellfolder-getuiobjectof"><strong>IShellFolder::GetUIObjectOf</strong></a> or <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellitem-bindtohandler"><strong>IShellItem::BindToHandler</strong></a> methods. Data sources can create a standard data object implementation that supports the <a href="clipboard.html">CFSTR_SHELLIDLIST</a> format by using <a href="/windows/desktop/api/shlobj_core/nf-shlobj_core-shcreatedataobject"><strong>SHCreateDataObject</strong></a>.</li>
+<li>Drop targets that want to reason about the items being dragged using the shell item programming model can convert an IDataObject into an <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellitemarray"><strong>IShellItemArray</strong></a> using <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-shcreateshellitemarrayfromdataobject"><strong>SHCreateShellItemArrayFromDataObject</strong></a>.</li>
+<li>Use standard feedback cursors.</li>
+<li>Support left and right drag.</li>
+<li>Use the data object itself from an embedded object. This approach allows your application to retrieve any extra formats the data object has to offer and avoids creating an extra layer of containment. For instance, an embedded object from server A is dragged from server/container B and dropped on container C. C should create an embedded object of server A, not an embedded object of server B containing an embedded object of server A.</li>
+<li>Remember that the Shell might use <a href="#handling-optimized-move-operations">optimized moves</a> or <a href="#handling-delete-on-paste-operations">delete-on-paste</a> operations when moving files. Your application should be able to recognize these operations and respond appropriately.</li>
+</ul>
+<p>For data targets:</p>
+<ul>
+<li>The Shell Clipboard formats, with the exception of <a href="clipboard.html">CF_HDROP</a>, are not predefined. Each format you want to use must be registered by calling <a href="/windows/win32/api/winuser/nf-winuser-registerclipboardformata">RegisterClipboardFormat</a>.</li>
+<li>Implement and register an OLE drop target. Avoid using Windows 3.1 targets or the <a href="wm-dropfiles.html"><strong>WM_DROPFILES</strong></a> message, if possible.</li>
+<li>The formats contained by a data object vary, depending on where the object comes from. Since you generally do not know in advance where a data object comes from, do not assume that a particular format will be present. The data object should enumerate the formats in order of quality, starting with the best. Thus, to get the best available format, applications normally enumerate the available formats and use the first format in the enumeration that they can support.</li>
+<li>Support right-drag. You can customize the drag shortcut menu by creating a <a href="context-menu-handlers.html">drag-and-drop handler</a>.</li>
+<li>If your application will accept existing files, it must be able to handle the <a href="clipboard.html">CF_HDROP</a> format.</li>
+<li>In general, applications that accept files should also handle the <a href="clipboard.html">CFSTR_FILECONTENTS</a>/<a href="clipboard.html">CFSTR_FILEDESCRIPTOR</a> formats. While files from the file system have the <a href="clipboard.html">CF_HDROP</a> format, files from providers such as namespace extensions generally use <a href="clipboard.html">CFSTR_FILECONTENTS</a>/<a href="clipboard.html">CFSTR_FILEDESCRIPTOR</a>. Examples include WindowsÂ CE folders, File Transfer Protocol (FTP) folders, web folders, and CAB folders. The source normally implements an <a href="/windows/win32/api/objidl/nn-objidl-istream"><strong>IStream</strong></a> interface to present data from its storage as a file.</li>
+<li>Remember that the Shell might use <a href="#handling-optimized-move-operations">optimized moves</a> or <a href="#handling-delete-on-paste-operations">delete-on-paste</a> operations when moving files. Your application should be able to recognize these operations and respond appropriately.</li>
+</ul>
+<h2>Copying File Names from the Clipboard to an Application</h2>
+<p><strong>Scenario:</strong> A user selects one or more files in Windows Explorer and copies them to the Clipboard. Your application extracts the file names and pastes them into the document.</p>
+<p>This scenario could be used, for instance, to allow a user to create an HTML link by cutting and pasting the file to your application. Your application can then extract the file name from the data object and process it to create an anchor tag.</p>
+<p>When a user selects a file in Windows Explorer and copies it to the Clipboard, the Shell creates a data object. It then calls <a href="/windows/win32/api/ole2/nf-ole2-olesetclipboard"><strong>OleSetClipboard</strong></a> to place a pointer to the data object's <a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a> interface on the Clipboard.</p>
+<p>When the user selects the <strong>Paste</strong> command from your application's menu or toolbar:</p>
+<ol>
+<li>Call <a href="/windows/win32/api/ole2/nf-ole2-olegetclipboard"><strong>OleGetClipboard</strong></a> to retrieve the data object's <a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a> interface.</li>
+<li>Call <a href="/windows/win32/api/objidl/nf-objidl-idataobject-enumformatetc"><strong>IDataObject::EnumFormatEtc</strong></a> to request an enumerator object.</li>
+<li>Use the enumerator object's <a href="/windows/win32/api/objidl/nn-objidl-ienumformatetc"><strong>IEnumFORMATETC</strong></a> interface to enumerate the formats contained by the data object.</li>
+</ol>
+<blockquote>
+<p>[!Note]<br />
+The final two steps in this procedure are included for completeness. They are typically not necessary for simple file transfers. All data objects used for this type of data transfer should contain the <a href="clipboard.html">CF_HDROP</a> format, which can be used to determine the names of the files contained by the object. However, for more general data transfers, you should enumerate the formats and select the best one that your application can handle.</p>
+</blockquote>
+<p>Â </p>
+<h3>Extracting the File Names from the Data Object</h3>
+<p>The next step is to extract one or more file names from the data object and paste them into your application. Note that the procedure discussed in this section for extracting a file name from a data object applies equally well to drag-and-drop transfers.</p>
+<p>The simplest way to retrieve file names from a data object is the <a href="clipboard.html">CF_HDROP</a> format:</p>
+<ol>
+<li>
+<p>Call <a href="/windows/win32/api/objidl/nf-objidl-idataobject-getdata"><strong>IDataObject::GetData</strong></a>. Set the <strong>cfFormat</strong> member of the <a href="/windows/win32/api/objidl/ns-objidl-formatetc"><strong>FORMATETC</strong></a> structure to <a href="clipboard.html">CF_HDROP</a> and the <strong>tymed</strong> member to <a href="dataobject.html">TYMED_HGLOBAL</a>. The <strong>dwAspect</strong> member is normally set to DVASPECT_CONTENT. However, if you need to have the file's path in short (8.3) format, set <strong>dwAspect</strong> to DVASPECT_SHORT.</p>
+<p>When <a href="/windows/win32/api/objidl/nf-objidl-idataobject-getdata"><strong>IDataObject::GetData</strong></a> returns, the <strong>hGlobal</strong> member of the <a href="/windows/win32/api/objidl/ns-objidl-ustgmedium-r1"><strong>STGMEDIUM</strong></a> structure points to a global memory object that contains the data.</p>
+</li>
+<li>
+<p>Create an HDROP variable and set it to the <strong>hGlobal</strong> member of the <a href="/windows/win32/api/objidl/ns-objidl-ustgmedium-r1"><strong>STGMEDIUM</strong></a> structure. The HDROP variable is now a handle to a <a href="/windows/desktop/api/shlobj_core/ns-shlobj_core-dropfiles"><strong>DROPFILES</strong></a> structure followed by a double null-terminated string containing the fully qualified file paths of the copied files.</p>
+</li>
+<li>
+<p>Determine how many file paths are in the list by calling <a href="/windows/desktop/api/Shellapi/nf-shellapi-dragqueryfilea"><strong>DragQueryFile</strong></a> with the <em>iFile</em> parameter set to 0xFFFFFFFF. The function returns the number of file paths in the list. The file path's zero-based index in this list is used in the next step to identify a particular path.</p>
+</li>
+<li>
+<p>Extract the file paths from the global memory object by calling <a href="/windows/desktop/api/Shellapi/nf-shellapi-dragqueryfilea"><strong>DragQueryFile</strong></a> once for each file, with <em>iFile</em> set to the file's index.</p>
+</li>
+<li>
+<p>Process the file paths as needed and paste them into your application.</p>
+</li>
+<li>
+<p>Call <a href="/windows/win32/api/ole2/nf-ole2-releasestgmedium"><strong>ReleaseStgMedium</strong></a> and pass in the pointer to the <a href="/windows/win32/api/objidl/ns-objidl-ustgmedium-r1"><strong>STGMEDIUM</strong></a> structure that you passed to <a href="/windows/win32/api/objidl/nf-objidl-idataobject-getdata"><strong>IDataObject::GetData</strong></a> in step 1. Once you have released the structure, the HDROP value that you created in step 2 is no longer valid and should not be used.</p>
+</li>
+</ol>
+<h2>Copying the Contents of a Dropped File into an Application</h2>
+<p><strong>Scenario:</strong> A user drags one or more files from Windows Explorer and drops them on your application's window. Your application extracts the content of the file (s) and pastes it into the application.</p>
+<p>This scenario uses drag-and-drop to transfer the files from Windows Explorer to the application. Prior to the operation, your application must:</p>
+<ol>
+<li>Call <a href="/windows/win32/api/winuser/nf-winuser-registerclipboardformata">RegisterClipboardFormat</a> to register any needed Shell Clipboard formats.</li>
+<li>Call <a href="/windows/win32/api/ole2/nf-ole2-registerdragdrop"><strong>RegisterDragDrop</strong></a> to register a target window and your application's <a href="/windows/win32/api/oleidl/nn-oleidl-idroptarget"><strong>IDropTarget</strong></a> interface.</li>
+</ol>
+<p>After the user initiates the operation by selecting one or more files and starting to drag them:</p>
+<ol>
+<li>Windows Explorer creates a data object and loads the supported formats into it.</li>
+<li>Windows Explorer calls <a href="/windows/win32/api/ole2/nf-ole2-dodragdrop"><strong>DoDragDrop</strong></a> to initiate the drag loop.</li>
+<li>When the drag image reaches your target window, the system notifies you by calling <a href="/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragenter"><strong>IDropTarget::DragEnter</strong></a>.</li>
+<li>To determine what the data object contains, call the data object's <a href="/windows/win32/api/objidl/nf-objidl-idataobject-enumformatetc"><strong>IDataObject::EnumFormatEtc</strong></a> method. Use the enumerator object returned by the method to enumerate the formats contained by the data object. If your application does not want to accept any of these formats, return DROPEFFECT_NONE. For the purposes of this scenario, your application should ignore any data objects that do not contain formats used to transfer files, such as <a href="clipboard.html">CF_HDROP</a>.</li>
+<li>When the user drops the data, the system calls <a href="/windows/win32/api/oleidl/nf-oleidl-idroptarget-drop"><strong>IDropTarget::Drop</strong></a>.</li>
+<li>Use the <a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a> interface to extract the contents of the files.</li>
+</ol>
+<p>There are several different ways to extract the contents of a Shell object from a data object. In general, use the following order:</p>
+<ul>
+<li>If the file contains a <a href="clipboard.html">CF_TEXT</a> format, the data is ANSI text. You can use the CF_TEXT format to extract the data, rather than opening the file itself.</li>
+<li>If the file contains a linked or embedded OLE object, the data object contains a CF_EMBEDDEDOBJECT format. Use standard OLE techniques to extract the data. <a href="#creating-and-importing-scrap-files">Scrap files</a> always contain a CF_EMBEDDEDOBJECT format.</li>
+<li>If the Shell object is from the file system, the data object contains a <a href="clipboard.html">CF_HDROP</a> format with the names of the files. Extract the file name from <a href="clipboard.html">CF_HDROP</a> and call <a href="/windows/win32/api/ole2/nf-ole2-olecreatefromfile"><strong>OleCreateFromFile</strong></a> to create a new linked or embedded object. For a discussion of how to retrieve a file name from a <a href="clipboard.html">CF_HDROP</a> format, see <a href="#copying-file-names-from-the-clipboard-to-an-application">Copying File Names from the Clipboard to an Application</a>.</li>
+<li>If the data object contains a <a href="clipboard.html">CFSTR_FILEDESCRIPTOR</a> format, you can extract a file's contents from the file's <a href="clipboard.html">CFSTR_FILECONTENTS</a> format. For a discussion of this procedure, see <a href="/windows">Using the CFSTR_FILECONTENTS Format to Extract Data from a File</a>.</li>
+<li>Prior to Shell <a href="versions.html">version 4.71</a>, an application indicated that it was transferring a shortcut file type by setting <strong>FD_LINKUI</strong> in the <strong>dwFlags</strong> member of the <a href="/windows/win32/api/shlobj_core/ns-shlobj_core-filedescriptora"><strong>FILEDESCRIPTOR</strong></a> structure. For later versions of the Shell, the preferred way to indicate that shortcuts are being transferred is to use the <a href="clipboard.html">CFSTR_PREFERREDDROPEFFECT</a> format set to DROPEFFECT_LINK. This approach is much more efficient than extracting the <strong>FILEDESCRIPTOR</strong> structure just to check a flag.</li>
+</ul>
+<p>If the data extraction process will be lengthy, you might want to do the operation asynchronously on a background thread. Your primary thread can then proceed without unnecessary delays. For a discussion of how to handle asynchronous data extraction, see <a href="#dragging-and-dropping-shell-objects-asynchronously">Dragging and Dropping Shell Objects Asynchronously</a>.</p>
+<h3>Using the CFSTR_FILECONTENTS Format to Extract Data from a File</h3>
+<p>The <a href="clipboard.html">CFSTR_FILECONTENTS</a> format provides a very flexible and powerful way to transfer the contents of a file. It is not even necessary for the data to be stored as a single file. All that is required for this format is that the data object present the data to the target as if it were a file. For instance, the actual data might be a section of a text document or a block of data extracted from a database. The target can treat the data as a file and does not need to know anything about the underlying storage mechanism.</p>
+<p>Namespace extensions normally use <a href="clipboard.html">CFSTR_FILECONTENTS</a> to transfer data because this format does not assume any particular storage mechanism. A namespace extension can use whatever storage mechanism is convenient, and use this format to present its objects to applications as if they were files.</p>
+<p>The data transfer mechanism for <a href="clipboard.html">CFSTR_FILECONTENTS</a> is normally <a href="dataobject.html">TYMED_ISTREAM</a>. Transferring an <a href="/windows/win32/api/objidl/nn-objidl-istream"><strong>IStream</strong></a> interface pointer requires much less memory than loading the data into a global memory object, and <strong>IStream</strong> is a simpler way to represent data than <a href="/windows/win32/api/objidl/nn-objidl-istorage"><strong>IStorage</strong></a>.</p>
+<p>A <a href="clipboard.html">CFSTR_FILECONTENTS</a> format is always accompanied by a <a href="clipboard.html">CFSTR_FILEDESCRIPTOR</a> format. You must examine the contents of this format first. If more than one file is being transferred, the data object will actually contain multiple <a href="clipboard.html">CFSTR_FILECONTENTS</a> formats, one for each file. The <a href="clipboard.html">CFSTR_FILEDESCRIPTOR</a> format contains the name and attributes of each file, and provides an index value for each file that is needed to extract a particular file's <a href="clipboard.html">CFSTR_FILECONTENTS</a> format.</p>
+<p>To extract a <a href="clipboard.html">CFSTR_FILECONTENTS</a> format:</p>
+<ol>
+<li>Extract the <a href="clipboard.html">CFSTR_FILEDESCRIPTOR</a> format as a <a href="dataobject.html">TYMED_HGLOBAL</a> value.</li>
+<li>The <strong>hGlobal</strong> member of the returned <a href="/windows/win32/api/objidl/ns-objidl-ustgmedium-r1"><strong>STGMEDIUM</strong></a> structure points to a global memory object. Lock that object by passing the <strong>hGlobal</strong> value to <a href="/windows/win32/api/winbase/nf-winbase-globallock"><strong>GlobalLock</strong></a>.</li>
+<li>Cast the pointer returned by <a href="/windows/win32/api/winbase/nf-winbase-globallock"><strong>GlobalLock</strong></a> to a <a href="/windows/win32/api/shlobj_core/ns-shlobj_core-filegroupdescriptora"><strong>FILEGROUPDESCRIPTOR</strong></a> pointer. It will point to a <strong>FILEGROUPDESCRIPTOR</strong> structure followed by one or more <a href="/windows/win32/api/shlobj_core/ns-shlobj_core-filedescriptora"><strong>FILEDESCRIPTOR</strong></a> structures. Each <strong>FILEDESCRIPTOR</strong> structure contains a description of a file that is contained by one of the accompanying <a href="clipboard.html">CFSTR_FILECONTENTS</a> formats.</li>
+<li>Examine the <a href="/windows/win32/api/shlobj_core/ns-shlobj_core-filedescriptora"><strong>FILEDESCRIPTOR</strong></a> structures to determine which one corresponds to the file you want to extract. The zero-based index of that <strong>FILEDESCRIPTOR</strong> structure is used to identify the file's <a href="clipboard.html">CFSTR_FILECONTENTS</a> format. Because the size of a global memory block is not byte-precise, use the structure's <strong>nFileSizeLow</strong> and <strong>nFileSizeHigh</strong> members to determine how many bytes represent the file in the global memory object.</li>
+<li>Call <a href="/windows/win32/api/objidl/nf-objidl-idataobject-getdata"><strong>IDataObject::GetData</strong></a> with the <strong>cfFormat</strong> member of the <a href="/windows/win32/api/objidl/ns-objidl-formatetc"><strong>FORMATETC</strong></a> structure set to the <a href="clipboard.html">CFSTR_FILECONTENTS</a> value and the <strong>lIndex</strong> member set to the index that you determined in the previous step. The <strong>tymed</strong> member is typically set to <a href="dataobject.html">TYMED_HGLOBAL</a> | TYMED_ISTREAM | TYMED_ISTORAGE. The data object can then choose its preferred data transfer mechanism.</li>
+<li>The <a href="/windows/win32/api/objidl/ns-objidl-ustgmedium-r1"><strong>STGMEDIUM</strong></a> structure that <a href="/windows/win32/api/objidl/nf-objidl-idataobject-getdata"><strong>IDataObject::GetData</strong></a> returns will contain a pointer to the file's data. Examine the <strong>tymed</strong> member of the structure to determine the data transfer mechanism.</li>
+<li>If <strong>tymed</strong> is set to <a href="dataobject.html">TYMED_ISTREAM</a> or TYMED_ISTORAGE, use the interface to extract the data. If <strong>tymed</strong> is set to TYMED_HGLOBAL, the data is contained in a global memory object. For a discussion of how to extract data from a global memory object, see the <em>Extracting a global memory object from a data object</em> section of <a href="dataobject.html">Shell Data Object</a>.</li>
+<li>Call <a href="/windows/win32/api/winbase/nf-winbase-globallock"><strong>GlobalLock</strong></a> to unlock the global memory object that you locked in step 2.</li>
+</ol>
+<h2>Handling Optimized Move Operations</h2>
+<p><strong>Scenario:</strong> A file is moved from the file system to a namespace extension using an optimized move.</p>
+<p>In a conventional move operation, the target makes a copy of the data and the source deletes the original. This procedure can be inefficient because it requires two copies of the data. With large objects such as databases, a conventional move operation might not even be practical.</p>
+<p>With an optimized move, the target uses its understanding of how the data is stored to handle the entire move operation. There is never a second copy of the data, and there is no need for the source to delete the original data. Shell data is well suited to optimized moves because the target can handle the entire operation using the Shell API. A typical example is moving files. Once the target has the path of a file to be moved, it can use <a href="/windows/desktop/api/Shellapi/nf-shellapi-shfileoperationa"><strong>SHFileOperation</strong></a> to move it. There is no need for the source to delete the original file.</p>
+<blockquote>
+<p>[!Note]<br />
+The Shell normally uses an optimized move to move files. To handle Shell data transfer properly, your application must be capable of detecting and handling an optimized move.</p>
+</blockquote>
+<p>Â </p>
+<p>Optimized moves are handled in the following way:</p>
+<ol>
+<li>
+<p>The source calls <a href="/windows/win32/api/ole2/nf-ole2-dodragdrop"><strong>DoDragDrop</strong></a> with the <em>dwEffect</em> parameter set to DROPEFFECT_MOVE to indicate that the source objects can be moved.</p>
+</li>
+<li>
+<p>The target receives the DROPEFFECT_MOVE value through one of its <a href="/windows/win32/api/oleidl/nn-oleidl-idroptarget"><strong>IDropTarget</strong></a> methods, indicating that a move is allowed.</p>
+</li>
+<li>
+<p>The target either copies the object (unoptimized move) or moves the object (optimized move).</p>
+</li>
+<li>
+<p>The target then tells the source whether it needs to delete the original data.</p>
+<p>An optimized move is the default operation, with the data deleted by the target. To inform the source that an optimized move was performed:</p>
+<ul>
+<li>
+<ul>
+<li>The target sets the <em>pdwEffect</em> value it received through its <a href="/windows/win32/api/oleidl/nf-oleidl-idroptarget-drop"><strong>IDropTarget::Drop</strong></a> method to some value other than DROPEFFECT_MOVE. It is typically set to either DROPEFFECT_NONE or DROPEFFECT_COPY. The value will be returned to the source by <a href="/windows/win32/api/ole2/nf-ole2-dodragdrop"><strong>DoDragDrop</strong></a>.</li>
+<li>The target also calls the data object's <a href="/windows/win32/api/objidl/nf-objidl-idataobject-setdata"><strong>IDataObject::SetData</strong></a> method and passes it a <a href="clipboard.html">CFSTR_PERFORMEDDROPEFFECT</a> format identifier set to DROPEFFECT_NONE. This method call is necessary because some drop targets might not set the <em>pdwEffect</em> parameter of <a href="/windows/win32/api/ole2/nf-ole2-dodragdrop"><strong>DoDragDrop</strong></a> properly. The <a href="clipboard.html">CFSTR_PERFORMEDDROPEFFECT</a> format is the reliable way to indicate that an optimized move has taken place.</li>
+</ul>
+</li>
+</ul>
+<p>If the target did an unoptimized move, the data must be deleted by the source. To inform the source that an unoptimized move was performed:</p>
+<ul>
+<li>
+<ul>
+<li>The target sets the <em>pdwEffect</em> value it received through its <a href="/windows/win32/api/oleidl/nf-oleidl-idroptarget-drop"><strong>IDropTarget::Drop</strong></a> method to DROPEFFECT_MOVE. The value will be returned to the source by <a href="/windows/win32/api/ole2/nf-ole2-dodragdrop"><strong>DoDragDrop</strong></a>.</li>
+<li>The target also calls the data object's <a href="/windows/win32/api/objidl/nf-objidl-idataobject-setdata"><strong>IDataObject::SetData</strong></a> method and passes it a <a href="clipboard.html">CFSTR_PERFORMEDDROPEFFECT</a> format identifier set to DROPEFFECT_MOVE. This method call is necessary because some drop targets might not set the <em>pdwEffect</em> parameter of <a href="/windows/win32/api/ole2/nf-ole2-dodragdrop"><strong>DoDragDrop</strong></a> properly. The <a href="clipboard.html">CFSTR_PERFORMEDDROPEFFECT</a> format is the reliable way to indicate that an unoptimized move has taken place.</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>
+<p>The source inspects the two values that can be returned by the target. If both are set to DROPEFFECT_MOVE, it completes the unoptimized move by deleting the original data. Otherwise, the target did an optimized move and the original data has been deleted.</p>
+</li>
+</ol>
+<h2>Handling Delete-on-Paste Operations</h2>
+<p><strong>Scenario:</strong> One or more files are cut from a folder in Windows Explorer and pasted into a namespace extension. Windows Explorer leaves the files highlighted until it receives feedback on the outcome of the paste operation.</p>
+<p>Traditionally, when a user cuts data it immediately disappears from view. This might not be efficient, and it can lead to usability problems if the user becomes concerned about what has happened to the data. An alternative approach is to use a delete-on-paste operation.</p>
+<p>With a delete-on-paste operation, the selected data is not immediately removed from view. Instead, the source application marks it as selected, perhaps by changing the font or background color. After the target application has pasted the data, it notifies the source about the outcome of the operation. If the target performed an <a href="#handling-optimized-move-operations">optimized move</a>, the source can simply update its display. If the target performed a normal move, the source must also delete its copy of the data. If the paste fails, the source application restores the selected data to its original appearance.</p>
+<blockquote>
+<p>[!Note]<br />
+The Shell normally uses delete-on-paste when a cut/paste operation is used to move files. Delete-on-paste operations with Shell objects normally use an <a href="#handling-optimized-move-operations">optimized move</a> to move the files. To handle Shell data transfer properly, your application must be capable of detecting and handling delete-on-paste operations.</p>
+</blockquote>
+<p>Â </p>
+<p>The essential requirement for delete-on-paste is that the target must report the outcome of the operation to the source. However, standard Clipboard techniques cannot be used to implement delete-on-paste because they do not provide a way for the target to communicate with the source. Instead, the target application uses the data object's <a href="/windows/win32/api/objidl/nf-objidl-idataobject-setdata"><strong>IDataObject::SetData</strong></a> method to report the outcome to the data object. The data object can then communicate with the source through a private interface.</p>
+<p>The basic procedure for a delete-on-paste operation is as follows:</p>
+<ol>
+<li>The source marks the screen display of the selected data.</li>
+<li>The source creates a data object. It indicates a cut operation by adding the <a href="clipboard.html">CFSTR_PREFERREDDROPEFFECT</a> format with a data value of DROPEFFECT_MOVE.</li>
+<li>The source places the data object on the Clipboard using <a href="/windows/win32/api/ole2/nf-ole2-olesetclipboard"><strong>OleSetClipboard</strong></a>.</li>
+<li>The target retrieves the data object from the Clipboard using <a href="/windows/win32/api/ole2/nf-ole2-olegetclipboard"><strong>OleGetClipboard</strong></a>.</li>
+<li>The target extracts the <a href="clipboard.html">CFSTR_PREFERREDDROPEFFECT</a> data. If it is set to only DROPEFFECT_MOVE, the target can either do an optimized move or simply copy the data.</li>
+<li>If the target does not do an optimized move, it calls the <a href="/windows/win32/api/objidl/nf-objidl-idataobject-setdata"><strong>IDataObject::SetData</strong></a> method with the <a href="clipboard.html">CFSTR_PERFORMEDDROPEFFECT</a> format set to DROPEFFECT_MOVE.</li>
+<li>When the paste is complete, the target calls the <a href="/windows/win32/api/objidl/nf-objidl-idataobject-setdata"><strong>IDataObject::SetData</strong></a> method with the <a href="clipboard.html">CFSTR_PASTESUCCEEDED</a> format set to DROPEFFECT_MOVE.</li>
+<li>When the source's <a href="/windows/win32/api/objidl/nf-objidl-idataobject-setdata"><strong>IDataObject::SetData</strong></a> method is called with the <a href="clipboard.html">CFSTR_PASTESUCCEEDED</a> format set to DROPEFFECT_MOVE, it must check to see if it also received the <a href="clipboard.html">CFSTR_PERFORMEDDROPEFFECT</a> format set to DROPEFFECT_MOVE. If both formats are sent by the target, the source will have to delete the data. If only the <a href="clipboard.html">CFSTR_PASTESUCCEEDED</a> format is received, the source can simply remove the data from its display. If the transfer fails, the source updates the display to its original appearance.</li>
+</ol>
+<h2>Transferring Data to and from Virtual Folders</h2>
+<p><strong>Scenario:</strong> A user drags an object from or drops it on a virtual folder.</p>
+<p>Virtual folders contain objects that are generally not part of the file system. Some virtual folders, such as the Recycle Bin, can represent data that is stored on the hard disk but not as ordinary file system objects. Some can represent stored data that is on a remote system, such as a handheld PC, or an FTP site. Others, such as the Printers folder, contain objects that do not represent stored data at all. While some virtual folders are part of the system, developers can also create and install custom virtual folders by implementing a namespace extension.</p>
+<p>Regardless of the type of data or how it is stored, the folder and file objects that are contained by a virtual folder are presented by the Shell as if they were normal files and folders. It is the responsibility of the virtual folder to take whatever data it contains and present it to the Shell appropriately. This requirement means that virtual folders normally support drag-and-drop and Clipboard data transfers.</p>
+<p>There are thus two groups of developers who need to be concerned with data transfer to and from virtual folders:</p>
+<ul>
+<li>Developers whose applications need to accept data that is transferred from a virtual folder.</li>
+<li>Developers whose namespace extensions need to properly support data transfer.</li>
+</ul>
+<h3>Accepting Data from a Virtual Folder</h3>
+<p>Virtual folders can represent virtually any type of data and can store that data in any way they choose. Some virtual folders might actually contain normal file system files and folders. Others might, for instance, pack all their objects into a single document or database.</p>
+<p>When a file system object is transferred to an application, the data object normally contains a <a href="clipboard.html">CF_HDROP</a> format with the object's fully qualified path. Your application can extract this string and use the normal file system functions to open the file and extract its data. However, because virtual folders typically do not contain normal file system objects, they generally do not use <a href="clipboard.html">CF_HDROP</a>.</p>
+<p>Instead of <a href="clipboard.html">CF_HDROP</a>, data is normally transferred from virtual folders with the <a href="clipboard.html">CFSTR_FILEDESCRIPTOR</a>/<a href="clipboard.html">CFSTR_FILECONTENTS</a> formats. The <a href="clipboard.html">CFSTR_FILECONTENTS</a> format has two advantages over <a href="clipboard.html">CF_HDROP</a>:</p>
+<ul>
+<li>No particular method of data storage is assumed.</li>
+<li>The format is more flexible. It supports three data transfer mechanisms: a global memory object, an <a href="/windows/win32/api/objidl/nn-objidl-istream"><strong>IStream</strong></a> interface, or an <a href="/windows/win32/api/objidl/nn-objidl-istorage"><strong>IStorage</strong></a> interface.</li>
+</ul>
+<p>Global memory objects are rarely used to transfer data to or from virtual objects because the data must be copied into memory in its entirety. Transferring an interface pointer requires almost no memory and is much more efficient. With very large files, an interface pointer might be the only practical data transfer mechanism. Typically, data is represented by an <a href="/windows/win32/api/objidl/nn-objidl-istream"><strong>IStream</strong></a> pointer, because that interface is somewhat more flexible than <a href="/windows/win32/api/objidl/nn-objidl-istorage"><strong>IStorage</strong></a>. The target extracts the pointer from the data object and uses the interface methods to extract the data.</p>
+<p>For further discussion of how to handle the <a href="clipboard.html">CFSTR_FILEDESCRIPTOR</a>/<a href="clipboard.html">CFSTR_FILECONTENTS</a> formats, see <a href="/windows">Using the CFSTR_FILECONTENTS Format to Extract Data from a File</a>.</p>
+<h3>Transferring Data to and from a NameSpace Extension</h3>
+<p>When you implement a namespace extension, you will normally want to support drag-and-drop capabilities. Follow the recommendations for drop sources and targets discussed in <a href="#general-guidelines">General Guidelines</a>. In particular, a namespace extension must:</p>
+<ul>
+<li>Be able to handle the <a href="clipboard.html">CFSTR_FILEDESCRIPTOR</a>/<a href="clipboard.html">CFSTR_FILECONTENTS</a> formats. These two formats are normally used to transfer objects to and from namespace extensions.</li>
+<li>Be able to handle <a href="#handling-optimized-move-operations">optimized moves</a>. The Shell expects that Shell objects will be moved with an optimized move.</li>
+<li>Be able to handle a <a href="#handling-delete-on-paste-operations">delete-on-paste</a> operation. The Shell uses delete-on-paste when objects are moved from the Shell with a cut/paste operation.</li>
+<li>Be able to handle data transfer through an <a href="/windows/win32/api/objidl/nn-objidl-istream"><strong>IStream</strong></a> or <a href="/windows/win32/api/objidl/nn-objidl-istorage"><strong>IStorage</strong></a> interface. Data transfer to or from a virtual folder is normally handled by transferring one of these two interface pointers, typically an <strong>IStream</strong> pointer. The target then calls the interface methods to extract the data:
+<ul>
+<li>
+<ul>
+<li>As a drop source, the namespace extension must extract the data from storage and pass it through this interface to the target.</li>
+<li>As a drop target, a namespace extension must accept data from a source through this interface and store it properly.</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<h2>Dropping Files on the Recycle Bin</h2>
+<p><strong>Scenario:</strong> The user drops a file on the <strong>Recycle Bin</strong>. Your application or namespace extension deletes the original file.</p>
+<p>The Recycle Bin is a virtual folder that is used as a repository for files that are no longer needed. As long as the Recycle Bin has not been emptied, the user can later recover the file and return it to the file system.</p>
+<p>For the most part, transferring Shell objects to the Recycle Bin works much like any other folder. However, when a user drops a file on the <strong>Recycle Bin</strong>, the source needs to delete the original, even if the feedback from the folder indicates a copy operation. Normally, a drop source has no way of knowing which folder its data object has been dropped on. However, for WindowsÂ 2000 and later systems, when a data object is dropped on the <strong>Recycle Bin</strong>, the Shell will call the data object's <a href="/windows/win32/api/objidl/nf-objidl-idataobject-setdata"><strong>IDataObject::SetData</strong></a> method with a <a href="clipboard.html">CFSTR_TARGETCLSID</a> format set to the Recycle Bin's class identifier (CLSID) (CLSID_RecycleBin). To handle the Recycle Bin case properly, your data object should be able to recognize this format and communicate the information to the source through a private interface.</p>
+<blockquote>
+<p>[!Note]<br />
+When <a href="/windows/win32/api/objidl/nf-objidl-idataobject-setdata"><strong>IDataObject::SetData</strong></a> is called with a <a href="clipboard.html">CFSTR_TARGETCLSID</a> format set to CLSID_RecycleBin, the data source should close any open handles to the objects that are being transferred before returning from the method. Otherwise, you might create sharing violations.</p>
+</blockquote>
+<p>Â </p>
+<h2>Creating and Importing Scrap Files</h2>
+<p><strong>Scenario:</strong> A user drags some data from an OLE application's data file and drops it on the desktop or Windows Explorer.</p>
+<p>Windows allows users to drag an object from an OLE application's data file and drop it on the desktop or a file system folder. This operation creates a <em>scrap file</em>, which contains the data or a link to the data. The file name is taken from the short name registered for the CLSID of the object and the <a href="clipboard.html">CF_TEXT</a> data. For the Shell to create a scrap file containing data, the application's <a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a> interface must support the CF_EMBEDSOURCE Clipboard format. To create a file containing a link, <strong>IDataObject</strong> must support the CF_LINKSOURCE format.</p>
+<p>There are also three optional features that an application can implement to support scrap files:</p>
+<ul>
+<li>Round-trip support</li>
+<li>Cached data formats</li>
+<li>Delayed rendering</li>
+</ul>
+<h3>Round-trip Support</h3>
+<p>A <em>round trip</em> involves transferring a data object to another container and then back to the original document. For instance, a user could transfer a group of cells from a spreadsheet to the desktop, creating a scrap file with the data. If the user then transfers the scrap back to the spreadsheet, the data needs to be integrated into the document as it was before the original transfer.</p>
+<p>When the Shell creates the scrap file, it represents the data as an embedding object. When the scrap is transferred to another container, it is transferred as an embedding object, even if it is being returned to the original document. Your application is responsible for determining the data format contained in the scrap and putting the data back into its native format if necessary.</p>
+<p>To establish the format of the embedded object, determine its CLSID by retrieving the object's CF_OBJECTDESCRIPTOR format. If the CLSID indicates a data format that belongs to the application, it should transfer the native data instead of calling <a href="/windows/win32/api/ole2/nf-ole2-olecreatefromdata"><strong>OleCreateFromData</strong></a>.</p>
+<h3>Cached Data Formats</h3>
+<p>When the Shell creates a scrap file, it checks the registry for the list of available formats. By default, there are two formats available: CF_EMBEDSOURCE and CF_LINKSOURCE. However, there are a number of scenarios where applications might need to have scrap files in different formats:</p>
+<ul>
+<li>To allow scraps to be transferred to non-OLE containers, which cannot accepted embedded object formats.</li>
+<li>To allow suites of applications to communicate with a private format.</li>
+<li>To make round trips easier to handle.</li>
+</ul>
+<p>Applications can add formats to the scrap by caching them in the registry. There are two types of cached formats:</p>
+<ul>
+<li>Priority cache formats. For these formats, the data is copied in its entirety into the scrap from the data object.</li>
+<li>Delay-rendered formats. For these formats, the data object is not copied to the scrap. Instead, rendering is delayed until a target requests the data. Delay-rendering is discussed in more detail in the next section.</li>
+</ul>
+<p>To add a priority cache or delay-rendered format, create a <strong>DataFormat</strong> subkey under the <strong>CLSID</strong> key of the application that is the source of the data. Under that subkey, create a <strong>PriorityCacheFormats</strong> or <strong>DelayRenderFormats</strong> subkey. For each priority cache or delay-rendered format, create a numbered subkey starting with zero. Set the value of this key to either a string with the registered name of the format or a #X value, where X represents the format number of a standard Clipboard format.</p>
+<p>The following sample shows cached formats for two applications. The MyProg1 application has the rich-text format as a priority cache format, and a private format &quot;My Format&quot; as a delay-rendered format. The MyProg2 application has the CF_BITMAP format (#8&quot;) as a priority cache format.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â CLSID
+Â Â Â Â Â Â {GUID}
+Â Â Â Â Â Â Â Â Â (Default) = MyProg1
+Â Â Â Â Â Â Â Â Â DataFormats
+Â Â Â Â Â Â Â Â Â Â Â Â PriorityCacheFormats
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â 0
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â (Default) = Rich Text Format
+Â Â Â Â Â Â Â Â Â Â Â Â DelayRenderFormats
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â 0
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â (Default) = My Format
+Â Â Â Â Â Â {GUID}
+Â Â Â Â Â Â Â Â Â (Default) = MyProg2
+Â Â Â Â Â Â Â Â Â DataFormats
+Â Â Â Â Â Â Â Â Â Â Â Â PriorityCacheFormats
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â 0
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â (Default) = #8
+</code></pre>
+<p>Additional formats can be added by creating additional numbered subkeys.</p>
+<h3>Delayed Rendering</h3>
+<p>A delayed rendering format allows an application to create a scrap file but delay the expense of rendering the data until it is requested by a target. The <a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a> interface of a scrap will offer the delayed rendering formats to the target along with native and cached data. If the target requests a delayed rendering format, the Shell will run the application and provide the data to the target from the active object.</p>
+<blockquote>
+<p>[!Note]<br />
+Because delayed rendering is somewhat risky, it should be used with caution. It will not work if the server is not available, or on applications that are not OLE-enabled.</p>
+</blockquote>
+<p>Â </p>
+<h2>Dragging and Dropping Shell Objects Asynchronously</h2>
+<p><strong>Scenario:</strong> A user transfers a large block of data from source to target. To avoid blocking both applications for a significant amount of time, the target extracts the data asynchronously.</p>
+<p>Normally, drag-and-drop is a synchronous operation. In brief:</p>
+<ol>
+<li>The drop source calls <a href="/windows/win32/api/ole2/nf-ole2-dodragdrop"><strong>DoDragDrop</strong></a> and blocks its primary thread until the function returns. Blocking the primary thread normally blocks UI processing.</li>
+<li>After the target's <a href="/windows/win32/api/oleidl/nf-oleidl-idroptarget-drop"><strong>IDropTarget::Drop</strong></a> method is called, the target extracts the data from the data object on its primary thread. This procedure normally blocks the target's UI processing for the duration of the extraction process.</li>
+<li>Once the data has been extracted, the target returns the <a href="/windows/win32/api/oleidl/nf-oleidl-idroptarget-drop"><strong>IDropTarget::Drop</strong></a> call, the system returns <a href="/windows/win32/api/ole2/nf-ole2-dodragdrop"><strong>DoDragDrop</strong></a>, and both threads can proceed.</li>
+</ol>
+<p>In short, synchronous data transfer can block the primary threads of both applications for a significant amount of time. In particular, both threads must wait while the target extracts the data. For small amounts of data, the time required to extract data is small and synchronous data transfer works quite well. However, synchronously extracting large amounts of data can cause lengthy delays and interfere with the UI of both target and source.</p>
+<p>The <a href="/previous-versions//bb776309(v=vs.85)"><strong>IAsyncOperation</strong></a>/<a href="/windows/desktop/api/Shldisp/nn-shldisp-idataobjectasynccapability"><strong>IDataObjectAsyncCapability</strong></a> interface is an optional interface that can be implemented by a data object. It gives the drop target the ability to extract data from the data object asynchronously on a background thread. Once data extraction is handed off to the background thread, the primary threads of both applications are free to proceed.</p>
+<h3>Using IASyncOperation/IDataObjectAsyncCapability</h3>
+<blockquote>
+<p>[!Note]<br />
+The interface was originally named <a href="/previous-versions//bb776309(v=vs.85)"><strong>IAsyncOperation</strong></a>, but this was later changed to <a href="/windows/desktop/api/Shldisp/nn-shldisp-idataobjectasynccapability"><strong>IDataObjectAsyncCapability</strong></a>. Otherwise, the two interfaces are identical.</p>
+</blockquote>
+<p>Â </p>
+<p>The purpose of <a href="/previous-versions//bb776309(v=vs.85)"><strong>IAsyncOperation</strong></a>/<a href="/windows/desktop/api/Shldisp/nn-shldisp-idataobjectasynccapability"><strong>IDataObjectAsyncCapability</strong></a> is to allow the drop source and drop target to negotiate whether data can be extracted asynchronously. The following procedure outlines how the drop source uses the interface:</p>
+<ol>
+<li>Create a data object that exposes <a href="/previous-versions//bb776309(v=vs.85)"><strong>IAsyncOperation</strong></a>/<a href="/windows/desktop/api/Shldisp/nn-shldisp-idataobjectasynccapability"><strong>IDataObjectAsyncCapability</strong></a>.</li>
+<li>Call <a href="/windows/desktop/api/Shldisp/nf-shldisp-idataobjectasynccapability-setasyncmode"><strong>SetAsyncMode</strong></a> with <em>fDoOpAsync</em> set to <strong>VARIANT_TRUE</strong> to indicate that an asynchronous operation is supported.</li>
+<li>After <a href="/windows/win32/api/ole2/nf-ole2-dodragdrop"><strong>DoDragDrop</strong></a> returns, call <a href="/windows/desktop/api/Shldisp/nf-shldisp-idataobjectasynccapability-inoperation"><strong>InOperation</strong></a>:
+<ul>
+<li>If <a href="/windows/desktop/api/Shldisp/nf-shldisp-idataobjectasynccapability-inoperation"><strong>InOperation</strong></a> fails or returns <strong>VARIANT_FALSE</strong>, a normal synchronous data transfer has taken place and the data extraction process is finished. The source should do any cleanup that is required, and proceed.</li>
+<li>If <a href="/windows/desktop/api/Shldisp/nf-shldisp-idataobjectasynccapability-inoperation"><strong>InOperation</strong></a> returns <strong>VARIANT_TRUE</strong>, the data is being extracted asynchronously. Cleanup operations should be handled by <a href="/windows/desktop/api/Shldisp/nf-shldisp-idataobjectasynccapability-endoperation"><strong>EndOperation</strong></a>.</li>
+</ul>
+</li>
+<li>Release the data object.</li>
+<li>When the asynchronous data transfer is complete, the data object normally notifies the source through a private interface.</li>
+</ol>
+<p>The following procedure outlines how the drop target uses the <a href="/previous-versions//bb776309(v=vs.85)"><strong>IAsyncOperation</strong></a>/<a href="/windows/desktop/api/Shldisp/nn-shldisp-idataobjectasynccapability"><strong>IDataObjectAsyncCapability</strong></a> interface to extract data asynchronously:</p>
+<ol>
+<li>When the system calls <a href="/windows/win32/api/oleidl/nf-oleidl-idroptarget-drop"><strong>IDropTarget::Drop</strong></a>, call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>IDataObject::QueryInterface</strong></a> and request an <a href="/previous-versions//bb776309(v=vs.85)"><strong>IAsyncOperation</strong></a>/<a href="/windows/desktop/api/Shldisp/nn-shldisp-idataobjectasynccapability"><strong>IDataObjectAsyncCapability</strong></a> interface (IID_IAsyncOperation/IID_IDataObjectAsyncCapability) from the data object.</li>
+<li>Call <a href="/windows/desktop/api/Shldisp/nf-shldisp-idataobjectasynccapability-getasyncmode"><strong>GetAsyncMode</strong></a>. If the method returns <strong>VARIANT_TRUE</strong>, the data object supports asynchronous data extraction.</li>
+<li>Create a separate thread to handle data extraction and call <a href="/windows/desktop/api/Shldisp/nf-shldisp-idataobjectasynccapability-startoperation"><strong>StartOperation</strong></a>.</li>
+<li>Return the <a href="/windows/win32/api/oleidl/nf-oleidl-idroptarget-drop"><strong>IDropTarget::Drop</strong></a> call, as you would for a normal data transfer operation. <a href="/windows/win32/api/ole2/nf-ole2-dodragdrop"><strong>DoDragDrop</strong></a> will return and unblock the drop source. Do not call <a href="/windows/win32/api/objidl/nf-objidl-idataobject-setdata"><strong>IDataObject::SetData</strong></a> to indicate the outcome of an optimized move or delete-on-paste operation. Wait until the operation is finished.</li>
+<li>Extract the data on the background thread. The target's primary thread is unblocked and free to proceed.</li>
+<li>If the data transfer was an <a href="#handling-optimized-move-operations">optimized move</a> or <a href="#handling-delete-on-paste-operations">delete-on-paste</a> operation, call <a href="/windows/win32/api/objidl/nf-objidl-idataobject-setdata"><strong>IDataObject::SetData</strong></a> to indicate the outcome.</li>
+<li>Notify the data object that extraction is finished by calling <a href="/windows/desktop/api/Shldisp/nf-shldisp-idataobjectasynccapability-endoperation"><strong>EndOperation</strong></a>.</li>
+</ol>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Writing a Custom Media Source</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to implement a custom media source in Microsoft Media Foundation.
+ms.assetid: '82db6f32-ad94-4563-b8bd-8a5072c5b221'
+title: Writing a Custom Media Source
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Writing a Custom Media Source</h1>
+<p>This topic describes how to implement a custom media source in Microsoft Media Foundation. It contains the following sections:</p>
+<ul>
+<li><a href="#creating-the-presentation-descriptor">Creating the Presentation Descriptor</a></li>
+<li><a href="#starting-the-media-source">Starting the Media Source</a>
+<ul>
+<li><a href="#seeking">Seeking</a></li>
+</ul>
+</li>
+<li><a href="#pausing-the-media-source">Pausing the Media Source</a></li>
+<li><a href="#generating-source-data">Generating Source Data</a>
+<ul>
+<li><a href="#sample-requests">Sample Requests</a></li>
+<li><a href="#allocating-samples">Allocating Samples</a></li>
+<li><a href="#gaps-in-the-stream">Gaps in the Stream</a></li>
+</ul>
+</li>
+<li><a href="#shutting-down-the-media-source">Shutting Down the Media Source</a></li>
+<li><a href="#live-sources">Live Sources</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Creating the Presentation Descriptor</h2>
+<p>The <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-createpresentationdescriptor"><strong>IMFMediaSource::CreatePresentationDescriptor</strong></a> method returns a copy of the source's presentation descriptor. To create the presentation descriptor, you must know the number of streams in the source content, and the possible formats of each stream. For each stream, create a stream descriptor as follows:</p>
+<ol>
+<li>Create an array of media types. Each media type in the array represents a possible format for the stream. For more information about creating media types, see <a href="media-types.html">Media Types</a>.</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatestreamdescriptor"><strong>MFCreateStreamDescriptor</strong></a> to create the stream descriptor. Pass in the array of media types. The function returns an <a href="/windows/desktop/api/mfidl/nn-mfidl-imfstreamdescriptor"><strong>IMFStreamDescriptor</strong></a> pointer.</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfstreamdescriptor-getmediatypehandler"><strong>IMFStreamDescriptor::GetMediaTypeHandler</strong></a> to get the stream descriptor's media type handler.</li>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediatypehandler-setcurrentmediatype"><strong>IMFMediaTypeHandler::SetCurrentMediaType</strong></a> to set the default stream format. Use one of the media types that you created in step 1. Generally, you should use the format with the highest quality.</li>
+<li>Optionally, set attributes on the stream descriptor. For a list of attributes that apply to stream descriptors, see <a href="stream-descriptor-attributes.html">Stream Descriptor Attributes</a>.</li>
+</ol>
+<p>Now create the presentation descriptor:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatepresentationdescriptor"><strong>MFCreatePresentationDescriptor</strong></a> and pass in the array of stream descriptors. The function returns an <a href="/windows/desktop/api/mfidl/nn-mfidl-imfpresentationdescriptor"><strong>IMFPresentationDescriptor</strong></a> pointer.</li>
+<li>Choose the default stream selection by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfpresentationdescriptor-selectstream"><strong>IMFPresentationDescriptor::SelectStream</strong></a> to select one or more streams. At least one stream must be selected in the default configuration.</li>
+<li>Optionally, set attributes on the presentation descriptor. For a list of attributes that apply to stream descriptors, see <a href="presentation-descriptor-attributes.html">Presentation Descriptor Attributes</a>.</li>
+</ol>
+<p>You should create the presentation descriptor once, either at startup or after the source has parsed enough of the source data to determine the contents. The <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-createpresentationdescriptor"><strong>CreatePresentationDescriptor</strong></a> method should return a copy of presentation descriptor. To create the copy, call <a href="/windows/desktop/api/mfidl/nf-mfidl-imfpresentationdescriptor-clone"><strong>IMFPresentationDescriptor::Clone</strong></a>. Returning a copy prevents the client from modifying the state of the original presentation descriptor, such as the attributes or the stream selection. However, be aware that <strong>Clone</strong> creates a shallow copy, so the client can potentially modify the underlying stream descriptors.</p>
+<h2>Starting the Media Source</h2>
+<p>The <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>IMFMediaSource::Start</strong></a> method starts the media source or seeks to a new position. A call to <strong>Start</strong> causes a <em>seek</em> when the previous state was either paused or running, and a new start time is specified. Otherwise, the <strong>Start</strong> method causes a <em>start</em>. When the <strong>Start</strong> operation completes, send the following events.</p>
+<ol>
+<li>Send an <a href="menewstream.html">MENewStream</a> event for each new streamâ€”that is, each stream that was previously deselected and is now selected. The event data is a pointer to the stream.</li>
+<li>Send an <a href="meupdatedstream.html">MEUpdatedStream</a> event for each stream that was previously selected and is still selected. The event data is a pointer to the stream. (Do not send an event for deselected streams.)</li>
+<li>If the source is seeking, send an <a href="mesourceseeked.html">MESourceSeeked</a> event. Otherwise, send an <a href="mesourcestarted.html">MESourceStarted</a> event. The event data is the start time that was specified in the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>Start</strong></a> method. For the MESourceStarted event, if the start time is VT_EMPTY, set the <a href="mf-event-source-actual-start-attribute.html"><strong>MF_EVENT_SOURCE_ACTUAL_START</strong></a> attribute on the event. The attribute value is the actual start time.</li>
+<li>For each stream, if the source is seeking, send an <a href="mestreamseeked.html">MEStreamSeeked</a> event. Otherwise, send an <a href="mestreamstarted.html">MEStreamStarted</a> event. The event data is the start time. (The media source can queue an event on the stream by calling the stream's <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaeventgenerator-queueevent"><strong>IMFMediaEventGenerator::QueueEvent</strong></a> method.)</li>
+</ol>
+<p>When a stream is deselected, shut down the stream. The stream should not queue any more events at that point.</p>
+<p>The time format for the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>Start</strong></a> method is given in the <em>pguidTimeFormat</em> parameter. The standard time format, indicated by <strong>GUID_NULL</strong>, is 100-nanosecond units. A media source must support this time format.</p>
+<h3>Seeking</h3>
+<p>When seeking, the requested start position might not fall on an exact sample boundary. Also, for compressed content, the start position might fall between key frames. A stream should deliver samples from the earliest point needed to produce an uncompressed sample at the requested start position. For video, that means starting from the previous key frame. The pipeline is responsible for dropping the extra frames from the decoder, so that playback starts at the requested time.</p>
+<p>The starting time given in the source events (<a href="mesourcestarted.html">MESourceStarted</a>, <a href="mesourceseeked.html">MESourceSeeked</a>, <a href="mestreamstarted.html">MEStreamStarted</a>, and <a href="mestreamseeked.html">MEStreamSeeked</a>) is the requested starting time (the value given in the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>Start</strong></a> method), regardless of the actual start position.</p>
+<p>For example, suppose the first few frames of a video stream have the following characteristics:</p>
+<table>
+<thead>
+<tr>
+<th>Sample</th>
+<th>1</th>
+<th>2</th>
+<th>3</th>
+<th>4</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Time</td>
+<td>33 msec</td>
+<td>66 msec</td>
+<td>100 msec</td>
+<td>133 msec</td>
+</tr>
+<tr>
+<td>Key frame?</td>
+<td>Yes</td>
+<td>No</td>
+<td>No</td>
+<td>Yes</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>If the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-start"><strong>Start</strong></a> method is called with a value of 100 milliseconds, the source needs to output video starting from frame 1, the first key frame prior to this time. The start event will still indicate 100 milliseconds in the event data.</p>
+<h2>Pausing the Media Source</h2>
+<p>The <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-pause"><strong>IMFMediaSource::Pause</strong></a> method pauses the media source.</p>
+<p>While the source is paused, a stream can create new samples and store them on a queue, but the stream does not deliver the samples. Here are some exceptions to this rule:</p>
+<ul>
+<li>Live sources should drop data while paused.</li>
+<li>If the source gets data from a network, it might pause the server.</li>
+</ul>
+<p>If the client calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediastream-requestsample"><strong>IMFMediaStream::RequestSample</strong></a> while the source is paused, the request is also queued until the source is started again. Requests should not be dropped.</p>
+<p>Pausing is allowed only from the started state. Otherwise, <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-pause"><strong>Pause</strong></a> should return <strong>MF_E_INVALID_STATE_TRANSITION</strong>.</p>
+<h2>Generating Source Data</h2>
+<p>Media Foundation uses a <em>pull model</em>, meaning that streams generate and deliver samples in response to requests from the pipeline. A stream can deliver samples when the media source is running and the stream is selected. A stream delivers data only when the client requests a new sample.</p>
+<h3>Sample Requests</h3>
+<p>The client requests a new sample by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediastream-requestsample"><strong>IMFMediaStream::RequestSample</strong></a>. Here is the sequence of operations:</p>
+<ol>
+<li>
+<p>The client calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediastream-requestsample"><strong>IMFMediaStream::RequestSample</strong></a>. The argument is a pointer to an optional <em>token</em> object that the client uses to track the request. The client implements the token. Tokens must expose the <strong>IUnknown</strong> interface. The client can also pass in a NULL pointer instead of a token.</p>
+</li>
+<li>
+<p>If the client provided a token, the media stream calls <strong>AddRef</strong> on the token and places the token in a first-in, first-out queue. The method returns, and the remaining steps occur asynchronously.</p>
+</li>
+<li>
+<p>When more data is available, the media stream creates a new sample. (This step is described in more detail in the next section.)</p>
+</li>
+<li>
+<p>The media stream pulls the first token from the queue.</p>
+</li>
+<li>
+<p>If the token is not <strong>NULL</strong>, the media stream sets the <a href="mfsampleextension-token-attribute.html"><strong>MFSampleExtension_Token</strong></a> attribute on the media sample. The value of the attribute is a pointer to the token.</p>
+</li>
+<li>
+<p>The media stream sends an <a href="memediasample.html">MEMediaSample</a> event. The event data is a pointer to the sample's <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfsample"><strong>IMFSample</strong></a> interface.</p>
+</li>
+<li>
+<p>If the client provided a token, the media stream calls <strong>Release</strong> on the token object.</p>
+</li>
+</ol>
+<p>If the media stream cannot fulfill the client's <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediastream-requestsample"><strong>RequestSample</strong></a> request, it pulls the token from the queue and calls <strong>Release</strong> on the token, but does not send an <a href="memediasample.html">MEMediaSample</a> event.</p>
+<p>The client can use the token to track the status of the request. When the client receives the <a href="memediasample.html">MEMediaSample</a> event, it can get the token from the sample and match it against the original request. The client can also use the token to detect if the media source dropped the request. If the token's reference count falls to zero and the media stream does not send an MEMediaSample event, it means that the request was dropped.</p>
+<p>The steps listed here assume that <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediastream-requestsample"><strong>RequestSample</strong></a> method is implemented as an asynchronous operation. If the method is synchronous, you do not need to put the request token on a queue. However, if generating data takes any significant amount of time, an asynchronous approach is recommendedâ€”for example, if the source reads data from a byte stream.</p>
+<p>The stream is responsible for buffering any data that accumulates between calls to <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediastream-requestsample"><strong>RequestSample</strong></a>.</p>
+<p>When the media stream reaches the end of the stream, it sends an <a href="meendofstream.html">MEEndOfStream</a> event after the last sample. After every stream has ended, the media source sends an <a href="meendofpresentation.html">MEEndOfPresentation</a> event. After a media stream sends the MEEndOfStream event, the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediastream-requestsample"><strong>RequestSample</strong></a> method returns <strong>MF_E_END_OF_STREAM</strong> until the source is restarted.</p>
+<h3>Allocating Samples</h3>
+<p>When the stream is ready to fill a pending sample request, it creates a new sample and adds one or more media buffers to the sample. For more information about creating media buffers, see <a href="media-buffers.html">Media Buffers</a>.</p>
+<p>The stream must set the time stamp and the duration, if known. The time stamp is relative to the source. In most cases, the start of the content corresponds to a time stamp of zero. For example, if the source reads from a media file, the start of the file would have a time stamp of zero.</p>
+<p>The time stamp on the sample does not necessarily equal the presentation time. The Media Session translates from source time to presentation time. For compressed data, the stream should generate data starting from the nearest key frame before the start time. This enables the decoder to deliver the frame that appears at the requested start time. (Otherwise, the decoder would need to wait until the following key frame.)</p>
+<p>If the playback rate is faster or slower than 1.0, the pipeline adjusts the rate of the presentation clock. The source does not adjust the time stamps on samples.</p>
+<p>The source can set additional information on the sample by setting attributes. For a list of sample attributes, see <a href="sample-attributes.html">Sample Attributes</a>.</p>
+<h3>Gaps in the Stream</h3>
+<p>If a stream contains a gap of significant length, it is recommended that the stream send an <a href="mestreamtick.html">MEStreamTick</a> event. This event notifies the client that a sample is missing. The event data is the time stamp of the missing sample, in 100-nanosecond units (<strong>VT_I8</strong>). This event can save downstream components from waiting for samples that will not arrive. The stream can send as many MEStreamTick events as needed to span the gap in the stream.</p>
+<h2>Shutting Down the Media Source</h2>
+<p>When the client is done using the media source, it calls <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-shutdown"><strong>IMFMediaSource::Shutdown</strong></a>. Inside this method, the media source should break any circular reference counts. Typically, there will be circular references between the media source and the media streams.</p>
+<p>If you are using the event queue to implement <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediaeventgenerator"><strong>IMFMediaEventGenerator</strong></a>, call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediaeventqueue-shutdown"><strong>IMFMediaEventQueue::Shutdown</strong></a> on the event queue. This method shuts down the event queue and signals any caller that is currently waiting for an event.</p>
+<p>After shutdown, all methods on the source return <strong>MF_E_SHUTDOWN</strong>, with the exception of <strong>IUnknown</strong> methods.</p>
+<h2>Live Sources</h2>
+<p>Starting in WindowsÂ 7, Media Foundation automatically supports audio and video capture devices. For video, the device must provide a kernel streaming (KS) minidriver in the video capture category. Media Foundation uses the PnP path to enumerate the device. For audio, Media Foundation uses the Windows Multimedia Device (MMDevice) API to enumerate audio endpoint devices. If the device meets these criteria, there is no need to implement a custom media source.</p>
+<p>However, you might want to implement a custom media source for some other type of device or other live data source. There are only a few differences between a live source and other media sources:</p>
+<ul>
+<li>In the <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-getcharacteristics"><strong>IMFMediaSource::GetCharacteristics</strong></a> method, return the <strong>MFMEDIASOURCE_IS_LIVE</strong> flag.</li>
+<li>The first sample should have a time stamp of zero.</li>
+<li>Events and streaming states are handled the same as media sources, with the exception of the paused state.</li>
+<li>While paused, do not queue samples. Drop any data that is generated while paused.</li>
+<li>Live sources typically do not support seeking, reverse play, or rate control.</li>
+</ul>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="media-sources.html">Media Sources</a></p>
+<!-- raw HTML omitted -->
+<p><a href="tutorial--writing-a-custom-media-source.html">Tutorial: Writing a Custom Media Source</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

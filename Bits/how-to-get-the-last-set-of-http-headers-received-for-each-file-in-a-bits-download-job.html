@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to get the last set of HTTP headers received for each file in a BITS download job</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: How to get the last set of HTTP headers received for each file in a BITS download job
+description: This sample shows how to use the new IBackgroundCopyJob5 interface's GetProperty method to obtain the last set HTTP headers received for each file in a Background Intelligent Transfer Service (BITS) download job.
+ms.assetid: 38808AB2-0D7A-46C6-A666-F3E0DB8A3009
+keywords:</p>
+<ul>
+<li>downloading BITS , HTTP header
+ms.topic: article
+ms.date: 10/04/2018</li>
+</ul>
+<hr />
+<h1>How to get the last set of HTTP headers received for each file in a BITS download job</h1>
+<p>This sample shows how to use the new <a href="/windows/desktop/api/Bits5_0/nn-bits5_0-ibackgroundcopyjob5"><strong>IBackgroundCopyJob5</strong></a> interface's <a href="/windows/desktop/api/Bits5_0/nf-bits5_0-ibackgroundcopyjob5-getproperty"><strong>GetProperty</strong></a> method to obtain the last set HTTP headers received for each file in a Background Intelligent Transfer Service (BITS) download job. The information in the HTTP header could be used, for example, to determine the file type or when it last changed on the server. Prior to WindowsÂ 8 and Windows ServerÂ 2012, BITS did not provide a means by which the application could retrieve and inspect the HTTP response headers of a completed download. This sample shows how to use the BITS API to create a BITS job with multiple URLs to download, list the URLs in a job, and retrieve the HTTP response headers for each URL.</p>
+<h2>What you need to know</h2>
+<h3>Technologies</h3>
+<h3>Prerequisites</h3>
+<ul>
+<li>Microsoft Visual Studio</li>
+</ul>
+<h2>Instructions</h2>
+<h3>Step 1: Include the required BITS header files</h3>
+<p>Insert the following header directives at the top of the source file.</p>
+<pre lang="C++"><code>#include &lt;bits.h&gt;
+</code></pre>
+<h3>Step 2: Initialize COM and instantiate a BITS Background Copy Manager object interface</h3>
+<p>Before instantiating the <a href="/windows/desktop/api/Bits/nn-bits-ibackgroundcopymanager"><strong>IBackgroundCopyManager</strong></a> interface (used to create a BITS job), you must initialize COM and set the desired COM threading model.</p>
+<pre lang="C++"><code>// Initialize COM and specify the appropriate COM threading model for your application.
+IBackgroundCopyManager* pManager;
+
+HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+if (SUCCEEDED(hr))
+{
+ hr = CoCreateInstance(__uuidof(BackgroundCopyManager), 
+                       NULL,
+                       CLSCTX_LOCAL_SERVER,
+                       __uuidof(IBackgroundCopyManager),
+                       (void**) &amp;pManager);
+}
+</code></pre>
+<h3>Step 3: Create the BITS job</h3>
+<p>Only the user who creates the job or a user with administrator privileges can add files to the job and change the job's properties.</p>
+<pre lang="C++"><code>GUID guidJob;
+IBackgroundCopyJob* pBackgroundCopyJob;
+
+hr = pManager-&gt;CreateJob(L&quot;TransferPolicy&quot;,
+                         BG_JOB_TYPE_DOWNLOAD,
+                         &amp;guidJob,
+                         (IBackgroundCopyJob **)&amp;pBackgroundCopyJob);
+</code></pre>
+<h3>Step 4: Add the files to the BITS job</h3>
+<p>The following example downloads publicly available documents from the Microsoft Download Center. You'll need to change these values for your specific environment.</p>
+<pre lang="C++"><code>// Array that contains multiple DOWNLOAD_FILE data structures that represent the 
+// files that will be added to the download job.
+DOWNLOAD_FILE FileList[] =
+{
+ {
+  L&quot;https://download.microsoft.com/download/0/2/8/02809141-3329-4412-8AC4-AA41B406055C/WinRT81-HttpClient-BT-Socket-Poster.pdf&quot;,
+  L&quot;c:\\temp\\data\\WinRT81-HttpClient-BT-Socket-Poster.pdf&quot;
+ },
+ {
+  L&quot;https://download.microsoft.com/download/6/6/2/662DD05E-BAD7-46EF-9431-135F9BAE6332/9781509302963_Microsoft%20Azure%20Essentials%20Fundamentals%20of%20Azure%202nd%20ed%20pdf.pdf&quot;,
+  L&quot;c:\\temp\\data\\Fundamentals of Azure.pdf&quot;
+ },
+ {
+  L&quot;https://aka.ms/WinServ16/StndPDF&quot;,
+  L&quot;c:\\temp\\data\\IntroducingWindowsServer2016.pdf&quot;
+ }
+};
+
+...
+
+// Add the files to the job.
+for (int i=0; i &lt; ARRAY_LENGTH(FileList); ++i)
+{
+ hr = Job-&gt;AddFile(FileList[i].RemoteFile,
+                   FileList[i].LocalFile);
+ ...
+}
+</code></pre>
+<h3>Step 5: Start the BITS job</h3>
+<p>After setting up the BITS job, call the <a href="/windows/desktop/api/Bits/nn-bits-ibackgroundcopyjob"><strong>IBackgroundCopyJob</strong></a> interface's <a href="/windows/desktop/api/Bits/nf-bits-ibackgroundcopyjob-resume"><strong>Resume</strong></a> function to start or continue the download.</p>
+<pre lang="C++"><code>// Start the BITS job. 
+hr = pBackgroundJob-&gt;Resume();
+</code></pre>
+<h3>Step 6: Monitor and display the BITS job's progress</h3>
+<p>The <code>MonitorJobProgress</code> helper function takes an <a href="/windows/desktop/api/Bits/nn-bits-ibackgroundcopyjob"><strong>IBackgroundCopyJob</strong></a> object as its only parameter and polls the job for a status every 500 milliseconds. This function does not return until the job has completed or been canceled.</p>
+<pre lang="C++"><code>HRESULT MonitorJobProgress(__in IBackgroundCopyJob* Job)
+{ 
+ HRESULT hr;
+ LPWSTR JobName;
+ BG_JOB_STATE State;
+ int PreviousState = -1;
+ bool Exit = false;
+ int ProgressCounter = 0;
+ hr = Job-&gt;GetDisplayName(&amp;JobName);
+ printf(&quot;Progress report for download job '%ws'.\n&quot;, JobName);
+ CoTaskMemFree(JobName);
+
+ // Display the download progress.
+ while (!Exit)
+ {
+  hr = Job-&gt;GetState(&amp;State);
+  if (State != PreviousState)
+  {
+   switch(State)
+   {
+    case BG_JOB_STATE_QUEUED:
+     printf(&quot;Job is in the queue and waiting to run.\n&quot;);
+    break;
+    case BG_JOB_STATE_CONNECTING:
+     printf(&quot;BITS is trying to connect to the remote server.\n&quot;);    
+    break;
+
+    case BG_JOB_STATE_TRANSFERRING:
+     printf(&quot;BITS has started downloading data.\n&quot;);  
+     DisplayProgress( Job );
+    break;
+
+    case BG_JOB_STATE_ERROR:
+     wprintf(L&quot;ERROR: BITS has encountered a non-recoverable error.\n&quot;);
+     DisplayError(Job);
+     wprintf(L&quot;       Exiting job.\n&quot;);
+     Exit = true;
+     break;
+
+    case BG_JOB_STATE_TRANSIENT_ERROR:
+     wprintf(L&quot;ERROR: BITS has encountered a recoverable error.\n&quot;);
+     DisplayError(Job);
+     wprintf(L&quot;       Continuing to retry.\n&quot;);
+     break;
+
+    case BG_JOB_STATE_TRANSFERRED:
+     DisplayProgress(Job);
+     printf(&quot;The job has been successfully completed.\n&quot;);
+     printf(&quot;Finalizing local files.\n&quot;);
+     Job-&gt;Complete();
+    break;
+
+    case BG_JOB_STATE_ACKNOWLEDGED:
+     printf(&quot;Finalization complete.\n&quot;);
+     Exit = true;
+    break;
+
+    case BG_JOB_STATE_CANCELLED:
+     printf(&quot;WARNING: The job has been cancelled.\n&quot;);   
+     Exit = true;
+    break;
+
+    default:
+     printf(&quot;WARNING: Unknown BITS state %d.\n&quot;, State);    
+     Exit = true;
+   }
+
+   PreviousState = State;
+  }
+  else if (State == BG_JOB_STATE_TRANSFERRING)
+  {
+   // Display job progress every 2 seconds.
+   if (++ProgressCounter % TWO_SECOND_LOOP == 0)
+   {
+    DisplayProgress( Job );
+   } 
+  }
+  Sleep(HALF_SECOND_AS_MILLISECONDS);
+ }
+ printf(&quot;\n&quot;);
+ return hr;
+}
+
+// Display the current progress of the job in terms of the amount of data
+// and number of files transferred.
+VOID DisplayProgress(__in IBackgroundCopyJob *Job)
+{
+ HRESULT hr;
+ BG_JOB_PROGRESS Progress;
+ hr = Job-&gt;GetProgress(&amp;Progress);
+ if (SUCCEEDED(hr))
+ {
+  printf(&quot;%llu of %llu bytes transferred (%lu of %lu files).\n&quot;,
+         Progress.BytesTransferred, Progress.BytesTotal,
+         Progress.FilesTransferred, Progress.FilesTotal);
+ }
+}
+</code></pre>
+<h3>Step 7: Display the downloaded file headers</h3>
+<p>The <code>DisplayFileHeaders</code> helper function enumerates the jobs defined for an <a href="/windows/desktop/api/Bits/nn-bits-ibackgroundcopyjob"><strong>IBackgroundCopyJob</strong></a> object.</p>
+<pre lang="C++"><code>// For each file in the job, obtain and display the HTTP header received server.
+HRESULT DisplayFileHeaders(__in IBackgroundCopyJob *Job)
+{
+ HRESULT hr;
+ IEnumBackgroundCopyFiles *FileEnumerator;
+ 
+ hr = Job-&gt;EnumFiles(&amp;FileEnumerator);
+ if (SUCCEEDED(hr))
+ {
+  ULONG Count;
+
+  hr = FileEnumerator-&gt;GetCount(&amp;Count);
+  if (SUCCEEDED(hr))
+  {
+   for (ULONG i=0; i &lt; Count; ++i)
+   {
+    IBackgroundCopyFile *TempFile;
+
+    hr = FileEnumerator-&gt;Next(1, &amp;TempFile, NULL);
+    if (SUCCEEDED(hr))
+    {
+     IBackgroundCopyFile5 *File;
+     hr = TempFile-&gt;QueryInterface(__uuidof( IBackgroundCopyFile5 ), (void **) &amp;File);
+     if (SUCCEEDED(hr))
+     {
+      LPWSTR RemoteFileName;
+      hr = File-&gt;GetRemoteName(&amp;RemoteFileName);
+      if (SUCCEEDED(hr))
+      {
+       printf(&quot;HTTP headers for remote file '%ws'\n&quot;, RemoteFileName );
+       CoTaskMemFree( RemoteFileName );
+       RemoteFileName = NULL;
+      }
+
+      BITS_FILE_PROPERTY_VALUE Value;
+      hr = File-&gt;GetProperty(BITS_FILE_PROPERTY_ID_HTTP_RESPONSE_HEADERS, &amp;Value);
+      if (SUCCEEDED(hr) &amp;&amp; Value.String)
+      {
+       printf(&quot;Headers: %ws\n&quot;, Headers );
+
+       CoTaskMemFree(Value.String);
+       Value.String = NULL;
+      }
+
+      File-&gt;Release();
+      File = NULL;
+     }
+
+     TempFile-&gt;Release();
+     TempFile = NULL;
+    }
+   }
+  }
+
+   FileEnumerator-&gt;Release();
+   FileEnumerator = NULL;
+ }
+
+ return S_OK;
+}
+</code></pre>
+<h2>Example</h2>
+<p>The following code example is a fully working console application that shows how to use the BITS API to create a BITS job with multiple URLs to download, list the URLs in a job, and retrieve the HTTP response headers for each URL.</p>
+<pre lang="C++"><code>//*********************************************************
+//
+//    Copyright (c) Microsoft. All rights reserved.
+//    This code is licensed under the Microsoft Public License.
+//    THIS CODE IS PROVIDED *AS IS* WITHOUT WARRANTY OF
+//    ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING ANY
+//    IMPLIED WARRANTIES OF FITNESS FOR A PARTICULAR
+//    PURPOSE, MERCHANTABILITY, OR NON-INFRINGEMENT.
+//
+//*********************************************************
+
+#define WIN32_LEAN_AND_MEAN // Exclude rarely-used stuff from Windows headers
+#include &lt;windows.h&gt;
+#include &lt;bits.h&gt;
+#include &lt;stdio.h&gt; // needed for wprintf
+#include &lt;strsafe.h&gt;
+
+#define ARRAY_LENGTH(x) (sizeof(x) / sizeof( *(x) ))
+
+// Definition of constants.
+static const unsigned int HALF_SECOND_AS_MILLISECONDS = 500;
+static const unsigned int TWO_SECOND_LOOP = 2000 / HALF_SECOND_AS_MILLISECONDS;
+
+// Simple data structure that contains the remote and local names for a file.
+typedef struct
+{
+ LPCWSTR RemoteFile;
+ LPCWSTR LocalFile;
+} DOWNLOAD_FILE;
+
+// Array that contains sample DOWNLOAD_FILE data structures that represent the files
+// that will be added to the download job.
+DOWNLOAD_FILE FileList[] =
+{
+ {
+  L&quot;https://download.microsoft.com/download/0/2/8/02809141-3329-4412-8AC4-AA41B406055C/WinRT81-HttpClient-BT-Socket-Poster.pdf&quot;,
+  L&quot;c:\\temp\\data\\WinRT81-HttpClient-BT-Socket-Poster.pdf&quot;
+ },
+ {
+  L&quot;https://download.microsoft.com/download/6/6/2/662DD05E-BAD7-46EF-9431-135F9BAE6332/9781509302963_Microsoft%20Azure%20Essentials%20Fundamentals%20of%20Azure%202nd%20ed%20pdf.pdf&quot;,
+  L&quot;c:\\temp\\data\\Fundamentals of Azure.pdf&quot;
+ },
+ {
+  L&quot;https://aka.ms/WinServ16/StndPDF&quot;,
+  L&quot;c:\\temp\\data\\IntroducingWindowsServer2016.pdf&quot;
+ }
+};
+
+// Forward declaration of functions.
+HRESULT GetBackgroundCopyManager(__out IBackgroundCopyManager **Manager);
+HRESULT CreateDownloadJob(__in LPCWSTR Name, __in IBackgroundCopyManager *Manager, __out IBackgroundCopyJob **Job);
+HRESULT MonitorJobProgress(__in IBackgroundCopyJob *Job);
+HRESULT DisplayFileHeaders(__in IBackgroundCopyJob *Job);
+VOID    DisplayProgress(__in IBackgroundCopyJob *Job);
+VOID    DisplayHeaders(__in LPWSTR Headers);
+VOID    DisplayError(__in IBackgroundCopyJob *Job);
+
+// Main program entry point.
+int wmain(int argc, wchar_t* argv[])
+{
+ HRESULT hr;
+ IBackgroundCopyManager *Manager;
+
+ // Get the BITS Background Copy Manager.
+ hr = GetBackgroundCopyManager(&amp;Manager);
+ if (SUCCEEDED(hr))
+ {
+  IBackgroundCopyJob *Job;
+
+  // Create a new download job.
+  hr = CreateDownloadJob(L&quot;MyJob&quot;, Manager, &amp;Job);
+  if (SUCCEEDED(hr))
+  {
+   // Add files to the job.
+   for (int i = 0; i &lt; ARRAY_LENGTH(FileList); ++i)
+   {
+    hr = Job-&gt;AddFile(FileList[i].RemoteFile, FileList[i].LocalFile);
+    if (FAILED(hr))
+    {
+     wprintf(L&quot;Error: Unable to add remote file '%ws' to the download job (error %08X).\n&quot;,
+      FileList[i].RemoteFile,
+      hr);
+    }
+    else
+    {
+     wprintf(L&quot;Downloading remote file '%ws' to local file '%ws'\n&quot;,
+      FileList[i].RemoteFile, FileList[i].LocalFile);
+    }
+   }
+
+   // Start the job and display its progress.
+   hr = Job-&gt;Resume();
+   if (FAILED(hr))
+   {
+    wprintf(L&quot;ERROR: Unable to start the BITS download job (error code %08X).\n&quot;, hr);
+   }
+   else
+   {
+    MonitorJobProgress(Job);
+   }
+
+   // Release the BITS IBackgroundCopyJob interface.
+   Job-&gt;Release();
+   Job = NULL;
+  }
+
+  // Release the IBackgroundCopyManager interface.
+  Manager-&gt;Release();
+  Manager = NULL;
+ }
+
+ return 0;
+}
+
+/**
+ * Gets a pointer to the BITS Background Copy Manager.
+ *
+ * If successful, this function returns a success code and sets the
+ * referenced IBackgroundCopyFileManager interface pointer to a
+ * reference counted instance of the Background Copy Manager interface.
+ */
+HRESULT GetBackgroundCopyManager(__out IBackgroundCopyManager **Manager)
+{
+ HRESULT hr;
+
+ //Specify the appropriate COM threading model for your application.
+ hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+ if (SUCCEEDED(hr))
+ {
+  hr = CoCreateInstance(__uuidof(BackgroundCopyManager),
+   NULL,
+   CLSCTX_LOCAL_SERVER,
+   __uuidof(IBackgroundCopyManager),
+   (void**)Manager);
+ }
+ else
+ {
+  wprintf(L&quot;ERROR: Unable to initialize COM (error code %08X).\n&quot;, hr);
+ }
+
+ return hr;
+}
+
+/**
+ * Creates a new download job with the specified name.
+ */
+HRESULT CreateDownloadJob(__in LPCWSTR Name, __in IBackgroundCopyManager *Manager, __out IBackgroundCopyJob **Job)
+{
+ GUID guid;
+ return Manager-&gt;CreateJob(Name, BG_JOB_TYPE_DOWNLOAD, &amp;guid, Job);
+}
+
+/**
+ * Monitors and displays the progress of the download job.
+ *
+ * A new status message is output whenever the job's status changes or,
+ * when transferring data, every 2 seconds displays how much data
+ * has been transferred.
+ */
+HRESULT MonitorJobProgress(__in IBackgroundCopyJob *Job)
+{
+ HRESULT hr;
+ LPWSTR JobName;
+ BG_JOB_STATE State;
+ int PreviousState = -1;
+ bool Exit = false;
+ int ProgressCounter = 0;
+
+ hr = Job-&gt;GetDisplayName(&amp;JobName);
+ wprintf(L&quot;Progress report for download job '%ws'.\n&quot;, JobName);
+ CoTaskMemFree(JobName);
+
+ // Display the download progress.
+ while (!Exit)
+ {
+  hr = Job-&gt;GetState(&amp;State);
+
+  if (State != PreviousState)
+  {
+   switch (State)
+   {
+   case BG_JOB_STATE_QUEUED:
+    wprintf(L&quot;Job is in the queue and waiting to run.\n&quot;);
+    break;
+
+   case BG_JOB_STATE_CONNECTING:
+    wprintf(L&quot;BITS is trying to connect to the remote server.\n&quot;);
+    break;
+
+   case BG_JOB_STATE_TRANSFERRING:
+    wprintf(L&quot;BITS has started downloading data.\n&quot;);
+    DisplayProgress(Job);
+    break;
+
+   case BG_JOB_STATE_ERROR:
+    wprintf(L&quot;ERROR: BITS has encountered a non-recoverable error.\n&quot;);
+    DisplayError(Job);
+    wprintf(L&quot;       Exiting job.\n&quot;);
+    Exit = true;
+    break;
+
+   case BG_JOB_STATE_TRANSIENT_ERROR:
+    wprintf(L&quot;ERROR: BITS has encountered a recoverable error.\n&quot;);
+    DisplayError(Job);
+    wprintf(L&quot;       Continuing to retry.\n&quot;);
+    break;
+
+   case BG_JOB_STATE_TRANSFERRED:
+    DisplayProgress(Job);
+    wprintf(L&quot;The job has been successfully completed.\n&quot;);
+    wprintf(L&quot;Finalizing local files.\n&quot;);
+    Job-&gt;Complete();
+    break;
+
+   case BG_JOB_STATE_ACKNOWLEDGED:
+    wprintf(L&quot;Finalization complete.\n&quot;);
+    Exit = true;
+    break;
+
+   case BG_JOB_STATE_CANCELLED:
+    wprintf(L&quot;WARNING: The job has been cancelled.\n&quot;);
+    Exit = true;
+    break;
+
+   default:
+    wprintf(L&quot;WARNING: Unknown BITS state %d.\n&quot;, State);
+    Exit = true;
+   }
+
+   PreviousState = State;
+  }
+  else if (State == BG_JOB_STATE_TRANSFERRING)
+  {
+   // Display job progress every 2 seconds.
+   if (++ProgressCounter % TWO_SECOND_LOOP == 0)
+   {
+    DisplayProgress(Job);
+   }
+  }
+  Sleep(HALF_SECOND_AS_MILLISECONDS);
+ }
+
+ wprintf(L&quot;\n&quot;);
+
+ if (SUCCEEDED(hr))
+ {
+  hr = DisplayFileHeaders(Job);
+ }
+
+ return hr;
+}
+
+/**
+ * For each file in the job, obtains the (final) HTTP headers received from the
+ * remote server that hosts the files and then displays the HTTP headers.
+ */
+HRESULT DisplayFileHeaders(__in IBackgroundCopyJob *Job)
+{
+ HRESULT hr;
+ IEnumBackgroundCopyFiles *FileEnumerator;
+
+ wprintf(L&quot;Individual file information.\n&quot;);
+
+ hr = Job-&gt;EnumFiles(&amp;FileEnumerator);
+ if (FAILED(hr))
+ {
+  wprintf(L&quot;WARNING: Unable to obtain an IEnumBackgroundCopyFiles interface.\n&quot;);
+  wprintf(L&quot;         No further information can be provided about the files in the job.\n&quot;);
+ }
+ else
+ {
+  ULONG Count;
+
+  hr = FileEnumerator-&gt;GetCount(&amp;Count);
+  if (FAILED(hr))
+  {
+   wprintf(L&quot;WARNING: Unable to obtain a count of the number of files in the job.\n&quot;);
+   wprintf(L&quot;        No further information can be provided about the files in the job.\n&quot;);
+  }
+  else
+  {
+   for (ULONG i = 0; i &lt; Count; ++i)
+   {
+    IBackgroundCopyFile *TempFile;
+
+    hr = FileEnumerator-&gt;Next(1, &amp;TempFile, NULL);
+    if (FAILED(hr))
+    {
+     wprintf(L&quot;WARNING: Unable to obtain an IBackgroundCopyFile interface for the next file in the job.\n&quot;);
+     wprintf(L&quot;        No further information can be provided about this file.\n&quot;);
+    }
+    else
+    {
+     IBackgroundCopyFile5 *File;
+     hr = TempFile-&gt;QueryInterface(__uuidof(IBackgroundCopyFile5), (void **)&amp;File);
+     if (FAILED(hr))
+     {
+      wprintf(L&quot;WARNING: Unable to obtain an IBackgroundCopyFile5 interface for the file.\n&quot;);
+      wprintf(L&quot;        No further information can be provided about this file.\n&quot;);
+     }
+     else
+     {
+      LPWSTR RemoteFileName;
+      hr = File-&gt;GetRemoteName(&amp;RemoteFileName);
+      if (FAILED(hr))
+      {
+       wprintf(L&quot;WARNING: Unable to obtain the remote file name for this file.\n&quot;);
+      }
+      else
+      {
+       wprintf(L&quot;HTTP headers for remote file '%ws'\n&quot;, RemoteFileName);
+       CoTaskMemFree(RemoteFileName);
+       RemoteFileName = NULL;
+      }
+
+      BITS_FILE_PROPERTY_VALUE Value;
+      hr = File-&gt;GetProperty(BITS_FILE_PROPERTY_ID_HTTP_RESPONSE_HEADERS, &amp;Value);
+      if (FAILED(hr))
+      {
+       wprintf(L&quot;WARNING: Unable to obtain the HTTP headers for this file.\n&quot;);
+      }
+      else
+      {
+       if (Value.String)
+       {
+        DisplayHeaders(Value.String);
+        CoTaskMemFree(Value.String);
+        Value.String = NULL;
+       }
+      }
+
+      File-&gt;Release();
+      File = NULL;
+     }
+
+     TempFile-&gt;Release();
+     TempFile = NULL;
+    }
+   }
+  }
+
+  FileEnumerator-&gt;Release();
+  FileEnumerator = NULL;
+ }
+
+ return S_OK;
+}
+
+
+/**
+ * Displays the current progress of the job in terms of the amount of data
+ * and number of files transferred.
+ */
+VOID DisplayProgress(__in IBackgroundCopyJob *Job)
+{
+ HRESULT hr;
+ BG_JOB_PROGRESS Progress;
+
+ hr = Job-&gt;GetProgress(&amp;Progress);
+ if (SUCCEEDED(hr))
+ {
+  wprintf(L&quot;%llu of %llu bytes transferred (%lu of %lu files).\n&quot;,
+   Progress.BytesTransferred, Progress.BytesTotal,
+   Progress.FilesTransferred, Progress.FilesTotal);
+ }
+ else
+ {
+  wprintf(L&quot;ERROR: Unable to get job progress (error code %08X).\n&quot;, hr);
+ }
+}
+
+/**
+ * Parses the provided string that contains HTTP headers,
+ * splits them apart and displays them to the user.
+ */
+VOID DisplayHeaders(__in LPWSTR Headers)
+{
+ wprintf(L&quot;Headers: %ws\n&quot;, Headers);
+}
+
+VOID DisplayError(__in IBackgroundCopyJob *Job)
+{
+ HRESULT hr;
+ IBackgroundCopyError *Error;
+ LPWSTR ErrorDescription;
+
+ hr = Job-&gt;GetError(&amp;Error);
+ if (FAILED(hr))
+ {
+  wprintf(L&quot;WARNING: Unable to get job error information (code %08X)\n&quot;, hr);
+ }
+ else
+ {
+  BG_ERROR_CONTEXT ErrorContext;
+  HRESULT ErrorResult;
+  hr = Error-&gt;GetError(&amp;ErrorContext, &amp;ErrorResult);
+  if (FAILED(hr))
+  {
+   wprintf(L&quot;WARNING: Unable to get job error code information (code %08X)\n&quot;, hr);
+  }
+  else
+  {
+   hr = Error-&gt;GetErrorDescription(LANGIDFROMLCID(GetThreadLocale()), &amp;ErrorDescription);
+   if (FAILED(hr))
+   {
+    wprintf(L&quot;WARNING: Unable to get job error description (code %08X) for %08X\n&quot;, hr, ErrorResult);
+   }
+   else
+   {
+    wprintf(L&quot;   Error details: code %08X %ws\n&quot;, ErrorResult, ErrorDescription);
+    CoTaskMemFree(ErrorDescription);
+   }
+  }
+
+  Error-&gt;Release();
+ }
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MPEG Decoder Preprocessing Transformations</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: MPEG Decoder Preprocessing Transformations
+ms.assetid: c7ae0137-0d02-46da-9532-738d805e327d
+title: MPEG Decoder Preprocessing Transformations
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>MPEG Decoder Preprocessing Transformations</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p><strong>Letterbox and PanScan</strong></p>
+<p>The 4x3 image can be formed by either padding the top and bottom of the image (referred to as a Letterbox image) or by extracting a 4x3 portion of the image (referred to as a PanScan image). The menus and subpicture streams are overlaid on top of the final video image. The 16x9 ratio images are stored in a 4x3 anamorphic format. Stretching the anamorphic 4x3 aspect ratio 720x480 source video to a 16x9 aspect ratio forms the original 16x9 aspect image.</p>
+<p>Below is a description of how to correctly display each of the modes and their highlights:</p>
+<ul>
+<li><strong>Widescreen:</strong> The source video stretched into the largest 16x9 area of the output window. The highlights are relative to the inside of the 16x9 area. Black bars should be added to either the top and bottom or to the sides to maintain a 16x9 area.</li>
+<li><strong>Pan Scan:</strong> From the 16x9 video, use the horizontal offset provided in the MPEG2 stream to extract a 4x3 subwindow. Place the 4x3 subwindow into the largest 4x3 area of the output client window. The highlight's coordinates are relative to the 4x3 output window and have no relationship to the source 16x9 video. Black bars should be added to either the top and bottom or to the sides to maintain a 4x3 area.</li>
+<li><strong>Letterbox:</strong> Compute the largest 4x3 area of the output window. Black bars should be added to either the top and bottom or to the sides to maintain a 4x3 area. The source anamorphic 4x3 video (representing a 16x9 image) is placed in the largest 16x9 subwindow inside of the 4x3 area. Black bars should be added to the top and bottom of the subwindow to maintain a 16x9 area. The highlight's coordinates are relative to the 4x3 area and have no relationship to the source 16x9 video. It is possible for a disk to specify a highlight that lies outside of the 16x9 area (but still in the 4x3 window). For 4x3 video, the video is placed in the largest 4x3 output area of the output client window. Black bars should be added to either the top and bottom or to the sides to maintain a 4x3 area.</li>
+</ul>
+<p><strong>MPEG preprocessing with the DVD Navigator and VMR</strong></p>
+<p>Currently, the decoder is passed a FORMAT_MPEG2_VIDEO media type (whose format block points to a <a href="/previous-versions/windows/desktop/api/dvdmedia/ns-dvdmedia-mpeg2videoinfo"><strong>MPEG2VIDEOINFO</strong></a> structure). On the output pins, the decoder produces a FORMAT_VideoInfo2 media type, whose format block points to a <a href="/previous-versions/windows/desktop/api/dvdmedia/ns-dvdmedia-videoinfoheader2"><strong>VIDEOINFOHEADER2</strong></a> structure. The structure's <strong>dwReserved</strong> field has been renamed to <strong>dwControls</strong> flags.</p>
+<p>The <strong>dwControlFlags</strong> member will now contain the new bits.</p>
+<table>
+<thead>
+<tr>
+<th>Label</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AMCONTROL_USED</td>
+<td>0x00000001</td>
+</tr>
+<tr>
+<td>AMCONTROL_PAD_TO_4x3</td>
+<td>0x00000002</td>
+</tr>
+<tr>
+<td>AMCONTROL_PAD_TO_16x9</td>
+<td>0x00000004</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>AMCONTROL_USED is used to test whether these new flags are supported. A source filter should set the AMCONTROL_USED flag and see if QueryAccept(MediaType) succeeds on the downstream pin. If it is rejected, then the AMCONTROL flags cannot be used and dwReserved1 must be set to 0.</p>
+<p>AMCONTROL_PAD_TO_4x3 indicates that the image should be padded and displayed in a 4x3 area.</p>
+<p>AMCONTROL_PAD_TO_16x9 indicates that the image should be padded and displayed in a 16x9 area.</p>
+<p>The decoder should either blindly copy or process the bits. If the decoder performs letterboxing itself, then it must alter the pixel aspect ratio, pad the image and remove the corresponding AMCONTROL_* bits.</p>
+<p>The MPEG2VIDEOINFO.dwFlags now contains three flags for controlling for controlling how the content should be displayed:</p>
+<ul>
+<li>
+<p><code>AMMPEG2_DoPanScan (0x00000001)</code>: If this flag is set, the MPEG-2 video decoder should crop the output image based on pan-scan vectors in picture_display_extension and change the picture aspect ratio to 4x3. The VMR should not receive a 16x9 sample with this flag. A simple implementation might alter the source rectangle to indicate a 540 wide source region with a left edge equal to the display offset in the picture_display_extension.</p>
+</li>
+<li>
+<p><code>AMMPEG2_LetterboxAnalogOut (0x00000020)</code>: When a hardware decoder displays this stream to a video output (usually an SVIDEO connector on the card), it should apply the rules for displaying a 16x9 sample on a 4x3 display.</p>
+<p>A software decoder (or a hardware decoder producing output sent to the VMR) has two options when processing images:</p>
+<ol>
+<li>Ignore this flag and pass the VideoInfoHeader2 contents to the VMR (the AMCONTROL_PAD_TO_4x3 flag will already be set by the <a href="dvd-navigator-filter.html">DVD Navigator</a> on the sample). The VMR will encounter a 16x9 video sample with the AMCONTROL_PAD_TO_4x3 flag set and a 4x3 subpicture stream. The application must set the output normalized destination rectangles of the two streams to be the same width.</li>
+<li>Convert the anamorphic stream to a 4x3 image by padding the top and bottom of the image and setting the image aspect ratio to 4x3 (see Letterbox above) and removing the AMCONTROL_PAD_TO_4x3 bit from the VIDEOINFOHEADER2.</li>
+</ol>
+<p>DirectXVA decoders that blend the video and subpicture streams will have to process this flag. If the hardware cannot scale the blended subpicture, then the decoder should produce a separate subpicture stream for the VMR to blend with the video.</p>
+</li>
+<li>
+<p><code>AMMPEG2_WidescreenAnalogOut (0x00000200)</code>: When a hardware decoder displays this stream to a video output (usually an SVIDEO connector on the card), it should assume a 16x9 (anamorphic) display.</p>
+<p>A software decoder (or a hardware decoder producing output sent to the VMR) has two options when processing an anamorphic image:</p>
+<ol>
+<li>Ignore this flag and copy the VideoInfoHeader2 contents to the VMR. The VMR will pad 4x3 images to 16x9 if they have the AMCONTROL_PAD_TO_16x9 set.</li>
+<li>Pad the output image to a 16x9 image and remove the AMCONTROL_PAD_TO_16x9 bit.</li>
+</ol>
+</li>
+</ul>
+<p>Most decoders should use <strong>GetMediaType</strong> to detect a media change on the input pin and copy the <strong>VIDEOINFOHEADER2</strong> contents (contained in the <strong>MPEG2INFOHEADER</strong>) to the output pin. They will probably only process the PanScan bit.</p>
+<p>The following example code shows how to copy the <strong>VIDEOINFOHEADER2</strong> contents from an input pin to an output pin.</p>
+<pre lang="C++"><code>#include &lt;dvdmedia.h&gt;
+HRESULT CopyMPeg2ToVideoInfoHeader2(CMediaSample* pInSample, CMediaSample* pOutSample)
+{
+    HRESULT hr = S_OK;
+    // Check for a media type on the input sample.
+    AM_MEDIA_TYPE* pInType;
+    if (pInSample-&gt;GetMediaType(&amp;pInType) == S_OK) 
+    {
+        // Make sure it's an MPEG2 Video format.
+        if ((pInType-&gt;formattype == FORMAT_MPEG2_VIDEO) &amp;&amp;
+            (pInType-&gt;cbFormat &gt;= sizeof(MPEG2VIDEOINFO)))
+        {
+            hr = S_OK; // Initialize hr for the CMediaType constructor.
+            CMediaType outType(*pInType, &amp;hr);
+            if (FAILED(hr))
+            {
+                DeleteMediaType( pInType );
+                return hr;
+            }
+
+            // Set the format type GUID.
+            outType.SetFormatType(&amp;FORMAT_VideoInfo2);
+                
+            // Truncate the format block to include just the VIDEOINFOHEADER part.
+            MPEG2VIDEOINFO *pMPeg2Header = (MPEG2VIDEOINFO*)pInType-&gt;pbFormat;
+            BYTE *pVIH = (BYTE*)&amp;pMPeg2Header-&gt;hdr;
+            hr = (outType.SetFormat(pVIH, sizeof(VIDEOINFOHEADER2)) ? S_OK : E_OUTOFMEMORY);
+            if (SUCCEEDED(hr))
+            {
+                hr = pOutSample-&gt;SetMediaType(&amp;outType);
+            }
+        } 
+        else 
+        {
+            ASSERT(FALSE); // Not a MPEG2 header.
+            hr = VFW_E_INVALIDMEDIATYPE;
+        }
+        DeleteMediaType( pInType );
+    } 
+
+    return hr;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

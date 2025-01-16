@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Improving the Single-Finger Panning Experience</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Improving the Single-Finger Panning Experience
+description: If you build an application that targets Windows Touch, it automatically provides basic panning support. However, you can use the WM_GESTURE message to provide enhanced support for single-finger panning.
+ms.assetid: eb01a6df-9969-44d1-a657-4f83fb0b67cb
+keywords:</p>
+<ul>
+<li>Windows Touch,single-finger panning</li>
+<li>Windows Touch,panning</li>
+<li>Windows Touch,scroll bars</li>
+<li>Windows Touch,flicks</li>
+<li>Windows Touch,gesture pan messages</li>
+<li>Windows Touch,boundary feedback</li>
+<li>single-finger panning</li>
+<li>panning,single-finger</li>
+<li>panning,boundary feedback</li>
+<li>scroll bars,single-finger panning</li>
+<li>flicks,single-finger panning</li>
+<li>scroll bars,disabling</li>
+<li>flicks,disabling</li>
+<li>gestures,gesture pan messages</li>
+<li>panning,gesture pan messages</li>
+<li>boundary feedback,single-finger panning
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Improving the Single-Finger Panning Experience</h1>
+<p>If you build an application that targets Windows Touch, it automatically provides basic panning support. However, you can use the <a href="wm-gesture.html"><strong>WM_GESTURE</strong></a> message to provide enhanced support for single-finger panning.</p>
+<h2>Overview</h2>
+<p>To improve the single-finger panning experience, use these steps, as explained in subsequent sections of this topic:</p>
+<ul>
+<li>Create an application with scrollÂ bars and with flicks disabled.</li>
+<li>Add support for gesture pan messages.</li>
+<li>Enable bounce.</li>
+</ul>
+<h2>Create an Application with Scroll Bars and with Flicks Disabled</h2>
+<p>Before you begin, you must create an application with scroll bars. The section <a href="legacy-support-for-panning-with-scrollbars.html">Legacy Support for Panning with Scrollbars</a> explains this process. If you want to start with the example content, go to that section and create an application with scroll bars and then disable flicks. If you already have an application with functioning scroll bars, disable flicks as described in that section.</p>
+<h2>Add Custom Panning Support for Gesture Pan Messages</h2>
+<p>To support gesture pan messages, you must handle them in the <strong>WndProc</strong> method. The gesture messages are used to determine horizontal and vertical deltas for pan messages. The deltas are used to update the scroll bar object, which updates the user interface.</p>
+<p>First, update the Windows version settings in the targetver.h file to enable Windows Touch. The following code shows the various Windows version settings that should replace those in targetver.h.</p>
+<pre lang="C++"><code>#ifndef WINVER                  // Specifies that the minimum required platform is Windows Vista.
+#define WINVER 0x0601           // Change this to the appropriate value to target other versions of Windows.
+#endif
+
+#ifndef _WIN32_WINNT            // Specifies that the minimum required platform is Windows Vista.
+#define _WIN32_WINNT 0x0601     // Change this to the appropriate value to target other versions of Windows.
+#endif
+</code></pre>
+<p>Next, add the UXTheme.h file to your project and add the uxtheme.lib library to the additional dependencies of your project.</p>
+<pre lang="C++"><code>#include &lt;uxtheme.h&gt;
+</code></pre>
+<p>Next, add the following variables to the top of the <strong>WndProc</strong> function. These will be used in calculations for panning.</p>
+<pre lang="C++"><code>// The following are used for the custom panning handler      
+BOOL bResult = FALSE;
+
+static int scale = 8;   // altering the scale value will change how fast the page scrolls
+static int lastY = 0;   // used for panning calculations (initial / previous vertical position)
+static int lastX = 0;   // used for panning calculations (initial / previous horizontal position)
+GESTUREINFO gi;  
+</code></pre>
+<p>Next, add the handler for the <a href="wm-gesture.html"><strong>WM_GESTURE</strong></a> message so that the scroll bars are updated with deltas based on panning gestures. This gives you a much finer-grained control of panning.</p>
+<p>The following code gets the <a href="/windows/win32/api/winuser/ns-winuser-gestureinfo"><strong>GESTUREINFO</strong></a> structure from the <em>lParam</em>, saves the last y-coordinate from the structure, and determines the change in position to update the scroll bar object. The following code should be placed in your <strong>WndProc</strong> switch statement.</p>
+<pre lang="C++"><code>    case WM_GESTURE:        
+        // Get all the vertial scroll bar information
+        si.cbSize = sizeof (si);
+        si.fMask  = SIF_ALL;
+        GetScrollInfo (hWnd, SB_VERT, &amp;si);
+        yPos = si.nPos;
+
+        ZeroMemory(&amp;gi, sizeof(GESTUREINFO));
+        gi.cbSize = sizeof(GESTUREINFO);
+        bResult = GetGestureInfo((HGESTUREINFO)lParam, &amp;gi);
+
+        if (bResult){
+            // now interpret the gesture            
+            switch (gi.dwID){
+                case GID_BEGIN:
+                   lastY = gi.ptsLocation.y;
+                   CloseGestureInfoHandle((HGESTUREINFO)lParam);
+                   break;                     
+                // A CUSTOM PAN HANDLER
+                // COMMENT THIS CASE OUT TO ENABLE DEFAULT HANDLER BEHAVIOR
+                case GID_PAN:                                                  
+                    
+                    si.nPos -= (gi.ptsLocation.y - lastY) / scale;
+
+                    si.fMask = SIF_POS;
+                    SetScrollInfo (hWnd, SB_VERT, &amp;si, TRUE);
+                    GetScrollInfo (hWnd, SB_VERT, &amp;si);                                                        
+                                               
+                    yOverpan -= lastY - gi.ptsLocation.y;
+                    lastY = gi.ptsLocation.y;
+                     
+                    if (gi.dwFlags &amp; GF_BEGIN){
+                        BeginPanningFeedback(hWnd);
+                        yOverpan = 0;
+                    } else if (gi.dwFlags &amp; GF_END) {
+                        EndPanningFeedback(hWnd, TRUE);
+                        yOverpan = 0;
+                    }
+                           
+                    if (si.nPos == si.nMin || si.nPos &gt;= (si.nMax - si.nPage)){                    
+                        // we reached the bottom / top, pan
+                        UpdatePanningFeedback(hWnd, 0, yOverpan, gi.dwFlags &amp; GF_INERTIA);
+                    }
+                    ScrollWindow(hWnd, 0, yChar * (yPos - si.nPos), NULL, NULL);
+                    UpdateWindow (hWnd);                    
+                                        
+                    return DefWindowProc(hWnd, message, lParam, wParam);
+                case GID_ZOOM:
+                   // Add Zoom handler 
+                   return DefWindowProc(hWnd, message, lParam, wParam);
+                default:
+                   // You have encountered an unknown gesture
+                   return DefWindowProc(hWnd, message, lParam, wParam);
+             }          
+        }else{
+            DWORD dwErr = GetLastError();
+            if (dwErr &gt; 0){
+                // something is wrong 
+                // 87 indicates that you are probably using a bad
+                // value for the gi.cbSize
+            }
+        } 
+        return DefWindowProc (hWnd, message, wParam, lParam);
+</code></pre>
+<p>Now, when you perform the pan gesture on your window, you will see the text scroll with inertia. At this point, you might want to change the text to have more lines so that you can explore panning large sections of text.</p>
+<h2>Boundary Feedback in WndProc</h2>
+<p>Boundary feedback is a type of visual feedback given to users when they reach the end of a pannable area. It is triggered by the application when a boundary is reached. In the previous example implementation of the <a href="wm-gesture.html"><strong>WM_GESTURE</strong></a> message, the end condition <code>(si.nPos == si.yPos)</code> from the <strong>WM_GESTURE</strong> case is used to test that you have reached the end of a pannable region. The following variables are used to track values and test errors.</p>
+<pre lang="C++"><code>// The following are used for panning feedback (Window Bounce)
+static int animCount = 0;
+static DWORD dwErr   = 0;
+
+static BOOL isOverpan  = FALSE;
+static long xOverpan   = 0;
+static long yOverpan   = 0;
+</code></pre>
+<p>The pan gesture case is updated to trigger boundary feedback. The following code illustrates the <strong>GID_PAN</strong> case from the <a href="wm-gesture.html"><strong>WM_GESTURE</strong></a> message handler.</p>
+<pre lang="C++"><code>                case GID_PAN:                                                  
+                    
+                    si.nPos -= (gi.ptsLocation.y - lastY) / scale;
+
+                    si.fMask = SIF_POS;
+                    SetScrollInfo (hWnd, SB_VERT, &amp;si, TRUE);
+                    GetScrollInfo (hWnd, SB_VERT, &amp;si);                                                        
+                                               
+                    yOverpan -= lastY - gi.ptsLocation.y;
+                    lastY = gi.ptsLocation.y;
+                     
+                    if (gi.dwFlags &amp; GF_BEGIN){
+                        BeginPanningFeedback(hWnd);
+                        yOverpan = 0;
+                    } else if (gi.dwFlags &amp; GF_END) {
+                        EndPanningFeedback(hWnd, TRUE);
+                        yOverpan = 0;
+                    }
+                           
+                    if (si.nPos == si.nMin){                    
+                        // we reached the top, pan upwards in y direction
+                        UpdatePanningFeedback(hWnd, 0, yOverpan, gi.dwFlags &amp; GF_INERTIA);
+                    }else if (si.nPos &gt;= (si.nMax - si.nPage)){
+                        // we reached the bottom, pan downwards in y direction
+                        UpdatePanningFeedback(hWnd, 0, yOverpan, gi.dwFlags &amp; GF_INERTIA);
+                    }
+                    ScrollWindow(hWnd, 0, yChar * (yPos - si.nPos), NULL, NULL);
+                    UpdateWindow (hWnd);                    
+                                        
+                    return DefWindowProc(hWnd, message, lParam, wParam);
+  
+</code></pre>
+<p>Now your application's window should have boundary feedback when a user pans past the bottom of the scroll bar region.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="guide-multi-touch-gestures.html">Windows Touch Gestures</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/win32/api/uxtheme/nf-uxtheme-beginpanningfeedback"><strong>BeginPanningFeedback</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/win32/api/uxtheme/nf-uxtheme-endpanningfeedback"><strong>EndPanningFeedback</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/win32/api/uxtheme/nf-uxtheme-updatepanningfeedback"><strong>UpdatePanningFeedback</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

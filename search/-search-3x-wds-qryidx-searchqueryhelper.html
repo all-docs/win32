@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Querying the Index with ISearchQueryHelper</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: You can use the ISearchQueryHelper interface to query the index. This interface is implemented as a helper class to ISearchCatalogManager (and ISearchCatalogManager2), and is obtained by calling ISearchCatalogManager::GetQueryHelper.
+ms.assetid: 6e567c09-8763-4866-bf02-ad6651b454db
+title: Querying the Index with ISearchQueryHelper
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Querying the Index with ISearchQueryHelper</h1>
+<p>You can use the <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchqueryhelper"><strong>ISearchQueryHelper</strong></a> interface to query the index. This interface is implemented as a helper class to <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchcatalogmanager"><strong>ISearchCatalogManager</strong></a> (and <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchcatalogmanager2"><strong>ISearchCatalogManager2</strong></a>), and is obtained by calling <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcatalogmanager-getqueryhelper"><strong>ISearchCatalogManager::GetQueryHelper</strong></a>. This interface permits you to:</p>
+<ul>
+<li>Obtain an OLEÂ DB connection string to connect to the Windows Search database.</li>
+<li>Convert Advanced Query Syntax (AQS) user queries to Windows Search Structured Query Language (SQL).</li>
+<li>Specify query restrictions that can be expressed in SQL, but not in AQS.</li>
+</ul>
+<p>This topic is organized as follows:</p>
+<ul>
+<li><a href="#getting-started-with-isearchqueryhelper">Getting Started with ISearchQueryHelper</a></li>
+<li><a href="#using-the-generatesqlfromuserquery-method">Using the GenerateSqlFromUserQuery Method</a></li>
+<li><a href="#working-with-locale-identifiers">Working with Locale Identifiers</a></li>
+<li><a href="#working-with-properties-and-columns">Working with Properties and Columns</a></li>
+<li><a href="#working-with-query-term-expansion">Working with Query Term Expansion</a></li>
+<li><a href="#working-with-other-isearchqueryhelper-methods">Working with Other ISearchQueryHelper Methods</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Getting Started with ISearchQueryHelper</h2>
+<p>There are a few key interfaces and methods you should be aware of before you can start programmatically querying Windows Search using the <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchqueryhelper"><strong>ISearchQueryHelper</strong></a> interface. At a high level, you need to follow these steps:</p>
+<ol>
+<li>
+<p>Instantiate an <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchmanager"><strong>ISearchManager</strong></a> instance.</p>
+<pre><code>// Create ISearchManager instance
+ISearchManager* pSearchManager;
+
+// Use library SearchSDK.lib for CLSID_CSearchManager.
+hr = CoCreateInstance(CLSID_CSearchManager, NULL, CLSCTX_LOCAL_SERVER, IID_PPV_ARGS(&amp;pSearchManager));      
+</code></pre>
+</li>
+<li>
+<p>Obtain an instance of <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchcatalogmanager"><strong>ISearchCatalogManager</strong></a> using <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchmanager-getcatalog"><strong>ISearchManager::GetCatalog</strong></a>. The name of the system catalog for Windows Search is <code>SYSTEMINDEX</code>.</p>
+<pre><code>// Create ISearchCatalogManager instance 
+ISearchCatalogManager* pSearchCatalogManager;
+
+// Call ISearchManager::GetCatalog for &quot;SystemIndex&quot; to access the catalog to the ISearchCatalogManager
+hr = pSearchManager-&gt;GetCatalog(L&quot;SystemIndex&quot;, &amp;pSearchCatalogManager);
+        
+</code></pre>
+</li>
+<li>
+<p>Obtain an instance of <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchqueryhelper"><strong>ISearchQueryHelper</strong></a> using <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcatalogmanager-getqueryhelper"><strong>ISearchCatalogManager::GetQueryHelper</strong></a>.</p>
+<pre><code>// Call ISearchCatalogManager::GetQueryHelper to get the ISearchQueryHelper interface
+ISearchQueryHelper* pQueryHelper;
+
+hr = pSearchCatalogManager-&gt;GetQueryHelper(&amp;pQueryHelper);
+        
+</code></pre>
+</li>
+<li>
+<p>After you have an instance of <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchqueryhelper"><strong>ISearchQueryHelper</strong></a>, you can then get the connection string used to connect to the Windows Search index OLEÂ DB connector.</p>
+<pre><code>// Call get_ConnectionString to get the OLE DB connection string
+LPWSTR pszConnectionString=NULL;
+
+hr = pQueryHelper-&gt;get_ConnectionString(&amp;pszConnectionString);
+// NOTE: YOU MUST call CoTaskMemFree() on the string
+    
+</code></pre>
+</li>
+</ol>
+<h2>Using the GenerateSqlFromUserQuery Method</h2>
+<p>The <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-generatesqlfromuserquery"><strong>ISearchQueryHelper::GenerateSQLFromUserQuery</strong></a> method transforms user input into a SQL query string, which can then be submitted to the OLEÂ DB provider for Windows Search. This method translates the <a href="-search-3x-advancedquerysyntax.html">Advanced Query Syntax</a> (AQS) or Natural Query Syntax (NQS) query entered by the user into SQL, and lets you add other SQL fragments as needed.</p>
+<p>The SQL query string is returned in the following form:</p>
+<pre><code>SELECT &lt;QuerySelectColumns&gt; 
+FROM &lt;CatalogName that created query helper&gt;
+WHERE &lt;Result of interpreting the user query passed into this function according to QuerySyntax&gt;
+      [ AND|OR &lt;QueryWhereRestrictions&gt; ]
+    
+</code></pre>
+<p>The following is an example of the SQL string returned from the call <code>GenerateSQLFromUserQuery(&quot;comput&quot;)</code>:</p>
+<pre><code>SELECT &quot;System.ItemUrl&quot; 
+FROM &quot;SystemIndex&quot; 
+WHERE ((CONTAINS(*,'&quot;comput*&quot;',1033) RANK BY COERCION(Absolute, 1)) OR 
+       (FREETEXT((&quot;System.ItemNameDisplay&quot;:0.9, *:0.1), 'comput', 1033) AND CONTAINS(*,'&quot;comput&quot;',1033)))
+ORDER BY &quot;System.ItemUrl&quot;
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+The method generates both the FREETEXT and the CONTAINS predicates because CONTAINS alone does not generate meaningful ranking.</p>
+</blockquote>
+<p>Â </p>
+<h2>Working with Locale Identifiers</h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-get_querycontentlocale"><strong>ISearchQueryHelper::get_QueryContentLocale</strong></a>/<!-- raw HTML omitted --> <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-put_querycontentlocale"><strong>ISearchQueryHelper::put_QueryContentLocale</strong></a><!-- raw HTML omitted --></td>
+<td>Gets/Puts the language code identifier (LCID) of the query. This helps get the correct wordbreaker and stemmer to compare query terms against the catalog/inverted index. The default is the current input locale.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-get_querykeywordlocale"><strong>ISearchQueryHelper::get_QueryKeywordLocale</strong></a>/<!-- raw HTML omitted --> <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-put_querykeywordlocale"><strong>ISearchQueryHelper::put_QueryKeywordLocale</strong></a><!-- raw HTML omitted --></td>
+<td>Gets/Puts the LCID for the language to use when parsing Advanced Query Syntax (AQS) keywords. The default is the default user locale.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The <strong>content locale</strong> and <strong>keyword locale</strong> are locale identifiers (LCID) that help the search engine use the correct word breakers by identifying the language of the query terms and the language the AQS keywords. These are not always the same LCIDs because Windows Search is offered in a number of international versions and also includes Multilingual User Interface (MUI) packs for more languages. The content locale identifies the LCID for the language users input their search query in, while the keyword locale identifies the LCID the search engine uses when parsing Advanced Query Syntax (AQS) keywords.</p>
+<p>For example, if you have the English-US version with no MUI packs, both the content locale and keyword locale are 1033. If you have the German version with no MUI packs, then both the content locale and keyword locale are 1031 (gr-gr). However, if you have the English version with the Romanian MUI pack, the content locale is 2072 (ro) and the keyword locale is 1033 (en-us).</p>
+<h2>Working with Properties and Columns</h2>
+<table>
+<thead>
+<tr>
+<th>Methods</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-get_querycontentproperties"><strong>ISearchQueryHelper::get_QueryContentProperties</strong></a>/<!-- raw HTML omitted --> <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-put_querycontentproperties"><strong>ISearchQueryHelper::put_QueryContentProperties</strong></a><!-- raw HTML omitted --></td>
+<td>Gets/Sets the content properties for the search (property column listed in the CONTAINS or FREETEXT clauses).</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-get_queryselectcolumns"><strong>ISearchQueryHelper::get_QuerySelectColumns</strong></a>/<!-- raw HTML omitted --> <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-put_queryselectcolumns"><strong>ISearchQueryHelper::put_QuerySelectColumns</strong></a><!-- raw HTML omitted --></td>
+<td>Gets/Sets the columns (or properties) requested in the SELECT statement. The default is System.ItemUrl and properties used in the WHERE clause.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Items are represented in the property store as a row. Each row contains a number of columns that represent properties for that item. Not all items will have a value for a given property. For example, an audio file would typically not contain a value for the System.Property.FromName property but may contain information regarding the System.Music.Artist.</p>
+<p>With these methods, you access or modify the property with a comma delimited, null-terminated, Unicode string that specifies one or more column names of the property store: &quot;System.Document.Author, System.Document.Title&quot;.</p>
+<h2>Working with Query Term Expansion</h2>
+<table>
+<thead>
+<tr>
+<th>Methods</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-get_querytermexpansion"><strong>ISearchQueryHelper::get_QueryTermExpansion</strong></a><!-- raw HTML omitted --> <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-put_querytermexpansion"><strong>ISearchQueryHelper::put_QueryTermExpansion</strong></a><!-- raw HTML omitted --></td>
+<td>Gets/Sets the search term expansion flag.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>This method enables the expansion of some query terms with wild card characters, similar to regular expression expansion. Prefix expansion searches for words with the same prefix (fun/funnel). If not set, the default value is SEARCH_TERM_PREFIX_ALL. The supported values of the <a href="/windows/desktop/api/Searchapi/ne-searchapi-search_term_expansion"><strong>SEARCH_TERM_EXPANSION</strong></a> enumeration are as follows:</p>
+<ul>
+<li>SEARCH_TERM_PREFIX_ALL - All search terms are expanded</li>
+<li>SEARCH_TERM_NO_EXPANSION - No search terms are expanded</li>
+</ul>
+<h2>Working with Other ISearchQueryHelper Methods</h2>
+<p>Many of the methods in the <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchqueryhelper"><strong>ISearchQueryHelper</strong></a> interface are used to set query arguments or define the properties returned.</p>
+<table>
+<thead>
+<tr>
+<th>Methods</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-get_connectionstring"><strong>ISearchQueryHelper::get_ConnectionString</strong></a><!-- raw HTML omitted --></td>
+<td>Returns the OLEÂ DB connection string. This is the preferred method of getting a properly formatted and correct connection string.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-get_querymaxresults"><strong>ISearchQueryHelper::get_QueryMaxResults</strong></a><!-- raw HTML omitted --> <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-put_querymaxresults"><strong>ISearchQueryHelper::put_QueryMaxResults</strong></a><!-- raw HTML omitted --></td>
+<td>Gets/Sets the maximum number of results to be returned by a query (that is, SELECT TOP n). The default is -1, meaning that no maximum results clause is generated.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-get_querysorting"><strong>ISearchQueryHelper::get_QuerySorting</strong></a><!-- raw HTML omitted --> <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-put_querysorting"><strong>ISearchQueryHelper::put_QuerySorting</strong></a><!-- raw HTML omitted --></td>
+<td>Gets/Sets the sort order for the query result set (ORDER BY). If no ORDER BY clause exists, the results are returned in non-deterministic order.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-get_querysyntax"><strong>ISearchQueryHelper::get_QuerySyntax</strong></a><!-- raw HTML omitted --> <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-put_querysyntax"><strong>ISearchQueryHelper::put_QuerySyntax</strong></a><!-- raw HTML omitted --></td>
+<td>Gets/Sets the syntax of the query: Advanced Query Syntax or Natural Query Syntax.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-get_querywhererestrictions"><strong>ISearchQueryHelper::get_QueryWhereRestrictions</strong></a><!-- raw HTML omitted --> <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchqueryhelper-put_querywhererestrictions"><strong>ISearchQueryHelper::put_QueryWhereRestrictions</strong></a><!-- raw HTML omitted --></td>
+<td>Gets/Sets the restrictions appended via WHERE clauses.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-qryidx-overview.html">Querying the Index Programmatically</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-qryidx-overview.html">Using SQL and AQS Approaches to Query the Index</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-qryidx-searchms.html">Querying the Index with the search-ms Protocol</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-sql-windowssearch-entry.html">Querying the Index with Windows Search SQL Syntax</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-advancedquerysyntax.html">Using Advanced Query Syntax Programmatically</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Setting Authentication Using C++</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: One of the main tasks of IWbemLocator::ConnectServer for WMI is returning a pointer to an IWbemServices proxy.
+ms.assetid: bbff43b7-79f8-4c7b-a772-d3d962cf3859
+ms.tgt_platform: multiple
+title: Setting Authentication Using C++
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Setting Authentication Using C++</h1>
+<p>One of the main tasks of <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemlocator-connectserver"><strong>IWbemLocator::ConnectServer</strong></a> for WMI is returning a pointer to an <a href="/windows/desktop/api/WbemCli/nn-wbemcli-iwbemservices"><strong>IWbemServices</strong></a> proxy. Through the <strong>IWbemServices</strong> proxy, you can access the capabilities of the WMI infrastructure. However, the pointer to the <strong>IWbemServices</strong> proxy has the identity of the client application process and not the identity of the <strong>IWbemServices</strong> process. Therefore, if you attempt to access <strong>IWbemServices</strong> with the pointer, you can receive an access-denied code such as <strong>E_ACCESSDENIED</strong>. To avoid the access-denied error, you must set the identity of the new pointer with a call to the <a href="/windows/win32/api/combaseapi/nf-combaseapi-cosetproxyblanket"><strong>CoSetProxyBlanket</strong></a> interface.</p>
+<p>A provider can set the security on a namespace so that no data is returned unless you use packet privacy (<strong>PktPrivacy</strong>) in your connection to that namespace. This ensures that data is encrypted as it crosses the network. If you try to set a lower authentication level, you will get an access denied message. For more information, see <a href="setting-namespace-security-descriptors.html">Setting Namepace Security Descriptors</a>.</p>
+<p>For more information about setting authentication in scripting, see <a href="setting-the-default-process-security-level-using-vbscript.html">Setting the Default Process Security Level Using VBScript</a>.</p>
+<h2>Setting Security on a Remote IUnknown Interface</h2>
+<p>In some situations, more access to a server than just a pointer to a proxy is required. At times, you may need to gain a secure connection to the <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> interface of the proxy. Using <strong>IUnknown</strong>, you can query the remote system for interfaces and other necessary techniques.</p>
+<p>When a proxy is located on a remote computer, the server delegates all calls to the <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> interface of the proxy to the <strong>IUnknown</strong> interface. For example, if you call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> on a proxy and the requested interface was not part of the proxy, the proxy sends the call to the remote server. In turn, the remote server checks for the appropriate interface support. If the server does support the interface, COM marshals a new proxy back to the client so that the application can use the new interface.</p>
+<p>Problems arise if the client does not have access permissions to the remote server, yet is using the credentials of a user that does. In this situation, any attempt to access <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> on the remote server fails. The final release on the proxy fails as well, because the current user does not have access to the remote server. A symptom of this is a one or two second lag before the client application fails the final proxy release. The failure occurs because COM attempted to access the remote server using the default security settings of the current user, which do not include the modified credentials that allowed access to the server in the first place. For more information, see <a href="setting-the-security-on-iwbemservices-and-other-proxies.html">Setting the Security on IWbemServices and Other Proxies</a>.</p>
+<p>To avoid the failed connection, use <a href="/windows/win32/api/combaseapi/nf-combaseapi-cosetproxyblanket"><strong>CoSetProxyBlanket</strong></a> to explicitly set the security authentication on the pointer returned from <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a>. Using <strong>CoSetProxyBlanket</strong>, you can ensure that the remote server receives the correct authentication identity.</p>
+<p>The following code example shows how to use <a href="/windows/win32/api/combaseapi/nf-combaseapi-cosetproxyblanket"><strong>CoSetProxyBlanket</strong></a> to access a remote <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> interface.</p>
+<pre lang="C++"><code>SEC_WINNT_AUTH_IDENTITY_W* pAuthIdentity = 
+   new SEC_WINNT_AUTH_IDENTITY_W;
+ZeroMemory(pAuthIdentity, sizeof(SEC_WINNT_AUTH_IDENTITY_W));
+
+pAuthIdentity-&gt;User = new WCHAR[32];
+StringCbCopyW(pAuthIdentity-&gt;User,sizeof(L&quot;MyUser&quot;),L&quot;MyUser&quot;);
+pAuthIdentity-&gt;UserLength = wcslen(pAuthIdentity-&gt;User);
+
+pAuthIdentity-&gt;Domain = new WCHAR[32];
+StringCbCopyW(pAuthIdentity-&gt;Domain,sizeof(L&quot;MyDomain&quot;),L&quot;MyDomain&quot;);
+pAuthIdentity-&gt;DomainLength = wcslen(pAuthIdentity-&gt;Domain);
+
+pAuthIdentity-&gt;Password = new WCHAR[32];
+pAuthIdentity-&gt;Password[0] = NULL;
+pAuthIdentity-&gt;PasswordLength = wcslen( pAuthIdentity-&gt;Password);
+
+pAuthIdentity-&gt;Flags = SEC_WINNT_AUTH_IDENTITY_UNICODE;
+
+IWbemServices* pWbemServices = 0;
+
+// Set proxy security
+hr = CoSetProxyBlanket(pWbemServices, 
+                       RPC_C_AUTHN_DEFAULT, 
+                       RPC_C_AUTHZ_NONE, 
+                       COLE_DEFAULT_PRINCIPAL, 
+                       RPC_C_AUTHN_LEVEL_DEFAULT, 
+                       RPC_C_IMP_LEVEL_IMPERSONATE, 
+                       pAuthIdentity, 
+                       EOAC_NONE 
+);
+if (FAILED(hr))
+{
+   cout &lt;&lt; &quot;Count not set proxy blanket. Error code = 0x&quot;
+        &lt;&lt; hex &lt;&lt; hr &lt;&lt; endl;
+   pWbemServices-&gt;Release();
+   return 1;
+}
+
+// Set IUnknown security
+IUnknown*    pUnk = NULL;
+pWbemServices-&gt;QueryInterface(IID_IUnknown, (void**) &amp;pUnk);
+
+hr = CoSetProxyBlanket(pUnk, 
+                       RPC_C_AUTHN_DEFAULT, 
+                       RPC_C_AUTHZ_NONE, 
+                       COLE_DEFAULT_PRINCIPAL, 
+                       RPC_C_AUTHN_LEVEL_DEFAULT, 
+                       RPC_C_IMP_LEVEL_IMPERSONATE, 
+                       pAuthIdentity, 
+                       EOAC_NONE 
+);
+if (FAILED(hr))
+{
+   cout &lt;&lt; &quot;Count not set proxy blanket. Error code = 0x&quot;
+        &lt;&lt; hex &lt;&lt; hr &lt;&lt; endl;
+   pUnk-&gt;Release();
+   pWbemServices-&gt;Release();
+   delete [] pAuthIdentity-&gt;User;
+   delete [] pAuthIdentity-&gt;Domain;
+   delete [] pAuthIdentity-&gt;Password;
+   delete pAuthIdentity;   
+   return 1;
+}
+
+// cleanup IUnknown
+pUnk-&gt;Release();
+
+//
+// Perform a bunch of operations
+//
+
+// Cleanup
+pWbemServices-&gt;Release();
+
+delete [] pAuthIdentity-&gt;User;
+delete [] pAuthIdentity-&gt;Domain;
+delete [] pAuthIdentity-&gt;Password;
+
+delete pAuthIdentity;
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+When you set security on the <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> interface of a proxy, COM creates a copy of the proxy that cannot be released until you call <a href="/windows/win32/api/combaseapi/nf-combaseapi-couninitialize"><strong>CoUninitialize</strong></a>.</p>
+</blockquote>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="setting-authentication-in-wmi.html">Setting Authentication in WMI</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

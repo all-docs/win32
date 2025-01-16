@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Multithreaded Direct2D Apps</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Multithreaded Direct2D Apps
+description: Describes best practices for creating multithreaded Direct2D apps.
+ms.assetid: FDD770D4-817F-44D9-86C4-15DD04D214AE
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Multithreaded Direct2D Apps</h1>
+<p>If you develop <a href="./direct2d-portal.html">Direct2D</a> apps, you may need to access Direct2D resources from more than one thread. In other cases, you may want to use multi-threading to get better performance or better responsiveness (like using one thread for screen display and a separate thread for offline rendering).</p>
+<p>This topic describes the best practices for developing multithreaded <a href="./direct2d-portal.html">Direct2D</a> apps with little to no <a href="/windows/desktop/direct3d11/atoc-dx-graphics-direct3d-11">Direct3D</a> rendering. Software defects caused by concurrency issues can be difficult to track down, and it is helpful to plan your multithreading policy and to follow the best practices described here.</p>
+<blockquote>
+<p>[!Note]<br />
+If you access two <a href="./direct2d-portal.html">Direct2D</a> resources created from two different single threaded Direct2D factories it doesn't cause access conflicts as long as the underlying <a href="/windows/desktop/direct3d11/atoc-dx-graphics-direct3d-11">Direct3D</a> devices and device contexts are also distinct. When talking about &quot;accessing Direct2D resources&quot; in this article, it really means &quot;accessing Direct2D resources created from the same Direct2D Device&quot; unless stated otherwise.</p>
+</blockquote>
+<h2>Developing Thread-Safe Apps that Call Only Direct2D APIs</h2>
+<p>You can create a multithreaded <a href="./direct2d-portal.html">Direct2D</a> factory instance. You can use and share a multithreaded factory and all its resources from more than one thread, but accesses to those resources (via Direct2D calls) are serialized by Direct2D, so no access conflicts occur. If your app calls only Direct2D APIs, such protection is automatically done by Direct2D in a granular level with minimum overhead. The code to create a multithreaded factory here.</p>
+<pre lang="cpp"><code>ID2D1Factory* m_D2DFactory;
+
+// Create a Direct2D factory.
+HRESULT hr = D2D1CreateFactory(
+    D2D1_FACTORY_TYPE_MULTI_THREADED,
+    &amp;m_D2DFactory
+);
+</code></pre>
+<p>The image here shows how <a href="./direct2d-portal.html">Direct2D</a> serializes two threads that make calls using only the Direct2D API.</p>
+<p><img src="images/multi-thread.png" alt="diagram of two serialized threads." /></p>
+<h2>Developing Thread-Safe Direct2D Apps with minimal Direct3D or DXGI Calls</h2>
+<p>It is more than often that a <a href="./direct2d-portal.html">Direct2D</a> app also makes some <a href="/windows/desktop/direct3d11/atoc-dx-graphics-direct3d-11">Direct3D</a> or DXGI calls. For example, a display thread will draw in Direct2D then present using a <a href="/windows/desktop/api/dxgi/nn-dxgi-idxgiswapchain"><strong>DXGI swap chain</strong></a>.</p>
+<p>In this case, assuring thread-safety is more complicated: some <a href="./direct2d-portal.html">Direct2D</a> calls indirectly access the underlying <a href="/windows/desktop/direct3d11/atoc-dx-graphics-direct3d-11">Direct3D</a> resources, which might be simultaneously accessed by another thread which calls Direct3D or DXGI. Since those Direct3D or DXGI calls are out of Direct2Dâ€™s awareness and control, you need to create a multithreaded Direct2D factory, but you must do mor to avoid access conflicts.</p>
+<p>The diagram here shows a <a href="/windows/desktop/direct3d11/atoc-dx-graphics-direct3d-11">Direct3D</a> resource access conflict due to thread T0 accessing a resource indirectly via a <a href="./direct2d-portal.html">Direct2D</a> call and T2 accessing the same resource directly via a Direct3D or DXGI call.</p>
+<blockquote>
+<p>[!Note]<br />
+The thread protection that <a href="./direct2d-portal.html">Direct2D</a> provides (the blue lock in this image) doesn't help in this case.</p>
+</blockquote>
+<p>Â </p>
+<p><img src="images/multi-thread2.png" alt="thread protection diagram." /></p>
+<p>To avoid resource access conflict here, we recommend you explicitly acquire the lock that <a href="./direct2d-portal.html">Direct2D</a> uses for internal access synchronization, and apply that lock when a thread needs to make <a href="/windows/desktop/direct3d11/atoc-dx-graphics-direct3d-11">Direct3D</a> or DXGI calls that might cause access conflict as shown here. In particular, you should take special care with code that uses exceptions or an early out system based on HRESULT return codes. For this reason, we recommend you use an RAII (Resource Acquisition Is Initialization) pattern to call the <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1multithread-enter"><strong>Enter</strong></a> and <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1multithread-leave"><strong>Leave</strong></a> methods.</p>
+<blockquote>
+<p>[!Note]<br />
+It is important that you pair up calls to the <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1multithread-enter"><strong>Enter</strong></a> and <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1multithread-leave"><strong>Leave</strong></a> methods, otherwise your app can deadlock.</p>
+</blockquote>
+<p>Â </p>
+<p>The code here shows an example of when to lock and then and unlock around <a href="/windows/desktop/direct3d11/atoc-dx-graphics-direct3d-11">Direct3D</a> or DXGI calls.</p>
+<pre lang="C++"><code>void MyApp::DrawFromThread2()
+{
+    // We are accessing Direct3D resources directly without Direct2D's knowledge, so we
+    // must manually acquire and apply the Direct2D factory lock.
+    ID2D1Multithread* m_D2DMultithread;
+    m_D2DFactory-&gt;QueryInterface(IID_PPV_ARGS(&amp;m_D2DMultithread));
+    m_D2DMultithread-&gt;Enter();
+    
+    // Now it is safe to make Direct3D/DXGI calls, such as IDXGISwapChain::Present
+    MakeDirect3DCalls();
+
+    // It is absolutely critical that the factory lock be released upon
+    // exiting this function, or else any consequent Direct2D calls will be blocked.
+    m_D2DMultithread-&gt;Leave();
+}
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+Some <a href="/windows/desktop/direct3d11/atoc-dx-graphics-direct3d-11">Direct3D</a> or DXGI calls (notably <a href="/windows/desktop/api/dxgi/nf-dxgi-idxgiswapchain-present"><strong>IDXGISwapChain::Present</strong></a>) may acquire locks and/or trigger callbacks into the code of the calling function or method. You should be aware of this and make sure that such behavior doesn't cause deadlocks. For more info, see the <a href="/windows/desktop/direct3ddxgi/d3d10-graphics-programming-guide-dxgi">DXGI Overview</a> topic.</p>
+</blockquote>
+<p>Â </p>
+<p><img src="images/multi-thread3.png" alt="direct2d and direct3d thread locking diagram." /></p>
+<p>When you use the <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1multithread-enter"><strong>Enter</strong></a> and <a href="/windows/win32/api/d2d1_1/nf-d2d1_1-id2d1multithread-leave"><strong>Leave</strong></a> methods, the calls are protected by the automatic <a href="./direct2d-portal.html">Direct2D</a> and the explicit lock, so the app doesn't hit access conflict.</p>
+<p>There are other approaches to work around this issue. However, we recommend you explicitly guard <a href="/windows/desktop/direct3d11/atoc-dx-graphics-direct3d-11">Direct3D</a> or DXGI calls with the <a href="./direct2d-portal.html">Direct2D</a> lock because it usually provides better performance as it protects concurrency at a much finer level and with lower overhead under Direct2Dâ€™s cover.</p>
+<h2>Ensuring Atomicity of Stateful Operations</h2>
+<p>While thread-safety features of <a href="/previous-versions//ee663301(v=vs.85)">DirectX</a> can help ensure that no two individual API calls are made concurrently, you must also ensure that threads that make stateful API calls don't interfere with each other. Here is an example.</p>
+<ol>
+<li>There are two lines of text that you want to render to both on-screen (by Thread 0) and off-screen (by Thread 1): Line #1 is &quot;A is greater&quot; and Line #2 is &quot;than B&quot;, both of which will be drawn using a solid black brush.</li>
+<li>Thread 1 draws the first line of text.</li>
+<li>Thread 0 reacts to a user input, updates both text lines to &quot;B is smaller&quot; and &quot;than A&quot; respectively, and changed the brush color to solid red for its own drawing;</li>
+<li>Thread 1 continues drawing the second line of text, which is now &quot;than A&quot;, with the red color brush;</li>
+<li>Finally, we get two lines of text on the off-screen drawing target: &quot;A is greater&quot; in black and &quot;than A&quot; in red.</li>
+</ol>
+<p><img src="images/multi-thread4.png" alt="a diagram of on and off screen threads." /></p>
+<p>In the top row, Thread 0 draws with current text strings and the current black brush. Thread 1 only finishes off-screen drawing on the top half.</p>
+<p>In the middle row, Thread 0 responds to user interaction, updates the text strings and the brush, then refreshes the screen. At this point, Thread 1 is blocked. In the bottom row, the final off-screen rendering after Thread 1 resumes drawing the bottom half with an altered brush and an altered text string.</p>
+<p>To address this issue, we recommend you have a separate context for each thread, so that:</p>
+<ul>
+<li>You should create a copy of the device context so that mutable resources (i.e. resources that may vary during display or printing, such as text contents or the solid color brush in the example) don't change when you render. In this sample, you should maintain a copy of those two lines of texts and the color brush before you draw. By doing so, you guarantee each thread has complete and consistent content to draw and present.</li>
+<li>You should share heavy-weight resources (like bitmaps and complex effect graphs) that are initialized once and then never modified across threads to increase performance.</li>
+<li>You can either share light-weight resources (like solid color brushes and text formats) that are initialized once and then never modified across threads or not</li>
+</ul>
+<h2>Summary</h2>
+<p>When you develop multithreaded <a href="./direct2d-portal.html">Direct2D</a> apps, you must create a multithreaded Direct2D factory then derive all Direct2D resources from that factory. If a thread will make <a href="/windows/desktop/direct3d11/atoc-dx-graphics-direct3d-11">Direct3D</a> or DXGI calls, you also must explicitly acquire then apply the Direct2D lock to guard those Direct3D or DXGI calls. Moreover, you must ensure context integrity by having a copy of mutable resources for each thread.</p>
+</body>

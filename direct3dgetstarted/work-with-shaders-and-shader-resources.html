@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Work with shaders and shader resources</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Work with shaders and shader resources
+description: It's time to learn how to work with shaders and shader resources in developing your Microsoft DirectX game for WindowsÂ 8.
+ms.assetid: 25a11983-e3f6-4bd3-86f1-d660edc4cd4b
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Work with shaders and shader resources</h1>
+<p>It's time to learn how to work with shaders and shader resources in developing your Microsoft DirectX game for WindowsÂ 8. We've seen how to set up the graphics device and resources, and perhaps you've even started modifying its pipeline. So now let's look at pixel and vertex shaders.</p>
+<p>If you aren't familiar with shader languages, a quick discussion is in order. Shaders are small, low-level programs that are compiled and run at specific stages in the graphics pipeline. Their specialty is very fast floating-point mathematical operations. The most common shader programs are:</p>
+<ul>
+<li><strong>Vertex shader</strong>â€”Executed for each vertex in a scene. This shader operates on vertex buffer elements provided to it by the calling app, and minimally results in a 4-component position vector that will be rasterized into a pixel position.</li>
+<li><strong>Pixel shader</strong>â€”Executed for each pixel in a render target. This shader receives rasterized coordinates from previous shader stages (in the simplest pipelines, this would be the vertex shader) and returns a color (or other 4-component value) for that pixel position, which is then written into a render target.</li>
+</ul>
+<p>This example includes very basic vertex and pixel shaders that only draw geometry, and more complex shaders that add basic lighting calculations.</p>
+<p>Shader programs are written in Microsoft High Level Shader Language (HLSL). HLSL syntax looks a lot like C, but without the pointers. Shader programs must be very compact and efficient. If your shader compiles to too many instructions, it cannot be run and an error is returned. (Note that the exact number of instructions allowed is part of the <a href="/windows/desktop/direct3d11/overviews-direct3d-11-devices-downlevel-intro">Direct3D feature level</a>.)</p>
+<p>In Direct3D, shaders are not compiled at run time; they are compiled when the rest of the program is compiled. When you compile your app with Microsoft Visual StudioÂ 2013, the HLSL files are compiled to CSO (.cso) files that your app must load and place in GPU memory prior to drawing. Make sure you include these CSO files with your app when you package it; they are assets just like meshes and textures.</p>
+<h2>Understand HLSL semantics</h2>
+<p>It's important to take a moment to discuss HLSL semantics before we continue, because they are often a point of confusion for new Direct3D developers. HLSL semantics are strings that identify a value passed between the app and a shader program. Although they can be any of a variety of possible strings, the best practice is to use a string like <code>POSITION</code> or <code>COLOR</code> that indicates the usage. You assign these semantics when you are constructing a constant buffer or input layout. You can also append a number between 0 and 7 to the semantic so that you use separate registers for similar values. For example: COLOR0, COLOR1, COLOR2...</p>
+<p>Semantics that are prefixed with &quot;SV_&quot; are <em>system value</em> semantics that are written to by your shader program; your game itself (running on the CPU) cannot modify them. Typically, these semantics contain values that are inputs or outputs from another shader stage in the graphics pipeline, or that are generated entirely by the GPU.</p>
+<p>Additionally, <code>SV_</code> semantics have different behaviors when they are used to specify input to or output from a shader stage. For example, <code>SV_POSITION</code> (output) contains the vertex data transformed during the vertex shader stage, and <code>SV_POSITION</code> (<em>input</em>) contains the pixel position values that were interpolated by the GPU during the rasterization stage.</p>
+<p>Here are a few common HLSL semantics:</p>
+<ul>
+<li><code>POSITION</code>(<em>n</em>) for vertex buffer data. <code>SV_POSITION</code> provides a pixel position to the pixel shader and cannot be written by your game.</li>
+<li><code>NORMAL</code>(<em>n</em>) for normal data provided by the vertex buffer.</li>
+<li><code>TEXCOORD</code>(<em>n</em>) for texture UV coordinate data supplied to a shader.</li>
+<li><code>COLOR</code>(n) for RGBA color data supplied to a shader. Note that it is treated identically to coordinate data, including interpolating the value during rasterization; the semantic simply helps you identify that it is color data.</li>
+<li><code>SV_Target</code>[n] for writing from a pixel shader to a target texture or other pixel buffer.</li>
+</ul>
+<p>We'll see some examples of HLSL semantics as we review the example.</p>
+<h2>Read from the constant buffers</h2>
+<p>Any shader can read from a constant buffer if that buffer is attached to its stage as a resource. In this example, only the vertex shader is assigned a constant buffer.</p>
+<p>The constant buffer is declared in two places: in the C++ code, and in the corresponding HLSL files that will access it.</p>
+<p>Here's how the constant buffer struct is declared in the C++ code.</p>
+<pre lang="C++"><code>typedef struct _constantBufferStruct {
+    DirectX::XMFLOAT4X4 world;
+    DirectX::XMFLOAT4X4 view;
+    DirectX::XMFLOAT4X4 projection;
+} ConstantBufferStruct;
+</code></pre>
+<p>When declaring the structure for the constant buffer in your C++ code, ensure that all of the data is correctly aligned along 16-byte boundaries. The easiest way to do this is to use <a href="/windows/desktop/dxmath/directxmath-portal">DirectXMath</a> types, like <strong>XMFLOAT4</strong> or <strong>XMFLOAT4X4</strong>, as seen in the example code. You can also guard against misaligned buffers by declaring a static assert:</p>
+<pre lang="C++"><code>// Assert that the constant buffer remains 16-byte aligned.
+static_assert((sizeof(ConstantBufferStruct) % 16) == 0, &quot;Constant Buffer size must be 16-byte aligned&quot;);
+</code></pre>
+<p>This line of code will cause an error at compile time if <strong>ConstantBufferStruct</strong> is not 16-byte aligned. For more information about constant buffer alignment and packing, see <a href="/windows/desktop/direct3dhlsl/dx-graphics-hlsl-packing-rules">Packing Rules for Constant Variables</a>.</p>
+<p>Now, here's how the constant buffer is declared in the vertex shader HLSL.</p>
+<pre lang="C++"><code>cbuffer ModelViewProjectionConstantBuffer : register(b0)
+{
+    matrix mWorld;      // world matrix for object
+    matrix View;        // view matrix
+    matrix Projection;  // projection matrix
+};
+</code></pre>
+<p>All buffersâ€”constant, texture, sampler, or otherâ€”must have a register defined so the GPU can access them. Each shader stage allows up to 15 constant buffers, and each buffer can hold up to 4,096 constant variables. The register-usage declaration syntax is as follows:</p>
+<ul>
+<li><strong>b</strong>*#*: A register for a constant buffer (<strong>cbuffer</strong>).</li>
+<li><strong>t</strong>*#*: A register for a texture buffer (<strong>tbuffer</strong>).</li>
+<li><strong>s</strong>*#*: A register for a sampler. (A sampler defines the lookup behavior for texels in the texture resource.)</li>
+</ul>
+<p>For example, the HLSL for a pixel shader might take a texture and a sampler as input with a declaration like this.</p>
+<pre lang="syntax"><code>Texture2D simpleTexture : register(t0);
+SamplerState simpleSampler : register(s0);
+</code></pre>
+<p>It's up to you to assign constant buffers to registersâ€”when you set up the pipeline, you attach a constant buffer to the same slot you assigned it to in the HLSL file. For example, in the previous topic the call to <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11devicecontext-vssetconstantbuffers"><strong>VSSetConstantBuffers</strong></a> indicates '0' for the first parameter. That tells Direct3D to attach the constant buffer resource to register 0, which matches the buffer's assignment to <strong>register(b0)</strong> in the HLSL file.</p>
+<h2>Read from the vertex buffers</h2>
+<p>The vertex buffer supplies the triangle data for the scene objects to the vertex shader(s). As with the constant buffer, the vertex buffer struct is declared in the C++ code, using similar packing rules.</p>
+<pre lang="C++"><code>typedef struct _vertexPositionColor
+{
+    DirectX::XMFLOAT3 pos;
+    DirectX::XMFLOAT3 color;
+} VertexPositionColor;
+</code></pre>
+<p>There is no standard format for vertex data in Direct3D 11. Instead, we define our own vertex data layout using a descriptor; the data fields are defined using an array of <a href="/windows/desktop/api/d3d11/ns-d3d11-d3d11_input_element_desc"><strong>D3D11_INPUT_ELEMENT_DESC</strong></a> structures. Here, we show a simple input layout that describes the same vertex format as the preceding struct:</p>
+<pre lang="C++"><code>D3D11_INPUT_ELEMENT_DESC iaDesc [] =
+{
+    { &quot;POSITION&quot;, 0, DXGI_FORMAT_R32G32B32_FLOAT,
+    0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+
+    { &quot;COLOR&quot;, 0, DXGI_FORMAT_R32G32B32_FLOAT,
+    0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+};
+
+hr = device-&gt;CreateInputLayout(
+    iaDesc,
+    ARRAYSIZE(iaDesc),
+    bytes,
+    bytesRead,
+    &amp;m_pInputLayout
+    );
+</code></pre>
+<p>If you add data to the vertex format when modifying the example code, be sure to update the input layout as well, or the shader will not be able to interpret it. You might modify the vertex layout like this:</p>
+<pre lang="C++"><code>typedef struct _vertexPositionColorTangent
+{
+    DirectX::XMFLOAT3 pos;
+    DirectX::XMFLOAT3 normal;
+    DirectX::XMFLOAT3 tangent;
+} VertexPositionColorTangent;
+</code></pre>
+<p>In that case, you'd modify the input-layout definition as follows.</p>
+<pre lang="C++"><code>D3D11_INPUT_ELEMENT_DESC iaDescExtended[] =
+{
+    { &quot;POSITION&quot;, 0, DXGI_FORMAT_R32G32B32_FLOAT,
+    0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+
+    { &quot;NORMAL&quot;, 0, DXGI_FORMAT_R32G32B32_FLOAT,
+    0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+
+    { &quot;TANGENT&quot;, 0, DXGI_FORMAT_R32G32B32_FLOAT,
+    0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+};
+
+hr = device-&gt;CreateInputLayout(
+    iaDesc,
+    ARRAYSIZE(iaDesc),
+    bytes,
+    bytesRead,
+    &amp;m_pInputLayoutExtended
+    );
+</code></pre>
+<p>Each of the input-layout element definitions is prefixed with a string, like &quot;POSITION&quot; or &quot;NORMAL&quot;â€”that is the semantic we discussed earlier in this topic. It's like a handle that helps the GPU identify that element when processing the vertex. Choose common, meaningful names for your vertex elements.</p>
+<p>Just as with the constant buffer, the vertex shader has a corresponding buffer definition for incoming vertex elements. (That's why we provided a reference to the vertex shader resource when creating the input layout - Direct3D validates the per-vertex data layout with the shader's input struct.) Note how the semantics match between the input layout definition and this HLSL buffer declaration. However, <code>COLOR</code> has a &quot;0&quot; appended to it. It isn't necessary to add the 0 if you have only one <code>COLOR</code> element declared in the layout, but it's a good practice to append it in case you choose to add more color elements in the future.</p>
+<pre lang="C++"><code>struct VS_INPUT
+{
+    float3 vPos   : POSITION;
+    float3 vColor : COLOR0;
+};
+</code></pre>
+<h2>Pass data between shaders</h2>
+<p>Shaders take input types and return output types from their main functions upon execution. For the vertex shader defined in the previous section, the input type was the VS_INPUT structure, and we defined a matching input layout and C++ struct. An array of this struct is used to create a vertex buffer in the <strong>CreateCube</strong> method.</p>
+<p>The vertex shader returns a PS_INPUT structure, which must minimally contain the 4-component (float4) final vertex position. This position value must have the system value semantic, <code>SV_POSITION</code>, declared for it so the GPU has the data it needs to perform the next drawing step. Notice that there is not a 1:1 correspondence between vertex shader output and pixel shader input; the vertex shader returns one structure for each vertex it is given, but the pixel shader runs once for each pixel. That's because the per-vertex data first passes through the rasterization stage. This stage decides which pixels &quot;cover&quot; the geometry you're drawing, computes interpolated per-vertex data for each pixel, and then calls the pixel shader once for each of those pixels. Interpolation is the default behavior when rasterizing output values, and is essential in particular for the correct processing of output vector data (light vectors, per-vertex normals and tangents, and others).</p>
+<pre lang="C++"><code>struct PS_INPUT
+{
+    float4 Position : SV_POSITION;  // interpolated vertex position (system value)
+    float4 Color    : COLOR0;       // interpolated diffuse color
+};
+</code></pre>
+<h2>Review the vertex shader</h2>
+<p>The example vertex shader is very simple: take in a vertex (position and color), transform the position from model coordinates into perspective projected coordinates, and return it (along with the color) to the rasterizer. Notice that the color value is interpolated right along with the position data, providing a different value for each pixel even though the vertex shader didn't perform any calculations on the color value.</p>
+<pre lang="C++"><code>VS_OUTPUT main(VS_INPUT input) // main is the default function name
+{
+    VS_OUTPUT Output;
+
+    float4 pos = float4(input.vPos, 1.0f);
+
+    // Transform the position from object space to homogeneous projection space
+    pos = mul(pos, mWorld);
+    pos = mul(pos, View);
+    pos = mul(pos, Projection);
+    Output.Position = pos;
+
+    // Just pass through the color data
+    Output.Color = float4(input.vColor, 1.0f);
+
+    return Output;
+}
+</code></pre>
+<p>A more complex vertex shader, such as one that sets up an object's vertices for Phong shading, might look more like this. In this case, we're taking advantage of the fact that the vectors and normals are interpolated to approximate a smooth-looking surface.</p>
+<pre lang="syntax"><code>// A constant buffer that stores the three basic column-major matrices for composing geometry.
+cbuffer ModelViewProjectionConstantBuffer : register(b0)
+{
+    matrix model;
+    matrix view;
+    matrix projection;
+};
+
+cbuffer LightConstantBuffer : register(b1)
+{
+    float4 lightPos;
+};
+
+struct VertexShaderInput
+{
+    float3 pos : POSITION;
+    float3 normal : NORMAL;
+};
+
+// Per-pixel color data passed through the pixel shader.
+
+struct PixelShaderInput
+{
+    float4 position : SV_POSITION; 
+    float3 outVec : POSITION0;
+    float3 outNormal : NORMAL0;
+    float3 outLightVec : POSITION1;
+};
+
+PixelShaderInput main(VertexShaderInput input)
+{
+    // Inefficient -- doing this only for instruction. Normally, you would
+ // premultiply them on the CPU and place them in the cbuffer.
+    matrix mvMatrix = mul(model, view);
+    matrix mvpMatrix = mul(mvMatrix, projection);
+
+    PixelShaderInput output;
+
+    float4 pos = float4(input.pos, 1.0f);
+    float4 normal = float4(input.normal, 1.0f);
+    float4 light = float4(lightPos.xyz, 1.0f);
+
+    // 
+    float4 eye = float4(0.0f, 0.0f, -2.0f, 1.0f);
+
+    // Transform the vertex position into projected space.
+    output.gl_Position = mul(pos, mvpMatrix);
+    output.outNormal = mul(normal, mvMatrix).xyz;
+    output.outVec = -(eye - mul(pos, mvMatrix)).xyz;
+    output.outLightVec = mul(light, mvMatrix).xyz;
+
+    return output;
+}
+</code></pre>
+<h2>Review the pixel shader</h2>
+<p>This pixel shader in this example is quite possibly the absolute minimum amount of code you can have in a pixel shader. It takes the interpolated pixel color data generated during rasterization and returns it as output, where it will be written to a render target. How boring!</p>
+<pre lang="C++"><code>PS_OUTPUT main(PS_INPUT In)
+{
+    PS_OUTPUT Output;
+
+    Output.RGBColor = In.Color;
+
+    return Output;
+}
+</code></pre>
+<p>The important part is the <code>SV_TARGET</code> system-value semantic on the return value. It indicates that the output is to be written to the primary render target, which is the texture buffer supplied to the swap chain for display. This is required for pixel shaders - without the color data from the pixel shader, Direct3D wouldn't have anything to display!</p>
+<p>An example of a more complex pixel shader to perform Phong shading might look like this. Since the vectors and normals were interpolated, we don't have to compute them on a per-pixel basis. However, we do have to re-normalize them because of how interpolation works; conceptually, we need to gradually &quot;spin&quot; the vector from direction at vertex A to direction at vertex B, maintaining its lengthâ€”wheras interpolation instead cuts across a straight line between the two vector endpoints.</p>
+<pre lang="syntax"><code>cbuffer MaterialConstantBuffer : register(b2)
+{
+    float4 lightColor;
+    float4 Ka;
+    float4 Kd;
+    float4 Ks;
+    float4 shininess;
+};
+
+struct PixelShaderInput
+{
+    float4 position : SV_POSITION;
+    float3 outVec : POSITION0;
+    float3 normal : NORMAL0;
+    float3 light : POSITION1;
+};
+
+float4 main(PixelShaderInput input) : SV_TARGET
+{
+    float3 L = normalize(input.light);
+    float3 V = normalize(input.outVec);
+    float3 R = normalize(reflect(L, input.normal));
+
+    float4 diffuse = Ka + (lightColor * Kd * max(dot(input.normal, L), 0.0f));
+    diffuse = saturate(diffuse);
+
+    float4 specular = Ks * pow(max(dot(R, V), 0.0f), shininess.x - 50.0f);
+    specular = saturate(specular);
+
+    float4 finalColor = diffuse + specular;
+
+    return finalColor;
+}
+</code></pre>
+<p>In another example, the pixel shader takes its own constant buffers that contain light and material information. The input layout in the vertex shader would be expanded to include normal data, and the output from that vertex shader is expected to include transformed vectors for the vertex, the light, and the vertex normal in the view coordinate system.</p>
+<p>If you have texture buffers and samplers with assigned registers (<strong>t</strong> and <strong>s</strong>, respectively), you can access them in the pixel shader also.</p>
+<pre lang="syntax"><code>Texture2D simpleTexture : register(t0);
+SamplerState simpleSampler : register(s0);
+
+struct PixelShaderInput
+{
+    float4 pos : SV_POSITION;
+    float3 norm : NORMAL;
+    float2 tex : TEXCOORD0;
+};
+
+float4 SimplePixelShader(PixelShaderInput input) : SV_TARGET
+{
+    float3 lightDirection = normalize(float3(1, -1, 0));
+    float4 texelColor = simpleTexture.Sample(simpleSampler, input.tex);
+    float lightMagnitude = 0.8f * saturate(dot(input.norm, -lightDirection)) + 0.2f;
+    return texelColor * lightMagnitude;
+}
+</code></pre>
+<p>Shaders are very powerful tools that can be used to generate procedural resources like shadow maps or noise textures. In fact, advanced techniques require that you think of textures more abstractly, not as visual elements but as buffers. They hold data like height information, or other data that can be sampled in the final pixel shader pass or in that particular frame as part of a multi-stage effects pass. Multi-sampling is a powerful tool and the backbone of many modern visual effects.</p>
+<h2>Next steps</h2>
+<p>Hopefully, you're comfortable with DirectX 11at this point and are ready to start working on your project. Here are some links to help answer other questions you may have about development with DirectX and C++:</p>
+<ul>
+<li><a href="/previous-versions/windows/apps/hh452744(v=win.10)">Developing games</a></li>
+<li><a href="/previous-versions/windows/apps/dn166877(v=win.10)">Use Visual Studio tools for DirectX game programming</a></li>
+<li><a href="/previous-versions/windows/apps/hh465149(v=win.10)">DirectX game development and sample walkthroughs</a></li>
+<li><a href="/previous-versions/windows/apps/dn194515(v=win.10)">Additional game programming resources</a></li>
+</ul>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="work-with-dxgi.html">Work with DirectX device resources</a></p>
+<!-- raw HTML omitted -->
+<p><a href="understand-the-directx-11-2-graphics-pipeline.html">Understand the Direct3D 11 rendering pipeline</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

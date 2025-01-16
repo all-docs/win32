@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>C++ Event Sinks Sample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This program demonstrates how you can build an application that captures InkCollector events using only C++. This program co-creates an InkCollector object to ink -enable the window. It displays a message box whenever a Stroke event is received.
+ms.assetid: 91450559-ae47-457a-a709-b4e4e78bde22
+title: C++ Event Sinks Sample
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>C++ Event Sinks Sample</h1>
+<p>This program demonstrates how you can build an application that captures InkCollector events using only C++. This program co-creates an <a href="inkcollector-class.html"><strong>InkCollector</strong></a> object to ink -enable the window. It displays a message box whenever a <a href="inkcollector-stroke.html"><strong>Stroke</strong></a> event is received.</p>
+<h2>Defining a Wrapper for Ink Collector Events</h2>
+<p>The <code>InkCollectorEvents</code> Class handles passing ink collector events from the ink collector to the user of this class. The <code>AdviseInkCollector</code> method sets up the connection between the <a href="inkcollector-class.html"><strong>InkCollector</strong></a> object and this class. The <code>Invoke</code> method converts the <a href="/windows/win32/api/oaidl/nn-oaidl-idispatch"><strong>IDispatch</strong></a> event notification into a call to a virtual function that the user of this class can override to process a particular event.</p>
+<blockquote>
+<p>[!Note]<br />
+You must do more than override the virtual function for an event handler to get that event. For all but default events, you have to call the ink collector's <a href="/windows/desktop/api/msinkaut/nf-msinkaut-iinkcollector-seteventinterest"><strong>SetEventInterest</strong></a> method to guarantee getting an event. Secondly, this object marshals itself free threaded so all implemented event handlers need to be free threaded as well. Of particular importance is using Windows APIs, which may cause a switch to another thread as the event handler is not guaranteed to be running on the same thread as the window connected with the ink collector.</p>
+</blockquote>
+<p>Â </p>
+<pre lang="C++"><code>// Invoke translates from IDispatch to an event callout
+//  that can be overridden by a subclass of this class.
+STDMETHOD(Invoke)(
+   DISPID dispidMember, 
+    REFIID riid,
+    LCID lcid, 
+    WORD /*wFlags*/, 
+    DISPPARAMS* pdispparams, 
+    VARIANT* pvarResult,
+    EXCEPINFO* /*pexcepinfo*/, 
+    UINT* /*puArgErr*/)
+{
+    switch(dispidMember)
+    {
+        case DISPID_ICEStroke:
+            Stroke(
+                (IInkCursor*) pdispparams-&gt;rgvarg[2].pdispVal,
+                (IInkStrokeDisp*) pdispparams-&gt;rgvarg[1].pdispVal,
+                (VARIANT_BOOL *)pdispparams-&gt;rgvarg[0].pboolVal);
+            break;
+        ...
+    }
+    return S_OK;
+}
+
+virtual void Stroke(
+    IInkCursor* Cursor,
+    IInkStrokeDisp* Stroke,
+    VARIANT_BOOL *Cancel)
+{
+    // This is a place holder designed to be overridden by
+    //  user of this class.
+    return;
+}
+...
+</code></pre>
+<p>The <code>Init</code> method calls <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreatefreethreadedmarshaler">CoCreateFreeThreadedMarshaler</a> to set up a free threaded marshaler.</p>
+<pre lang="C++"><code>// Init: set up free threaded marshaller.
+HRESULT Init()
+{
+    return CoCreateFreeThreadedMarshaler(this, &amp;m_punkFTM);
+}
+</code></pre>
+<p>The <code>AdviseInkCollector</code> method sets up the connection between the <a href="inkcollector-class.html"><strong>InkCollector</strong></a> object and this class. It first retrieves a connection point to the ink collector. Then it retrieves a pointer to the <code>IInkCollectorEvents</code> so that it may establish an advisory connection to the control.</p>
+<pre lang="C++"><code>// Set up connection between sink and InkCollector
+HRESULT AdviseInkCollector(
+    IInkCollector *pIInkCollector)
+{
+    // Get the connection point container
+    IConnectionPointContainer *pIConnectionPointContainer;
+    HRESULT hr = pIInkCollector-&gt;QueryInterface(IID_IConnectionPointContainer, (void **) &amp;pIConnectionPointContainer);
+        
+    if (FAILED(hr))
+        ...
+    
+    // Find the connection point for Ink Collector events
+    hr = pIConnectionPointContainer-&gt;FindConnectionPoint(__uuidof(_IInkCollectorEvents), &amp;m_pIConnectionPoint);
+        
+    if (SUCCEEDED(hr))
+    {
+        // Hook up sink to connection point
+        hr = m_pIConnectionPoint-&gt;Advise(this, &amp;m_dwCookie);
+    }
+    
+    if (FAILED(hr))
+        ...
+    
+    // Don't need the connection point container any more.
+    pIConnectionPointContainer-&gt;Release();
+    return hr;
+}
+</code></pre>
+<p>The <code>UnadviseInkCollector</code> method releases the connections the object has to the control.</p>
+<pre lang="C++"><code>// Remove the connection of the sink to the Ink Collector
+HRESULT UnadviseInkCollector()
+{
+    HRESULT hr = m_pIConnectionPoint-&gt;Unadvise(m_dwCookie);m_pIConnectionPoint-&gt;Release();
+m_pIConnectionPoint = NULL;
+    return hr;
+}
+</code></pre>
+<h2>Defining an Ink Collector Events Handler</h2>
+<p>The CMyInkEvents Class overrides the default behavior of the <a href="inkcollector-stroke.html"><strong>Stroke</strong></a> event handler of the InkCollectorEvents Class. The Stroke method displays a message box when the <a href="inkcollector-class.html"><strong>InkCollector</strong></a> receives a <strong>Stroke</strong> event.</p>
+<pre lang="C++"><code>class CMyInkEvents : public InkCollectorEvents
+{
+public:
+
+    // Event: Stroke
+    virtual void Stroke(
+        IInkCursor* Cursor,
+        IInkStrokeDisp* Stroke,
+        VARIANT_BOOL *Cancel)
+    {
+        // Demonstrate that the event notification was received.
+        MessageBox(m_hWnd, &quot;Stroke Event&quot;, &quot;Event Received&quot;, MB_OK);
+    }
+    
+    CMyInkEvents()
+    {
+        m_hWnd = NULL;
+    }
+    
+    HRESULT Init(
+        HWND hWnd)
+    {
+        m_hWnd = hWnd;
+        return InkCollectorEvents::Init();
+    }    
+    
+    HWND m_hWnd;
+};
+</code></pre>
+<h2>Defining an Ink Collector Wrapper</h2>
+<p>The CMyInkCollector Class's Init method declares and initializes a CMyInkEvents object. It then creates an <a href="inkcollector-class.html"><strong>InkCollector</strong></a> object and associates the ink collector and the event handler. Finally, the <strong>InkCollector</strong> is attached to the window and enabled.</p>
+<pre lang="C++"><code>// Handle all initialization
+HRESULT Init(
+HWND hWnd)
+{
+    // Initialize event sink. This consists of setting
+    //  up the free threaded marshaler.
+    HRESULT hr = m_InkEvents.Init(hWnd);
+
+    if (FAILED(hr))
+        ...
+
+    // Create the ink collector
+    hr = CoCreateInstance(CLSID_InkCollector, NULL, CLSCTX_ALL, IID_IInkCollector, (void **) &amp;m_pInkCollector);
+
+    if (FAILED(hr))
+        ...
+
+    // Set up connection between Ink Collector and our event sink
+    hr = m_InkEvents.AdviseInkCollector(m_pInkCollector);
+
+    if (FAILED(hr))
+        ...
+
+    // Attach Ink Collector to window
+    hr = m_pInkCollector-&gt;put_hWnd((long) hWnd);
+
+    if (FAILED(hr))
+        ...
+
+    // Allow Ink Collector to receive input.
+    return m_pInkCollector-&gt;put_Enabled(VARIANT_TRUE);
+}
+</code></pre>
+<h2>Accessing the Tablet PC Interfaces and the Wrapper Classes</h2>
+<p>First, include the headers for Tablet PC Automation interfaces. These are installed with the Microsoft&lt;entity type=&quot;reg&quot;/&gt; Windows&lt;entity type=&quot;reg&quot;/&gt; XP Tablet PC Edition Development Kit 1.7.</p>
+<pre lang="C++"><code>#include &lt;msinkaut.h&gt;
+#include &lt;msinkaut_i.c&gt;
+</code></pre>
+<p>Then, include the headers for the wrapper classes and <a href="inkcollector-class.html"><strong>InkCollector</strong></a> event handler was defined.</p>
+<pre lang="C++"><code>#include &quot;TpcConpt.h&quot;
+#include &quot;EventSink.h&quot;
+</code></pre>
+<h2>Calling the Wrapper Classes</h2>
+<p>When the window is created, the Window procedure creates an ink collector wrapper and initializes the wrapper. When the window is destroyed, the Window procedure deletes the ink collector wrapper. The ink collector wrapper handles the creation and deletion of its associated event handler.</p>
+<pre lang="C++"><code>case WM_CREATE:
+
+    // Allocate and initialize memory for object
+    pmic = new CMyInkCollector();
+
+    if (pmic != NULL)
+    {
+        // Real initialization. This consists of creating
+        //  an ink collector object and attaching it to
+        //  the current window. 
+        if (SUCCEEDED(pmic-&gt;Init(hWnd)))
+        {
+            return 0;
+        }
+        
+        // Failure free resources.
+        delete pmic;
+        pmic = NULL;
+    }
+    
+    return -1;
+...
+case WM_DESTROY:
+    // The destructor for the object handles releasing the
+    //  InkCollector and disconnecting the InkCollector
+    //  from the object's event sink. 
+    delete pmic;
+    pmic = NULL;
+    PostQuitMessage(0);
+    break;
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

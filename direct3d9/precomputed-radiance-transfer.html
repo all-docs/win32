@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Precomputed Radiance Transfer (Direct3D 9)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Precomputed Radiance Transfer (Direct3D 9)
+ms.assetid: 2a233d23-9a9e-4774-9be0-f3bfe0369b21
+title: Precomputed Radiance Transfer (Direct3D 9)
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Precomputed Radiance Transfer (Direct3D 9)</h1>
+<h2>Using Precomputed Radiance Transfer</h2>
+<p>There are several forms of complexity present in interesting scenes, including how the lighting environment is modeled (that is, area lighting models versus point/directional ones) and what kind of global effects are modeled (for example, shadows, interreflections, subsurface scattering.) Traditional interactive rendering techniques model a limited amount of this complexity. PRT enables these effects with some significant restrictions:</p>
+<ul>
+<li>Objects are assumed to be rigid (that is, no deformations).</li>
+<li>It is an object-centric approach (unless objects are moved together, these global effects are not maintained between them).</li>
+<li>Only low-frequency lighting is modeled (resulting in soft shadows.) For high-frequency lights (sharp shadows), traditional techniques would have to be employed.</li>
+</ul>
+<p>PRT requires either of the following, but not both:</p>
+<ul>
+<li>highly-tessellated models and vs_1_1</li>
+<li>ps_2_0</li>
+</ul>
+<h3>Standard Diffuse Lighting versus PRT</h3>
+<p>The following illustration is rendered using the traditional (n Â· l) lighting model. Sharp shadows could be enabled using another pass and some form of shadowing technique (shadow depth maps or shadow volumes). Adding multiple lights would require either multiple passes (if shadows are to be used) or more complex shaders with traditional techniques.</p>
+<p><img src="images/prt-diffuse-cropped.png" alt="screen shot of an illustration rendered by using the traditional lighting model" /></p>
+<p>The next illustration is rendered with PRT using the best approximation of a single directional light that it can resolve. This results in soft shadows that would be difficult to produce with traditional techniques. Because PRT always models complete lighting environments adding multiple lights or using an environment map, you would only change the values (but not the number) of constants used by the shader.</p>
+<p><img src="images/prt-diffuseshadows-cropped.png" alt="screen shot of an illustration rendered by using prt" /></p>
+<h3>PRT with Interreflections</h3>
+<p>Direct lighting reaches the surface directly from the light. Interreflections are light reaching the surface after bouncing off some other surface some number of times. PRT can model this behavior without changing the performance at run time by simply running the simulator with different parameters.</p>
+<p>The following illustration is created using direct PRT only (0 bounces with no interreflections).</p>
+<p><img src="images/prt-nointerreflections.png" alt="screen shot of an illustration rendered by using direct prt only" /></p>
+<p>The following illustration is created using PRT with interreflections (2 bounces with interreflections).</p>
+<p><img src="images/prt-interreflections.png" alt="screen shot of an illustration rendered by using prt with interreflections" /></p>
+<h3>PRT with Subsurface Scattering</h3>
+<p>Subsurface scattering is a technique that models how light passes through certain materials. As an example, press a lit flashlight against the palm of your hand. The light from the flashlight passes through your hand, bounces around (changing color in the process), and exits from the other side of your hand. This can also be modeled with simple changes to the simulator and no changes to the runtime.</p>
+<p>The following illustration demonstrates PRT with subsurface scattering.</p>
+<p><img src="images/prt-subsurface.png" alt="screen shot of an illustration rendered by using prt with subsurface scattering" /></p>
+<h2>How PRT Works</h2>
+<p>The following terms are useful for understanding how PRT works, as illustrated in the following diagram.</p>
+<p>Source Radiance: The source radiance represents the lighting environment as a whole. In PRT an arbitrary environment is approximated using the spherical harmonic basis - this lighting is assumed to be distant relative to the object (the same assumption that is made with environment maps.)</p>
+<p>Exit Radiance: Exit radiance is the light leaving from a point on the surface from any possible source (reflected radiance, subsurface scattering, emission).</p>
+<p>Transfer Vectors: Transfer vectors map Source Radiance into exit radiance and are precomputed offline using a complex light transport simulation.</p>
+<p><img src="images/prt-lightingpicture.png" alt="diagram of how prt works" /></p>
+<p>PRT factors the rendering process into two stages, as shown in the following diagram:</p>
+<ol>
+<li>An expensive light transport simulation precomputes transfer coefficients that can be used at run time.</li>
+<li>A relatively lightweight run-time stage first approximates the lighting environment using the spherical harmonic basis, then uses these lighting coefficients and the precomputed transfer coefficients (from stage 1) with a simple shader, resulting in exit radiance (the light leaving the object).</li>
+</ol>
+<p><img src="images/prt-dataflow.png" alt="diagram of prt data flow" /></p>
+<h3>How to Use the PRT API</h3>
+<ol>
+<li>
+<p>Compute the transfer vectors with one of the Compute... methods of <a href="id3dxprtengine.html"><strong>ID3DXPRTEngine</strong></a>.</p>
+<p>Directly dealing with these transfer vectors requires a significant amount of memory and shader computation. Compression significantly reduces the amount of memory and shader computation required.</p>
+<p>The final lighting values are calculated in a vertex shader that implements the following compressed rendering equation.</p>
+<p><img src="images/prt-shaderequation.png" alt="equation of prt rendering" /></p>
+<p>Where:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Râ‚š</td>
+<td>A single channel of exit radiance at vertex p and is evaluated at every vertex on the mesh.</td>
+</tr>
+<tr>
+<td>Mâ‚–</td>
+<td>The mean for cluster k. This is an OrderÂ² vector of coefficients.</td>
+</tr>
+<tr>
+<td>k</td>
+<td>The cluster ID for vertex p.</td>
+</tr>
+<tr>
+<td>L<!-- raw HTML omitted -->'<!-- raw HTML omitted --></td>
+<td>The approximation of the source radiance into the SH basis functions. This is an OrderÂ² vector of coefficients.</td>
+</tr>
+<tr>
+<td>j</td>
+<td>An integer that sums over the number of PCA vectors.</td>
+</tr>
+<tr>
+<td>w<!-- raw HTML omitted -->pj<!-- raw HTML omitted --></td>
+<td>The jth PCA weight for point p. This is a single coefficient.</td>
+</tr>
+<tr>
+<td>B<!-- raw HTML omitted -->kj<!-- raw HTML omitted --></td>
+<td>The jth PCA basis vector for cluster k. This is an OrderÂ² vector of coefficients.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The Extract... methods of <a href="id3dxprtcompbuffer.html"><strong>ID3DXPRTCompBuffer</strong></a> provide access to compressed data from the simulation.</p>
+</li>
+<li>
+<p>Compute the source radiance.</p>
+<p>There are several helper functions in the API to handle a variety of common lighting scenarios.</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="d3dxshevaldirectionallight.html"><strong>D3DXSHEvalDirectionalLight</strong></a></td>
+<td>Approximates a conventional directional light.</td>
+</tr>
+<tr>
+<td><a href="d3dxshevalsphericallight.html"><strong>D3DXSHEvalSphericalLight</strong></a></td>
+<td>Approximates local spherical light sources. (Note that PRT only works with distance lighting environments.)</td>
+</tr>
+<tr>
+<td><a href="d3dxshevalconelight.html"><strong>D3DXSHEvalConeLight</strong></a></td>
+<td>Approximates a distant area light source. An example would be the sun (very small cone angle).</td>
+</tr>
+<tr>
+<td><a href="d3dxshevalhemispherelight.html"><strong>D3DXSHEvalHemisphereLight</strong></a></td>
+<td>Evaluates a light that is a linear interpolation between two colors (one on each pole of a sphere).</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+</li>
+<li>
+<p>Compute the exit radiance.</p>
+<p>Equation 1 now has to be evaluated at every point using either a vertex or pixel shader. Before the shader can be evaluated, constants have to be precomputed and loaded into the constant table (see the <a href="https://msdn.microsoft.com/library/Ee418763(v=VS.85).aspx">PRT Demo Sample</a> for details). The shader itself is a straightforward implementation of this equation.</p>
+<pre><code>struct VS_OUTPUT
+{
+    float4 Position   : POSITION;   // vertex position 
+    float2 TextureUV  : TEXCOORD0;  // vertex texture coordinates 
+    float4 Diffuse    : COLOR0;     // vertex diffuse color
+};
+
+VS_OUTPUT Output;   
+Output.Position = mul(vPos, mWorldViewProjection);
+
+float4 vExitR = float4(0,0,0,0);
+float4 vExitG = float4(0,0,0,0);
+float4 vExitB = float4(0,0,0,0);
+    
+for (int i=0; i &lt; (NUM_PCA_VECTORS/4); i++) 
+{
+   vExitR += vPCAWeights[i] * 
+       vClusteredPCA[iClusterOffset+i+1+(NUM_PCA_VECTORS/4)*0];
+   vExitG += vPCAWeights[i] * 
+       vClusteredPCA[iClusterOffset+i+1+(NUM_PCA_VECTORS/4)*1];
+   vExitB += vPCAWeights[i] * 
+       vClusteredPCA[iClusterOffset+i+1+(NUM_PCA_VECTORS/4)*2];
+}
+   
+float4 vExitRadiance = vClusteredPCA[iClusterOffset];
+vExitRadiance.r += dot(vExitR,1);
+vExitRadiance.g += dot(vExitG,1);
+vExitRadiance.b += dot(vExitB,1);
+
+Output.Diffuse = vExitRadiance;
+</code></pre>
+</li>
+</ol>
+<h2>References</h2>
+<p>For more information about PRT and spherical harmonics, see the following papers:</p>
+<pre><code>Precomputed Radiance Transfer for Real-Time Rendering in Dynamic, 
+Low-Frequency Lighting Environments 
+P.-P. Sloan, J. Kautz, J. Snyder
+SIGGRAPH 2002 
+
+Clustered Principal Components for Precomputed Radiance Transfer 
+P.-P. Sloan, J. Hall, J. Hart, J. Snyder 
+SIGGRAPH 2003 
+
+Efficient Evaluation of Irradiance Environment Maps 
+P.-P. Sloan 
+ShaderX 2,  W. Engel 
+
+Spherical Harmonic Lighting: The Gritty Details 
+R. Green 
+GDC 2003 
+
+An Efficient Representation for Irradiance Environment Maps 
+R. Ramamoorthi, P. Hanrahan 
+
+A Practical Model for Subsurface Light Transport 
+H. W. Jensen, S. R. Marschner, M. Levoy, and P. Hanrahan 
+SIGGRAPH 2001 
+
+Bi-Scale Radiance Transfer 
+P.-P. Sloan, X. Liu, H.-Y. Shum, J. Snyder
+SIGGRAPH 2003 
+
+Fast, Arbitrary BRDF Shading for Low-Frequency Lighting Using Spherical 
+Harmonics 
+J. Kautz, P.-P. Sloan, J. Snyder
+12th Eurographics Workshop on Rendering 
+
+Precomputing Interactive Dynamic Deformable Scenes 
+D. James, K. Fatahalian 
+SIGGRAPH 2003 
+
+All-Frequency Shadows Using Non-linear Wavelet Lighting Approximation 
+R. Ng, R. Ramamoorth, P. Hanrahan 
+SIGGRAPH 2003 
+
+Matrix Radiance Transfer 
+J. Lehtinen, J. Kautz
+SIGGRAPH 2003 
+
+Math World 
+E. W. Weisstein, Wolfram Research, Inc. 
+
+Quantum Theory of Angular Momentum 
+D. A. Varshalovich, A.N. Moskalev, V.K. Khersonskii 
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="advanced-topics.html">Advanced Topics</a></p>
+<!-- raw HTML omitted -->
+<p><a href="prt-equations.html">PRT Equations (Direct3D 9)</a></p>
+<!-- raw HTML omitted -->
+<p><a href="representing-prt-with-textures.html">Representing PRT With Textures (Direct3D 9)</a></p>
+<!-- raw HTML omitted -->
+<p><a href="id3dxprtbuffer.html"><strong>ID3DXPRTBuffer</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="id3dxprtcompbuffer.html"><strong>ID3DXPRTCompBuffer</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="id3dxprtengine.html"><strong>ID3DXPRTEngine</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="id3dxtexturegutterhelper.html"><strong>ID3DXTextureGutterHelper</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="dx9-graphics-reference-d3dx-functions-prt.html">Precomputed Radiance Transfer Functions</a></p>
+<!-- raw HTML omitted -->
+<p><a href="dx9-graphics-reference-d3dx-functions-math.html">Math Functions</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

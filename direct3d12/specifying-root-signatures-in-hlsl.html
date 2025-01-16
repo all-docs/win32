@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Specifying Root Signatures in HLSL</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Specifying Root Signatures in HLSL
+description: Specifying root signatures in HLSL Shader Model 5.1 is an alternative to specifying them in C++ code.
+ms.assetid: 399F5E91-B017-4F5E-9037-DC055407D96F
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Specifying Root Signatures in HLSL</h1>
+<p>Specifying root signatures in HLSL Shader Model 5.1 is an alternative to specifying them in C++ code.</p>
+<ul>
+<li><a href="#an-example-hlsl-root-signature">An example HLSL Root Signature</a>
+<ul>
+<li><a href="#root-signature-version-10">Root Signature Version 1.0</a></li>
+<li><a href="#root-signature-version-11">Root Signature Version 1.1</a></li>
+</ul>
+</li>
+<li><a href="#rootflags">RootFlags</a></li>
+<li><a href="#root-constants">Root Constants</a></li>
+<li><a href="#visibility">Visibility</a></li>
+<li><a href="#root-level-cbv">Root-level CBV</a></li>
+<li><a href="#root-level-srv">Root-level SRV</a></li>
+<li><a href="#root-level-uav">Root-level UAV</a></li>
+<li><a href="#descriptor-table">Descriptor Table</a></li>
+<li><a href="#static-sampler">Static Sampler</a></li>
+<li><a href="#compiling-an-hlsl-root-signature">Compiling an HLSL root signature</a></li>
+<li><a href="#manipulating-root-signatures-with-the-fxc-compiler">Manipulating root signatures with the FXC compiler</a></li>
+<li><a href="#notes">Notes</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>An example HLSL Root Signature</h2>
+<p>A root signature can be specified in HLSL as a string. The string contains a collection of comma-separated clauses that describe root signature constituent components. The root signature should be identical across shaders for any one pipeline state object (PSO). Here is an example:</p>
+<h3>Root Signature Version 1.0</h3>
+<pre lang="syntax"><code>#define MyRS1 &quot;RootFlags( ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | &quot; \
+                         &quot;DENY_VERTEX_SHADER_ROOT_ACCESS), &quot; \
+              &quot;CBV(b0, space = 1), &quot; \
+              &quot;SRV(t0), &quot; \
+              &quot;UAV(u0, visibility = SHADER_VISIBILITY_GEOMETRY), &quot; \
+              &quot;DescriptorTable( CBV(b0), &quot; \
+                               &quot;UAV(u1, numDescriptors = 2), &quot; \
+                               &quot;SRV(t1, numDescriptors = unbounded)), &quot; \
+              &quot;DescriptorTable(Sampler(s0, numDescriptors = 2)), &quot; \
+              &quot;RootConstants(num32BitConstants=1, b9), &quot; \
+              &quot;DescriptorTable( UAV(u3), &quot; \
+                               &quot;UAV(u4), &quot; \
+                               &quot;UAV(u5, offset=1)), &quot; \
+
+              &quot;StaticSampler(s2),&quot; \
+              &quot;StaticSampler(s3, &quot; \
+                             &quot;addressU = TEXTURE_ADDRESS_CLAMP, &quot; \
+                             &quot;filter = FILTER_MIN_MAG_MIP_LINEAR )&quot;
+</code></pre>
+<p>This definition would give the following root signature, noting:</p>
+<ul>
+<li>The use of default parameters.</li>
+<li>b0 and (b0, space=1) do not conflict</li>
+<li>u0 is only visible to the geometry shader</li>
+<li>u4 and u5 are aliased to the same descriptor in a heap</li>
+</ul>
+<p><img src="images/hlsl-root-signature.png" alt="a root signature specified using the high level shader language" /></p>
+<h3>Root Signature Version 1.1</h3>
+<p><a href="root-signature-version-1-1.html">Root Signature Version 1.1</a> enables driver optimizations on root signature descriptors and data.</p>
+<pre lang="syntax"><code>#define MyRS1 &quot;RootFlags( ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | &quot; \
+                         &quot;DENY_VERTEX_SHADER_ROOT_ACCESS), &quot; \
+              &quot;CBV(b0, space = 1, flags = DATA_STATIC), &quot; \
+              &quot;SRV(t0), &quot; \
+              &quot;UAV(u0), &quot; \
+              &quot;DescriptorTable( CBV(b1), &quot; \
+                               &quot;SRV(t1, numDescriptors = 8, &quot; \
+                               &quot;        flags = DESCRIPTORS_VOLATILE), &quot; \
+                               &quot;UAV(u1, numDescriptors = unbounded, &quot; \
+                               &quot;        flags = DESCRIPTORS_VOLATILE)), &quot; \
+              &quot;DescriptorTable(Sampler(s0, space=1, numDescriptors = 4)), &quot; \
+              &quot;RootConstants(num32BitConstants=3, b10), &quot; \
+              &quot;StaticSampler(s1),&quot; \
+              &quot;StaticSampler(s2, &quot; \
+                             &quot;addressU = TEXTURE_ADDRESS_CLAMP, &quot; \
+                             &quot;filter = FILTER_MIN_MAG_MIP_LINEAR )&quot;
+</code></pre>
+<p>The HLSL root signature language closely corresponds to the C++ root signature APIs and has equivalent expressive power. The root signature is specified as a sequence of clauses, separated by comma. The order of clauses is important, as the order of parsing determines the slot position in the root signature. Each clause takes one or more named parameters. The order of parameters is not important, however.</p>
+<h2>RootFlags</h2>
+<p>The optional <em>RootFlags</em> clause takes either 0 (the default value to indicate no flags), or one or several of predefined root flags values, connected via the OR â€˜|â€™ operator. The allowed root flag values are defined by <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_root_signature_flags"><strong>D3D12_ROOT_SIGNATURE_FLAGS</strong></a>.</p>
+<p>For example:</p>
+<pre lang="syntax"><code>RootFlags(0) // default value â€“ no flags
+RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT)
+RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | DENY_VERTEX_SHADER_ROOT_ACCESS)
+</code></pre>
+<h2>Root Constants</h2>
+<p>The <em>RootConstants</em> clause specifies root constants in the root signature. Two mandatory parameters are: <em>num32BitConstants</em> and <em>bReg</em> (the register corresponding to <em>BaseShaderRegister</em> in C++ APIs) of the <em>cbuffer</em>. The space (<em>RegisterSpace</em> in C++ APIs) and visibility (<em>ShaderVisibility</em> in C++) parameters are optional, and the default values are:</p>
+<pre lang="syntax"><code>RootConstants(num32BitConstants=N, bReg [, space=0, 
+              visibility=SHADER_VISIBILITY_ALL ])
+</code></pre>
+<p>For example:</p>
+<pre lang="syntax"><code>RootConstants(num32BitConstants=3, b3)
+</code></pre>
+<h2>Visibility</h2>
+<p>Visibility is an optional parameter that can have one of the values from <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shader_visibility"><strong>D3D12_SHADER_VISIBILITY</strong></a>.</p>
+<p>SHADER_VISIBILITY_ALL broadcasts the root arguments to all shaders. On some hardware this has no cost, but on other hardware there is a cost to fork the data to all the shader stages. Setting one of the options, such as SHADER_VISIBILITY_VERTEX, limits the root argument to a single shader stage.</p>
+<p>Setting root arguments to single shader stages allows the same bind name to be used at different stages. For example, an SRV binding of <code>t0,SHADER_VISIBILITY_VERTEX</code> and SRV binding of <code>t0,SHADER_VISIBILITY_PIXEL</code> would be valid. But if the visibility setting was <code>t0,SHADER_VISIBILITY_ALL</code> for one of the bindings, the root signature would be invalid.</p>
+<h2>Root-level CBV</h2>
+<p>The <code>CBV</code> (constant buffer view) clause specifies a root-level constant buffer b-register Reg entry. Note that this is a scalar entry; it is not possible to specify a range for the root level.</p>
+<pre lang="syntax"><code>CBV(bReg [, space=0, visibility=SHADER_VISIBILITY_ALL ])    //   Version 1.0
+CBV(bReg [, space=0, visibility=SHADER_VISIBILITY_ALL,      // Version 1.1
+            flags=DATA_STATIC_WHILE_SET_AT_EXECUTE ])
+</code></pre>
+<h2>Root-level SRV</h2>
+<p>The <code>SRV</code> (shader resource view) clause specifies a root-level SRV t-register Reg entry. Note that this is a scalar entry; it is not possible to specify a range for the root level.</p>
+<pre lang="syntax"><code>SRV(tReg [, space=0, visibility=SHADER_VISIBILITY_ALL ])    //   Version 1.0
+SRV(tReg [, space=0, visibility=SHADER_VISIBILITY_ALL,      // Version 1.1
+            flags=DATA_STATIC_WHILE_SET_AT_EXECUTE ])
+</code></pre>
+<h2>Root-level UAV</h2>
+<p>The <code>UAV</code> (unordered access view) clause specifies a root-level UAV u-register Reg entry. Note that this is a scalar entry; it is not possible to specify a range for the root level.</p>
+<pre lang="syntax"><code>UAV(uReg [, space=0, visibility=SHADER_VISIBILITY_ALL ])    //   Version 1.0
+UAV(uReg [, space=0, visibility=SHADER_VISIBILITY_ALL,      // Version 1.1
+            flags=DATA_VOLATILE ])
+</code></pre>
+<p>For example:</p>
+<pre lang="syntax"><code>UAV(u3)
+</code></pre>
+<h2>Descriptor Table</h2>
+<p>The <code>DescriptorTable</code> clause is itself a list of comma-separated descriptor table clauses, as well as an optional visibility parameter. The <em>DescriptorTable</em> clauses include CBV, SRV, UAV, and Sampler. Note that their parameters differ from those of the root-level clauses.</p>
+<pre lang="syntax"><code>DescriptorTable( DTClause1, [ DTClause2, â€¦ DTClauseN,
+                 visibility=SHADER_VISIBILITY_ALL ] )
+</code></pre>
+<p>The Descriptor Table <code>CBV</code> has the following syntax:</p>
+<pre lang="syntax"><code>CBV(bReg [, numDescriptors=1, space=0, offset=DESCRIPTOR_RANGE_OFFSET_APPEND ])   // Version 1.0
+CBV(bReg [, numDescriptors=1, space=0, offset=DESCRIPTOR_RANGE_OFFSET_APPEND      // Version 1.1
+          , flags=DATA_STATIC_WHILE_SET_AT_EXECUTE ])
+</code></pre>
+<p>For example:</p>
+<pre lang="syntax"><code>DescriptorTable(CBV(b0),SRV(t3, numDescriptors=unbounded))
+</code></pre>
+<p>The mandatory parameter <em>bReg</em> specifies the start Reg of the cbuffer range. The <em>numDescriptors</em> parameter specifies the number of descriptors in the contiguous cbuffer range; the default value being 1. The entry declares a cbuffer range<code> [Reg, Reg + numDescriptors - 1]</code>, when <em>numDescriptors</em> is a number. If <em>numDescriptors</em> is equal to &quot;unbounded&quot;, the range is <code>[Reg, UINT_MAX]</code>, which means the app must ensure it is not referencing an out-of-bounds area. The <em>offset</em> field represents the <em>OffsetInDescriptorsFromTableStart</em> parameter in the C++ APIs, that is, the offset (in descriptors) from the start of the table. If the offset is set to DESCRIPTOR_RANGE_OFFSET_APPEND (the default), it means the range is directly after the previous range. However, entering specific offsets does allow for ranges to overlap each other, allowing register aliasing.</p>
+<p>The Descriptor Table <code>SRV</code> has the following syntax:</p>
+<pre lang="syntax"><code>SRV(tReg [, numDescriptors=1, space=0, offset=DESCRIPTOR_RANGE_OFFSET_APPEND ])    // Version 1.0
+SRV(tReg [, numDescriptors=1, space=0, offset=DESCRIPTOR_RANGE_OFFSET_APPEND,      // Version 1.1
+            flags=DATA_STATIC_WHILE_SET_AT_EXECUTE ])
+</code></pre>
+<p>This is similar to the descriptor table <code>CBV</code> entry, except the specified range is for shader resource views.</p>
+<p>The Descriptor Table <code>UAV</code> has the following syntax:</p>
+<pre lang="syntax"><code>UAV(uReg [, numDescriptors=1, space=0, offset=DESCRIPTOR_RANGE_OFFSET_APPEND ])    // Version 1.0
+UAV(uReg [, numDescriptors=1, space=0, offset=DESCRIPTOR_RANGE_OFFSET_APPEND,      // Version 1.1
+            flags=DATA_VOLATILE ])
+</code></pre>
+<p>This is similar to the descriptor table <code>CBV</code> entry, except the specified range is for unordered access views.</p>
+<p>The Descriptor Table <code>Sampler</code> has the following syntax:</p>
+<pre lang="syntax"><code>Sampler(sReg [, numDescriptors=1, space=0, offset=DESCRIPTOR_RANGE_OFFSET_APPEND ])  // Version 1.0
+Sampler(sReg [, numDescriptors=1, space=0, offset=DESCRIPTOR_RANGE_OFFSET_APPEND,    // Version 1.1
+                flags=0 ])
+</code></pre>
+<p>This is similar to the descriptor table <code>CBV</code> entry, except the specified range is for shader samplers. Note that Samplers canâ€™t be mixed with other types of descriptors in the same descriptor table (since they are in a separate descriptor heap).</p>
+<h2>Static Sampler</h2>
+<p>The static sampler represents the <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_static_sampler_desc"><strong>D3D12_STATIC_SAMPLER_DESC</strong></a> structure. The mandatory parameter for <em>StaticSampler</em> is a scalar, sampler s-register Reg. Other parameters are optional with default values shown below. Most fields accept a set of predefined enums.</p>
+<pre lang="syntax"><code>StaticSampler( sReg,
+              [ filter = FILTER_ANISOTROPIC, 
+                addressU = TEXTURE_ADDRESS_WRAP,
+                addressV = TEXTURE_ADDRESS_WRAP,
+                addressW = TEXTURE_ADDRESS_WRAP,
+                mipLODBias = 0.f,
+                maxAnisotropy = 16,
+                comparisonFunc = COMPARISON_LESS_EQUAL,
+                borderColor = STATIC_BORDER_COLOR_OPAQUE_WHITE,
+                minLOD = 0.f,         
+                maxLOD = 3.402823466e+38f,
+                space = 0, 
+                visibility = SHADER_VISIBILITY_ALL ])
+</code></pre>
+<p>For example:</p>
+<pre lang="syntax"><code>StaticSampler(s4, filter=FILTER_MIN_MAG_MIP_LINEAR)
+</code></pre>
+<p>The parameter options are very similar to the C++ API calls, except for <em>borderColor</em>, which is restricted to an enum in HLSL.</p>
+<p>The filter field can be one of <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_filter"><strong>D3D12_FILTER</strong></a>.</p>
+<p>The address fields can each be one of <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_texture_address_mode"><strong>D3D12_TEXTURE_ADDRESS_MODE</strong></a>.</p>
+<p>The comparison function can be one of <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_comparison_func"><strong>D3D12_COMPARISON_FUNC</strong></a>.</p>
+<p>The border color field can be one of <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_static_border_color"><strong>D3D12_STATIC_BORDER_COLOR</strong></a>.</p>
+<p>Visibility can be one of <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shader_visibility"><strong>D3D12_SHADER_VISIBILITY</strong></a>.</p>
+<h2>Compiling an HLSL root signature</h2>
+<p>There are two mechanisms to compile an HLSL root signature. First, it is possible to attach a root signature string to a particular shader via the <em>RootSignature</em> attribute (in the following example, using the <strong>MyRS1</strong> entry point):</p>
+<pre lang="syntax"><code>[RootSignature(MyRS1)]
+float4 main(float4 coord : COORD) : SV_Target
+{
+â€¦
+}
+</code></pre>
+<p>The compiler will create and verify the root signature blob for the shader and embed it alongside the shader byte code into the shader blob. The compiler supports root signature syntax for shader model 5.0 and higher. If a root signature is embedded in a shader model 5.0 shader and that shader is sent to the D3D11 runtime, as opposed to D3D12, the root signature portion will get silently ignored by D3D11.</p>
+<p>The other mechanism is to create a standalone root signature blob, perhaps to reuse it with a large set of shaders, saving space. The <a href="/windows/desktop/direct3dtools/fxc">Effect-Compiler Tool</a> (FXC) supports both <strong>rootsig_1_0</strong> and<strong>rootsig_1_1</strong> shader models. The name of the define string is specified via the usual /E argument. For example:</p>
+<pre lang="syntax"><code>fxc.exe /T rootsig_1_1 MyRS1.hlsl /E MyRS1 /Fo MyRS1.fxo
+</code></pre>
+<p>Note that the root signature string define can also be passed on the command line, e.g, /D MyRS1=â€â€¦â€.</p>
+<h2>Manipulating root signatures with the FXC compiler</h2>
+<p>The FXC compiler creates shader byte-code from HLSL source files. There are a lot of optional parameters for this compiler, refer to the <a href="/windows/desktop/direct3dtools/fxc">Effect-Compiler Tool</a>.</p>
+<p>For managing HLSL authored root signatures, the following table gives some examples of using FXC.</p>
+<table>
+<thead>
+<tr>
+<th>Line</th>
+<th>Command line</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>fxc /T ps_5_1 shaderWithRootSig.hlsl /Fo rs1.fxo</code></td>
+<td>Compiles a shader for the pixel shader 5.1 target, the shader source is in the shaderWithRootSig.hlsl file, which includes a root signature. The shader and root signature are compiled as separate blobs in the rs1.fxo binary file.</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>fxc /dumpbin rs1.fxo /extractrootsignature /Fo rs1.rs.fxo</code></td>
+<td>Extracts the root signature from the file created by line 1, so the rs1.rs.fxo file contains just a root signature.</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>fxc /dumpbin rs1.fxo /Qstrip_rootsignature /Fo rs1.stripped.fxo</code></td>
+<td>Removes the root signature from the file created by line 1, so the rs1.stripped.fxo file contains a shader with no root signature.</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>fxc /dumpbin rs1.stripped.fxo /setrootsignature rs1.rs.fxo /Fo rs1.new.fxo</code></td>
+<td>Combines a shader and root signature that are in separate files into a binary file containing both blobs. In this example rs1.new.fx0 would be identical to rs1.fx0 in line 1.</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>fxc /T rootsig_1_0 rootSigAndMaybeShaderInHereToo.hlsl /E RS1 /Fo rs2.fxo</code></td>
+<td>Creates a stand-alone root signature binary file from a source that may contain more than just a root signature. Note the rootsig_1_0 target, and that RS1 is the name of the root signature (#define) macro string in the HLSL file.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The functionality available through FXC is also available programmatically using the <a href="/windows/desktop/direct3dhlsl/d3dcompile"><strong>D3DCompile</strong></a> function. This call compiles a shader with a root signature, or stand-alone root signature (setting the rootsig_1_0 target). <a href="/windows/desktop/direct3dhlsl/d3dgetblobpart"><strong>D3DGetBlobPart</strong></a> and <a href="/windows/desktop/direct3dhlsl/d3dsetblobpart"><strong>D3DSetBlobPart</strong></a> can extract and attach root signatures to an existing blob.Â  D3D_BLOB_ROOT_SIGNATURE is used to specify the root signature blob part type. <a href="/windows/desktop/direct3dhlsl/d3dstripshader"><strong>D3DStripShader</strong></a> removes the root signature (using the D3DCOMPILER_STRIP_ROOT_SIGNATURE flag) from the blob.</p>
+<h2>Notes</h2>
+<blockquote>
+<p>[!Note]<br />
+Whereas the offline compilation of shaders is strongly recommended, if shaders have to be compiled at runtime, refer to the remarks for <a href="/windows/desktop/direct3dhlsl/d3dcompile2"><strong>D3DCompile2</strong></a>.</p>
+</blockquote>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+Existing HLSL assets do not need to be changed to handle root signatures to be used with them.</p>
+</blockquote>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="dynamic-indexing-using-hlsl-5-1.html">Dynamic Indexing using HLSL 5.1</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/direct3dhlsl/hlsl-shader-model-5-1-features-for-direct3d-12">HLSL Shader Model 5.1 Features for Direct3D 12</a></p>
+<!-- raw HTML omitted -->
+<p><a href="resource-binding.html">Resource Binding</a></p>
+<!-- raw HTML omitted -->
+<p><a href="resource-binding-in-hlsl.html">Resource Binding in HLSL</a></p>
+<!-- raw HTML omitted -->
+<p><a href="root-signatures.html">Root Signatures</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/direct3dhlsl/shader-model-5-1">Shader Model 5.1</a></p>
+<!-- raw HTML omitted -->
+<p><a href="shader-specified-stencil-reference-value.html">Shader Specified Stencil Reference Value</a></p>
+<!-- raw HTML omitted -->
+<p><a href="typed-unordered-access-view-loads.html">Typed Unordered Access View Loads</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

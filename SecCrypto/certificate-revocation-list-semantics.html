@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Crypt32 certificate revocation list (CRL) semantics</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Learn how Crypt32 uses CRLs for online revocation checking and how CRL pre-fetching and partitioning can be used to improve performance.
+title: Crypt32 certificate revocation list (CRL) semantics
+ms.topic: concept-article
+ms.date: 10/10/2024
+#customer intent: As a Windows developer, I want to learn how Crypt32 uses CRLs for online revocation checking and how CRL pre-fetching and partitioning can be used to improve performance.</h2>
+<h1>Crypt32 certificate revocation list (CRL) semantics</h1>
+<p>Crypt32 supports certificate revocation list (CRL) semantics for online revocation checking. This article provides information on how Crypt32 uses CRLs for online revocation checking and how CRL pre-fetching and partitioning can be used to improve performance.</p>
+<h2>Introduction</h2>
+<p>When the Crypt32 <a href="/windows/win32/api/wincrypt/nf-wincrypt-certgetcertificatechain">CertGetCertificateChain</a> API is called with online revocation enabled, it will attempt to retrieve a time valid OCSP response or CRL as follows:</p>
+<ul>
+<li>Check if a time valid stapled OCSP response was included in the handshake.</li>
+<li>Check if we have a time valid OCSP response or CRL in the userâ€™s Cryptnet URL cache.</li>
+<li>Check if we have a time valid CRL in a system store, such as HKLM\CA.</li>
+<li>For OCSP URL in the subject certificateâ€™s AIA extension, attempt to download the OCSP response from the OCSP server.
+<ul>
+<li>For success, add the OCSP response to the userâ€™s Cryptnet URL cache.</li>
+</ul>
+</li>
+<li>For CRL CDP extension in the subject certificate, attempt to download the CRL from the certificate authority (CA)â€™s CRL server.
+<ul>
+<li>For success, add the CRL to the userâ€™s Cryptnet URL cache.</li>
+</ul>
+</li>
+</ul>
+<p>For a CRL added to the <a href="/windows/win32/api/wincrypt/ns-wincrypt-cryptnet_url_cache_pre_fetch_info">Cryptnet URL cache</a>, the next CRL will be retrieved before it expires if the CRL has the following extension: â€œ1.3.6.1.4.1.311.21.4â€ (Next CRL Publish). By adding this extension, only the initial CRL download will take place during the certificate validation. See <a href="#crl-pre-fetching">CRL Pre-Fetching</a> section for more information on how Crypt32 uses this extension to pre-fetch the next CRL.</p>
+<p>If a CA issues a high volume of certificates, then, the number of revoked entries on a CRL could also become large, increasing the size of the CRL. To keep the size of the CRL in check, Microsoft recommends and supports CRL partitioning via the&quot;2.5.29.28&quot; (Issuing Distribution Point) extension added to the downloaded CRL. See <a href="#crl-partitioning">CRL Partitioning</a> section for more information on how Crypt32 supports CRL partitioning via this extension.</p>
+<p>CAâ€™s considering dropping support for OCSP and only supporting CRLs need to consider the impact this will have on applications calling the <strong>CertGetCertificateChain</strong> API with online revocation enabled:</p>
+<ul>
+<li>On the first validation, the calling application will do an on demand CRL download and will block the API from completing until the CRL is downloaded.
+<ul>
+<li>For high volume TLS servers, there will be corresponding high volume downloads from the CAâ€™s CRL server.</li>
+<li>If the CRL becomes large, it will have a direct impact on the server being able to handle a high volume of downloads.
+<ul>
+<li>The size of the CRL can be limited by supporting partitioned CRLs.</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>Subsequent validations will use the cached CRL until the CRL expires. When the CRL expires, the above will be repeated for the next validation.
+<ul>
+<li>This on demand CRL download can be avoided by adding the Next CRL Publish extension.</li>
+</ul>
+</li>
+</ul>
+<p>The following sections provide information on CRL pre-fetching and partitioning for improving online revocation performance where only CRLs are used.</p>
+<h2>CRL pre-fetching</h2>
+<p>An encoded CRL has the following two fields indicating when the CRL was published and how long the client can cache before needing to retrieve the next published CRL.</p>
+<pre lang="cpp"><code>ThisUpdate    GeneralizedTime,
+NextUpdate    GeneralizedTime OPTIONAL,
+</code></pre>
+<p>If <em>NextUpdate</em> is missing, this is the last CRL to be published and will never expire.</p>
+<p>A CRL may contain the â€œ1.3.6.1.4.1.311.21.4â€ (Next CRL Publish) extension which is also encoded as <em>GeneralizedTime</em>. When this extension is present, Crypt32 will attempt to pre-fetch the next published CRL after this <em>PublishTime</em> and before <em>NextUpdate</em> as follows:</p>
+<p>Given, <code>PublishPeriod = NextUpdate â€“ PublishTime</code>. The following three configuration parameters are used to determine the start and end of the <em>PreFetchPeriod</em>:</p>
+<ul>
+<li><em>AfterPublishPreFetchDivisor</em>
+<ul>
+<li>The start of the <em>PreFetchPeriod</em> is delayed after the <em>PublishTime</em> by dividing the <em>PublishPeriod</em> by this divisor.</li>
+<li>Default of 10</li>
+</ul>
+</li>
+<li><em>BeforeNextUpdatePreFetchDivisor</em>
+<ul>
+<li>The finish of the <em>PreFetchPeriod</em> occurs before <em>NextUpdate</em> by dividing the <em>PublishPeriod</em> by this divisor.</li>
+<li>Default of 20</li>
+</ul>
+</li>
+<li><em>MinPreFetchPeriod</em>
+<ul>
+<li>Given, <code>PreFetchPeriod = PreFetchPeriodFinishTime â€“ PreFetchPeriodStartTime</code>. Pre-Fetching is only enabled if the <em>PreFetchPeriod</em> exceeds this minimum.</li>
+<li>Default of 1 hour</li>
+</ul>
+</li>
+</ul>
+<p>Given the above calculated <em>PreFetchPeriod</em>, a random time is picked within this <em>PreFetchPeriod</em> for each client to pre-fetch and download the published CRL from the server.</p>
+<p>Some example times and the corresponding <em>PreFetchPeriod</em> using the default configuration values.</p>
+<p>CRL is valid for two days and published every day:</p>
+<pre lang="output"><code>ThisUpdate:  Nov 05 08:00 
+NextUpdate:  Nov 07 08:00 
+PublishTime: Nov 06 08:00 
+
+PublishPeriod = 24 hours 
+PreFetchPeriodStartTime  = PublishTime + 24/10 (2.4 hours) 
+PreFetchPeriodFinishTime = NextUpdate â€“ 24/20 (1.2 hours) 
+
+PreFetchPeriod = Nov 06 10:24 .. Nov 07 06:48 = 20:24  
+
+Clients would randomly pre-fetch in the above PreFetchPeriod. 
+</code></pre>
+<p>CRL is valid for eight days and published every four days:</p>
+<pre lang="output"><code>ThisUpdate:  Nov 03 08:00 
+NextUpdate:  Nov 11 08:00 
+PublishTime: Nov 07 08:00 
+
+PublishPeriod = 96 hours 
+PreFetchPeriodStartTime  = PublishTime + 96/10 (9.6 hours) 
+PreFetchPeriodFinishTime = NextUpdate â€“ 96/20 (4.8 hours) 
+
+PreFetchPeriod = Nov 07 17:36 .. Nov 11 03:12 = 81:36 
+
+Clients would randomly pre-fetch in the above PreFetchPeriod 
+</code></pre>
+<blockquote>
+<p>[!NOTE]
+If the pre-fetched CRL isnâ€™t used by the client, then, the above pre-fetching will be stopped until the client initiates a new on demand download for this CRL.</p>
+</blockquote>
+<h2>CRL partitioning</h2>
+<p>This section provides information on how Crypt32 supports CRL partitioning.</p>
+<h3>Example</h3>
+<p>The following is an example of a commonly formatted CDP and identity provider (IDP) extension used for CRL partitioning.</p>
+<p>For the first partition of certificates issued from the CA:</p>
+<pre lang="output"><code>Cert CDP:
+[1]CRL Distribution Point
+â€¯â€¯â€¯â€¯â€¯Distribution Point Name:
+â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯Full Name:
+â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯URL=http://crl.godaddy.com/first.crl
+
+CRL IDP:
+Distribution Point Name:
+â€¯â€¯â€¯â€¯â€¯Full Name:
+â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯URL=http://crl.godaddy.com/first.crl
+Only Contains User Certs=No
+Only Contains CA Certs=No
+Indirect CRL=No
+</code></pre>
+<p>For the second partition of certificates issued from the CA, points to a different CRL in both the CDP and IDP:</p>
+<pre lang="output"><code>Cert CDP:
+[1]CRL Distribution Point
+â€¯â€¯â€¯â€¯â€¯Distribution Point Name:
+â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯Full Name:
+â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯URL=http://crl.godaddy.com/second.crl
+
+CRL IDP:
+Distribution Point Name:
+â€¯â€¯â€¯â€¯â€¯Full Name:
+â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯URL=http://crl.godaddy.com/second.crl
+Only Contains User Certs=No
+Only Contains CA Certs=No
+Indirect CRL=No
+</code></pre>
+<p>As you can see, the same single http CRL URL is used in both the CDP and IDP. Also, the partitioned CRLs are directly signed by the CA and are applicable to both CAs and end user certs.</p>
+<p>The next section provides details on the ASN.1 encoding of the IDP and CDP extensions and what is supported by Crypt32.</p>
+<h3>Details</h3>
+<p>This is the ASN.1 for the Issuing Distribution Point (IDP) extension (&quot;2.5.29.28&quot;):</p>
+<pre lang="cpp"><code>--------------------------------------------
+-- CRL Issuing Distribution Point Extension
+--------------------------------------------
+IssuingDistributionPoint ::= SEQUENCE {
+â€¯â€¯â€¯ issuingDistributionPointâ€¯â€¯â€¯ [0] EXPLICIT DistributionPointName OPTIONAL,
+â€¯â€¯â€¯ onlyContainsUserCertsâ€¯â€¯â€¯â€¯â€¯â€¯ [1] IMPLICIT BOOLEAN DEFAULT FALSE,
+â€¯â€¯â€¯ onlyContainsCACertsâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [2] IMPLICIT BOOLEAN DEFAULT FALSE,
+â€¯â€¯â€¯ onlySomeReasonsâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [3] IMPLICIT ReasonFlags OPTIONAL,
+â€¯â€¯â€¯ indirectCRLâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [4] IMPLICIT BOOLEAN DEFAULT FALSE
+} --#publicâ€”
+
+DistributionPointName ::= CHOICE {
+â€¯â€¯â€¯ fullNameâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [0] IMPLICIT GeneralNames,
+â€¯â€¯â€¯ nameRelativeToCRLIssuer [1] IMPLICIT RelativeDistinguishedName
+}
+
+GeneralNames ::= SEQUENCE OF GeneralName
+
+GeneralName ::= CHOICE {
+â€¯â€¯â€¯ otherNameâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [0] IMPLICIT OtherName,
+â€¯â€¯â€¯ rfc822Nameâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [1] IMPLICIT IA5STRING,
+â€¯â€¯â€¯ dNSNameâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [2] IMPLICIT IA5STRING,
+â€¯â€¯â€¯ x400Addressâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [3] IMPLICIT SeqOfAny,
+â€¯â€¯â€¯ directoryNameâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [4] EXPLICIT NOCOPYANY,â€¯â€¯â€¯ -- really Name
+â€¯â€¯â€¯ ediPartyNameâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [5] IMPLICIT SeqOfAny,
+â€¯â€¯â€¯ uniformResourceLocatorâ€¯ [6] IMPLICIT IA5STRING,
+â€¯â€¯â€¯ iPAddressâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [7] IMPLICIT OCTETSTRING,
+â€¯â€¯â€¯ registeredIDâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [8] IMPLICIT EncodedObjectID
+}
+</code></pre>
+<p>If a CRL has an IDP, the Windows Client will proceed as follows:</p>
+<ul>
+<li>Ignore IDPs having:
+<ul>
+<li><em>onlySomeReasons</em></li>
+<li><em>indirectCRL</em></li>
+</ul>
+</li>
+<li>Only support IDPs with the <em>fullName</em> choice.
+<ul>
+<li>The CRL CDP must also have the fullName choice.</li>
+</ul>
+</li>
+<li>If <em>onlyContainsUserCerts</em> or <em>onlyContainsCACerts</em>:
+<ul>
+<li>Use certificateâ€™s basic constraints extension to determine if the IDP is applicable to the certificate.</li>
+</ul>
+</li>
+</ul>
+<p>This is the ASN.1 for the CDP extension in a certificate:</p>
+<pre lang="cpp"><code>--------------------------------------------
+-- CRL Distribution Points Extension
+--------------------------------------------
+CRLDistributionPoints ::= SEQUENCE OF DistributionPoint
+
+DistributionPoint ::= SEQUENCE {
+â€¯â€¯â€¯ distributionPointâ€¯â€¯â€¯â€¯â€¯ â€¯[0] EXPLICIT DistributionPointName OPTIONAL,
+â€¯â€¯â€¯ reasonsâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [1] IMPLICIT ReasonFlags OPTIONAL,
+â€¯â€¯â€¯ cRLIssuerâ€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯â€¯ [2] IMPLICIT GeneralNames OPTIONAL
+}
+
+DistributionPointName see above
+</code></pre>
+<p>A Windows client will:</p>
+<ul>
+<li>Iterate through the IDPâ€™s sequence of <em>GeneralNames</em> until a match with a CDP name:
+<ul>
+<li>Iterate through the CDPâ€™s sequence of <em>DistributionPoints</em>:
+<ul>
+<li>Skip CDP <em>DistributionPoint</em> having:
+<ul>
+<li><em>reasons</em></li>
+<li><em>cRLIssuer</em></li>
+</ul>
+</li>
+<li>Skip CDP <em>DistributionPoint</em> if it doesnâ€™t have a <em>fullName</em> choice for <em>DistributionPointName</em>.</li>
+<li>Iterate through the CDPâ€™s sequence of <em>GeneralNames</em>:
+<ul>
+<li>Check if IDP and CDP <em>GeneralName</em> matches
+<ul>
+<li>If <strong>IsSameGeneralName()</strong>, we have a match and the CRL can be used for the subject certificate.</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p><strong>IsSameGeneralName</strong>(IDP_GeneralName, CDP_GeneralName)</p>
+<p>The IDP and CDP must have the same <em>GeneralName</em> choice. For same choice compare the IDP and CDP name according to the choice:</p>
+<ul>
+<li>rfc822Name
+<ul>
+<li>Case insensitive string comparison. No % character normalization.</li>
+</ul>
+</li>
+<li>dNSName
+<ul>
+<li>Case insensitive string comparison. No % character normalization.</li>
+</ul>
+</li>
+<li>uniformResourceLocator (URL)
+<ul>
+<li>Case insensitive string comparison. No % character normalization.</li>
+</ul>
+</li>
+<li>otherName
+<ul>
+<li>The OID and OID specific binary value are compared.</li>
+</ul>
+</li>
+<li>registeredID
+<ul>
+<li>The OIDs are compared.</li>
+</ul>
+</li>
+<li>directoryName
+<ul>
+<li>The encoded name bytes are compared.</li>
+</ul>
+</li>
+<li>iPAddress
+<ul>
+<li>The encoded OCTET bytes are compared.</li>
+</ul>
+</li>
+<li>x400Address
+<ul>
+<li>Not supported.</li>
+</ul>
+</li>
+<li>ediPartyName
+<ul>
+<li>Not supported.</li>
+</ul>
+</li>
+</ul>
+<p>The expectation is that the uniformResourceLocator <em>GeneralName</em> choice will be used.</p>
+<h2>Related content</h2>
+<p><a href="/windows/win32/api/wincrypt/nf-wincrypt-certgetcertificatechain">CertGetCertificateChain</a></p>
+<p><a href="/windows/win32/api/wincrypt/nf-wincrypt-certgetcrlcontextproperty">CertGetCRLContextProperty</a></p>
+<p><a href="cryptography-functions.html">Cryptography Functions</a></p>
+</body>

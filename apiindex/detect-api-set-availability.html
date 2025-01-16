@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Detect API set availability</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Describes how to detect whether a specific API set is available on the current device.
+title: Detect API set availability
+ms.topic: article
+ms.date: 05/31/2023</h2>
+<h1>Detect API set availability</h1>
+<p>In some cases, a given API set contract name may be intentionally mapped to an empty module name on some Windows devices. The reasons for this vary, but a common example is that an expensive feature in terms of system resources may be removed from the Windows OS when configured for a resource-constrained device. This poses a challenge for applications to gracefully handle optional features at the API level.</p>
+<p>The traditional approach for testing whether a Win32 API is available is to use <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibrarya">LoadLibrary</a> or <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress">GetProcAddress</a>. However, these are not a reliable means for testing API sets because of the <a href="api-set-loader-operation.md#reverse-forwarding">reverse forwarding</a> support in Windows 10, and later. When reverse forwarding is applied to a given API, <strong>LoadLibrary</strong> or <strong>GetProcAddress</strong> may resolve to a valid function pointer even in cases where the internal implementation has been removed. In this case, the function pointer will be pointing to a stub function that simply returns an error.</p>
+<p>In order to detect this case, you can use the <a href="/windows/win32/api/apiquery2/nf-apiquery2-isapisetimplemented">IsApiSetImplemented</a> function to query the underlying availability of a given API implementation. This test validates that calling this function will result in executing a functional implementation of the API.</p>
+<p>The following code example demonstrates how to use <strong>IsApiSetImplemented</strong> to determine whether the <a href="/windows/win32/api/wtsapi32/nf-wtsapi32-wtsenumeratesessionsa">WTSEnumerateSessions</a> function is available on the current device before calling it.</p>
+<pre lang="c++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;Wtsapi32.h&gt;
+
+int __cdecl wmain(int /* argc */, PCWSTR /* argv */ [])
+{
+    PWTS_SESSION_INFO pInfo = {};
+    DWORD count = 0;
+
+    if (!IsApiSetImplemented(&quot;ext-ms-win-session-wtsapi32-l1-1-0&quot;))
+    {
+        wprintf(L&quot;IsApiSetImplemented on ext-ms-win-session-wtsapi32-l1-1-0 returns FALSE\n&quot;);
+    }
+    else
+    {
+        if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &amp;pInfo, &amp;count))
+        {
+            wprintf(L&quot;SessionCount = %d\n&quot;, count);
+
+            for (ULONG i = 0; i &lt; count; i++)
+            {
+                PWTS_SESSION_INFO pCurInfo = &amp;pInfo[i];
+                wprintf(L&quot;    %s: ID = %d, state = %d\n&quot;, pCurInfo-&gt;pWinStationName, 
+                    pCurInfo-&gt;SessionId, pCurInfo-&gt;State);
+            }
+
+            WTSFreeMemory(pInfo);
+        }
+        else
+        {
+            wprintf(L&quot;WTSEnumerateSessions failure : %x\n&quot;, GetLastError());
+        }
+    }
+
+    return 0;
+}
+</code></pre>
+</body>

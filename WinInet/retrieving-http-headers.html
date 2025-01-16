@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Retrieving HTTP Headers</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Retrieving HTTP Headers
+description: This tutorial describes how to retrieve header information from HTTP requests.
+ms.assetid: 347e4fb3-5f96-488a-bef8-4df0b8d1ade1
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Retrieving HTTP Headers</h1>
+<p>This tutorial describes how to retrieve header information from HTTP requests.</p>
+<h2>Implementation Steps</h2>
+<p>There are two ways to retrieve the header information:</p>
+<ul>
+<li>Use one of the <a href="query-info-flags.html"><strong>Query Info Flag</strong></a> constants associated with the HTTP header that your application needs.</li>
+<li>Use the HTTP_QUERY_CUSTOM attribute flag and pass the name of the HTTP header.</li>
+</ul>
+<p>Using the constant associated with the HTTP header that your application needs is faster internally, but there might be HTTP headers that do not have a constant associated with them. For those cases, the method using the HTTP_QUERY_CUSTOM attribute flag is available.</p>
+<p>Both methods use the <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a> function. <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a> takes the <a href="appendix-a-hinternet-handles.html"><strong>HINTERNET</strong></a> handle on which the HTTP request was made, one attribute, a buffer, a DWORD value that contains the buffer size, and an index value. A modifier can also be added to the attribute passed to <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a> to indicate in what format the data should be returned.</p>
+<h3>Retrieving Headers Using a Constant</h3>
+<p>To use the <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a> function to retrieve an HTTP header using a constant, follow these steps:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a> with a constant from the <a href="query-info-flags.html"><strong>Attributes</strong></a> list, a <strong>NULL</strong> buffer, and the variable that holds the buffer size set to zero. Also, if your application needs the data in a particular format, you can add a constant from the <a href="query-info-flags.html"><strong>Modifiers</strong></a> list.</li>
+<li>If the requested HTTP header exists, the call to <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a> should fail, <a href="/windows/desktop/api/errhandlingapi/nf-errhandlingapi-getlasterror"><strong>GetLastError</strong></a> should return ERROR_INSUFFICIENT_BUFFER, and the variable passed for the <em>lpdwBufferLength</em> parameter should be set to the number of bytes required.</li>
+<li>Allocate a buffer with the number of bytes required.</li>
+<li>Retry the call to <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a>.</li>
+</ol>
+<p>The following sample demonstrates a call to <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a> using the HTTP_QUERY_RAW_HEADERS_CRLF constant, which is a special value that requests all of the returned HTTP headers.</p>
+<pre lang="C++"><code>// Retrieving Headers Using a Constant
+BOOL SampleCodeOne(HINTERNET hHttp)
+{
+   LPVOID lpOutBuffer=NULL;
+   DWORD dwSize = 0;
+
+retry:
+
+   // This call will fail on the first pass, because
+   // no buffer is allocated.
+   if(!HttpQueryInfo(hHttp,HTTP_QUERY_RAW_HEADERS_CRLF,
+      (LPVOID)lpOutBuffer,&amp;dwSize,NULL))
+   {
+      if (GetLastError()==ERROR_HTTP_HEADER_NOT_FOUND)
+      {
+         // Code to handle the case where the header isn't available.
+         return TRUE;
+      }
+      else
+      {
+        // Check for an insufficient buffer.
+        if (GetLastError()==ERROR_INSUFFICIENT_BUFFER)
+        {
+            // Allocate the necessary buffer.
+            lpOutBuffer = new char[dwSize];
+
+            // Retry the call.
+            goto retry;
+        }
+        else
+        {
+            // Error handling code.
+            if (lpOutBuffer)
+            {
+               delete [] lpOutBuffer;
+            }
+            return FALSE;
+        }
+      }
+   }
+
+   if (lpOutBuffer)
+   {
+      delete [] lpOutBuffer;
+   }
+
+   return TRUE;
+}
+</code></pre>
+<h3>Retrieving Headers Using HTTP_QUERY_CUSTOM</h3>
+<p>To use the <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a> function to retrieve an HTTP header using HTTP_QUERY_CUSTOM, follow these steps:</p>
+<ol>
+<li>Allocate a buffer that is large enough to hold the string name of the HTTP header.</li>
+<li>Write the string name of the HTTP header into the buffer.</li>
+<li>Call <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a> with HTTP_QUERY_CUSTOM, the buffer that contains the string name of the HTTP header, and the variable that holds the buffer size. Also, if your application needs the data in a particular format, you can add a constant from the <a href="query-info-flags.html"><strong>Modifiers</strong></a> list.</li>
+<li>If the call to <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a> fails and <a href="/windows/desktop/api/errhandlingapi/nf-errhandlingapi-getlasterror"><strong>GetLastError</strong></a> returns ERROR_INSUFFICIENT_BUFFER, reallocate a buffer with the number of bytes required.</li>
+<li>Write the string name of the HTTP header into the buffer again.</li>
+<li>Retry the call to <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a>.</li>
+</ol>
+<p>The following sample demonstrates a call to <a href="/windows/desktop/api/Wininet/nf-wininet-httpqueryinfoa"><strong>HttpQueryInfo</strong></a> using the HTTP_QUERY_CUSTOM constant to request the Content-Type HTTP header.</p>
+<pre lang="C++"><code>// Retrieving Headers Using HTTP_QUERY_CUSTOM
+BOOL SampleCodeTwo(HINTERNET hHttp)
+{
+    DWORD dwSize = 20;
+    LPVOID lpOutBuffer = new char[dwSize];
+
+    StringCchPrintfA((LPSTR)lpOutBuffer,dwSize,&quot;Content-Type&quot;);
+
+retry:
+
+    if(!HttpQueryInfo(hHttp,HTTP_QUERY_CUSTOM,
+        (LPVOID)lpOutBuffer,&amp;dwSize,NULL))
+    {
+        if (GetLastError()==ERROR_HTTP_HEADER_NOT_FOUND)
+        {
+            // Code to handle the case where the header isn't available.
+            delete [] lpOutBuffer;
+            return TRUE;
+        }
+        else
+        {
+            // Check for an insufficient buffer.
+            if (GetLastError()==ERROR_INSUFFICIENT_BUFFER)
+            {
+                // Allocate the necessary buffer.
+                delete [] lpOutBuffer;
+                lpOutBuffer = new char[dwSize];
+
+                // Rewrite the header name in the buffer.
+                StringCchPrintfA((LPSTR)lpOutBuffer,
+                                 dwSize,&quot;Content-Type&quot;);
+
+                // Retry the call.
+                goto retry;
+            }
+            else
+            {
+                // Error handling code.
+                delete [] lpOutBuffer;
+                return FALSE;
+            }
+        }
+    }
+
+   return TRUE;
+}
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+WinINet does not support server implementations. In addition, it should not be used from a service. For server implementations or services use <a href="/windows/desktop/WinHttp/winhttp-start-page">Microsoft Windows HTTP Services (WinHTTP)</a>.</p>
+</blockquote>
+<p>Â </p>
+<p>Â </p>
+<p>Â </p>
+</body>

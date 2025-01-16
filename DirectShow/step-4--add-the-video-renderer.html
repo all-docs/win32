@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 4: Add the Video Renderer</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic is step 4 of the tutorial Audio/Video Playback in DirectShow.
+ms.assetid: 34f35a95-1981-4467-a581-46db96c05224
+title: 'Step 4: Add the Video Renderer'
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Step 4: Add the Video Renderer</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This topic is step 4 of the tutorial <a href="audio-video-playback-in-directshow.html">Audio/Video Playback in DirectShow</a>. The complete code is shown in the topic <a href="directshow-playback-example.html">DirectShow Playback Example</a>.</p>
+<p>DirectShow provides several different filters that render video:</p>
+<ul>
+<li><a href="enhanced-video-renderer-filter.html"><strong>Enhanced Video Renderer Filter</strong></a> (EVR)</li>
+<li><a href="video-mixing-renderer-filter-9.html">Video Mixing Renderer Filter 9</a> (VMR-9)</li>
+<li><a href="video-mixing-renderer-filter-7.html">Video Mixing Renderer Filter 7</a> (VMR-7)</li>
+</ul>
+<p>For more information about the differences between these filters, see <a href="choosing-the-right-renderer.html">Choosing the Right Video Renderer</a>.</p>
+<p>In this tutorial, each video renderer filter is wrapped by a class that abstracts some of the differences between them. These classes all derive from an abstract base class named <code>CVideoRenderer</code>. The declaration of <code>CVideoRenderer</code> is shown in <a href="step-2--declare-cvideorenderer-and-derived-classes.html">Step 2: Declare CVideoRenderer and Derived Classes</a>.</p>
+<p>The following method tries to create each video renderer in turn, starting with the EVR, then the VMR-9, and finally the VMR-7.</p>
+<pre lang="C++"><code>HRESULT DShowPlayer::CreateVideoRenderer()
+{
+    HRESULT hr = E_FAIL;
+
+    enum { Try_EVR, Try_VMR9, Try_VMR7 };
+
+    for (DWORD i = Try_EVR; i &lt;= Try_VMR7; i++)
+    {
+        switch (i)
+        {
+        case Try_EVR:
+            m_pVideo = new (std::nothrow) CEVR();
+            break;
+
+        case Try_VMR9:
+            m_pVideo = new (std::nothrow) CVMR9();
+            break;
+
+        case Try_VMR7:
+            m_pVideo = new (std::nothrow) CVMR7();
+            break;
+        }
+
+        if (m_pVideo == NULL)
+        {
+            hr = E_OUTOFMEMORY;
+            break;
+        }
+
+        hr = m_pVideo-&gt;AddToGraph(m_pGraph, m_hwnd);
+        if (SUCCEEDED(hr))
+        {
+            break;
+        }
+
+        delete m_pVideo;
+        m_pVideo = NULL;
+    }
+    return hr;
+}
+
+</code></pre>
+<h3>EVR Filter</h3>
+<p>The following code creates the EVR filter and adds it to the filter graph. The function <code>AddFilterByCLSID</code> used in this example is shown in the topic <a href="add-a-filter-by-clsid.html">Add a Filter by CLSID</a>.</p>
+<pre lang="C++"><code>HRESULT CEVR::AddToGraph(IGraphBuilder *pGraph, HWND hwnd)
+{
+    IBaseFilter *pEVR = NULL;
+
+    HRESULT hr = AddFilterByCLSID(pGraph, CLSID_EnhancedVideoRenderer, 
+        &amp;pEVR, L&quot;EVR&quot;);
+
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = InitializeEVR(pEVR, hwnd, &amp;m_pVideoDisplay);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Note: Because IMFVideoDisplayControl is a service interface,
+    // you cannot QI the pointer to get back the IBaseFilter pointer.
+    // Therefore, we need to cache the IBaseFilter pointer.
+
+    m_pEVR = pEVR;
+    m_pEVR-&gt;AddRef();
+
+done:
+    SafeRelease(&amp;pEVR);
+    return hr;
+}
+</code></pre>
+<p>The <code>InitializeEVR</code> function initializes the EVR filter. This function performs the following steps.</p>
+<ol>
+<li>Queries the filter for the <a href="/windows/win32/api/mfidl/nn-mfidl-imfgetservice"><strong>IMFGetService</strong></a> interface.</li>
+<li>Calls <a href="/windows/win32/api/mfidl/nf-mfidl-imfgetservice-getservice"><strong>IMFGetService::GetService</strong></a> to get a pointer to the <a href="/windows/win32/api/evr/nn-evr-imfvideodisplaycontrol"><strong>IMFVideoDisplayControl</strong></a> interface.</li>
+<li>Calls <a href="/windows/win32/api/evr/nf-evr-imfvideodisplaycontrol-setvideowindow"><strong>IMFVideoDisplayControl::SetVideoWindow</strong></a> to set the video window.</li>
+<li>Calls <a href="/windows/win32/api/evr/nf-evr-imfvideodisplaycontrol-setaspectratiomode"><strong>IMFVideoDisplayControl::SetAspectRatioMode</strong></a> to configure the EVR to preserve the video aspect ratio.</li>
+</ol>
+<p>The following code shows the <code>InitializeEVR</code> function.</p>
+<pre lang="C++"><code>HRESULT InitializeEVR( 
+    IBaseFilter *pEVR,              // Pointer to the EVR
+    HWND hwnd,                      // Clipping window
+    IMFVideoDisplayControl** ppDisplayControl
+    ) 
+{ 
+    IMFGetService *pGS = NULL;
+    IMFVideoDisplayControl *pDisplay = NULL;
+
+    HRESULT hr = pEVR-&gt;QueryInterface(IID_PPV_ARGS(&amp;pGS)); 
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGS-&gt;GetService(MR_VIDEO_RENDER_SERVICE, IID_PPV_ARGS(&amp;pDisplay));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Set the clipping window.
+    hr = pDisplay-&gt;SetVideoWindow(hwnd);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Preserve aspect ratio by letter-boxing
+    hr = pDisplay-&gt;SetAspectRatioMode(MFVideoARMode_PreservePicture);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Return the IMFVideoDisplayControl pointer to the caller.
+    *ppDisplayControl = pDisplay;
+    (*ppDisplayControl)-&gt;AddRef();
+
+done:
+    SafeRelease(&amp;pGS);
+    SafeRelease(&amp;pDisplay);
+    return hr; 
+} 
+</code></pre>
+<p>After the graph is built, the <code>DShowPlayer::RenderStreams</code> calls <code>CVideoRenderer::FinalizeGraph</code>. This method performs any final initialization or cleanup. The following code shows the <code>CEVR</code> implementation of this method.</p>
+<pre lang="C++"><code>HRESULT CEVR::FinalizeGraph(IGraphBuilder *pGraph)
+{
+    if (m_pEVR == NULL)
+    {
+        return S_OK;
+    }
+
+    BOOL bRemoved;
+    HRESULT hr = RemoveUnconnectedRenderer(pGraph, m_pEVR, &amp;bRemoved);
+    if (bRemoved)
+    {
+        SafeRelease(&amp;m_pEVR);
+        SafeRelease(&amp;m_pVideoDisplay);
+    }
+    return hr;
+}
+</code></pre>
+<p>If the EVR is not connected to any other filter, this method removes the EVR from the graph. This can occur if the media file does not contain a video stream.</p>
+<h3>VMR-9 Filter</h3>
+<p>The following code creates the VMR-9 filter and adds it to the filter graph.</p>
+<pre lang="C++"><code>HRESULT CVMR9::AddToGraph(IGraphBuilder *pGraph, HWND hwnd)
+{
+    IBaseFilter *pVMR = NULL;
+
+    HRESULT hr = AddFilterByCLSID(pGraph, CLSID_VideoMixingRenderer9, 
+        &amp;pVMR, L&quot;VMR-9&quot;);
+    if (SUCCEEDED(hr))
+    {
+        // Set windowless mode on the VMR. This must be done before the VMR 
+        // is connected.
+        hr = InitWindowlessVMR9(pVMR, hwnd, &amp;m_pWindowless);
+    }
+    SafeRelease(&amp;pVMR);
+    return hr;
+}
+</code></pre>
+<p>The <code>InitWindowlessVMR9</code> function initializes the VMR-9 for windowless mode. (For more information about windowless mode, see <a href="vmr-windowless-mode.html">VMR Windowless Mode</a>.) This function performs the following steps.</p>
+<ol>
+<li>Queries the VMR-9 filter for the <a href="/previous-versions/windows/desktop/api/Vmr9/nn-vmr9-ivmrfilterconfig9"><strong>IVMRFilterConfig9</strong></a> interface.</li>
+<li>Calls the <a href="/previous-versions/windows/desktop/api/Vmr9/nf-vmr9-ivmrfilterconfig9-setrenderingmode"><strong>IVMRFilterConfig9::SetRenderingMode</strong></a> method to set windowless mode.</li>
+<li>Queries the VMR-9 filter for the <a href="/previous-versions/windows/desktop/api/Vmr9/nn-vmr9-ivmrwindowlesscontrol9"><strong>IVMRWindowlessControl9</strong></a> interface.</li>
+<li>Calls the <a href="/previous-versions/windows/desktop/api/Vmr9/nf-vmr9-ivmrwindowlesscontrol9-setvideoclippingwindow"><strong>IVMRWindowlessControl9::SetVideoClippingWindow</strong></a> method to set the video window.</li>
+<li>Calls the <a href="/previous-versions/windows/desktop/api/Vmr9/nf-vmr9-ivmrwindowlesscontrol9-setaspectratiomode"><strong>IVMRWindowlessControl9::SetAspectRatioMode</strong></a> method to preserve the video aspect ratio.</li>
+</ol>
+<p>The following code shows the <code>InitWindowlessVMR9</code> function.</p>
+<pre lang="C++"><code>HRESULT InitWindowlessVMR9( 
+    IBaseFilter *pVMR,              // Pointer to the VMR
+    HWND hwnd,                      // Clipping window
+    IVMRWindowlessControl9** ppWC   // Receives a pointer to the VMR.
+    ) 
+{ 
+
+    IVMRFilterConfig9 * pConfig = NULL; 
+    IVMRWindowlessControl9 *pWC = NULL;
+
+    // Set the rendering mode.  
+    HRESULT hr = pVMR-&gt;QueryInterface(IID_PPV_ARGS(&amp;pConfig)); 
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pConfig-&gt;SetRenderingMode(VMR9Mode_Windowless); 
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Query for the windowless control interface.
+    hr = pVMR-&gt;QueryInterface(IID_PPV_ARGS(&amp;pWC));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Set the clipping window.
+    hr = pWC-&gt;SetVideoClippingWindow(hwnd);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Preserve aspect ratio by letter-boxing
+    hr = pWC-&gt;SetAspectRatioMode(VMR9ARMode_LetterBox);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Return the IVMRWindowlessControl pointer to the caller.
+    *ppWC = pWC;
+    (*ppWC)-&gt;AddRef();
+
+done:
+    SafeRelease(&amp;pConfig);
+    SafeRelease(&amp;pWC);
+    return hr; 
+} 
+</code></pre>
+<p>The <code>CVMR9::FinalizeGraph</code> method checks if the VMR-9 filter is connected, and if not, removes it from the filter graph.</p>
+<pre lang="C++"><code>HRESULT CVMR9::FinalizeGraph(IGraphBuilder *pGraph)
+{
+    if (m_pWindowless == NULL)
+    {
+        return S_OK;
+    }
+
+    IBaseFilter *pFilter = NULL;
+
+    HRESULT hr = m_pWindowless-&gt;QueryInterface(IID_PPV_ARGS(&amp;pFilter));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    BOOL bRemoved;
+    hr = RemoveUnconnectedRenderer(pGraph, pFilter, &amp;bRemoved);
+
+    // If we removed the VMR, then we also need to release our 
+    // pointer to the VMR's windowless control interface.
+    if (bRemoved)
+    {
+        SafeRelease(&amp;m_pWindowless);
+    }
+
+done:
+    SafeRelease(&amp;pFilter);
+    return hr;
+}
+</code></pre>
+<h3>VMR-7 Filter</h3>
+<p>The steps for the VMR-7 filter are nearly identical to those for the VMR-9, except the VMR-7 interfaces are used instead. The following code creates the VMR-7 filter and adds it to the filter graph.</p>
+<pre lang="C++"><code>HRESULT CVMR7::AddToGraph(IGraphBuilder *pGraph, HWND hwnd)
+{
+    IBaseFilter *pVMR = NULL;
+
+    HRESULT hr = AddFilterByCLSID(pGraph, CLSID_VideoMixingRenderer, 
+        &amp;pVMR, L&quot;VMR-7&quot;);
+
+    if (SUCCEEDED(hr))
+    {
+        // Set windowless mode on the VMR. This must be done before the VMR
+        // is connected.
+        hr = InitWindowlessVMR(pVMR, hwnd, &amp;m_pWindowless);
+    }
+    SafeRelease(&amp;pVMR);
+    return hr;
+}
+</code></pre>
+<p>The <code>InitWindowlessVMR</code> function initializes the VMR-7 for windowless mode. This function performs the following steps.</p>
+<ol>
+<li>Queries the VMR-7 filter for the <a href="/windows/desktop/api/Strmif/nn-strmif-ivmrfilterconfig"><strong>IVMRFilterConfig</strong></a> interface.</li>
+<li>Calls the <a href="/windows/desktop/api/Strmif/nf-strmif-ivmrfilterconfig-setrenderingmode"><strong>IVMRFilterConfig::SetRenderingMode</strong></a> method to set windowless mode.</li>
+<li>Queries the VMR-7 filter for the <a href="/windows/desktop/api/Strmif/nn-strmif-ivmrwindowlesscontrol"><strong>IVMRWindowlessControl</strong></a> interface.</li>
+<li>Calls the <a href="/windows/desktop/api/Strmif/nf-strmif-ivmrwindowlesscontrol-setvideoclippingwindow"><strong>IVMRWindowlessControl::SetVideoClippingWindow</strong></a> method to set the video window.</li>
+<li>Calls the <a href="/windows/desktop/api/Strmif/nf-strmif-ivmrwindowlesscontrol-setaspectratiomode"><strong>IVMRWindowlessControl::SetAspectRatioMode</strong></a> method to preserve the video aspect ratio.</li>
+</ol>
+<p>The following code shows the <code>InitWindowlessVMR</code> function.</p>
+<pre lang="C++"><code>HRESULT InitWindowlessVMR( 
+    IBaseFilter *pVMR,              // Pointer to the VMR
+    HWND hwnd,                      // Clipping window
+    IVMRWindowlessControl** ppWC    // Receives a pointer to the VMR.
+    ) 
+{ 
+
+    IVMRFilterConfig* pConfig = NULL; 
+    IVMRWindowlessControl *pWC = NULL;
+
+    // Set the rendering mode.  
+    HRESULT hr = pVMR-&gt;QueryInterface(IID_PPV_ARGS(&amp;pConfig)); 
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pConfig-&gt;SetRenderingMode(VMRMode_Windowless); 
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Query for the windowless control interface.
+    hr = pVMR-&gt;QueryInterface(IID_PPV_ARGS(&amp;pWC));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Set the clipping window.
+    hr = pWC-&gt;SetVideoClippingWindow(hwnd);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Preserve aspect ratio by letter-boxing
+    hr = pWC-&gt;SetAspectRatioMode(VMR_ARMODE_LETTER_BOX);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Return the IVMRWindowlessControl pointer to the caller.
+    *ppWC = pWC;
+    (*ppWC)-&gt;AddRef();
+
+done:
+    SafeRelease(&amp;pConfig);
+    SafeRelease(&amp;pWC);
+    return hr; 
+} 
+</code></pre>
+<p>The <code>CVMR7::FinalizeGraph</code> method checks if the VMR-7 filter is connected, and if not, removes it from the filter graph.</p>
+<pre lang="C++"><code>HRESULT CVMR7::FinalizeGraph(IGraphBuilder *pGraph)
+{
+    if (m_pWindowless == NULL)
+    {
+        return S_OK;
+    }
+
+    IBaseFilter *pFilter = NULL;
+
+    HRESULT hr = m_pWindowless-&gt;QueryInterface(IID_PPV_ARGS(&amp;pFilter));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    BOOL bRemoved;
+    hr = RemoveUnconnectedRenderer(pGraph, pFilter, &amp;bRemoved);
+
+    // If we removed the VMR, then we also need to release our 
+    // pointer to the VMR's windowless control interface.
+    if (bRemoved)
+    {
+        SafeRelease(&amp;m_pWindowless);
+    }
+
+done:
+    SafeRelease(&amp;pFilter);
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="directshow-playback-example.html">DirectShow Playback Example</a></p>
+<!-- raw HTML omitted -->
+<p><a href="../medfound/using-the-directshow-evr-filter.html">Using the DirectShow EVR Filter</a></p>
+<!-- raw HTML omitted -->
+<p><a href="using-the-video-mixing-renderer.html">Using the Video Mixing Renderer</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

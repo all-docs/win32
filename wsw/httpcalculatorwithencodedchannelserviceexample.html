@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HttpCalculatorWithEncodedChannelServiceExample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: HttpCalculatorWithEncodedChannelServiceExample
+description: Review a Windows Web Services API (WWSAPI) C++ example of an HTTP calculator with encoded channel service.
+ms.assetid: 3b8d58dd-2f0c-4008-81ad-abda23a26a52
+keywords:</p>
+<ul>
+<li>HttpCalculatorWithEncodedChannelServiceExample Native-Web-Services</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>HttpCalculatorWithEncodedChannelServiceExample</h1>
+<p>This example shows how to use service host for hosting a calculator service with a custom channel and listener implementation that layer on top of HTTP.</p>
+<ul>
+<li><a href="#httpcalculatorwithencodedchannelservicecpp">HttpCalculatorWithEncodedChannelService.cpp</a></li>
+<li><a href="#encodedchannelh">EncodedChannel.h</a></li>
+<li><a href="#encodedchannelcpp">EncodedChannel.cpp</a></li>
+<li><a href="#calculatorservicewsdl">CalculatorService.wsdl</a></li>
+<li><a href="#makefile">Makefile</a></li>
+</ul>
+<h2>HttpCalculatorWithEncodedChannelService.cpp</h2>
+<pre lang="C++"><code>
+//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;string.h&quot;
+#include &quot;CalculatorService.wsdl.h&quot;
+//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+extern WS_CHANNEL_ENCODER channelEncoder;
+extern WS_CHANNEL_DECODER channelDecoder;
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+HANDLE closeServer = NULL;  
+
+
+HRESULT CALLBACK Add(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in int a, 
+    __in int b, 
+    __out int* result, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(context);
+    UNREFERENCED_PARAMETER(asyncContext);
+    UNREFERENCED_PARAMETER(error);
+
+    *result = a + b;
+    printf (&quot;%d + %d = %d\n&quot;, a, b, *result);
+    fflush(stdout);
+    return NOERROR;
+}
+
+HRESULT CALLBACK Subtract(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in int a, 
+    __in int b, 
+    __out int* result, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext, 
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(context);
+    UNREFERENCED_PARAMETER(asyncContext);
+    UNREFERENCED_PARAMETER(error);
+
+    *result = a - b;
+    printf (&quot;%d - %d = %d\n&quot;, a, b, *result);
+    fflush(stdout);
+    return NOERROR;
+}
+
+HRESULT CALLBACK CloseChannelCallback(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext)
+{
+    UNREFERENCED_PARAMETER(context);
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    SetEvent(closeServer);
+    return NOERROR;
+}
+
+static const DefaultBinding_ICalculatorFunctionTable calculatorFunctions = {Add, Subtract};
+
+// Method contract for the service
+static const WS_SERVICE_CONTRACT calculatorContract = 
+{
+    &amp;CalculatorService_wsdl.contracts.DefaultBinding_ICalculator, // comes from the generated header.
+    NULL, // for not specifying the default contract
+    &amp;calculatorFunctions // specified by the user
+};
+
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_SERVICE_HOST* host = NULL;
+    WS_SERVICE_ENDPOINT serviceEndpoint = {};
+    const WS_SERVICE_ENDPOINT* serviceEndpoints[1];
+    serviceEndpoints[0] = &amp;serviceEndpoint;
+    
+    WS_ERROR* error = NULL;
+    
+    
+    // Set up channel properties for the custom channel
+    WS_CHANNEL_PROPERTY channelPropertyArray[1];
+    
+    // Set up channel property that specifies the callbacks that implement the custom channel
+    channelPropertyArray[0].id = WS_CHANNEL_PROPERTY_DECODER;
+    channelPropertyArray[0].value = &amp;channelDecoder;
+    channelPropertyArray[0].valueSize = sizeof(channelDecoder);
+    
+    // Set up service endpoint properties
+    WS_SERVICE_ENDPOINT_PROPERTY serviceEndpointProperties[1];
+    
+    WS_SERVICE_PROPERTY_CLOSE_CALLBACK closeCallbackProperty = {CloseChannelCallback};
+    serviceEndpointProperties[0].id = WS_SERVICE_ENDPOINT_PROPERTY_CLOSE_CHANNEL_CALLBACK;
+    serviceEndpointProperties[0].value = &amp;closeCallbackProperty;
+    serviceEndpointProperties[0].valueSize = sizeof(closeCallbackProperty);
+    
+    
+    // Initialize service endpoint
+    serviceEndpoint.address.url.chars = L&quot;https://+:80/example&quot;; // address given as uri
+    serviceEndpoint.address.url.length = (ULONG)wcslen(serviceEndpoint.address.url.chars);
+    serviceEndpoint.channelBinding = WS_HTTP_CHANNEL_BINDING; // channel binding for the endpoint
+    serviceEndpoint.channelType = WS_CHANNEL_TYPE_REPLY; // the channel type
+    serviceEndpoint.contract = &amp;calculatorContract;  // the contract
+    serviceEndpoint.properties = serviceEndpointProperties;
+    serviceEndpoint.propertyCount = WsCountOf(serviceEndpointProperties);
+    serviceEndpoint.channelProperties.properties = channelPropertyArray; // Channel properties
+    serviceEndpoint.channelProperties.propertyCount = WsCountOf(channelPropertyArray); // Channel property Count
+    
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // Create Event object for closing the server
+    closeServer = CreateEvent(
+        NULL, 
+        TRUE, 
+        FALSE, 
+        NULL);
+    if (closeServer == NULL)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto Exit;
+    }   
+    // Creating a service host
+    hr = WsCreateServiceHost(
+        serviceEndpoints, 
+        1, 
+        NULL, 
+        0, 
+        &amp;host, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // WsOpenServiceHost to start the listeners in the service host 
+    hr = WsOpenServiceHost(
+            host, 
+            NULL, 
+            error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    WaitForSingleObject(closeServer, INFINITE);
+    // Close the service host
+    hr = WsCloseServiceHost(host, NULL, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    if (host != NULL)
+    {
+        WsFreeServiceHost(host);
+    }
+    
+    
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    if (closeServer != NULL)
+    {
+        CloseHandle(closeServer);
+    }
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+
+</code></pre>
+<h2>EncodedChannel.h</h2>
+<pre lang="C++"><code>extern WS_CHANNEL_ENCODER channelEncoder;
+extern WS_CHANNEL_DECODER channelDecoder;
+</code></pre>
+<h2>EncodedChannel.cpp</h2>
+<pre lang="C++"><code>#ifndef UNICODE
+#define UNICODE
+#endif
+#include &lt;windows.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;stdio.h&quot;
+#include &quot;string.h&quot;
+
+WS_STRING encodedContentType = WS_STRING_VALUE(L&quot;myContentType&quot;);
+
+struct Encoder
+{
+    BYTE* buffer;
+    ULONG bufferLength;
+    WCHAR contentType[256];
+    ULONG contentTypeLength;
+    WS_WRITE_CALLBACK writeCallback;
+    void* writeContext;
+};
+
+HRESULT CreateEncoder(
+    __in void* createContext,
+    __in WS_WRITE_CALLBACK writeCallback,
+    __in void* writeContext,
+    __deref_out void** encoderContext,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(createContext);
+    UNREFERENCED_PARAMETER(error);
+
+    Encoder* encoder = new Encoder;
+    if (encoder == NULL)
+    {
+        return E_OUTOFMEMORY;
+    }
+    encoder-&gt;bufferLength = 1024;
+    encoder-&gt;buffer = new BYTE[encoder-&gt;bufferLength];
+    if (encoder-&gt;buffer == NULL)
+    {
+        delete encoder;
+        return E_OUTOFMEMORY;
+    }
+    encoder-&gt;writeCallback = writeCallback;
+    encoder-&gt;writeContext = writeContext;
+    (*encoderContext) = encoder;
+    return NOERROR;
+}
+
+HRESULT EncoderGetContentType(
+    __in void* encoderContext,
+    __in const WS_STRING* contentType,
+    __out WS_STRING* newContentType,
+    __out WS_STRING* contentEncoding,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(error);
+
+    Encoder* encoder = (Encoder*)encoderContext;
+    if (contentType-&gt;length &gt; WsCountOf(encoder-&gt;contentType))
+    {
+        return E_FAIL;
+    }
+    ::memcpy(encoder-&gt;contentType, contentType-&gt;chars, contentType-&gt;length * sizeof(WCHAR));
+    encoder-&gt;contentTypeLength = contentType-&gt;length;
+    (*newContentType) = encodedContentType;
+    contentEncoding-&gt;length = 0;
+    contentEncoding-&gt;chars = NULL;
+    return NOERROR;
+}
+
+HRESULT EncoderStart(
+    __in void* encoderContext,
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    HRESULT hr;
+    Encoder* encoder = (Encoder*)encoderContext;
+    WS_BYTES bytes1 = { sizeof(encoder-&gt;contentTypeLength), (BYTE*)&amp;encoder-&gt;contentTypeLength };
+    hr = encoder-&gt;writeCallback(encoder-&gt;writeContext, &amp;bytes1, 1, NULL, error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    WS_BYTES bytes2 = { encoder-&gt;contentTypeLength * sizeof(WCHAR), (BYTE*)encoder-&gt;contentType };
+    hr = encoder-&gt;writeCallback(encoder-&gt;writeContext, &amp;bytes2, 1, NULL, error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    return NOERROR;
+}
+
+HRESULT EncoderEncode(
+    __in Encoder* encoder,
+    __in_ecount(bufferLength) const BYTE* buffer,
+    __in ULONG bufferLength,
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    HRESULT hr;
+    while (bufferLength &gt; encoder-&gt;bufferLength)
+    {
+        memcpy(encoder-&gt;buffer, buffer, encoder-&gt;bufferLength);
+        for (ULONG i = 0; i &lt; encoder-&gt;bufferLength; i++)
+        {
+            encoder-&gt;buffer[i]++;
+        }
+        WS_BYTES newBytes = { encoder-&gt;bufferLength, encoder-&gt;buffer };
+        hr = encoder-&gt;writeCallback(encoder-&gt;writeContext, &amp;newBytes, 1, NULL, error);
+        if (FAILED(hr))
+        {
+            return hr;
+        }
+        buffer += encoder-&gt;bufferLength;
+        bufferLength -= encoder-&gt;bufferLength;
+    }
+    memcpy(encoder-&gt;buffer, buffer, bufferLength);
+    for (ULONG i = 0; i &lt; bufferLength; i++)
+    {
+        encoder-&gt;buffer[i]++;
+    }
+    WS_BYTES newBytes = { bufferLength, encoder-&gt;buffer };
+    return encoder-&gt;writeCallback(encoder-&gt;writeContext, &amp;newBytes, 1, NULL, error);
+}
+
+HRESULT EncoderEncode(
+    __in void* encoderContext,
+    __in_ecount(count) const WS_BYTES* buffers,
+    __in ULONG count,
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    HRESULT hr;
+    Encoder* encoder = (Encoder*)encoderContext;
+    for (ULONG i = 0; i &lt; count; i++)
+    {
+        hr = EncoderEncode(encoder, buffers[i].bytes, buffers[i].length, NULL, error);
+        if (FAILED(hr))
+        {
+            return hr;
+        }
+    }
+    return NOERROR;
+}
+
+HRESULT EncoderEnd(
+    __in void* encoderContext,
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(encoderContext);
+    UNREFERENCED_PARAMETER(asyncContext);
+    UNREFERENCED_PARAMETER(error);
+    return NOERROR;
+}
+
+void FreeEncoder(
+    __in void* encoderContext)
+{
+    Encoder* encoder = (Encoder*)encoderContext;
+    delete encoder;
+}
+
+WS_CHANNEL_ENCODER channelEncoder =
+{
+    NULL,
+    (WS_CREATE_ENCODER_CALLBACK)CreateEncoder, 
+    (WS_ENCODER_GET_CONTENT_TYPE_CALLBACK)EncoderGetContentType, 
+    (WS_ENCODER_START_CALLBACK)EncoderStart,
+    (WS_ENCODER_ENCODE_CALLBACK)EncoderEncode, 
+    (WS_ENCODER_END_CALLBACK)EncoderEnd,
+    (WS_FREE_ENCODER_CALLBACK)FreeEncoder 
+};
+
+struct Decoder
+{
+    WCHAR contentType[256];
+    ULONG contentTypeLength;
+    WS_READ_CALLBACK readCallback;
+    void* readContext;
+};
+
+HRESULT ReadBlock(
+    __in Decoder* decoder,
+    __out_ecount_part_opt(maxLength, *outLength) void* buffer,
+    __in ULONG maxLength,
+    __out_opt ULONG* outLength,
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    HRESULT hr;
+    ULONG length = 0;
+    while (length &lt; maxLength)
+    {
+        ULONG actualLength;
+        hr = decoder-&gt;readCallback(decoder-&gt;readContext, &amp;((BYTE*)buffer)[length], maxLength - length, &amp;actualLength, NULL, error);
+        if (FAILED(hr))
+        {
+            return hr;
+        }
+        if (actualLength == 0)
+        {
+            break;
+        }
+        length += actualLength;
+    }
+    if (outLength == NULL)
+    {
+        if (length != maxLength)
+        {
+            return E_FAIL;
+        }
+    }
+    else
+    {
+        (*outLength) = length;
+    }
+    return NOERROR;
+}
+
+HRESULT CreateDecoder(
+    __in void* createContext,
+    __in WS_READ_CALLBACK readCallback,
+    __in void* readContext,
+    __deref_out void** decoderContext,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(createContext);
+    UNREFERENCED_PARAMETER(error);
+
+    Decoder* decoder = new Decoder;
+    if (decoder == NULL)
+    {
+        return E_OUTOFMEMORY;
+    }
+    decoder-&gt;readCallback = readCallback;
+    decoder-&gt;readContext = readContext;
+    (*decoderContext) = decoder;
+    return NOERROR;
+}
+
+HRESULT DecoderGetContentType(
+    __in void* decoderContext,
+    __in const WS_STRING* contentType,
+    __in_opt const WS_STRING* contentEncoding,
+    __out WS_STRING* newContentType,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(error);
+
+    Decoder* decoder = (Decoder*)decoderContext;
+    if (contentEncoding != NULL)
+    {
+        return E_FAIL;
+    }
+    if (contentType-&gt;length != encodedContentType.length)
+    {
+        return E_FAIL;
+    }
+    if (::memcmp(contentType-&gt;chars, encodedContentType.chars, encodedContentType.length * sizeof(WCHAR)) != 0)
+    {
+        return E_FAIL;
+    }
+    newContentType-&gt;chars = decoder-&gt;contentType;
+    newContentType-&gt;length = decoder-&gt;contentTypeLength;
+    return NOERROR;
+}
+
+HRESULT DecoderStart(
+    __in void* decoderContext,
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    HRESULT hr;
+    Decoder* decoder = (Decoder*)decoderContext;
+
+    hr = ReadBlock(decoder, &amp;decoder-&gt;contentTypeLength, sizeof(ULONG), NULL, NULL, error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    if (decoder-&gt;contentTypeLength &gt; WsCountOf(decoder-&gt;contentType))
+    {
+        return E_FAIL;
+    }
+    hr = ReadBlock(decoder, &amp;decoder-&gt;contentType, decoder-&gt;contentTypeLength * sizeof(WCHAR), NULL, NULL, error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    return NOERROR;
+}
+
+HRESULT DecoderDecode(
+    __in void* decoderContext,
+    __out_ecount_part_opt(maxLength, *outLength) void* buffer,
+    __in ULONG maxLength,
+    __out ULONG* outLength,
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    HRESULT hr;
+    Decoder* decoder = (Decoder*)decoderContext;
+    ULONG length;
+    hr = ReadBlock(decoder, buffer, maxLength, &amp;length, NULL, error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    for (ULONG i = 0; i &lt; length; i++)
+    {
+        ((BYTE*)buffer)[i]--;
+    }
+    (*outLength) = length;
+    return hr;
+}
+
+HRESULT DecoderEnd(
+    __in void* decoderContext,
+    __in_opt const WS_ASYNC_CONTEXT* asyncContext,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(decoderContext);
+    UNREFERENCED_PARAMETER(asyncContext);
+    UNREFERENCED_PARAMETER(error);
+    return NOERROR;
+}
+
+void FreeDecoder(
+    __in void* decoderContext)
+{
+    Decoder* decoder = (Decoder*)decoderContext;
+    delete decoder;
+}
+
+WS_CHANNEL_DECODER channelDecoder =
+{
+    NULL,
+    (WS_CREATE_DECODER_CALLBACK)CreateDecoder, 
+    (WS_DECODER_GET_CONTENT_TYPE_CALLBACK)DecoderGetContentType, 
+    (WS_DECODER_START_CALLBACK)DecoderStart,
+    (WS_DECODER_DECODE_CALLBACK)DecoderDecode, 
+    (WS_DECODER_END_CALLBACK)DecoderEnd,
+    (WS_FREE_DECODER_CALLBACK)FreeDecoder 
+};
+</code></pre>
+<h2>CalculatorService.wsdl</h2>
+<pre lang="syntax"><code>&lt;wsdl:definitions 
+    xmlns:soap=&quot;https://schemas.xmlsoap.org/wsdl/soap/&quot; 
+    xmlns:tns=&quot;https://Example.org&quot; 
+    xmlns:xsd=&quot;https://www.w3.org/2001/XMLSchema&quot; 
+    xmlns:wsaw=&quot;https://www.w3.org/2006/05/addressing/wsdl&quot; 
+    xmlns:soap12=&quot;https://schemas.xmlsoap.org/wsdl/soap12/&quot; 
+    targetNamespace=&quot;https://Example.org&quot; 
+    xmlns:wsdl=&quot;https://schemas.xmlsoap.org/wsdl/&quot;&gt;
+    &lt;wsdl:types&gt;
+        &lt;xsd:schema targetNamespace=&quot;https://Example.org&quot; elementFormDefault=&quot;qualified&quot; &gt;
+            &lt;xsd:element name=&quot;Add&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;a&quot; type=&quot;xsd:int&quot; /&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;b&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;AddResponse&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;result&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;Subtract&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;a&quot; type=&quot;xsd:int&quot; /&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;b&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;SubtractResponse&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;result&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+        &lt;/xsd:schema&gt;
+    &lt;/wsdl:types&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Add_InputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:Add&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Add_OutputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:AddResponse&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Subtract_InputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:Subtract&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Subtract_OutputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:SubtractResponse&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:portType name=&quot;ICalculator&quot;&gt;
+        &lt;wsdl:operation name=&quot;Add&quot;&gt;
+            &lt;wsdl:input wsaw:Action=&quot;https://Example.org/ICalculator/Add&quot; message=&quot;tns:ICalculator_Add_InputMessage&quot; /&gt;
+            &lt;wsdl:output wsaw:Action=&quot;https://Example.org/ICalculator/AddResponse&quot; message=&quot;tns:ICalculator_Add_OutputMessage&quot; /&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;Subtract&quot;&gt;
+            &lt;wsdl:input wsaw:Action=&quot;https://Example.org/ICalculator/Subtract&quot; message=&quot;tns:ICalculator_Subtract_InputMessage&quot; /&gt;
+            &lt;wsdl:output wsaw:Action=&quot;https://Example.org/ICalculator/SubtractResponse&quot; message=&quot;tns:ICalculator_Subtract_OutputMessage&quot; /&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:portType&gt;
+    &lt;wsdl:binding name=&quot;DefaultBinding_ICalculator&quot; type=&quot;tns:ICalculator&quot;&gt;
+        &lt;soap:binding transport=&quot;https://schemas.xmlsoap.org/soap/http&quot; /&gt;
+        &lt;wsdl:operation name=&quot;Add&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://Example.org/ICalculator/Add&quot; style=&quot;document&quot; /&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;Subtract&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://Example.org/ICalculator/Subtract&quot; style=&quot;document&quot; /&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:binding&gt;
+    &lt;wsdl:service name=&quot;CalculatorService&quot;&gt;
+        &lt;wsdl:port name=&quot;ICalculator&quot; binding=&quot;tns:DefaultBinding_ICalculator&quot;&gt;
+            &lt;soap:address location=&quot;https://Example.org/ICalculator&quot; /&gt;
+        &lt;/wsdl:port&gt;
+    &lt;/wsdl:service&gt;
+
+&lt;/wsdl:definitions&gt;
+</code></pre>
+<h2>Makefile</h2>
+<pre lang="syntax"><code>!include &lt;Win32.Mak&gt;
+
+EXTRA_LIBS = WebServices.lib
+
+all: $(OUTDIR) $(OUTDIR)\WsHttpCalculatorWithEncodedChannelService.exe
+
+&quot;$(OUTDIR)&quot; :
+    if not exist &quot;$(OUTDIR)/$(NULL)&quot; mkdir &quot;$(OUTDIR)&quot;
+    
+$(OUTDIR)\CalculatorService.wsdl.c: CalculatorService.wsdl
+     Wsutil.exe /wsdl:CalculatorService.wsdl /string:WS_STRING /out:$(OUTDIR)
+    
+$(OUTDIR)\CalculatorService.wsdl.obj: $(OUTDIR)\CalculatorService.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; $(OUTDIR)\CalculatorService.wsdl.c
+
+$(OUTDIR)\HttpCalculatorWithEncodedChannelService.obj: HttpCalculatorWithEncodedChannelService.cpp $(OUTDIR)\CalculatorService.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; HttpCalculatorWithEncodedChannelService.cpp
+
+$(OUTDIR)\EncodedChannel.obj: EncodedChannel.cpp
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; EncodedChannel.cpp
+
+$(OUTDIR)\WsHttpCalculatorWithEncodedChannelService.exe: $(OUTDIR)\HttpCalculatorWithEncodedChannelService.obj $(OUTDIR)\CalculatorService.wsdl.obj $(OUTDIR)\EncodedChannel.obj
+    $(link) $(ldebug) $(conlflags) $(conlibsmt) $(EXTRA_LIBS) -out:$(OUTDIR)\WsHttpCalculatorWithEncodedChannelService.exe $(OUTDIR)\HttpCalculatorWithEncodedChannelService.obj $(OUTDIR)\CalculatorService.wsdl.obj $(OUTDIR)\EncodedChannel.obj /PDB:$(OUTDIR)\WsHttpCalculatorWithEncodedChannelService.PDB
+
+clean:
+    $(CLEANUP)
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

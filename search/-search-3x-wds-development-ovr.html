@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Windows Search as a Development Platform</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: To index the contents and properties of new file formats and data stores, Microsoft Windows Search must be extended with add-ins.
+ms.assetid: 04ddcd97-c358-44d2-9092-a035436c50c9
+title: Windows Search as a Development Platform
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Windows Search as a Development Platform</h1>
+<p>To index the contents and properties of new file formats and data stores, Microsoft Windows Search must be extended with add-ins.</p>
+<p>Before a third-party developer of new file formats and data stores can get those formats and stores to appear in query results in Windows Explorer, the developer must do the following three things:</p>
+<ul>
+<li>Implement a Shell data source to extend the Shell namespace.</li>
+<li>Expose items in a data store (if they are adding a new data store, because it would need to be indexed).</li>
+<li>Develop a protocol handler so that Windows Search can access the data for indexing.</li>
+</ul>
+<p>This topic is organized as follows:</p>
+<ul>
+<li><a href="#getting-started">Getting Started</a></li>
+<li><a href="#overview-of-search-development-scenarios">Overview of Search Development Scenarios</a>
+<ul>
+<li><a href="#adding-a-new-data-store">Adding a New Data Store</a></li>
+<li><a href="#adding-a-new-file-format">Adding a New File Format</a></li>
+<li><a href="#consuming-windows-search-results">Consuming Windows Search Results</a></li>
+</ul>
+</li>
+<li><a href="#overview-of-handlers">Overview of Handlers</a></li>
+<li><a href="#add-in-installer-guidelines">Add-in Installer Guidelines</a></li>
+<li><a href="#note-to-implementers">Note to Implementers</a></li>
+<li><a href="#additional-resources">Additional Resources</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Getting Started</h2>
+<p>Before you start creating a Windows Search application, remember that the preferred way to do it is through a Shell data source. A Shell data source extends the Shell namespace and exposes the items in a data store. The items in the data store can then be indexed by the Windows Search system by using a protocol handler. This indirect approach for accessing Windows Search by implementing a Shell data source is preferred because it provides access to full Shell functionality. Doing it this way ensures a reasonable user experience.</p>
+<p>If you want the query results to appear in Windows Explorer, you must implement a Shell data source before you can create a protocol handler to extend the index. However, if all queries will be programmatic (through OLEÂ DB for example) and interpreted by the application's code rather than the Shell, a Shell namespace is still preferred but not required.</p>
+<p>A protocol handler is required for Windows to obtain knowledge of file contents, such as items in databases or custom file types. While Windows Search can index the name and properties of the file, Windows has no knowledge of the content of the file. As a result, such items cannot be indexed or exposed in the Windows Shell. By implementing a custom protocol handler, you can expose these items. For a list of handlers identified by the developer scenario you are trying to achieve, see <a href="#overview-of-handlers">Overview of Handlers</a>.</p>
+<h2>Overview of Search Development Scenarios</h2>
+<p>The most common development scenarios in Windows Search are:</p>
+<ul>
+<li><a href="#adding-a-new-data-store">Adding a new data store</a></li>
+<li><a href="#adding-a-new-file-format">Adding a new file format</a></li>
+<li><a href="#consuming-windows-search-results">Consuming Windows Search results</a></li>
+</ul>
+<h3>Adding a New Data Store</h3>
+<p>You need a Shell data store for Windows Search only if you are adding a new data store to be indexed. A data store is a repository of data that can be exposed to the Shell programming model as a container by using a Shell data source. The items in a data store can then be indexed by the Windows Search system using a protocol handler. The protocol handler implements the protocol for accessing a content source in its native format. The <a href="/windows/win32/api/Searchapi/nn-searchapi-isearchprotocol"><strong>ISearchProtocol</strong></a> and <a href="/windows/win32/api/Searchapi/nn-searchapi-isearchprotocol2"><strong>ISearchProtocol2</strong></a> interfaces are used to implement a custom protocol handler to expand the data sources that can be indexed. For information about creating a Shell data source, see <a href="/previous-versions/windows/desktop/legacy/cc144093(v=vs.85)">Implementing the Basic Folder Object Interfaces</a>.</p>
+<h3>Adding a New File Format</h3>
+<p>If you add a new custom file format, you need to develop either a filter handler or a property handler, but not both. A filter is an implementation of the <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a> interface. It opens files of a particular file type, and filters properties and chunks of text for the indexer. Filters are associated with file types, as denoted by file name extensions, MIME types, or class identifiers (CLSIDs). Although one filter can handle multiple file types, each file type works with only one filter.</p>
+<p>A property handler translates data stored in a file into a structured schema that is recognized by and can be accessed by Windows Explorer, Windows Search, and other applications. These systems can then interact with the property handler to write and read properties to and from a file. The translated data includes details view, infotips, details pane, property pages, and so forth. Each property handler is associated with a particular file type, identified by the file name extension. You need a property handler to do the following:</p>
+<ul>
+<li>Show non-indexed item properties in the UI.</li>
+<li>Support writing properties.</li>
+</ul>
+<h3>Consuming Windows Search Results</h3>
+<p>The following sections describe several ways of consuming Windows Search results:</p>
+<ul>
+<li><a href="#querying-data">Querying data</a></li>
+<li><a href="#querying-remote-data-stores-federated-search">Querying remote data stores (Federated Search)</a></li>
+<li><a href="#indexing-files-and-items">Indexing files and items</a></li>
+<li><a href="#indexing-a-data-store">Indexing a data store</a></li>
+<li><a href="#managing-the-indexing-process">Managing the indexing process</a></li>
+<li><a href="#integrating-the-windows-property-system-with-windows-search-applications">Integrating the Windows Property System with Windows Search applications</a></li>
+</ul>
+<h3>Querying Data</h3>
+<p>Developers writing applications on top of the combined Windows Search and Windows property system can access files and items regardless of application or file type. There are two ways for applications to access the indexer data:</p>
+<ul>
+<li>Applications communicate directly with OLEÂ DB by sending Windows Search Structured Query Language (SQL) queries to the Windows Search OLEÂ DB provider to retrieve results. Queries can be constructed manually or by using the <a href="/windows/win32/api/Searchapi/nn-searchapi-isearchqueryhelper"><strong>ISearchQueryHelper</strong></a> interface to generate the SQL from search keywords, and Advanced Query Syntax (AQS).</li>
+<li>Applications work through the Shell layer. The advantage of the Shell layer is that it also supports other sources like grep. However, the disadvantage is that not all indexer features are available.</li>
+</ul>
+<p>Another option is using the search-ms:// and search:// protocols, which execute URL-based searches rendered through Windows Explorer. This option enables the lightest-weight development but does not return results or user selections from the results view to the calling application. Also, like other protocols, third-party search applications can take over the search-ms:// and search:// protocols if the applications conform to the required feature set. For more information on querying, see <a href="querying-process--windows-search-.html">Querying Process in Windows Search</a> and <a href="-search-3x-wds-qryidx-overview.html">Querying the Index Programmatically</a>.</p>
+<h3>Querying Remote Data Stores (Federated Search)</h3>
+<p>In WindowsÂ 7 and later, federated search offers a new search provider that queries remote data stores through web servers, through the <a href="https://github.com/dewitt/opensearch">OpenSearch</a> protocol, and enumerates the results as RSS or Atom XML feeds. Search Connectors are namespace junctions that simulate folder behavior by using a search provider. For more information about search federation to remote data stores in WindowsÂ 7, see <a href="-search-federated-search-overview.html">Federated Search in Windows</a>.</p>
+<h3>Indexing Files and Items</h3>
+<p>The content that is indexed is based on the file and data types supported through add-ins included with Windows Search and the default inclusion and exclusion rules for folders in the file system. For example, the filters included in Window Search support over 200 common types of data, including Microsoft Office documents, Microsoft Outlook email (in conjunction with the MAPI protocol handler), plain-text files, HTML, and many more. For a full list of file types natively supported, see <a href="-search-3x-wds-included-in-index.html">What Is Included in the Index</a>.</p>
+<p>The index can be extended with property handlers and filters to expose the content and properties of new file formats to the index and Windows Explorer. Filters are an implementation of the <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a> interface. There are two kinds of filters: one that interacts with individual items such as files and one that interacts with containers such as folders. Filters are multi-purpose in that they support chunking data, text content, some properties, and multiple languages.</p>
+<p>In contrast, property handlers have a more specific purpose: to expose the properties of specific file types that are identified by file name extensions. A property handler for a file type can enable get and set properties, and can enumerate the properties associated with that file type. Unlike filters, property handlers do not support chucking data or text content, and property handlers have no way of indicating what language a text property is in unless they support writing properties.</p>
+<h3>Indexing a Data Store</h3>
+<p>The index can be extended with protocol handlers to provide access to proprietary data stores. For example, files and items contained in non-file-system data stores (such as databases and email stores) require a protocol handler to map from a URL to a stream. Protocol handlers can also optionally determine the correct filters to use for extracting information from a stream. Filters enumerate the data store URLs. The items are then individually indexed using the proper filter and/or property handler. For more information, see <a href="-search-3x-wds-extidx-overview.html">Extending the Index</a>.</p>
+<h3>Managing the Indexing Process</h3>
+<p>Application developers can control the scope and frequency of Windows Search indexing by using various management interfaces. These interfaces include functionality to add and remove the directories that the indexer scans for changes, manually notify the index of changes to data, check the status of the indexer, and force re-indexing of some or all data. For more information, see <a href="-search-3x-wds-mngidx-overview.html">Managing the Index</a>.</p>
+<h3>Integrating the Windows Property System with Windows Search Applications</h3>
+<p>The Windows Property System is an extensible read/write system of data definitions that provides a uniform way of expressing metadata about Shell items. The Windows Property system in WindowsÂ Vista and later enables you to store and retrieve metadata for Shell items. A Shell item is any single piece of content, such as a file, folder, email or contact. A property is an individual piece of metadata associated with a Shell item. Property values are expressed as a <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant"><strong>PROPVARIANT</strong></a> structure.</p>
+<p>An extensive list of common properties is included for a number of common item types such as photos, music, documents, messages, contacts, and files. Developers can also introduce their own properties to the platform if no existing property meets their needs. For more information on integrating applications with the Windows property system, see <a href="-search-3x-wds-extidx-propertyhandlers.html">Developing Property Handlers</a>.</p>
+<h2>Overview of Handlers</h2>
+<p>A handler is a Component Object Model (COM) object that provides functionality for a Shell item. Most Shell data sources offer an extensible system for binding handlers to items. For example, the file system folder uses the association system to look up the handlers for a particular file type. A specific handler is required for every file type. One filter handler is required for the Adobe Acrobat .pdf file type, for example, another filter handler is required for the .doc file format, and so forth.</p>
+<p>Different handlers have some commonality. In WindowsÂ Vista and later, all handlers must use one of the following interfaces to initialize the handler: <a href="/windows/win32/api/propsys/nn-propsys-iinitializewithstream"><strong>IInitializeWithStream</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-iinitializewithitem"><strong>IInitializeWithItem</strong></a>, or <a href="/windows/win32/api/propsys/nn-propsys-iinitializewithfile"><strong>IItinitializeWithFile</strong></a>.</p>
+<p>The following table lists high-level developer tasks, the type of handler needed for each task, and provides a link to conceptual information about how to perform each task.</p>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Handler</th>
+<th>Conceptual information</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Accessing the properties of a file for indexing</td>
+<td>Property handler</td>
+<td><a href="-search-3x-wds-extidx-propertyhandlers.html">Developing Property Handlers</a><!-- raw HTML omitted --> <a href="-shell-systemdefinedpropertiesforfileformats.html">System-Defined Properties for Custom File Formats</a><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Adding clipboard formats for the data object (<a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a>) of an item (Data objects are used in drag-and-drop and copy/paste scenarios.)</td>
+<td>Data object handler</td>
+<td><a href="/previous-versions/windows/desktop/legacy/cc144163(v=vs.85)">Creating Data Handlers</a></td>
+</tr>
+<tr>
+<td>Adding verbs for an item that are commonly displayed in a shortcut menu</td>
+<td>Shortcut menu handler</td>
+<td><a href="../shell/context-menu-handlers.html">Creating Context Menu Handlers</a><!-- raw HTML omitted --> <a href="../shell/shortcut-menu-using-dynamic-verbs.html">Customizing a Shortcut Menu Using Dynamic Verbs</a><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Associating a file type with a specific icon</td>
+<td>Icon handler</td>
+<td><a href="../shell/how-to-create-icon-handlers.html">Creating Icon Handlers</a></td>
+</tr>
+<tr>
+<td>Creating property sheets with UI pictures and controls that permit custom interaction with a file type</td>
+<td>Property sheet handler</td>
+<td><a href="/previous-versions/windows/desktop/legacy/cc144106(v=vs.85)">Property Sheet Handlers</a></td>
+</tr>
+<tr>
+<td>Enabling an item type to support drag-and-drop and copy/paste scenarios</td>
+<td>Drop handler</td>
+<td><a href="/previous-versions/windows/desktop/legacy/bb776905(v=vs.85)">Transferring Shell Objects with Drag-and-Drop and the Clipboard</a></td>
+</tr>
+<tr>
+<td>Extracting chunks of text and document properties for indexing</td>
+<td>Filter handler</td>
+<td><a href="-search-ifilter-conceptual.html">Developing Filter Handlers</a></td>
+</tr>
+<tr>
+<td>Indexing a new file type</td>
+<td>Filter handler, property handler</td>
+<td><a href="-search-ifilter-conceptual.html">Developing Filter Handlers</a><!-- raw HTML omitted --> <a href="-search-3x-wds-extidx-propertyhandlers.html">Developing Property Handlers</a><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Indexing the contents of a data store</td>
+<td>Protocol handler</td>
+<td><a href="-search-3x-wds-phaddins.html">Developing Protocol Handlers</a></td>
+</tr>
+<tr>
+<td>Previewing a simplified view of the Shell item in the Windows Explorer preview pane</td>
+<td>Preview handler</td>
+<td><a href="../shell/preview-handlers.html">Preview Handlers</a></td>
+</tr>
+<tr>
+<td>Supplying pop-up text when a mouse hovers over a UI object</td>
+<td>Infotip handler</td>
+<td><a href="../shell/handlers.html">Creating Shell Extension Handlers</a> (Infotip Customization)</td>
+</tr>
+<tr>
+<td>Supplying a static image to represent a Shell item</td>
+<td>Thumbnail handler</td>
+<td><a href="/previous-versions/windows/desktop/legacy/cc144118(v=vs.85)">Thumbnail Handlers</a></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The following table lists handlers and the interfaces for implementing each type of handler.</p>
+<table>
+<thead>
+<tr>
+<th>Handler</th>
+<th>Interfaces</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Drop handler</td>
+<td><a href="/windows/win32/api/oleidl/nn-oleidl-idroptarget"><strong>IDropTarget</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-idroptargethelper"><strong>IDropTargetHelper</strong></a>, <a href="/windows/win32/api/objidl/nn-objidl-ipersistfile"><strong>IPersistFile</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a></td>
+</tr>
+<tr>
+<td>Data object handler</td>
+<td><a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a>, <a href="/windows/win32/api/objidl/nn-objidl-ipersistfile"><strong>IPersistFile</strong></a></td>
+</tr>
+<tr>
+<td>Filter handler</td>
+<td><a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Icon handler</td>
+<td><a href="/windows/win32/api/shlobj_core/nn-shlobj_core-iextracticona"><strong>IExtractIcon</strong></a><!-- raw HTML omitted --> Optional: <a href="/windows/win32/api/objidl/nn-objidl-ipersist"><strong>IPersist</strong></a>, <a href="/windows/win32/api/objidl/nn-objidl-ipersistfile"><strong>IPersistFile</strong></a><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Infotip handler</td>
+<td><a href="/windows/win32/api/shlobj_core/nn-shlobj_core-iqueryinfo"><strong>IQueryInfo</strong></a></td>
+</tr>
+<tr>
+<td>Preview handler</td>
+<td><a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ipreviewhandler"><strong>IPreviewHandler</strong></a></td>
+</tr>
+<tr>
+<td>Property handler</td>
+<td><a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a></td>
+</tr>
+<tr>
+<td>Protocol handler</td>
+<td><a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a>, <a href="/windows/win32/api/Searchapi/nn-searchapi-isearchprotocol"><strong>ISearchProtocol</strong></a>, <a href="/windows/win32/api/Searchapi/nn-searchapi-iurlaccessor"><strong>IUrlAccessor</strong></a><!-- raw HTML omitted --> Optional: <a href="/windows/win32/api/Searchapi/nn-searchapi-isearchprotocol2"><strong>ISearchProtocol2</strong></a>, <a href="/windows/win32/api/Searchapi/nn-searchapi-iurlaccessor2"><strong>IUrlAccessor2</strong></a>, <a href="/windows/win32/api/Searchapi/nn-searchapi-iurlaccessor3"><strong>IUrlAccessor3</strong></a>, <a href="/windows/win32/api/Searchapi/nn-searchapi-iurlaccessor4"><strong>IUrlAccessor4</strong></a><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Property sheet handler</td>
+<td><a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellpropsheetext"><strong>IShellPropSheetExt</strong></a></td>
+</tr>
+<tr>
+<td>Shortcut menu handler</td>
+<td><a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-icontextmenu"><strong>IContextMenu</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-iexplorercommand"><strong>IExplorerCommand</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a></td>
+</tr>
+<tr>
+<td>Thumbnail handler</td>
+<td><a href="/windows/win32/api/thumbcache/nn-thumbcache-ithumbnailprovider"><strong>IThumbnailProvider</strong></a></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+A property handler is sometimes kown as a metadata handler. A Shell data source is sometimes known as a Shell namespace extension. A file type handler is sometimes known as a Shell extension handler or a Shell extension.</p>
+</blockquote>
+<p>Â </p>
+<p>For more information about creating handlers, see <a href="../shell/handlers.html">Creating Shell Extension Handlers</a>. For more information about properties, see <a href="../properties/windows-properties-system.html">Windows Property System</a>.</p>
+<h2>Add-in Installer Guidelines</h2>
+<p>Use the following guidelines when creating an Add-in installer:</p>
+<ul>
+<li>The installer must use either the EXE or MSI installer.</li>
+<li>Release notes must be provided.</li>
+<li>An <strong>Add/Remove Programs</strong> entry must be created for each add-in installed.</li>
+<li>The installer must take over all registry settings for the particular file type or store that the current add-in understands.</li>
+<li>If a previous add-in is being overwritten, the installer should notify the user.</li>
+<li>If a newer add-in has overwritten a previous add-in, the user should be able to restore the previous add-in's functionality and make it the default add-in again for that file type or store.</li>
+</ul>
+<h2>Note to Implementers</h2>
+<p>Before creating a filter or property handler, developers should consider the following:</p>
+<ul>
+<li>These handlers are in-process extensions that are loaded into processes that you do not control, such as the filter daemon process, Windows Explorer (grep search), and third-party hosts like Windows Mail).</li>
+<li>You must write secure code that is robust enough to handle arbitrarily corrupt forms of your file format that were created to attack the system.</li>
+<li>Your add-in must not leak resources that will produce problems for the host processes.</li>
+<li>Your add-in must not crash as this will also crash the host processes and slow down the filtering process.</li>
+<li>Because these handlers are run in a background system process, they must perform quickly with a minimum of CPU and I/O consumed in order to meet the performance requirements of the system.</li>
+</ul>
+<p>Thus, these add-ins should be written by developers with expertise in creating system-level code.</p>
+<h2>Additional Resources</h2>
+<ul>
+<li>For information about creating a Shell data source, see <a href="/previous-versions/windows/desktop/legacy/cc144093(v=vs.85)">Implementing the Basic Folder Object Interfaces</a>.</li>
+<li>For data sources that need to use the Shell Default System Folder View Object (DefView), see <a href="../lwef/nse-folderview.html">Implementing a Folder View</a>, <a href="/windows/win32/api/shlobj_core/nf-shlobj_core-shcreateshellfolderview"><strong>SHCreateShellFolderView</strong></a> function, and <a href="/windows/win32/api/shlobj_core/ns-shlobj_core-sfv_create"><strong>SFV_CREATE</strong></a> structure. Data sources that use the Shell Default System Folder View Object (DefView) must implement the following set of interfaces: <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellfolder"><strong>IShellFolder</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellfolder2"><strong>IShellFolder2</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ipersistfolder"><strong>IPersistFolder</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ipersistfolder2"><strong>IPersistFolder2</strong></a>, and (optionally) <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ipersistfolder3"><strong>IPersistFolder3</strong></a>. If your <strong>IShellFolder</strong> implementation does not use <strong>SHCreateShellFolderView</strong> to create the DefView, the Shell view object may need <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ifolderview"><strong>IFolderView</strong></a>.</li>
+<li><a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-isearchfolderitemfactory"><strong>ISearchFolderItemFactory</strong></a> is the primary interface for consumers of the Shell data source known as DBFolder. For more information about DBFolder, see the description of the STR_PARSE_WITH_PROPERTIES constant in <a href="../shell/str-constants.html"><strong>Bind Context String Keys</strong></a>. See also <a href="/previous-versions/windows/desktop/legacy/ee872122(v=vs.85)">Association Arrays</a> and <a href="/windows/win32/api/propsys/nf-propsys-ipropertysystem-getpropertydescriptionlistfromstring"><strong>IPropertySystem::GetPropertyDescriptionListFromString</strong></a>.</li>
+<li>For information on OLEÂ DB, see <a href="https://msdn.microsoft.com/library/5d8sd9we(VS.71).aspx">OLE DB Programming Overview</a>. For information on the .NET Framework Data Provider for OLEÂ DB, see the <a href="/dotnet/api/system.data.oledb">System.Data.OleDb Namespace</a> documentation.</li>
+<li>For community-supported message boards on Search technologies, see <a href="https://social.msdn.microsoft.com/Forums/windowsdesktopsearchdevelopment/threads">Windows: Search Forums</a>.</li>
+<li>For related code samples, see <a href="-search-samples-ovw.html">Windows Search Code Samples</a>.</li>
+</ul>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-overview.html">Windows Search Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-language-support.html">Languages Supported by Windows Search</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-managed-code.html">Using Managed Code with Shell Data and Windows Search</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-developers-guide-entry-page.html">Windows Search Developer's Guide</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

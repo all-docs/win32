@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>InkStart Method</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: InkStart Method
+description: InkStart, InkDraw, and InkStop methods all use Win32 GUI constructs such as device contexts and pen objects.
+ms.assetid: a639e1d2-6d81-472b-b639-d237e202020f
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>InkStart Method</h1>
+<p><strong>InkStart</strong>, <a href="inkdraw-method.html"><strong>InkDraw</strong></a>, and <a href="cguipaper-methods.html"><strong>InkStop</strong></a> methods all use Win32 GUI constructs such as device contexts and pen objects. This illustrates why CGuiPaper is needed as a separate level of encapsulation. The GUI aspects of the drawing paper are handled in CGuiPaper. The COPaper object is sent only ink data.</p>
+<p>Another design reason for the CGuiPaper level of encapsulation is the dual nature of its <strong>InkStart</strong>, <a href="inkdraw-method.html"><strong>InkDraw</strong></a>, and <a href="cguipaper-methods.html"><strong>InkStop</strong></a> methods. They not only call on COPaper to record the ink data as it occurs, they also paint a visual image of the drawing as it occurs. CGuiPaper keeps an m_bInkSaving flag to manage this dual nature. When m_bInkSaving is FALSE, the image is drawn on screen but the data is not sent to COPaper for recording.</p>
+<p>This scheme is used in repainting when the user is not moving the mouse but COPaper's ink data is being resent to CGuiPaper for automatic repainting. CGuiPaper can be told to set the m_bInkSaving flag by calling its <a href="cguipaper-methods.html"><strong>InkSaving</strong></a> method.</p>
+<p>The following sample code snippets illustrate the <strong>InkStart</strong> methods of GUIPAPER.CPP AND SINK.CPP.</p>
+<h2>InkStart Method (GUIPAPER.CPP)</h2>
+<pre lang="C++"><code>HRESULT CGuiPaper::InkStart(
+                       SHORT nX,
+                       SHORT nY)
+  {
+    HRESULT hr = E_FAIL;
+
+    if (m_nLockKey || (!m_nLockKey &amp;&amp; !m_bInkSaving))
+    {
+      // Start an ink drawing sequence only if one is not in progress.
+      if (!m_bInking)
+      {
+        // Remember start position.
+        m_OldPos.x = nX;
+        m_OldPos.y = nY;
+
+        // Delete old pen.
+        if (m_hPen)
+          DeleteObject(m_hPen);
+
+        // Create and select the new drawing pen.
+        m_hPen = CreatePen(PS_SOLID, m_nInkWidth, m_crInkColor);
+        SelectObject(m_hDC, m_hPen);
+
+        hr = NOERROR;
+
+        // Ask the Paper object to mark the start of the ink drawing
+        // sequence in the current ink color.
+        if (m_pIPaper &amp;&amp; m_bInkSaving)
+        {
+          hr = m_pIPaper-&gt;InkStart(
+                            m_nLockKey,
+                            nX,
+                            nY,
+                            m_nInkWidth,
+                            m_crInkColor);
+          // Capture the Mouse.
+          SetCapture(m_hWnd);
+
+          // We've modified the ink data--it is now &quot;dirty&quot; with
+          // respect to the compound file image. Set dirty flag.
+          m_bDirty = TRUE;
+        }
+
+        // Set inking flag to TRUE.
+        m_bInking = TRUE;
+      }
+    }
+
+    return hr;
+  }
+</code></pre>
+<h2>InkStart Method (SINK.CPP)</h2>
+<p><strong>StoClien</strong> receives the drawing data in the form of calls to the connected <strong>IPaperSink</strong> interface in its COPaperSink object. These methods correspond to the similar <strong>InkStart</strong>, <a href="inkdraw-method.html"><strong>InkDraw</strong></a>, and <a href="cguipaper-methods.html"><strong>InkStop</strong></a> methods in CGuiPaper.</p>
+<pre lang="C++"><code>STDMETHODIMP COPaperSink::CImpIPaperSink::InkStart(
+                                              SHORT nX,
+                                              SHORT nY,
+                                              SHORT nWidth,
+                                              COLORREF crInkColor)
+  {
+    // Turn off ink saving to the COPaper object.
+    m_pBackObj-&gt;m_pGuiPaper-&gt;InkSaving(FALSE);
+
+    // Play the data back to the CGuiPaper for display only.
+    m_pBackObj-&gt;m_pGuiPaper-&gt;InkWidth(nWidth);
+    m_pBackObj-&gt;m_pGuiPaper-&gt;InkColor(crInkColor);
+    m_pBackObj-&gt;m_pGuiPaper-&gt;InkStart(nX, nY);
+
+    return NOERROR;
+  }
+</code></pre>
+<p>When <strong>InkStart</strong> is called in the sink, it calls CGuiPaper to turn off ink saving to COPaper. COPaper does not need to receive an echoed copy of the data it is sending. When <a href="inkdraw-method.html"><strong>InkDraw</strong></a> is called in the sink, it simply passes the call on to <strong>CGuiPaper::InkDraw</strong>. When <a href="cguipaper-methods.html"><strong>InkStop</strong></a> is called in the sink, CGuiPaper is called to turn ink saving back on. The result is a playback of COPaper's ink data to CGuiPaper for display only.</p>
+<p>You can test the behavior of <strong>StoClien</strong> when its <strong>IPaperSink</strong> is disconnected by choosing the Disconnect choice on the Sink menu. As an experiment, after disconnecting the sink, choose About from the Help menu. This will show the About dialog box, which will cover part of the <strong>StoClien</strong>'s drawing. Click OK in the About dialog box. Notice that the portion of the drawing that was covered is now gone. The drawing data is not lost, but part of the image is. The client received the WM_PAINT message and issued the <a href="ipaper--redraw.html"><strong>IPaper::Redraw</strong></a> method. But because the sink was not connected, it did not receive the <strong>IPaperSink</strong> calls to repaint the drawing.</p>
+<p>You can also test this behavior by minimizing <strong>StoClien</strong> and then restoring it. In this case, the entire drawing image is lost and needs repainting. To repaint the drawing image after either of these tests, use the Sink menu to reconnect, and then choose <a href="ipaper--redraw.html"><strong>Redraw</strong></a> from the Draw menu.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

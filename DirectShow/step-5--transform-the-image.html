@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 5. Transform the Image</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Use this example to understand how the RLE encoder might implement the method as part of writing a transform filter.
+ms.assetid: b7d878ab-523f-4b52-b98d-c9d4fa18ce8a
+title: Step 5. Transform the Image
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Step 5. Transform the Image</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This is step 5 of the tutorial <a href="writing-transform-filters.html">Writing Transform Filters</a>.</p>
+<p>The upstream filter delivers media samples to the transform filter by calling the <a href="/windows/desktop/api/Strmif/nf-strmif-imeminputpin-receive"><strong>IMemInputPin::Receive</strong></a> method on the transform filter's input pin. To process the data, the transform filter calls the <strong>Transform</strong> method, which is pure virtual. The <strong>CTransformFilter</strong> and <strong>CTransInPlaceFilter</strong> classes use two different versions of this method:</p>
+<ul>
+<li><a href="ctransformfilter-transform.html"><strong>CTransformFilter::Transform</strong></a> takes a pointer to the input sample and a pointer to the output sample. Before the filter calls the method, it copies the sample properties from the input sample to the output sample, including the time stamps.</li>
+<li><a href="ctransinplacefilter-transform.html"><strong>CTransInPlaceFilter::Transform</strong></a> takes a pointer to the input sample. The filter modifies the data in place.</li>
+</ul>
+<p>If the <strong>Transform</strong> method returns S_OK, the filter delivers the sample downstream. To skip a frame, return S_FALSE. If there is a streaming error, return a failure code.</p>
+<p>The following example shows how the RLE encoder might implement this method. Your own implementation might differ considerably, depending on what your filter does.</p>
+<pre lang="C++"><code>HRESULT CRleFilter::Transform(IMediaSample *pSource, IMediaSample *pDest)
+{
+    // Get pointers to the underlying buffers.
+    BYTE *pBufferIn, *pBufferOut;
+    hr = pSource-&gt;GetPointer(&amp;pBufferIn);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    hr = pDest-&gt;GetPointer(&amp;pBufferOut);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    // Process the data.
+    DWORD cbDest = EncodeFrame(pBufferIn, pBufferOut);
+    KASSERT((long)cbDest &lt;= pDest-&gt;GetSize());
+
+    pDest-&gt;SetActualDataLength(cbDest);
+    pDest-&gt;SetSyncPoint(TRUE);
+    return S_OK;
+}
+</code></pre>
+<p>This example assumes that EncodeFrame is a private method that implements the RLE encoding. The encoding algorithm itself is not described here; for details, see the topic &quot;Bitmap Compression&quot; in the Platform SDK documentation.</p>
+<p>First, the example calls <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample-getpointer"><strong>IMediaSample::GetPointer</strong></a> to retrieve the addresses of the underlying buffers. It passes these to the private EncoderFrame method. Then it calls <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample-setactualdatalength"><strong>IMediaSample::SetActualDataLength</strong></a> to specify the length of the encoded data. The downstream filter needs this information so that it can manage the buffer properly. Finally, the method calls <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample-setsyncpoint"><strong>IMediaSample::SetSyncPoint</strong></a> to set the key frame flag to <strong>TRUE</strong>. Run-length encoding does not use any delta frames, so every frame is a key frame. For delta frames, set the value to <strong>FALSE</strong>.</p>
+<p>Other issues that you must consider include:</p>
+<ul>
+<li>
+<p>Time stamps. The <strong>CTransformFilter</strong> class timestamps the output sample before calling the <strong>Transform</strong> method. It copies the time stamp values from the input sample, without modifying them. If your filter needs to change the time stamps, call <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample-settime"><strong>IMediaSample::SetTime</strong></a> on the output sample.</p>
+</li>
+<li>
+<p>Format changes. The upstream filter can change formats mid-stream by attaching a media type to the sample. Before doing so, it calls <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-queryaccept"><strong>IPin::QueryAccept</strong></a> on your filter's input pin. In the <strong>CTransformFilter</strong> class, this results in a call to <strong>CheckInputType</strong> followed by <strong>CheckTransform</strong>. The downstream filter can also change media types, using the same mechanism. In your own filter, there are two things to watch for:</p>
+<ul>
+<li>Make sure that <strong>QueryAccept</strong> does not return false acceptances.</li>
+<li>If your filter does accept format changes, check for them inside the <strong>Transform</strong> method by calling <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample-getmediatype"><strong>IMediaSample::GetMediaType</strong></a>. If that method returns S_OK, your filter must respond to the format change.</li>
+</ul>
+<p>For more information, see <a href="dynamic-format-changes.html">Dynamic Format Changes</a>.</p>
+</li>
+<li>
+<p>Threads. In both <strong>CTransformFilter</strong> and <strong>CTransInPlaceFilter</strong>, the transform filter delivers output samples synchronously inside the <strong>Receive</strong> method. The filter does not create any worker threads to process the data. Typically, there is no reason for a transform filter to create worker threads.</p>
+</li>
+</ul>
+<p>Next: <a href="step-6--add-support-for-com.html">Step 6. Add Support for COM</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="writing-directshow-filters.html">Writing DirectShow Filters</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

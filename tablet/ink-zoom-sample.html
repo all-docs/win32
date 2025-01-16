@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ink Zoom Sample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This sample program demonstrates how to zoom and scroll ink.
+ms.assetid: d3b5668a-29bf-4846-8ab0-1bda7b6160f9
+title: Ink Zoom Sample
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Ink Zoom Sample</h1>
+<p>This sample program demonstrates how to zoom and scroll ink. In particular, it enables the user to zoom in and out of ink in increments. It also demonstrates how to zoom into a particular region using a zoom rectangle. Finally, this sample illustrates how to collect ink at different zoom ratios and how to set up scrolling within the zoomed drawing area.</p>
+<p>In the sample, the <a href="/previous-versions/ms828481(v=msdn.10)">Renderer</a> object's view and object transforms are used to perform zooming and scrolling. The view transform applies to the points and the pen width. The object transform applies only to the points. The user can control which transform is used by changing the Scale Pen Width item on the Mode menu.</p>
+<blockquote>
+<p>[!Note]<br />
+It is problematic to perform some COM calls on certain interface methods (<a href="/windows/desktop/api/msinkaut/nf-msinkaut-iinkrenderer-setviewtransform"><strong>InkRenderer.SetViewTransform</strong></a> and <a href="/windows/desktop/api/msinkaut/nf-msinkaut-iinkrenderer-setobjecttransform"><strong>InkRenderer.SetObjectTransform</strong></a>, for example) when a message has been SENT. When messages are SENT, they need to be marshalled to the POST message queue. To address this scenario, test whether you are handling a message from POST by calling <a href="/windows/desktop/api/winuser/nf-winuser-insendmessageex"><strong>InSendMesssageEx</strong></a> and POST the message to yourself if the message was SENT.</p>
+</blockquote>
+<p>Â </p>
+<p>The following features are used in this sample:</p>
+<ul>
+<li>The <a href="/previous-versions/ms583683(v=vs.100)">InkCollector</a> object</li>
+<li>The <a href="/previous-versions/ms828481(v=msdn.10)">Renderer</a> object's <a href="/previous-versions/ms828514(v=msdn.10)">SetViewTransform</a> method</li>
+<li>The <a href="/previous-versions/ms828481(v=msdn.10)">Renderer</a> object's <a href="/previous-versions/ms828513(v=msdn.10)">SetObjectTransform</a> method</li>
+</ul>
+<h2>Initializing the Form</h2>
+<p>First, the sample references the Tablet PC Automation interfaces, which are provided in the Windows Vista or Windows XP Tablet PC Edition Software Development Kit (SDK).</p>
+<pre lang="C++"><code>using Microsoft.Ink;
+</code></pre>
+<p>The sample declares an <a href="/previous-versions/ms583683(v=vs.100)">InkCollector</a>, <code>myInkCollector</code>, and some private members to help with scaling.</p>
+<pre lang="C++"><code>// Declare the Ink Collector object
+private InkCollector myInkCollector = null;
+...
+// The starting and ending points of the zoom rectangle
+private Rectangle zoomRectangle = Rectangle.Empty;
+
+// The current zoom factor (1 = 100% zoom level)
+private float zoomFactor = 1;
+
+// Declare constants for the width and height of the 
+// drawing area (in ink space coordinates).
+private const int InkSpaceWidth = 50000;
+private const int InkSpaceHeight = 50000;
+...
+// Declare constant for the pen width used by this application
+private const float MediumInkWidth = 100;
+</code></pre>
+<p>Then the sample creates and enables the <a href="/previous-versions/ms583683(v=vs.100)">InkCollector</a> in the form's <a href="/dotnet/api/system.windows.forms.form.load?view=netcore-3.1&amp;preserve-view=true">Load</a> event handler. Also, the <a href="/previous-versions/ms837941(v=msdn.10)">Width</a> property of the InkCollector object's <a href="/previous-versions/ms836500(v=msdn.10)">DefaultDrawingAttributes</a> property is set. Finally, the scroll bar ranges are defined and the application's <code>UpdateZoomAndScroll</code> method is called.</p>
+<pre lang="C++"><code>private void InkZoom_Load(object sender, System.EventArgs e)
+{
+   // Create the pen used to draw the zoom rectangle
+    blackPen = new Pen(Color.Black, 1);
+
+    // Create the ink collector and associate it with the form
+    myInkCollector = new InkCollector(pnlDrawingArea.Handle);
+
+    // Set the pen width
+    myInkCollector.DefaultDrawingAttributes.Width = MediumInkWidth;
+
+    // Enable ink collection
+    myInkCollector.Enabled = true;
+
+    // Define ink space size - note that the scroll bars
+    // map directly to ink space
+    hScrollBar.Minimum = 0;
+    hScrollBar.Maximum = InkSpaceWidth;
+    vScrollBar.Minimum = 0;
+    vScrollBar.Maximum = InkSpaceHeight;
+
+    // Set the scroll bars to map to the current zoom level
+    UpdateZoomAndScroll();
+}
+</code></pre>
+<h2>Updating the Zoom and Scroll Values</h2>
+<p>The drawing area of the ink collector is affected by many events. In the <code>UpdateZoomAndScroll</code> method, a transformation matrix is used to both scale and translate the ink collector within the window.</p>
+<blockquote>
+<p>[!Note]<br />
+The <a href="/previous-versions/ms828481(v=msdn.10)">Renderer</a> object's <a href="/previous-versions/ms828514(v=msdn.10)">SetViewTransform</a> method applies the transform to both the strokes and the pen width, while the <a href="/previous-versions/ms828513(v=msdn.10)">SetObjectTransform</a> method only applies the transform to the strokes.</p>
+</blockquote>
+<p>Â </p>
+<p>Finally, the application's <code>UpdateScrollBars</code> method is called and the form is forced to refresh.</p>
+<pre lang="C++"><code>// Create a transformation matrix
+Matrix m = new Matrix();
+
+// Apply the current scale factor
+m.Scale(zoomFactor,zoomFactor);
+
+// Apply the current translation factor - note that since 
+// the scroll bars map directly to ink space, their values
+// can be used directly.
+m.Translate(-hScrollBar.Value, -vScrollBar.Value);
+
+// ...
+if (miScalePenWidth.Checked)
+{
+    myInkCollector.Renderer.SetViewTransform(m);
+}
+else
+{
+    myInkCollector.Renderer.SetObjectTransform(m);
+}
+
+// Set the scroll bars to map to the current zoom level
+UpdateScrollBars();
+
+Refresh();
+</code></pre>
+<h2>Managing the Scroll Bars</h2>
+<p>The <code>UpdateScrollBars</code> method sets up the scroll bars to work correctly with the current window size, zoom setting, and scroll location within the <a href="/previous-versions/ms583683(v=vs.100)">InkCollector</a>. This method calculates the large change and small change values for the vertical and horizontal scroll bars. It also calculates the current value of the scroll bars and whether they should be visible. The <a href="/previous-versions/ms828481(v=msdn.10)">Renderer</a> object's <a href="/previous-versions/ms828505(v=msdn.10)">PixelToInkSpace</a> method handles the conversion from pixels to the zoomed coordinate space and accounts for any scaling and scrolling that is applied through the view and object transforms.</p>
+<pre lang="C++"><code>// Create a point representing the top left of the drawing area (in pixels)
+Point ptUpperLeft = new Point(0, 0);
+
+// Create a point representing the size of a small change
+Point ptSmallChange = new Point(SmallChangeSize, SmallChangeSize);
+
+// Create a point representing the lower right of the drawing area (in pixels)
+Point ptLowerRight = new Point(hScrollBar.Width, vScrollBar.Height);
+
+using (Graphics g = CreateGraphics())
+{
+    // Convert each of the points to ink space
+    myInkCollector.Renderer.PixelToInkSpace(g, ref ptUpperLeft);
+    myInkCollector.Renderer.PixelToInkSpace(g, ref ptLowerRight);
+    myInkCollector.Renderer.PixelToInkSpace(g, ref ptSmallChange);
+}
+
+// Set the SmallChange values (in ink space)
+// Note that it is necessary to subract the upper-left point
+// value to account for scrolling.
+hScrollBar.SmallChange = ptSmallChange.X - ptUpperLeft.X;
+vScrollBar.SmallChange = ptSmallChange.Y - ptUpperLeft.Y;
+
+// Set the LargeChange values to the drawing area width (in ink space)
+// Note that it is necessary to subract the upper-left point
+// value to account for scrolling.
+hScrollBar.LargeChange = ptLowerRight.X - ptUpperLeft.X;
+vScrollBar.LargeChange = ptLowerRight.Y - ptUpperLeft.Y;
+
+// If the scroll bars are not needed, hide them
+hScrollBar.Visible = hScrollBar.LargeChange &lt; hScrollBar.Maximum;
+vScrollBar.Visible = vScrollBar.LargeChange &lt; vScrollBar.Maximum;
+
+// If the horizontal scroll bar value would run off of the drawing area, 
+// adjust it
+if(hScrollBar.Visible &amp;&amp; (hScrollBar.Value + hScrollBar.LargeChange &gt; hScrollBar.Maximum)) 
+{
+    hScrollBar.Value = hScrollBar.Maximum - hScrollBar.LargeChange;
+}
+
+// If the vertical scroll bar value would run off of the drawing area, 
+// adjust it
+if(vScrollBar.Visible &amp;&amp; (vScrollBar.Value + vScrollBar.LargeChange &gt; vScrollBar.Maximum))
+{
+    vScrollBar.Value = vScrollBar.Maximum - vScrollBar.LargeChange;
+}
+</code></pre>
+<h2>Zooming to a Rectangle</h2>
+<p>The <code>pnlDrawingArea</code> panel event handlers manage drawing the rectangle to the window. If the Zoom To Rect command is checked on the Mode menu, then the <a href="/previous-versions/ms567618(v=vs.100)">MouseUp</a> event handler calls the application's <code>ZoomToRectangle</code> method. The <code>ZoomToRectangle</code> method calculates the width and height of the rectangle, checks for boundary conditions, updates the scroll bar values and the scale factor, and then calls the application's <code>UpdateZoomAndScroll</code> method to apply the new settings.</p>
+<h2>Closing the Form</h2>
+<p>The form's <a href="/dotnet/api/system.windows.forms.form.dispose?view=netcore-3.1&amp;preserve-view=true">Dispose</a> method disposes the <a href="/previous-versions/ms583683(v=vs.100)">InkCollector</a> object.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

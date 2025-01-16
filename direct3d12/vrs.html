@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Variable-rate shading (VRS)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Variable-rate shading (VRS)
+description: Variable-rate shading—or coarse pixel shading—is a mechanism that lets you allocate rendering performance/power at rates that vary across your rendered image.
+ms.topic: article
+ms.date: 04/08/2019</h2>
+<h1>Variable-rate shading (VRS)</h1>
+<h2>The motivation for VRS</h2>
+<p>Due to performance constraints, a graphics renderer can't always afford to deliver the same level of quality to every part of its output image. Variable-rate shading—or coarse pixel shading—is a mechanism that lets you allocate rendering performance/power at rates that vary across your rendered image.</p>
+<p>In some cases, the shading rate can be reduced with little or no reduction in perceptible output quality; leading to a performance improvement that's essentially free of charge.</p>
+<h2>Without VRS—multi-sample anti-aliasing with supersampling</h2>
+<p>Without variable-rate shading, the only means of controlling shading rate is with multi-sample anti-aliasing (MSAA) with sample-based execution (also known as supersampling).</p>
+<p>MSAA is a mechanism for reducing geometric aliasing, and improving the rendering quality of an image compared with not using MSAA. The MSAA sample count, which can be 1x, 2x, 4x, 8x, or 16x, governs the number of samples allocated per render target pixel. The MSAA sample count must be known up front when the target is allocated, and it can't be changed thereafter.</p>
+<p>Supersampling causes the pixel shader to be invoked once per sample, at a higher quality but also higher performance cost compared to per-pixel execution.</p>
+<p>Your application can control its shading rate by choosing between per-pixel-based execution, or MSAA-with-supersampling. Those two options don't provide very fine control. Also, you might want a lower shading rate for a certain class of objects compared to the rest of the image. Such objects might include an object behind a HUD element, or a transparency, a blur (depth-of-field, motion, etc.), or an optical distortion due to VR optics. But that wouldn't be possible, because the shading quality and costs are fixed over the entire image.</p>
+<h2>With variable-rate shading (VRS)</h2>
+<p>The variable-rate shading (VRS) model extends supersampling-with-MSAA into the opposite, &quot;coarse pixel&quot;, direction, by adding the concept of coarse shading. This is where shading can be performed at a frequency more coarse than a pixel. In other words, a group of pixels can be shaded as a single unit, and the result is then broadcast to all samples in the group.</p>
+<p>A coarse-shading API allows your application to specify the number of pixels that belong to a shaded group, or <em>coarse pixel</em>. You can vary the coarse pixel size after you've allocated the render target. So, different portions of the screen or different draw passes can have different shading rates.</p>
+<p>Following is a table describing which MSAA level is supported with which coarse pixel size, for platforms that support coarse shading:</p>
+<ul>
+<li>For cells marked <em>Y</em>, that combination is enabled.</li>
+<li>For cells marked <em>Cap</em>, that combination is conditionally enabled based on a cap (AdditionalShadingRatesSupported).</li>
+<li>For cells that are blank, that combination is unsupported.</li>
+<li>For cells that are halftone-shaded, that combination is unsupported, <em>and</em> it involves tracking more than 16 samples per pixel shader invocation. For tracking more than 16 samples there are additional hardware alignment barriers to support, compared to the other cases.</li>
+</ul>
+<p><img src="images/CoarsePixelSizeSupport.PNG" alt="Table shows coarse pixel size for M S A A levels." title="Coarse pixel sizes" /></p>
+<h2>Feature tiers</h2>
+<p>There are two tiers to the VRS implementation, and two capabilities that you can query for. Each tier is described in greater detail after the table.</p>
+<p><img src="images/Tiers.PNG" alt="Table shows features available in Tier 1 and Tier 2." title="VRS tiers" /></p>
+<h3>Tier 1</h3>
+<ul>
+<li>Shading rate can be specified only on a per-draw-basis; no more granular than that.</li>
+<li>Shading rate applies uniformly to what is drawn independently of where it lies within the render target.</li>
+</ul>
+<h3>Tier 2</h3>
+<ul>
+<li>Shading rate can be specified on a per-draw basis, as in Tier 1. It can also be specified by a combination of per-draw basis, and of:
+<ul>
+<li>Semantic from each provoking vertex, and</li>
+<li>a screen-space image.</li>
+</ul>
+</li>
+<li>Shading rates from the three sources are combined using a set of combiners.</li>
+<li>Screen-space image tile size is 16x16 or smaller.</li>
+<li>Shading rate requested by your application is guaranteed to be delivered exactly (for precision of temporal and other reconstruction filters).</li>
+<li>SV_ShadingRate PS input is supported.</li>
+<li>The per-provoking-vertex (also known as per-primitive) shading rate, is valid when one viewport is used and <code>SV_ViewportArrayIndex</code> is not written to.</li>
+<li>The per-provoking-vertex rate can be used with more than one viewport if the <em>SupportsPerVertexShadingRateWithMultipleViewports</em> capability is set to <code>true</code>. Additionally, in that case, that rate can be used when <code>SV_ViewportArrayIndex</code> is written to.</li>
+</ul>
+<h3>List of capabilities</h3>
+<ul>
+<li><em>AdditionalShadingRatesSupported</em>
+<ul>
+<li>Boolean type.</li>
+<li>Indicates whether 2x4, 4x2, and 4x4 coarse pixel sizes are supported for single-sampled rendering; and whether coarse pixel size 2x4 is supported for 2x MSAA.</li>
+</ul>
+</li>
+<li><em>SupportsPerVertexShadingRateWithMultipleViewports</em>
+<ul>
+<li>Boolean type.</li>
+<li>Indicates whether more than one viewport can be used with the per-vertex (also known as per-primitive) shading rate.</li>
+</ul>
+</li>
+</ul>
+<h2>Specifying shading rate</h2>
+<p>For flexibility in applications, there are a variety of mechanisms provided to control the shading rate. Different mechanisms are available depending on the hardware feature tier.</p>
+<h3>Command list</h3>
+<p>This is the simplest mechanism for setting the shading rate. It's available on all tiers.</p>
+<p>Your application can specify a coarse pixel size using the <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist5-rssetshadingrate"><strong>ID3D12GraphicsCommandList5::RSSetShadingRate</strong> method</a>. That API takes a single enum argument. The API provides an overall control of the level of quality for rendering—the ability to set the shading rate on a per-draw basis.</p>
+<p>Values for this state are expressed through the <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shading_rate"><strong>D3D12_SHADING_RATE</strong></a> enumeration.</p>
+<h4>Coarse pixel size support</h4>
+<p>The shading rates 1x1, 1x2, 2x1, and 2x2 are supported on all tiers.</p>
+<p>There is a capability, <em>AdditionalShadingRatesSupported</em>, to indicate whether 2x4, 4x2, and 4x4 are supported on the device.</p>
+<h3>Screen-space image (image-based)</h3>
+<p>On Tier 2 and higher, you can specify the pixel-shading rate with a screen-space image.</p>
+<p>The screen-space image allows your application to create a &quot;level-of-detail (LOD) mask&quot; image indicating regions of varying quality, such as areas that will be covered by motion blur, depth-of-field blur, transparent objects, or HUD UI elements. The resolution of the image is in macroblocks; it's not in the resolution of the render target. In other words, the shading rate data is specified at a granularity of 8x8 or 16x16 pixel tiles, as indicated by the VRS tile size.</p>
+<h4>Tile size</h4>
+<p>Your application can query an API to retrieve the supported VRS tile size for its device.</p>
+<p>Tiles are square, and the size refers to the tile's width or height in texels.</p>
+<p>If the hardware doesn't support Tier 2 variable-rate shading, then the capability query for the tile size returns 0.</p>
+<p>If the hardware <em>does</em> support Tier 2 variable-rate shading, then the tile size is one of these values.</p>
+<ul>
+<li>8</li>
+<li>16</li>
+<li>32</li>
+</ul>
+<h4>Screen-space image size</h4>
+<p>For a render target of size {rtWidth, rtHeight}, using a given tile size named <strong>VRSTileSize</strong>, the screen-space image that will cover it is of these dimensions.</p>
+<pre lang="cpp"><code>{ ceil((float)rtWidth / VRSTileSize), ceil((float)rtHeight / VRSTileSize) }
+</code></pre>
+<p>The screen-space image's top left (0, 0) is locked to the render-target's top left (0, 0).</p>
+<p>To look up the (x,y) coordinate of a tile that corresponds to a particular location in the render target, divide the window-space coordinates of (x, y) by the tile size, ignoring fractional bits.</p>
+<p>If the screen-space image is larger than it needs to be for a given render target, the extra portions at the right and/or bottom are not used.</p>
+<p>If the screen-space image is too small for a given render target, any attempted read from the image beyond its actual extents yields a default shading rate of 1x1. This is because the screen-space image's top left (0, 0) is locked to the render-target's top left (0, 0) and &quot;reading beyond the render-target extents&quot; means reading too-great of values for x and y.</p>
+<h4>Format, layout, resource properties</h4>
+<p>The format of this surface is a single-channel 8-bit surface (<a href="/windows/desktop/api/dxgiformat/ne-dxgiformat-dxgi_format"><strong>DXGI_FORMAT_R8_UINT</strong></a>).</p>
+<p>The resource is dimension <strong>TEXTURE2D</strong>.</p>
+<p>It can't be arrayed or mipped. It must explicitly have one mip level.</p>
+<p>It has sample count 1, and sample quality 0.</p>
+<p>It has texture layout <strong>UNKNOWN</strong>. It implicitly can't be row-major layout, because cross-adapter is not allowed.</p>
+<p>The expected way in which the screen-space image data is populated is to either</p>
+<ol>
+<li>Write the data using a compute shader; the screen-space image is bound as a UAV, or</li>
+<li>Copy the data to the screen-space image.</li>
+</ol>
+<p>When creating the screen-space image, these flags are permitted.</p>
+<ul>
+<li>NONE</li>
+<li>ALLOW_UNORDERED_ACCESS</li>
+<li>DENY_SHADER_RESOURCE</li>
+</ul>
+<p>These flags are not permitted.</p>
+<ul>
+<li>ALLOW_RENDER_TARGET</li>
+<li>ALLOW_DEPTH_STENCIL</li>
+<li>ALLOW_CROSS_ADAPTER</li>
+<li>ALLOW_SIMULTANEOUS_ACCESS</li>
+<li>VIDEO_DECODE_REFERENCE_ONLY</li>
+</ul>
+<p>The resource's heap type can't be UPLOAD nor READBACK.</p>
+<p>The resource can't be SIMULTANEOUS_ACCESS. The resource is not allowed to be cross-adapter.</p>
+<h4>Data</h4>
+<p>Each byte of the screen-space image corresponds to a value of the <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shading_rate"><strong>D3D12_SHADING_RATE</strong></a>  enumeration.</p>
+<h4>Resource state</h4>
+<p>A resource needs to be transitioned into a read-only state when used as a screen-space image. A read-only state, <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_resource_states"><strong>D3D12_RESOURCE_STATE_SHADING_RATE_SOURCE</strong></a>, is defined for this purpose.</p>
+<p>The image resource is transitioned out of that state to become writable again.</p>
+<h4>Setting the image</h4>
+<p>The screen-space image for specifying the shader rate is set on the command list.</p>
+<p>A resource that has been set as a shading rate source can't be read or written from any shader stage.</p>
+<p>A <code>null</code> screen-space image can be set for specifying the shader rate. This has the effect of 1x1 being consistently used as the contribution from the screen-space image. The screen-space image can initially be considered to be set to <code>null</code>.</p>
+<h4>Promotion and decay</h4>
+<p>A screen-space image resource doesn't have any special implications with respect to promotion or decay.</p>
+<h3>Per-primitive attribute</h3>
+<p>A per-primitive attribute adds the ability to specify a shading rate term as an attribute from a provoking vertex. This attribute is flat-shaded—that is, it's propagated to all pixels in the current triangle or line primitive. Use of a per-primitive attribute can enable finer-grained control of image quality compared to the other shading rate specifiers.</p>
+<p>The per-primitive attribute is a settable semantic named <code>SV_ShadingRate</code>. <code>SV_ShadingRate</code> exists as part of <a href="/windows/desktop/direct3dhlsl/hlsl-shader-model-6-4-features-for-direct3d-12">HLSL Shader Model 6.4</a>.</p>
+<p>If a VS or GS sets <code>SV_ShadingRate</code>, but VRS is not enabled, then the semantic-setting has no effect. If no value for <code>SV_ShadingRate</code> is specified per-primitive, then a shading rate value of 1x1 is assumed as the per-primitive contribution.</p>
+<h3>Combining shading rate factors</h3>
+<p>The various sources of shading rate are applied in sequence using this diagram.</p>
+<p><img src="images/Combiners.PNG" alt="Diagram shows a pipeline state, labeled A, with Provoking vertex shading rate, labeled B, applied at a Combiner, then Image based shading rate, labeled B, applied at a Combiner." title="Shading combiners" /></p>
+<p>Each pair of A and B is combined using a combiner.</p>
+<p>* When specifying a shader rate by vertex attribute.</p>
+<ul>
+<li>If a geometry shader is used, shading rate can be specified through that.</li>
+<li>If a geometry shader is not used, the shading rate is specified by the provoking vertex.</li>
+</ul>
+<h4>List of combiners</h4>
+<p>The following combiners are supported. Using a Combiner (C) and two inputs (A and B).</p>
+<ul>
+<li><strong>Passthrough</strong>. C.xy = A.xy.</li>
+<li><strong>Override</strong>. C.xy = B.xy.</li>
+<li><strong>Higher quality</strong>. C.xy = min(A.xy, B.xy).</li>
+<li><strong>Lower quality</strong>. C.xy = max(A.xy, B.xy).</li>
+<li><strong>Apply cost B relative to A</strong>. C.xy = min(maxRate, A.xy + B.xy).</li>
+</ul>
+<p>where <code>maxRate</code> is the largest permitted dimension of coarse pixel on the device. This would be</p>
+<ul>
+<li><strong>D3D12_AXIS_SHADING_RATE_2X</strong> (that is, a value of 1), if AdditionalShadingRatesSupported is <code>false</code>.</li>
+<li><strong>D3D12_AXIS_SHADING_RATE_4X</strong> (that is, a value of 2), if AdditionalShadingRatesSupported is <code>true</code>.</li>
+</ul>
+<p>The choice of combiner for variable-rate shading is set on the command list through <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist5-rssetshadingrate"><strong>ID3D12GraphicsCommandList5::RSSetShadingRate</strong></a>.</p>
+<p>If no combiners are ever set, then they stay at the default, which is PASSTHROUGH.</p>
+<p>If the source to a combiner is a <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_axis_shading_rate"><strong>D3D12_AXIS_SHADING_RATE</strong></a>, which is not allowed in the support table, then the input is sanitized to a shading rate that <em>is</em> supported.</p>
+<p>If the output of a combiner doesn't correspond to a shading rate supported on the platform, then the result is sanitized to a shading rate that <em>is</em> supported.</p>
+<h3>Default state, and state clearing</h3>
+<p>All shading rate sources, namely</p>
+<ul>
+<li>the pipeline state-specified rate (specified on the command list),</li>
+<li>the screen-space image-specified rate, and</li>
+<li>the per-primitive attribute</li>
+</ul>
+<p>have a default of <strong>D3D12_SHADING_RATE_1X1</strong>. The default combiners are {PASSTHROUGH, PASSTHROUGH}.</p>
+<p>If no screen-space image is specified, then a shading rate of 1x1 is inferred from that source.</p>
+<p>If no per-primitive attribute is specified, then a shading rate of 1x1 is inferred from that source.</p>
+<p><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-clearstate">ID3D12CommandList::ClearState</a> resets the pipeline-state-specified rate to the default, and the selection of screen-space image to the default of &quot;no screen-space image&quot;.</p>
+<h2>Querying shading rate by using SV_ShadingRate</h2>
+<p>It's useful to know what shading rate was selected by the hardware at any given pixel shader invocation. This could enable a variety of optimizations in your PS code. A PS-only system variable, <code>SV_ShadingRate</code>, provides information about the shading rate.</p>
+<h3>Type</h3>
+<p>The type of this semantic is uint.</p>
+<h3>Data interpretation</h3>
+<p>The data is interpreted as a value of the <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shading_rate"><strong>D3D12_SHADING_RATE</strong></a> enumeration.</p>
+<h3>If VRS is not being used</h3>
+<p>If coarse pixel shading is not being used, then <code>SV_ShadingRate</code> is read back as a value of 1x1, indicating fine pixels.</p>
+<h3>Behavior under sample-based execution</h3>
+<p>A pixel shader fails compilation if it inputs <code>SV_ShadingRate</code> and also uses sample-based execution—for example, by inputting <code>SV_SampleIndex</code>, or using the sample interpolation keyword.</p>
+<blockquote>
+<h3>Remarks on deferred shading</h3>
+<p>A deferred shading application's lighting passes may need to know what shading rate was used for which area of the screen. This is so that lighting pass dispatches can launch at a coarser rate. The <code>SV_ShadingRate</code> variable can be used to accomplish this if it is written out to the gbuffer.</p>
+</blockquote>
+<h2>Depth and stencil</h2>
+<p>When coarse pixel shading is used, depth and stencil and coverage are always computed and emitted at the full sample resolution.</p>
+<h2>Using the shading rate requested</h2>
+<p>For all tiers, it's expected that if a shading rate is requested, and it's supported on the device-and-MSAA-level-combination, then that is the shading rate delivered by the hardware.</p>
+<p>A requested shading rate means a shading rate computed as an output of the combiners (see the <a href="#combining-shading-rate-factors">Combining shading rate factors</a> section in this topic).</p>
+<p>A supported shading rate is 1x1, 1x2, 2x1, or 2x2 in a rendering operation where the sample count is less than or equal to four. If the <em>AdditionalShadingRatesSupported</em> capability is <code>true</code>, then 2x4, 4x2, and 4x4 are also supported shading rates for some sample counts (see the table in the <a href="#with-variable-rate-shading-vrs">With variable-rate shading (VRS)</a> section in this topic).</p>
+<h2>Screen-space derivatives</h2>
+<p>Calculations of pixel-to-adjacent-pixel gradients are affected by coarse pixel shading. For example, when 2x2 coarse pixels are used, a gradient will be twice the size as compared to when coarse pixels are not used. Your application may want to adjust shaders to compensate for this—or not, depending on the functionality you desire.</p>
+<p>Because mips are chosen based on a screen-space derivative, the usage of coarse pixel shading affects mip selection. Usage of coarse pixel shading causes lesser-detailed mips to be selected compared to when coarse pixels are not used.</p>
+<h2>Attribute interpolation</h2>
+<p>Inputs to a pixel shader may be interpolated based on their source vertices. Because variable-rate shading affects the areas of the target written by each invocation of the pixel shader, it interacts with attribute interpolation. The three types of interpolation are center, centroid, and sample.</p>
+<h3>Center</h3>
+<p>The center interpolation location for a coarse pixel is the geometric center of the full coarse pixel area. <code>SV_Position</code> is always interpolated at the center of the coarse pixel region.</p>
+<h3>Centroid</h3>
+<p>When coarse pixel shading is used with MSAA, for each fine pixel there will still be writes to the full number of samples allocated for the target's MSAA level. So, the centroid interpolation location will consider all samples for fine pixels within coarse pixels. That being said, the centroid interpolation location is defined as the first covered sample, in increasing order of sample index. The sample's effective coverage is AND-ed with the corresponding bit of the rasterizer state SampleMask.</p>
+<blockquote>
+<p>[!NOTE]
+When coarse pixel shading is used on Tier 1, SampleMask is always a full mask. If SampleMask is configured to not be a full mask, coarse pixel shading is disabled on Tier 1.</p>
+</blockquote>
+<h3>Sample-based execution</h3>
+<p>Sample-based execution, or <em>supersampling</em>—which is caused by use of the sample interpolation feature—can be used with coarse pixel shading, and causes the pixel shader to be invoked per sample. For targets of sample count N, the pixel shader is invoked N times per fine pixel.</p>
+<h3>EvaluateAttributeSnapped</h3>
+<p>Pull-model intrinsics are not compatible with coarse pixel shading on Tier 1. If there is an attempt to use pull-model intrinsics with coarse pixel shading on Tier 1, then coarse pixel shading is automatically disabled.</p>
+<p>The intrinsic <code>EvaluateAttributeSnapped</code> is allowed to be used with coarse pixel shading on Tier 2. Its syntax is the same as it has always been.</p>
+<pre lang="hlsl"><code>numeric EvaluateAttributeSnapped(	
+    in attrib numeric value, 
+    in int2 offset);
+</code></pre>
+<p>For context, <code>EvaluateAttributeSnapped</code> has an offset parameter with two fields. When used without coarse pixel shading, just the lower-order four bits out of the full thirty-two are used. These four bits represent the range [-8, 7]. This range spans a 16x16 grid within a pixel. The range is such that the top and left edges of the pixel are included, and the bottom and right edges are not. Offset (-8, -8) is at the top-left corner, and offset (7, 7) is by the bottom-right corner. Offset (0, 0) is the center of the pixel.</p>
+<p>When used with coarse pixel shading, <code>EvaluateAttributeSnapped</code>'s offset parameter is capable of specifying a wider range of locations. The offset parameter selects a 16x16 grid for each fine pixel, and there are multiple fine pixels. The expressible range and consequent number of bits used depends on the coarse pixel size. The top and left edges of the coarse pixel are included, and the bottom and right edges are not.</p>
+<p>The table below describes the interpretation of <code>EvaluateAttributeSnapped</code>'s offset parameter for each coarse pixel size.</p>
+<h4>EvaluateAttributeSnapped's offset range</h4>
+<table>
+<thead>
+<tr>
+<th align="right">Coarse pixel size</th>
+<th align="right">Indexable range</th>
+<th align="right">Representable range size</th>
+<th align="right">Number of bits needed {x, y}</th>
+<th align="right">Binary mask of usable bits</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="right">1x1 (fine)</td>
+<td align="right">{[-8, 7], [-8, 7]}</td>
+<td align="right">{16, 16}</td>
+<td align="right">{4, 4}</td>
+<td align="right">{000000000000xxxx, 000000000000xxxx}</td>
+</tr>
+<tr>
+<td align="right">1x2</td>
+<td align="right">{[-8, 7], [-16, 15]}</td>
+<td align="right">{16, 32}</td>
+<td align="right">{4, 5}</td>
+<td align="right">{000000000000xxxx, 00000000000xxxxx}</td>
+</tr>
+<tr>
+<td align="right">2x1</td>
+<td align="right">{[-16, 15], [-8, 7]}</td>
+<td align="right">{32, 16}</td>
+<td align="right">{5, 4}</td>
+<td align="right">{00000000000xxxxx, 000000000000xxxx}</td>
+</tr>
+<tr>
+<td align="right">2x2</td>
+<td align="right">{[-16, 15], [-16, 15]}</td>
+<td align="right">{32, 32}</td>
+<td align="right">{5, 5}</td>
+<td align="right">{00000000000xxxxx, 00000000000xxxxx}</td>
+</tr>
+<tr>
+<td align="right">2x4</td>
+<td align="right">{[-16, 15], [-32, 31]}</td>
+<td align="right">{32, 64}</td>
+<td align="right">{5, 6}</td>
+<td align="right">{00000000000xxxxx, 0000000000xxxxxx}</td>
+</tr>
+<tr>
+<td align="right">4x2</td>
+<td align="right">{[-32, 31], [-16, 15]}</td>
+<td align="right">{64, 32}</td>
+<td align="right">{6, 5}</td>
+<td align="right">{0000000000xxxxxx, 00000000000xxxxx}</td>
+</tr>
+<tr>
+<td align="right">4x4</td>
+<td align="right">{[-32, 31], [-32, 31]}</td>
+<td align="right">{64, 64}</td>
+<td align="right">{6, 6}</td>
+<td align="right">{0000000000xxxxxx, 0000000000xxxxxx}</td>
+</tr>
+</tbody>
+</table>
+<p>The tables below are a guide for conversion to from the fixed-point to decimal and fractional representation. The first usable bit in the binary mask is the sign bit, and the rest of the binary mask comprises the numerical portion.</p>
+<p>The number scheme for four-bit values passed in to <code>EvaluateAttributeSnapped</code> is not specific to variable-rate shading. It's reiterated here for completeness.</p>
+<p>For four-bit values.</p>
+<table>
+<thead>
+<tr>
+<th align="right">Binary value</th>
+<th align="right">Decimal</th>
+<th align="right">Fractional</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="right">1000</td>
+<td align="right">-0.5f</td>
+<td align="right">-8 / 16</td>
+</tr>
+<tr>
+<td align="right">1001</td>
+<td align="right">-0.4375f</td>
+<td align="right">-7 / 16</td>
+</tr>
+<tr>
+<td align="right">1010</td>
+<td align="right">-0.375f</td>
+<td align="right">-6 / 16</td>
+</tr>
+<tr>
+<td align="right">1011</td>
+<td align="right">-0.3125f</td>
+<td align="right">-5 / 16</td>
+</tr>
+<tr>
+<td align="right">1100</td>
+<td align="right">-0.25f</td>
+<td align="right">-4 / 16</td>
+</tr>
+<tr>
+<td align="right">1101</td>
+<td align="right">-0.1875f</td>
+<td align="right">-3 / 16</td>
+</tr>
+<tr>
+<td align="right">1110</td>
+<td align="right">-0.125f</td>
+<td align="right">-2 / 16</td>
+</tr>
+<tr>
+<td align="right">1111</td>
+<td align="right">-0.0625f</td>
+<td align="right">-1 /16</td>
+</tr>
+<tr>
+<td align="right">0000</td>
+<td align="right">0.0f</td>
+<td align="right">0 / 16</td>
+</tr>
+<tr>
+<td align="right">0001</td>
+<td align="right">-0.0625f</td>
+<td align="right">1 / 16</td>
+</tr>
+<tr>
+<td align="right">0010</td>
+<td align="right">-0.125f</td>
+<td align="right">2 / 16</td>
+</tr>
+<tr>
+<td align="right">0011</td>
+<td align="right">-0.1875f</td>
+<td align="right">3 / 16</td>
+</tr>
+<tr>
+<td align="right">0100</td>
+<td align="right">-0.25f</td>
+<td align="right">4 / 16</td>
+</tr>
+<tr>
+<td align="right">0101</td>
+<td align="right">-0.3125f</td>
+<td align="right">5 / 16</td>
+</tr>
+<tr>
+<td align="right">0110</td>
+<td align="right">-0.375f</td>
+<td align="right">6 / 16</td>
+</tr>
+<tr>
+<td align="right">0111</td>
+<td align="right">-0.4375f</td>
+<td align="right">7 / 16</td>
+</tr>
+</tbody>
+</table>
+<p>For five-bit values.</p>
+<table>
+<thead>
+<tr>
+<th align="right">Binary value</th>
+<th align="right">Decimal</th>
+<th align="right">Fractional</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="right">10000</td>
+<td align="right">-1</td>
+<td align="right">-16 / 16</td>
+</tr>
+<tr>
+<td align="right">10001</td>
+<td align="right">-0.9375</td>
+<td align="right">-15 / 16</td>
+</tr>
+<tr>
+<td align="right">10010</td>
+<td align="right">-0.875</td>
+<td align="right">-14 / 16</td>
+</tr>
+<tr>
+<td align="right">10011</td>
+<td align="right">-0.8125</td>
+<td align="right">-13 / 16</td>
+</tr>
+<tr>
+<td align="right">10100</td>
+<td align="right">-0.75</td>
+<td align="right">-12 / 16</td>
+</tr>
+<tr>
+<td align="right">10101</td>
+<td align="right">-0.6875</td>
+<td align="right">-11 / 16</td>
+</tr>
+<tr>
+<td align="right">10110</td>
+<td align="right">-0.625</td>
+<td align="right">-10 / 16</td>
+</tr>
+<tr>
+<td align="right">10111</td>
+<td align="right">-0.5625</td>
+<td align="right">-9 / 16</td>
+</tr>
+<tr>
+<td align="right">11000</td>
+<td align="right">-0.5</td>
+<td align="right">-8 / 16</td>
+</tr>
+<tr>
+<td align="right">11001</td>
+<td align="right">-0.4375</td>
+<td align="right">-7 / 16</td>
+</tr>
+<tr>
+<td align="right">11010</td>
+<td align="right">-0.375</td>
+<td align="right">-6 / 16</td>
+</tr>
+<tr>
+<td align="right">11011</td>
+<td align="right">-0.3125</td>
+<td align="right">-5 / 16</td>
+</tr>
+<tr>
+<td align="right">11100</td>
+<td align="right">-0.25</td>
+<td align="right">-4 / 16</td>
+</tr>
+<tr>
+<td align="right">11101</td>
+<td align="right">-0.1875</td>
+<td align="right">-3 / 16</td>
+</tr>
+<tr>
+<td align="right">11110</td>
+<td align="right">-0.125</td>
+<td align="right">-2 / 16</td>
+</tr>
+<tr>
+<td align="right">11111</td>
+<td align="right">-0.0625</td>
+<td align="right">-1 / 16</td>
+</tr>
+<tr>
+<td align="right">00000</td>
+<td align="right">0</td>
+<td align="right">0 / 16</td>
+</tr>
+<tr>
+<td align="right">00001</td>
+<td align="right">0.0625</td>
+<td align="right">1 / 16</td>
+</tr>
+<tr>
+<td align="right">00010</td>
+<td align="right">0.125</td>
+<td align="right">2 / 16</td>
+</tr>
+<tr>
+<td align="right">00011</td>
+<td align="right">0.1875</td>
+<td align="right">3 / 16</td>
+</tr>
+<tr>
+<td align="right">00100</td>
+<td align="right">0.25</td>
+<td align="right">4 / 16</td>
+</tr>
+<tr>
+<td align="right">00101</td>
+<td align="right">0.3125</td>
+<td align="right">5 / 16</td>
+</tr>
+<tr>
+<td align="right">00110</td>
+<td align="right">0.375</td>
+<td align="right">6 / 16</td>
+</tr>
+<tr>
+<td align="right">00111</td>
+<td align="right">0.4375</td>
+<td align="right">7 / 16</td>
+</tr>
+<tr>
+<td align="right">01000</td>
+<td align="right">0.5</td>
+<td align="right">8 / 16</td>
+</tr>
+<tr>
+<td align="right">01001</td>
+<td align="right">0.5625</td>
+<td align="right">9 / 16</td>
+</tr>
+<tr>
+<td align="right">01010</td>
+<td align="right">0.625</td>
+<td align="right">10 / 16</td>
+</tr>
+<tr>
+<td align="right">01011</td>
+<td align="right">0.6875</td>
+<td align="right">11 / 16</td>
+</tr>
+<tr>
+<td align="right">01100</td>
+<td align="right">0.75</td>
+<td align="right">12 / 16</td>
+</tr>
+<tr>
+<td align="right">01101</td>
+<td align="right">0.8125</td>
+<td align="right">13 / 16</td>
+</tr>
+<tr>
+<td align="right">01110</td>
+<td align="right">0.875</td>
+<td align="right">14 / 16</td>
+</tr>
+<tr>
+<td align="right">01111</td>
+<td align="right">0.9375</td>
+<td align="right">15 / 16</td>
+</tr>
+</tbody>
+</table>
+<p>For six-bit values.</p>
+<table>
+<thead>
+<tr>
+<th align="right">Binary value</th>
+<th align="right">Decimal</th>
+<th align="right">Fractional</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="right">100000</td>
+<td align="right">-2</td>
+<td align="right">-32 / 16</td>
+</tr>
+<tr>
+<td align="right">100001</td>
+<td align="right">-1.9375</td>
+<td align="right">-31 / 16</td>
+</tr>
+<tr>
+<td align="right">100010</td>
+<td align="right">-1.875</td>
+<td align="right">-30 / 16</td>
+</tr>
+<tr>
+<td align="right">100011</td>
+<td align="right">-1.8125</td>
+<td align="right">-29 / 16</td>
+</tr>
+<tr>
+<td align="right">100100</td>
+<td align="right">-1.75</td>
+<td align="right">-28 / 16</td>
+</tr>
+<tr>
+<td align="right">100101</td>
+<td align="right">-1.6875</td>
+<td align="right">-27 / 16</td>
+</tr>
+<tr>
+<td align="right">100110</td>
+<td align="right">-1.625</td>
+<td align="right">-26 / 16</td>
+</tr>
+<tr>
+<td align="right">100111</td>
+<td align="right">-1.5625</td>
+<td align="right">-25 / 16</td>
+</tr>
+<tr>
+<td align="right">101000</td>
+<td align="right">-1.5</td>
+<td align="right">-24 / 16</td>
+</tr>
+<tr>
+<td align="right">101001</td>
+<td align="right">-1.4375</td>
+<td align="right">-23 / 16</td>
+</tr>
+<tr>
+<td align="right">101010</td>
+<td align="right">-1.375</td>
+<td align="right">-22 / 16</td>
+</tr>
+<tr>
+<td align="right">101011</td>
+<td align="right">-1.3125</td>
+<td align="right">-21 / 16</td>
+</tr>
+<tr>
+<td align="right">101100</td>
+<td align="right">-1.25</td>
+<td align="right">-20 / 16</td>
+</tr>
+<tr>
+<td align="right">101101</td>
+<td align="right">-1.1875</td>
+<td align="right">-19 / 16</td>
+</tr>
+<tr>
+<td align="right">101110</td>
+<td align="right">-1.125</td>
+<td align="right">-18 / 16</td>
+</tr>
+<tr>
+<td align="right">101111</td>
+<td align="right">-1.0625</td>
+<td align="right">-17 / 16</td>
+</tr>
+<tr>
+<td align="right">110000</td>
+<td align="right">-1</td>
+<td align="right">-16 / 16</td>
+</tr>
+<tr>
+<td align="right">110001</td>
+<td align="right">-0.9375</td>
+<td align="right">-15 / 16</td>
+</tr>
+<tr>
+<td align="right">110010</td>
+<td align="right">-0.875</td>
+<td align="right">-14 / 16</td>
+</tr>
+<tr>
+<td align="right">110011</td>
+<td align="right">-0.8125</td>
+<td align="right">-13 / 16</td>
+</tr>
+<tr>
+<td align="right">110100</td>
+<td align="right">-0.75</td>
+<td align="right">-12 / 16</td>
+</tr>
+<tr>
+<td align="right">110101</td>
+<td align="right">-0.6875</td>
+<td align="right">-11 / 16</td>
+</tr>
+<tr>
+<td align="right">110110</td>
+<td align="right">-0.625</td>
+<td align="right">-10 / 16</td>
+</tr>
+<tr>
+<td align="right">110111</td>
+<td align="right">-0.5625</td>
+<td align="right">-9 / 16</td>
+</tr>
+<tr>
+<td align="right">111000</td>
+<td align="right">-0.5</td>
+<td align="right">-8 / 16</td>
+</tr>
+<tr>
+<td align="right">111001</td>
+<td align="right">-0.4375</td>
+<td align="right">-7 / 16</td>
+</tr>
+<tr>
+<td align="right">111010</td>
+<td align="right">-0.375</td>
+<td align="right">-6 / 16</td>
+</tr>
+<tr>
+<td align="right">111011</td>
+<td align="right">-0.3125</td>
+<td align="right">-5 / 16</td>
+</tr>
+<tr>
+<td align="right">111100</td>
+<td align="right">-0.25</td>
+<td align="right">-4 / 16</td>
+</tr>
+<tr>
+<td align="right">111101</td>
+<td align="right">-0.1875</td>
+<td align="right">-3 / 16</td>
+</tr>
+<tr>
+<td align="right">111110</td>
+<td align="right">-0.125</td>
+<td align="right">-2 / 16</td>
+</tr>
+<tr>
+<td align="right">111111</td>
+<td align="right">-0.0625</td>
+<td align="right">-1 / 16</td>
+</tr>
+<tr>
+<td align="right">000000</td>
+<td align="right">0</td>
+<td align="right">0 / 16</td>
+</tr>
+<tr>
+<td align="right">000001</td>
+<td align="right">0.0625</td>
+<td align="right">1 / 16</td>
+</tr>
+<tr>
+<td align="right">000010</td>
+<td align="right">0.125</td>
+<td align="right">2 / 16</td>
+</tr>
+<tr>
+<td align="right">000011</td>
+<td align="right">0.1875</td>
+<td align="right">3 / 16</td>
+</tr>
+<tr>
+<td align="right">000100</td>
+<td align="right">0.25</td>
+<td align="right">4 / 16</td>
+</tr>
+<tr>
+<td align="right">000101</td>
+<td align="right">0.3125</td>
+<td align="right">5 / 16</td>
+</tr>
+<tr>
+<td align="right">000110</td>
+<td align="right">0.375</td>
+<td align="right">6 / 16</td>
+</tr>
+<tr>
+<td align="right">000111</td>
+<td align="right">0.4375</td>
+<td align="right">7 / 16</td>
+</tr>
+<tr>
+<td align="right">001000</td>
+<td align="right">0.5</td>
+<td align="right">8 / 16</td>
+</tr>
+<tr>
+<td align="right">001001</td>
+<td align="right">0.5625</td>
+<td align="right">9 / 16</td>
+</tr>
+<tr>
+<td align="right">001010</td>
+<td align="right">0.625</td>
+<td align="right">10 / 16</td>
+</tr>
+<tr>
+<td align="right">001011</td>
+<td align="right">0.6875</td>
+<td align="right">11 / 16</td>
+</tr>
+<tr>
+<td align="right">001100</td>
+<td align="right">0.75</td>
+<td align="right">12 / 16</td>
+</tr>
+<tr>
+<td align="right">001101</td>
+<td align="right">0.8125</td>
+<td align="right">13 / 16</td>
+</tr>
+<tr>
+<td align="right">001110</td>
+<td align="right">0.875</td>
+<td align="right">14 / 16</td>
+</tr>
+<tr>
+<td align="right">001111</td>
+<td align="right">0.9375</td>
+<td align="right">15 / 16</td>
+</tr>
+<tr>
+<td align="right">010000</td>
+<td align="right">1</td>
+<td align="right">16 / 16</td>
+</tr>
+<tr>
+<td align="right">010001</td>
+<td align="right">1.0625</td>
+<td align="right">17 / 16</td>
+</tr>
+<tr>
+<td align="right">010010</td>
+<td align="right">1.125</td>
+<td align="right">18 / 16</td>
+</tr>
+<tr>
+<td align="right">010011</td>
+<td align="right">1.1875</td>
+<td align="right">19 / 16</td>
+</tr>
+<tr>
+<td align="right">010100</td>
+<td align="right">1.25</td>
+<td align="right">20 / 16</td>
+</tr>
+<tr>
+<td align="right">010101</td>
+<td align="right">1.3125</td>
+<td align="right">21 / 16</td>
+</tr>
+<tr>
+<td align="right">010110</td>
+<td align="right">1.375</td>
+<td align="right">22 / 16</td>
+</tr>
+<tr>
+<td align="right">010111</td>
+<td align="right">1.4375</td>
+<td align="right">23 / 16</td>
+</tr>
+<tr>
+<td align="right">011000</td>
+<td align="right">1.5</td>
+<td align="right">24 / 16</td>
+</tr>
+<tr>
+<td align="right">011001</td>
+<td align="right">1.5625</td>
+<td align="right">25 / 16</td>
+</tr>
+<tr>
+<td align="right">011010</td>
+<td align="right">1.625</td>
+<td align="right">26 / 16</td>
+</tr>
+<tr>
+<td align="right">011011</td>
+<td align="right">1.6875</td>
+<td align="right">27 / 16</td>
+</tr>
+<tr>
+<td align="right">011100</td>
+<td align="right">1.75</td>
+<td align="right">28 / 16</td>
+</tr>
+<tr>
+<td align="right">011101</td>
+<td align="right">1.8125</td>
+<td align="right">29 / 16</td>
+</tr>
+<tr>
+<td align="right">011110</td>
+<td align="right">1.875</td>
+<td align="right">30 / 16</td>
+</tr>
+<tr>
+<td align="right">011111</td>
+<td align="right">1.9375</td>
+<td align="right">31 / 16</td>
+</tr>
+</tbody>
+</table>
+<p>In the same manner as with fine pixels, <code>EvaluateAttributeSnapped</code>'s grid of evaluateable locations is centered at the coarse pixel center when using coarse pixel shading.</p>
+<h2>SetSamplePositions</h2>
+<p>When the API <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist1-setsamplepositions"><strong>ID3D12GraphicsCommandList1::SetSamplePositions</strong></a> is used with coarse shading, the API sets the sample positions for fine pixels.</p>
+<h2>SV_Coverage</h2>
+<p>If <code>SV_Coverage</code> is declared as a shader input or output on Tier 1, then coarse pixel shading is disabled.</p>
+<p>You can use the <code>SV_Coverage</code> semantic with coarse pixel shading on Tier 2, and it reflects which samples of an MSAA target are being written.</p>
+<p>When coarse pixel shading is used—allowing multiple source pixels to comprise a tile—the coverage mask represents all samples that come from that tile.</p>
+<p>Given coarse pixel shading's compatibility with MSAA, the number of coverage bits needed to be specified can vary. For example, with a 4x MSAA resource using <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shading_rate"><strong>D3D12_SHADING_RATE_2x2</strong></a>, each coarse pixel writes to four fine pixels, and each fine pixel has four samples. This means that each coarse pixel writes to a total of 4 * 4 = 16 samples.</p>
+<h3>Number of coverage bits needed</h3>
+<p>The following table indicates how many coverage bits are needed for each combination of coarse pixel size and MSAA level.</p>
+<p><img src="images/NumberOfCoverageBits.PNG" alt="Table shows coarse pixel size, number of fine pixels, and M S A A levels." title="Coverage bits" /></p>
+<p>As indicated in the table, it isn't possible to use coarse pixels to write to more than 16 samples at a time using the variable-rate shading feature exposed through Direct3D 12. This restriction is due to Direct3D 12's constraints regarding which MSAA levels are allowed with which coarse pixel size (see the table in the <a href="#with-variable-rate-shading-vrs">With variable-rate shading (VRS)</a> section in this topic).</p>
+<h3>Ordering and format of bits in the coverage mask</h3>
+<p>The bits of the coverage mask adhere to a well-defined order. The mask consists of coverages from pixels from left to right, then top to bottom (column-major) order. Coverage bits are the low-order bits of the coverage semantic, and are densely packed together.</p>
+<p>The table below shows the coverage mask format for supported combinations of coarse pixel size and MSAA level.</p>
+<p><img src="images/Coverage1x.PNG" alt="Table shows coarse pixel size, coarse pixel diagram, and 1 x M S A A coverage bits." title="Coverage at 1x" /></p>
+<p>The following table portrays 2x MSAA pixels, where each pixel has two samples of indices 0 and 1.</p>
+<p>The positioning of the labels of samples on the pixels are for illustrative purposes, and do not necessarily convey the spatial {X, Y} locations of samples on that pixel; especially given that sample positions can be programmatically changed. Samples are referred to by their 0-based index.</p>
+<p><img src="images/Coverage2x.PNG" alt="Table shows coarse pixel size, coarse pixel diagram, and 2 x M S A A coverage bits." title="Coverage at 2x" /></p>
+<p>The following table shows 4x MSAA pixels, where each pixel has four samples of indices 0, 1, 2, and 3.</p>
+<p><img src="images/Coverage4x.PNG" alt="Table shows coarse pixel size, coarse pixel diagram, and 4 x M S A A coverage bits." title="Coverage at 4x" /></p>
+<h2>Discard</h2>
+<p>When the HLSL semantic <code>discard</code> is used with coarse pixel shading, coarse pixels are discarded.</p>
+<h2>Target-independent rasterization (TIR)</h2>
+<p>TIR is not supported when coarse pixel shading is used.</p>
+<h2>Raster order views (ROVs)</h2>
+<p>ROV interlocks are specified as operating at fine pixel granularity. If shading is performed per sample, then interlocks are operating at sample granularity.</p>
+<h2>Conservative rasterization</h2>
+<p>You can use conservative rasterization with variable-rate shading. When conservative rasterization is used with coarse pixel shading, fine pixels within coarse pixels are conservatively rasterized by being given full coverage.</p>
+<h3>Coverage</h3>
+<p>When conservative rasterization is used, the coverage semantic contains full masks for fine pixels that are covered, and 0 for fine pixels that are not covered.</p>
+<h2>Bundles</h2>
+<p>You can call variable-rate shading APIs on a bundle.</p>
+<h2>Render passes</h2>
+<p>You can call variable-rate shading APIs in a <a href="/windows/desktop/direct3d12/direct3d-12-render-passes">render pass</a>.</p>
+<h2>Calling the VRS APIs</h2>
+<p>This next section describes the manner in which variable-rate shading is accessible to your application through Direct3D 12.</p>
+<h3>Capability querying</h3>
+<p>To query for the adapter's variable-rate shading capability, call <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-checkfeaturesupport"><strong>ID3D12Device::CheckFeatureSupport</strong></a> with <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_feature"><strong>D3D12_FEATURE::D3D12_FEATURE_D3D12_OPTIONS6</strong></a>, and provide a <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_feature_data_d3d12_options6"><strong>D3D12_FEATURE_DATA_D3D12_OPTIONS6</strong> structure</a> for the function to fill in for you. The <strong>D3D12_FEATURE_DATA_D3D12_OPTIONS6</strong> structure contains several members, including one that is of the enumerated type <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_variable_shading_rate_tier"><strong>D3D12_VARIABLE_SHADING_RATE_TIER</strong></a> (D3D12_FEATURE_DATA_D3D12_OPTIONS6::VariableShadingRateTier), and one that indicates whether background processing is supported (D3D12_FEATURE_DATA_D3D12_OPTIONS6::BackgroundProcessingSupported).</p>
+<p>To query for Tier 1 capability, for example, you can do this.</p>
+<pre lang="cpp"><code>D3D12_FEATURE_DATA_D3D12_OPTIONS6 options;
+return 
+    SUCCEEDED(m_device-&gt;CheckFeatureSupport(
+        D3D12_FEATURE_D3D12_OPTIONS6, 
+        &amp;options, 
+        sizeof(options))) &amp;&amp; 
+    options.ShadingRateTier == D3D12_VARIABLE_SHADING_RATE_TIER_1;
+</code></pre>
+<h3>Shading rates</h3>
+<p>The values in the <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shading_rate"><strong>D3D12_SHADING_RATE</strong> enumeration</a> are organized so that shading rates are easily decomposable into two axes, where each axis's values are compactly represented in logarithmic space according to the <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_axis_shading_rate"><strong>D3D12_AXIS_SHADING_RATE</strong> enumeration</a>.</p>
+<p>You can author a macro to compose two axis shading rates into a shading rate like this.</p>
+<pre lang="cpp"><code>#define D3D12_MAKE_COARSE_SHADING_RATE(x,y) ((x) &lt;&lt; 2 | (y))
+D3D12_MAKE_COARSE_SHADING_RATE(
+    D3D12_AXIS_SHADING_RATE_2X, 
+    D3D12_AXIS_SHADING_RATE_1X)
+</code></pre>
+<p>The platform also provides these macros, defined in <code>d3d12.h</code>.</p>
+<pre lang="cpp"><code>#define D3D12_GET_COARSE_SHADING_RATE_X_AXIS(x) ((x) &gt;&gt; 2 )
+#define D3D12_GET_COARSE_SHADING_RATE_Y_AXIS(y) ((y) &amp; 3 )
+</code></pre>
+<p>Those can be used to dissect and understand <code>SV_ShaderRate</code>.</p>
+<blockquote>
+<p>[!NOTE]
+This data interpretation is geared toward describing the screen-space image, which can be manipulated by shaders. That's discussed further in the sections above. But there's no reason not to have a consistent definition of the coarse pixel sizes to be used everywhere, including when setting the command-level shading rate.</p>
+</blockquote>
+<h3>Setting command-level shading rate and combiners</h3>
+<p>The shading rate and, optionally, combiners are specified through the <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist5-rssetshadingrate"><strong>ID3D12GraphicsCommandList5::RSSetShadingRate</strong></a> method. You pass a <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shading_rate"><strong>D3D12_SHADING_RATE</strong></a> value for the base shading rate, and an optional array of <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_shading_rate_combiner">D3D12_SHADING_RATE_COMBINER</a> values.</p>
+<h3>Preparing the screen-space image</h3>
+<p>The read-only resource state designating a usable shading rate image is defined as <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_resource_states">D3D12_RESOURCE_STATES::D3D12_RESOURCE_STATE_SHADING_RATE_SOURCE</a>.</p>
+<h3>Setting the screen-space image</h3>
+<p>You specify the screen-space image through the <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist5-rssetshadingrateimage"><strong>ID3D12GraphicsCommandList5::RSSetShadingRateImage</strong></a> method.</p>
+<pre lang="cpp"><code>m_commandList-&gt;RSSetShadingRateImage(screenSpaceImage);
+</code></pre>
+<h3>Querying the tile size</h3>
+<p>You can query the tile size from the <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_feature_data_d3d12_options6"><strong>D3D12_FEATURE_DATA_D3D12_OPTIONS6::ShadingRateImageTileSize</strong></a> member. See <a href="#capability-querying">Capability querying</a> above.</p>
+<p>One dimension is retrieved, since the horizontal and vertical dimensions are always the same. If the system's capability is <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_variable_shading_rate_tier"><strong>D3D12_SHADING_RATE_TIER_NOT_SUPPORTED</strong></a>, then the tile size returned is 0.</p>
+</body>

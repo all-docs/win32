@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example Code for Implementation of the Property Sheet COM Object</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Example Code for Implementation of the Property Sheet COM Object
+description: The following code example can be used to implement an Active Directory property sheet extension.
+ms.assetid: aeee870e-1a0e-437f-a724-0bbac30f5e34
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Example Code for Implementation of the Property Sheet COM Object AD
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Example Code for Implementation of the Property Sheet COM Object</h1>
+<p>The following code example can be used to implement an Active Directory property sheet extension.</p>
+<h2>IShellExtInit Implementation</h2>
+<p>The following C++ code example can be used to implement the <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a> methods.</p>
+<pre lang="C++"><code>/**************************************************************************
+
+    CPropSheetExt::Initialize()
+
+**************************************************************************/
+
+STDMETHODIMP CPropSheetExt::Initialize( LPCITEMIDLIST pidlFolder,
+                                        IDataObject *pDataObj,
+                                        HKEY hKeyProgId)
+{
+    STGMEDIUM   stm;
+    FORMATETC   fe;
+    HRESULT     hr = S_OK;
+
+    if(NULL == pDataObj)
+    {
+        return E_INVALIDARG;
+    }
+
+    hr = pDataObj-&gt;QueryInterface(IID_IDataObject, (LPVOID*)&amp;m_pdo);
+    if(FAILED(hr))
+    {
+        return hr;
+    }
+
+    fe.cfFormat = RegisterClipboardFormat(CFSTR_DSOBJECTNAMES);
+    fe.ptd = NULL;
+    fe.dwAspect = DVASPECT_CONTENT;
+    fe.lindex = -1;
+    fe.tymed = TYMED_HGLOBAL;
+    hr = m_pdo-&gt;GetData(&amp;fe, &amp;stm);
+    if(SUCCEEDED(hr))
+    {
+        LPDSOBJECTNAMES pdson = (LPDSOBJECTNAMES)GlobalLock(stm.hGlobal);
+
+        if(pdson)
+        {
+            LPWSTR  pwszName = (LPWSTR)((LPBYTE)pdson + pdson-&gt;aObjects[0].offsetName);
+            
+            m_pwszADsPath = (LPWSTR)GlobalAlloc(GPTR, (lstrlenW(pwszName) + 1) * sizeof(WCHAR));
+            if(m_pwszADsPath)
+            {
+                wcscpy_s(m_pwszADsPath, pwszName);
+            }
+            
+            LPWSTR  pwszClass = (LPWSTR)((LPBYTE)pdson + pdson-&gt;aObjects[0].offsetClass);
+            pwszClass = NULL;
+
+            GlobalUnlock(stm.hGlobal);
+        }
+        
+        ReleaseStgMedium(&amp;stm);
+    }
+
+    m_hwndNotifyObj = CreateADsNotificationObject(pDataObj);
+
+    if(m_hwndNotifyObj)
+    {
+        ADSPROPINITPARAMS   InitParams;
+        
+        hr = GetADsPageInfo(m_hwndNotifyObj, &amp;InitParams);
+        if(SUCCEEDED(hr))
+        {
+            if(InitParams.pDsObj)
+            {
+                hr = InitParams.pDsObj-&gt;QueryInterface( IID_IDirectoryObject, 
+                                                        (LPVOID*) &amp; m_pDirObj);
+            }
+        }
+    }
+
+    fe.cfFormat = RegisterClipboardFormat(CFSTR_DS_DISPLAY_SPEC_OPTIONS);
+    fe.ptd = NULL;
+    fe.dwAspect = DVASPECT_CONTENT;
+    fe.lindex = -1;
+    fe.tymed = TYMED_HGLOBAL;
+    hr = pDataObj-&gt;GetData(&amp;fe, &amp;stm);
+    if(SUCCEEDED(hr))
+    {
+        PDSDISPLAYSPECOPTIONS   pdso;
+        
+        pdso = (PDSDISPLAYSPECOPTIONS)GlobalLock(stm.hGlobal);
+        if(pdso)
+        {
+            DWORD   dwBytes = GlobalSize(stm.hGlobal);
+
+            m_pDispSpecOpts = (PDSDISPLAYSPECOPTIONS)GlobalAlloc(GPTR, dwBytes);
+            if(m_pDispSpecOpts)
+            {
+                CopyMemory(m_pDispSpecOpts, pdso, dwBytes);
+            }
+            
+            GlobalUnlock(stm.hGlobal);
+        }
+
+        ReleaseStgMedium(&amp;stm);
+    }
+
+    return hr;
+}
+
+</code></pre>
+<h2>IShellPropSheetExt Implementation</h2>
+<p>The following C++ code example can be used to implement the <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellpropsheetext"><strong>IShellPropSheetExt</strong></a> methods.</p>
+<pre lang="C++"><code>/**************************************************************************
+
+    CPropSheetExt::AddPages()
+
+**************************************************************************/
+
+STDMETHODIMP CPropSheetExt::AddPages(   LPFNADDPROPSHEETPAGE pfnAddPage, 
+                                        LPARAM lParam)
+{
+    PROPSHEETPAGE  psp;
+    HPROPSHEETPAGE hPage;
+
+    psp.dwSize        = sizeof(psp);
+    psp.dwFlags       = PSP_USETITLE | PSP_USECALLBACK;
+    psp.hInstance     = g_hInst;
+    psp.pszTemplate   = MAKEINTRESOURCE(IDD_PAGEDLG);
+    psp.hIcon         = 0;
+    psp.pszTitle      = g_szPageTitle;
+    psp.pfnDlgProc    = (DLGPROC)PageDlgProc;
+    psp.pcRefParent   = NULL;
+    psp.pfnCallback   = PageCallbackProc;
+    //pass the object pointer to the dialog box
+    psp.lParam        = (LPARAM)this;
+
+    hPage = CreatePropertySheetPage(&amp;psp);
+                
+    if(hPage) 
+    {
+        if(pfnAddPage(hPage, lParam))
+        {
+            /*
+            Maintain this object until the page is released in 
+            PageCallbackProc.
+            */
+            this-&gt;AddRef();
+            return S_OK;
+        }
+        else
+        {
+            DestroyPropertySheetPage(hPage);
+        }
+    }
+    else
+    {
+        return E_OUTOFMEMORY;
+    }
+
+    return E_FAIL;
+}
+
+/**************************************************************************
+
+    CPropSheetExt::ReplacePage()
+
+**************************************************************************/
+
+STDMETHODIMP CPropSheetExt::ReplacePage(    UINT uPageID, 
+                                            LPFNADDPROPSHEETPAGE lpfnAddPage, 
+                                            LPARAM lParam)
+{
+    return E_NOTIMPL;
+}
+
+</code></pre>
+<h2>Miscellaneous Implementation</h2>
+<p>The following C++ code example can be used to implement the utility methods and functions used in the previous code example.</p>
+<pre lang="C++"><code>HWND CreateADsNotificationObject(IDataObject *pDataObject)
+{
+    STGMEDIUM   stm;
+    FORMATETC   fe;
+    HRESULT     hr;
+    HWND        hwndNotifyObject = NULL;
+
+    /*
+    The &quot;DsAdminMultiSelectClipFormat&quot; clipboard format is supported by the 
+    data object if the Active Directory Users and Computers snap-in supports 
+    multi-selection property sheets.
+    */
+    fe.cfFormat = RegisterClipboardFormat(TEXT(&quot;DsAdminMultiSelectClipFormat&quot;));
+    fe.ptd = NULL;
+    fe.dwAspect = DVASPECT_CONTENT;
+    fe.lindex = -1;
+    fe.tymed = TYMED_HGLOBAL;
+    hr = pDataObject-&gt;GetData(&amp;fe, &amp;stm);
+    if (SUCCEEDED(hr))
+    {
+        PWSTR pwzUniqueID = (LPWSTR)GlobalLock(stm.hGlobal);
+
+        if (pwzUniqueID)
+        {
+            hr = ADsPropCreateNotifyObj(pDataObject, pwzUniqueID, &amp;hwndNotifyObject);
+
+            GlobalUnlock(stm.hGlobal);
+        }
+            
+        ReleaseStgMedium(&amp;stm);
+    }
+    else
+    {
+        fe.cfFormat = RegisterClipboardFormat(CFSTR_DSOBJECTNAMES);
+        fe.ptd = NULL;
+        fe.dwAspect = DVASPECT_CONTENT;
+        fe.lindex = -1;
+        fe.tymed = TYMED_HGLOBAL;
+        hr = pDataObject-&gt;GetData(&amp;fe, &amp;stm);
+        if(SUCCEEDED(hr))
+        {
+            LPDSOBJECTNAMES pdson = (LPDSOBJECTNAMES)GlobalLock(stm.hGlobal);
+
+            if(pdson)
+            {
+                LPWSTR  pwszName = (LPWSTR)((LPBYTE)pdson + pdson-&gt;aObjects[0].offsetName);
+                
+                hr = ADsPropCreateNotifyObj(pDataObject, pwszName, &amp;hwndNotifyObject);
+
+                GlobalUnlock(stm.hGlobal);
+            }
+            
+            ReleaseStgMedium(&amp;stm);
+        }
+    }
+
+    return hwndNotifyObject;
+}
+
+/**************************************************************************
+
+    GetADsPageInfo()
+   
+**************************************************************************/
+
+HRESULT GetADsPageInfo(HWND hwndNotifyObject, ADSPROPINITPARAMS *pip)
+{
+    if(!IsWindow(hwndNotifyObject))
+    {
+        return E_INVALIDARG;
+    }
+
+    ADSPROPINITPARAMS   InitParams;
+    
+    InitParams.dwSize = sizeof(ADSPROPINITPARAMS);
+    if(ADsPropGetInitInfo(hwndNotifyObject, &amp;InitParams))
+    {
+        *pip = InitParams;
+    
+        return InitParams.hr;
+    }
+    
+    return E_FAIL;
+}
+
+/**************************************************************************
+
+    CPropSheetExt::PageDlgProc
+
+**************************************************************************/
+
+#define THIS_POINTER_PROP  TEXT(&quot;ThisPointerProperty&quot;)
+
+BOOL CALLBACK CPropSheetExt::PageDlgProc(   HWND hWnd, 
+                                            UINT uMsg, 
+                                            WPARAM wParam, 
+                                            LPARAM lParam)
+{
+    // Get the object pointer.
+    CPropSheetExt *pExt = (CPropSheetExt*)GetProp(hWnd, THIS_POINTER_PROP);
+    
+    switch(uMsg)
+    {
+    case WM_INITDIALOG:
+        {
+            /*
+            Get the pointer to the object. This is contained in the LPARAM of 
+            the PROPSHEETPAGE structure.
+            */
+            LPPROPSHEETPAGE pPage = (LPPROPSHEETPAGE)lParam;
+
+            if(pPage)
+            {
+                pExt = (CPropSheetExt*)pPage-&gt;lParam;
+
+                if(pExt)
+                {
+                    // Set the page window handle in the object.
+                    pExt-&gt;m_hwndPage = hWnd;
+                    
+                    // Store the object pointer with this particular page dialog.
+                    SetProp(hWnd, THIS_POINTER_PROP, (HANDLE)pExt);
+
+                    ADsPropSetHwnd(pExt-&gt;m_hwndNotifyObj, hWnd, g_szPageTitle);
+
+                    // Forward the message to the message handler.
+                    return pExt-&gt;OnInitDialog(wParam, lParam);
+                }
+            }
+        }
+        break;
+
+    case WM_NOTIFY:
+        if(pExt)
+        {
+            // Forward the message to the message handler.
+            return pExt-&gt;OnNotify(wParam, lParam);
+        }
+        break;
+    
+    case WM_COMMAND:
+        if(pExt)
+        {
+            // Forward the message to the message handler.
+            return pExt-&gt;OnCommand(wParam, lParam);
+        }
+        return FALSE;
+    
+    case WM_DESTROY:
+        if(pExt)
+        {
+            // Forward the message to the message handler.
+            pExt-&gt;OnDestroy();
+        }
+        
+        // Remove the property from the page.
+        RemoveProp(hWnd, THIS_POINTER_PROP);
+        break; 
+    }
+
+    return FALSE;
+}
+
+
+/**************************************************************************
+
+    CPropSheetExt::PageCallbackProc()
+
+    This function is called when the page is created and released. This is 
+    even called if the page is never actually displayed. 
+
+**************************************************************************/
+
+UINT CALLBACK CPropSheetExt::PageCallbackProc(  HWND hWnd,
+                                                UINT uMsg,
+                                                LPPROPSHEETPAGE ppsp)
+{
+    switch(uMsg)
+    {
+    case PSPCB_CREATE:
+        // Must return TRUE to create the page.
+        return TRUE;
+
+    case PSPCB_RELEASE:
+        {
+            /*
+            Release the object. This is called even if the page dialog was 
+            never actually created.
+            */
+            CPropSheetExt *pPropSheetExt = (CPropSheetExt*)ppsp-&gt;lParam;
+
+            if(pPropSheetExt)
+            {
+                if(IsWindow(pPropSheetExt-&gt;m_hwndNotifyObj))
+                {
+                    SendMessage(pPropSheetExt-&gt;m_hwndNotifyObj, 
+                        WM_ADSPROP_NOTIFY_EXIT, 
+                        0, 
+                        0);
+
+                    pPropSheetExt-&gt;m_hwndNotifyObj = NULL;
+                }
+                pPropSheetExt-&gt;Release();
+            }
+        }
+        break;
+    }
+
+    return FALSE;
+}
+
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

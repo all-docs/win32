@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Capturing a Stream</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Capturing a Stream
+ms.assetid: 1d9072dc-4f9b-4111-a747-5eb33ad3ae5b
+title: Capturing a Stream
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Capturing a Stream</h1>
+<p>The client calls the methods in the <a href="/windows/desktop/api/Audioclient/nn-audioclient-iaudiocaptureclient"><strong>IAudioCaptureClient</strong></a> interface to read captured data from an endpoint buffer. The client shares the endpoint buffer with the audio engine in shared mode and with the audio device in exclusive mode. To request an endpoint buffer of a particular size, the client calls the <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudioclient-initialize"><strong>IAudioClient::Initialize</strong></a> method. To get the size of the allocated buffer, which might be different from the requested size, the client calls the <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudioclient-getbuffersize"><strong>IAudioClient::GetBufferSize</strong></a> method.</p>
+<p>To move a stream of captured data through the endpoint buffer, the client alternately calls the <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudiocaptureclient-getbuffer"><strong>IAudioCaptureClient::GetBuffer</strong></a> method and the <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudiocaptureclient-releasebuffer"><strong>IAudioCaptureClient::ReleaseBuffer</strong></a> method. The client accesses the data in the endpoint buffer as a series of data packets. The <strong>GetBuffer</strong> call retrieves the next packet of captured data from the buffer. After reading the data from the packet, the client calls <strong>ReleaseBuffer</strong> to release the packet and make it available for more captured data.</p>
+<p>The packet size can vary from one <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudiocaptureclient-getbuffer"><strong>GetBuffer</strong></a> call to the next. Before calling <strong>GetBuffer</strong>, the client has the option of calling the <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudiocaptureclient-getnextpacketsize"><strong>IAudioCaptureClient::GetNextPacketSize</strong></a> method to get the size of the next packet in advance. In addition, the client can call the <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudioclient-getcurrentpadding"><strong>IAudioClient::GetCurrentPadding</strong></a> method to get the total amount of captured data that is available in the buffer. At any instant, the packet size is always less than or equal to the total amount of captured data in the buffer.</p>
+<p>During each processing pass, the client has the option of processing the captured data in one of the following ways:</p>
+<ul>
+<li>The client alternately calls <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudiocaptureclient-getbuffer"><strong>GetBuffer</strong></a> and <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudiocaptureclient-releasebuffer"><strong>ReleaseBuffer</strong></a>, reading one packet with each pair of calls, until <strong>GetBuffer</strong> returns AUDCNT_S_BUFFEREMPTY, indicating that the buffer is empty.</li>
+<li>The client calls <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudiocaptureclient-getnextpacketsize"><strong>GetNextPacketSize</strong></a> before each pair of calls to <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudiocaptureclient-getbuffer"><strong>GetBuffer</strong></a> and <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudiocaptureclient-releasebuffer"><strong>ReleaseBuffer</strong></a> until <strong>GetNextPacketSize</strong> reports a packet size of 0, indicating that the buffer is empty.</li>
+</ul>
+<p>The two techniques yield equivalent results.</p>
+<p>The following code example shows how to record an audio stream from the default capture device:</p>
+<pre lang="C++"><code>//-----------------------------------------------------------
+// Record an audio stream from the default audio capture
+// device. The RecordAudioStream function allocates a shared
+// buffer big enough to hold one second of PCM audio data.
+// The function uses this buffer to stream data from the
+// capture device. The main loop runs every 1/2 second.
+//-----------------------------------------------------------
+
+// REFERENCE_TIME time units per second and per millisecond
+#define REFTIMES_PER_SEC  10000000
+#define REFTIMES_PER_MILLISEC  10000
+
+#define EXIT_ON_ERROR(hres)  \
+              if (FAILED(hres)) { goto Exit; }
+#define SAFE_RELEASE(punk)  \
+              if ((punk) != NULL)  \
+                { (punk)-&gt;Release(); (punk) = NULL; }
+
+const CLSID CLSID_MMDeviceEnumerator = __uuidof(MMDeviceEnumerator);
+const IID IID_IMMDeviceEnumerator = __uuidof(IMMDeviceEnumerator);
+const IID IID_IAudioClient = __uuidof(IAudioClient);
+const IID IID_IAudioCaptureClient = __uuidof(IAudioCaptureClient);
+
+HRESULT RecordAudioStream(MyAudioSink *pMySink)
+{
+    HRESULT hr;
+    REFERENCE_TIME hnsRequestedDuration = REFTIMES_PER_SEC;
+    REFERENCE_TIME hnsActualDuration;
+    UINT32 bufferFrameCount;
+    UINT32 numFramesAvailable;
+    IMMDeviceEnumerator *pEnumerator = NULL;
+    IMMDevice *pDevice = NULL;
+    IAudioClient *pAudioClient = NULL;
+    IAudioCaptureClient *pCaptureClient = NULL;
+    WAVEFORMATEX *pwfx = NULL;
+    UINT32 packetLength = 0;
+    BOOL bDone = FALSE;
+    BYTE *pData;
+    DWORD flags;
+
+    hr = CoCreateInstance(
+           CLSID_MMDeviceEnumerator, NULL,
+           CLSCTX_ALL, IID_IMMDeviceEnumerator,
+           (void**)&amp;pEnumerator);
+    EXIT_ON_ERROR(hr)
+
+    hr = pEnumerator-&gt;GetDefaultAudioEndpoint(
+                        eCapture, eConsole, &amp;pDevice);
+    EXIT_ON_ERROR(hr)
+
+    hr = pDevice-&gt;Activate(
+                    IID_IAudioClient, CLSCTX_ALL,
+                    NULL, (void**)&amp;pAudioClient);
+    EXIT_ON_ERROR(hr)
+
+    hr = pAudioClient-&gt;GetMixFormat(&amp;pwfx);
+    EXIT_ON_ERROR(hr)
+
+    hr = pAudioClient-&gt;Initialize(
+                         AUDCLNT_SHAREMODE_SHARED,
+                         0,
+                         hnsRequestedDuration,
+                         0,
+                         pwfx,
+                         NULL);
+    EXIT_ON_ERROR(hr)
+
+    // Get the size of the allocated buffer.
+    hr = pAudioClient-&gt;GetBufferSize(&amp;bufferFrameCount);
+    EXIT_ON_ERROR(hr)
+
+    hr = pAudioClient-&gt;GetService(
+                         IID_IAudioCaptureClient,
+                         (void**)&amp;pCaptureClient);
+    EXIT_ON_ERROR(hr)
+
+    // Notify the audio sink which format to use.
+    hr = pMySink-&gt;SetFormat(pwfx);
+    EXIT_ON_ERROR(hr)
+
+    // Calculate the actual duration of the allocated buffer.
+    hnsActualDuration = (double)REFTIMES_PER_SEC *
+                     bufferFrameCount / pwfx-&gt;nSamplesPerSec;
+
+    hr = pAudioClient-&gt;Start();  // Start recording.
+    EXIT_ON_ERROR(hr)
+
+    // Each loop fills about half of the shared buffer.
+    while (bDone == FALSE)
+    {
+        // Sleep for half the buffer duration.
+        Sleep(hnsActualDuration/REFTIMES_PER_MILLISEC/2);
+
+        hr = pCaptureClient-&gt;GetNextPacketSize(&amp;packetLength);
+        EXIT_ON_ERROR(hr)
+
+        while (packetLength != 0)
+        {
+            // Get the available data in the shared buffer.
+            hr = pCaptureClient-&gt;GetBuffer(
+                                   &amp;pData,
+                                   &amp;numFramesAvailable,
+                                   &amp;flags, NULL, NULL);
+            EXIT_ON_ERROR(hr)
+
+            if (flags &amp; AUDCLNT_BUFFERFLAGS_SILENT)
+            {
+                pData = NULL;  // Tell CopyData to write silence.
+            }
+
+            // Copy the available capture data to the audio sink.
+            hr = pMySink-&gt;CopyData(
+                              pData, numFramesAvailable, &amp;bDone);
+            EXIT_ON_ERROR(hr)
+
+            hr = pCaptureClient-&gt;ReleaseBuffer(numFramesAvailable);
+            EXIT_ON_ERROR(hr)
+
+            hr = pCaptureClient-&gt;GetNextPacketSize(&amp;packetLength);
+            EXIT_ON_ERROR(hr)
+        }
+    }
+
+    hr = pAudioClient-&gt;Stop();  // Stop recording.
+    EXIT_ON_ERROR(hr)
+
+Exit:
+    CoTaskMemFree(pwfx);
+    SAFE_RELEASE(pEnumerator)
+    SAFE_RELEASE(pDevice)
+    SAFE_RELEASE(pAudioClient)
+    SAFE_RELEASE(pCaptureClient)
+
+    return hr;
+}
+</code></pre>
+<p>In the preceding example, the RecordAudioStream function takes a single parameter, <code>pMySink</code>, which is a pointer to an object that belongs to a client-defined class, MyAudioSink, with two functions, CopyData and SetFormat. The example code does not include the implementation of MyAudioSink because:</p>
+<ul>
+<li>None of the class members communicates directly with any of the methods in the interfaces in WASAPI.</li>
+<li>The class could be implemented in a variety of ways, depending on the requirements of the client. (For example, it might write the capture data to a WAV file.)</li>
+</ul>
+<p>However, information about the operation of the two methods is useful for understanding the example.</p>
+<p>The CopyData function copies a specified number of audio frames from a specified buffer location. The RecordAudioStream function uses the CopyData function to read and save the audio data from the shared buffer. The SetFormat function specifies the format for the CopyData function to use for the data.</p>
+<p>As long as the MyAudioSink object requires additional data, the CopyData function outputs the value <strong>FALSE</strong> through its third parameter, which, in the preceding code example, is a pointer to the variable <code>bDone</code>. When the MyAudioSink object has all the data that it requires, the CopyData function sets <code>bDone</code> to <strong>TRUE</strong>, which causes the program to exit the loop in the RecordAudioStream function.</p>
+<p>The RecordAudioStream function allocates a shared buffer that has a duration of one second. (The allocated buffer might have a slightly longer duration.) Within the main loop, the call to the Windows <a href="/windows/desktop/api/synchapi/nf-synchapi-sleep"><strong>Sleep</strong></a> function causes the program to wait for a half second. At the start of each <strong>Sleep</strong> call, the shared buffer is empty or nearly empty. By the time the <strong>Sleep</strong> call returns, the shared buffer is about half filled with capture data.</p>
+<p>Following the call to the <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudioclient-initialize"><strong>IAudioClient::Initialize</strong></a> method, the stream remains open until the client releases all of its references to the <a href="/windows/desktop/api/Audioclient/nn-audioclient-iaudioclient"><strong>IAudioClient</strong></a> interface and to all references to service interfaces that the client obtained through the <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudioclient-getservice"><strong>IAudioClient::GetService</strong></a> method. The final <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> call closes the stream.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="stream-management.html">Stream Management</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

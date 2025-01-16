@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Custom Mixers</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Custom Mixers
+ms.assetid: a0af318d-9ac2-43f9-8934-f28c472256a6
+title: Custom Mixers
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Custom Mixers</h1>
+<p>[The component described on this page, <a href="/windows/win32/medfound/enhanced-video-renderer">Enhanced Video Renderer</a>, is a legacy feature. It has been superseded by the Simple Video Renderer (SVR) exposed through the <a href="/uwp/api/windows.media.playback.mediaplayer">MediaPlayer</a> and <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a> components. To play video content you should send data into one of these components and allow them to instantiate the new video renderer.  These components have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong> or the lower level <strong>IMFMediaEngine</strong> APIs to play video media in Windows instead of the EVR, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This topic describes how to write a custom mixer for the enhanced video renderer (EVR). You can use a custom mixer with either the Media Foundation EVR media sink, or the DirectShow EVR filter. For more information about mixers and presenters, see <a href="enhanced-video-renderer.html">Enhanced Video Renderer</a>.</p>
+<p>The mixer is a Media Foundation transform (MFT) with one or more inputs (the reference stream plus the substreams) and one output. The input stream receives samples from upstream. The output stream delivers samples to the presenter. The EVR is responsible for calling <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processinput"><strong>IMFTransform::ProcessInput</strong></a> on the mixer, and the presenter is responsible for calling <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>IMFTransform::ProcessOutput</strong></a>.</p>
+<p>At a minimum, an EVR mixer must implement the following interfaces:</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/mftransform/nn-mftransform-imftransform"><strong>IMFTransform</strong></a></td>
+<td>Provides base MFT functionality.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/evr/nn-evr-imftopologyservicelookupclient"><strong>IMFTopologyServiceLookupClient</strong></a></td>
+<td>Enables the mixer to get interfaces from the EVR.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/evr/nn-evr-imfvideodeviceid"><strong>IMFVideoDeviceID</strong></a></td>
+<td>Enables the mixer to get interfaces from the EVR.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfattributes"><strong>IMFAttributes</strong></a></td>
+<td>Used to expose the <a href="mf-sa-d3d-aware-attribute.html"><strong>MF_SA_D3D_AWARE</strong></a> attribute to the EVR.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Optionally, an MFT can implement any of the following interfaces:</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/evr/nn-evr-ievrtrustedvideoplugin"><strong>IEVRTrustedVideoPlugin</strong></a></td>
+<td>Required to play protected content.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfgetservice"><strong>IMFGetService</strong></a></td>
+<td>Exposes interfaces such as <a href="/windows/desktop/api/evr9/nn-evr9-imfvideomixerbitmap"><strong>IMFVideoMixerBitmap</strong></a> and <a href="/windows/desktop/api/evr9/nn-evr9-imfvideoprocessor"><strong>IMFVideoProcessor</strong></a> to the application.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/mfidl/nn-mfidl-imfqualityadvise"><strong>IMFQualityAdvise</strong></a></td>
+<td>Enables the quality manager to adjust the video quality.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/evr9/nn-evr9-imfvideomixerbitmap"><strong>IMFVideoMixerBitmap</strong></a></td>
+<td>Enables the application to mix a static bitmap onto the video.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/evr/nn-evr-imfvideopositionmapper"><strong>IMFVideoPositionMapper</strong></a></td>
+<td>Maps coordinates on the output video frame to coordinates on the input video frame.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/evr9/nn-evr9-imfvideoprocessor"><strong>IMFVideoProcessor</strong></a></td>
+<td>Exposes some DXVA video processing features to the application.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Format negotiation with the mixer works as follows:</p>
+<ol>
+<li>
+<p>The EVR sets the media type on the reference stream.</p>
+</li>
+<li>
+<p>The EVR calls <a href="/windows/desktop/api/evr/nf-evr-imfvideopresenter-processmessage"><strong>IMFVideoPresenter::ProcessMessage</strong></a> on the presenter with the <strong>MFVP_MESSAGE_INVALIDATEMEDIATYPE</strong> message.</p>
+</li>
+<li>
+<p>The presenter sets the media type on the mixer's output stream.</p>
+</li>
+<li>
+<p>The EVR sets the media type on the substreams.</p>
+</li>
+</ol>
+<p>If the media type on the reference stream changes, the mixer's other media types are no longer valid. The mixer's <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>IMFTransform::ProcessOutput</strong></a> method will then fail and return <strong>MF_E_TRANSFORM_STREAM_CHANGE</strong>. The presenter should not do anything at this point. The EVR will initiate the format negotiation process again.</p>
+<p>When any input stream reaches the end of the stream, the EVR calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processmessage"><strong>IMFTransform::ProcessMessage</strong></a> on the mixer with <a href="mft-message-notify-end-of-stream.html"><strong>MFT_MESSAGE_NOTIFY_END_OF_STREAM</strong></a>.</p>
+<p>The mixer sends the following events to the EVR, using the EVR's <a href="/windows/win32/api/strmif/nn-strmif-imediaeventsink"><strong>IMediaEventSink</strong></a> interface. This interface is documented in the DirectShow SDK documentation.</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../directshow/ec-sample-needed.html"><strong>EC_SAMPLE_NEEDED</strong></a></td>
+<td>The mixer requires a new input sample.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The EVR might call <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>ProcessOutput</strong></a> on the mixer before streaming starts. The mixer should not fail these calls. Instead, it should fill the output surface with black pixels. The mixer should continue to color-fill output samples until it receives an <a href="mft-message-notify-begin-streaming.html"><strong>MFT_MESSAGE_NOTIFY_BEGIN_STREAMING</strong></a> message or the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processinput"><strong>ProcessInput</strong></a> method is called. If the mixer receives an <a href="mft-message-notify-end-streaming.html"><strong>MFT_MESSAGE_NOTIFY_END_STREAMING</strong></a> message, it should switch back to color-fill mode.</p>
+<h2>Implementing IMFVideoDeviceID</h2>
+<p>The <a href="/windows/desktop/api/evr/nn-evr-imfvideodeviceid"><strong>IMFVideoDeviceID</strong></a> interface contains one method, <a href="/windows/desktop/api/evr/nf-evr-imfvideodeviceid-getdeviceid"><strong>GetDeviceID</strong></a>, which returns a device GUID. The device GUID ensures that the presenter and the mixer use compatible technologies. If the device GUIDs do not match, the EVR fails to initialize.</p>
+<p>The standard mixer and presenter both use Direct3D 9, with the device GUID equal to IID_IDirect3DDevice9. If you intend to use your custom presenter with the standard mixer, the presenter's device GUID must be IID_IDirect3DDevice9. If you replace both components, you could define a new device GUID.</p>
+<h2>Implementing IMFTopologyServiceLookupClient</h2>
+<p>The mixer must implement the <a href="/windows/desktop/api/evr/nn-evr-imftopologyservicelookupclient"><strong>IMFTopologyServiceLookupClient</strong></a> interface. Before streaming begins, the EVR calls <a href="/windows/desktop/api/evr/nf-evr-imftopologyservicelookupclient-initservicepointers"><strong>IMFTopologyServiceLookupClient::InitServicePointers</strong></a> and passes in a pointer to the EVR's <a href="/windows/desktop/api/evr/nn-evr-imftopologyservicelookup"><strong>IMFTopologyServiceLookup</strong></a> interface. The mixer uses this pointer to get interface pointers from the EVR.</p>
+<p>At a minimum, the mixer must query for the following interface:</p>
+<ul>
+<li><a href="/windows/win32/api/strmif/nn-strmif-imediaeventsink"><strong>IMediaEventSink</strong></a></li>
+</ul>
+<p>When the EVR calls <a href="/windows/desktop/api/evr/nf-evr-imftopologyservicelookupclient-releaseservicepointers"><strong>IMFTopologyServiceLookupClient::ReleaseServicePointers</strong></a>, the mixer must release any pointers obtained from the call to <a href="/windows/desktop/api/evr/nf-evr-imftopologyservicelookupclient-initservicepointers"><strong>InitServicePointers</strong></a>.</p>
+<h2>Mixer Attributes</h2>
+<p>A mixer should support the following attributes.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="mf-sa-d3d-aware-attribute.html"><strong>MF_SA_D3D_AWARE</strong></a></td>
+<td>Specifies whether the mixer supports DirectX Video Acceleration (DXVA).</td>
+</tr>
+<tr>
+<td><a href="mf-sa-required-sample-count-attribute.html"><strong>MF_SA_REQUIRED_SAMPLE_COUNT</strong></a></td>
+<td>The number of video samples the EVR should allocate for each mixer stream. This attribute applies to individual streams; use the attribute store returned by <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getinputstreamattributes"><strong>IMFTransform::GetInputStreamAttributes</strong></a>.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Setting the Mixer on the EVR</h2>
+<p>To set a custom mixer on the EVR, call <a href="/windows/desktop/api/evr/nf-evr-imfvideorenderer-initializerenderer"><strong>IMFVideoRenderer::InitializeRenderer</strong></a>. Both the DirectShow EVR filter and the EVR media sink implement this method.</p>
+<p><strong>EVR Activation Object</strong>. If you are using the EVR activation object, you can provide a custom mixer by setting one of the following attributes on the EVR activation object:</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="mf-activate-custom-video-mixer-activate-attribute.html"><strong>MF_ACTIVATE_CUSTOM_VIDEO_MIXER_ACTIVATE</strong></a></td>
+<td>Pointer to an activation object for the mixer. The activation object must implement the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfactivate"><strong>IMFActivate</strong></a> interface.</td>
+</tr>
+<tr>
+<td><a href="mf-activate-custom-video-mixer-clsid-attribute.html"><strong>MF_ACTIVATE_CUSTOM_VIDEO_MIXER_CLSID</strong></a></td>
+<td>CLSID of the mixer.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="enhanced-video-renderer.html">Enhanced Video Renderer</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

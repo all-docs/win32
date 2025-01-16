@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Detecting the Schema Master</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Detecting the Schema Master
+description: Active Directory Domain Services have a multi-master update system; every domain controller holds a writable copy of the directory.
+ms.assetid: 8e096351-43f8-48ee-acb6-681d9e38e93c
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Detecting the Schema Master AD
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Detecting the Schema Master</h1>
+<p>Active Directory Domain Services have a multi-master update system; every domain controller holds a writable copy of the directory. Schema updates are propagated to all domains that belong to the same tree or forest. Because it is difficult to reconcile conflicting updates to the schema, schema updates can only be performed at a single server. The server with the right to perform updates can change, but only one server will have that right at any given time. This server is called the schema master. The first DC installed in an enterprise is, by default, the schema master.</p>
+<p>Schema changes can only be made at the schema master level. To detect which DC is the schema master, perform the following steps.</p>
+<p><strong>Detecting the DC Schema Master</strong></p>
+<ol>
+<li>Read the <strong>fsmoRoleOwner</strong> attribute of the schema container on any DC. The <strong>fsmoRoleOwner</strong> attribute returns the distinguished name (DN) of the <strong>nTDSDSA</strong> object for the schema master.</li>
+<li>Bind to the <strong>nTDSDSA</strong> object whose DN you just retrieved. The parent of this object is the server object for the DC containing the schema master.</li>
+<li>Get the ADsPath for the parent of the <strong>nTDSDSA</strong> object. The parent is a server object.</li>
+<li>Bind to the server object.</li>
+<li>Get the <strong>dNSHostName</strong> attribute of the server object. This is the DNS name of the DC that contains the schema master.</li>
+<li>Specify the DNS name of the schema master as the server and the DN as the DN of the schema container to bind to the schema master. For example, if the server was &quot;dc1.fabrikam.com&quot; and the schema container DN was &quot;cn=schema,cn=configuration,dc=fabrikam,dc=com&quot;, the ADsPath would be as follows.
+<pre lang="C++"><code>LDAP://dc1.fabrikam.com/cn=schema,cn=configuration,dc=fabrikam,dc=com
+</code></pre>
+</li>
+</ol>
+<p>It is recommended that you find the schema master and bind to it to make schema changes. However, you can move the schema master to another server.</p>
+<p>To make another server the schema master, a suitably privileged user can:</p>
+<ul>
+<li>
+<p>Use the Schema Manager MMC snap-in.</p>
+<blockquote>
+<p>[!Note]
+The Active Directory Schema MMC snap-in must be registered manually. To register the Schema snap-in, you must run the following command from the command prompt in the Windows System32 directory.</p>
+<p><strong>regsvr32.exe schmmgmt.dll</strong></p>
+</blockquote>
+<p>Â </p>
+</li>
+<li>
+<p>Use the NTDSUTIL command-line utility.</p>
+</li>
+<li>
+<p>Use a third-party application (an application that issues the appropriate LDAP write).</p>
+</li>
+</ul>
+<p>To become the schema master programmatically, an application running in the context of a suitably privileged user can issue an LDAP write of the operational attribute <strong>becomeSchemaMaster</strong> to the rootDSE on that DC. This initiates an atomic transfer of the schema master right from the current holder to the local DC.</p>
+<p>The following code example finds the schema master. The following function binds to the schema container on the computer that is the schema master.</p>
+<pre lang="C++"><code>HRESULT BindToSchemaMaster(IADsContainer **ppSchemaMaster)
+{
+HRESULT hr = E_FAIL;
+// Get rootDSE and the schema container DN.
+IADs *pObject = NULL;
+IADs *pTempSchema = NULL;
+IADs *pNTDS = NULL;
+IADs *pServer = NULL;
+BSTR bstrParent;
+LPOLESTR szPath = new OLECHAR[MAX_PATH];
+VARIANT var, varRole,varComputer;
+hr = ADsOpenObject(L&quot;LDAP://rootDSE&quot;,
+         NULL,
+         NULL,
+         ADS_SECURE_AUTHENTICATION, // Use Secure Authentication.
+         IID_IADs,
+         (void**)&amp;pObject);
+if (hr == S_OK)
+{
+  hr = pObject-&gt;Get(CComBSTR(&quot;schemaNamingContext&quot;), &amp;var);
+  if (hr == S_OK)
+  {
+    wcscpy_s(szPath,L&quot;LDAP://&quot;);
+    wcscat_s(szPath,var.bstrVal);
+    hr = ADsOpenObject(szPath,
+             NULL,
+             NULL,
+             ADS_SECURE_AUTHENTICATION, // Use Secure Authentication.
+             IID_IADs,
+             (void**)&amp;pTempSchema);
+ 
+    if (hr == S_OK)
+    {
+      /*
+      Read the fsmoRoleOwner attribute to identify which server is 
+      the schema master.
+      */  
+      hr = pTempSchema-&gt;Get(CComBSTR(&quot;fsmoRoleOwner&quot;), &amp;varRole);
+      if (hr == S_OK)
+      {
+        // The fsmoRoleOwner attribute returns the nTDSDSA object.
+        // The parent is the server object.
+        // Bind to NTDSDSA object and get parent.
+        wcscpy_s(szPath,L&quot;LDAP://&quot;);
+        wcscat_s(szPath,varRole.bstrVal);
+        hr = ADsOpenObject(szPath,
+             NULL,
+             NULL,
+             ADS_SECURE_AUTHENTICATION,
+             IID_IADs,
+             (void**)&amp;pNTDS);
+        if (hr == S_OK)
+        {
+          hr = pNTDS-&gt;get_Parent(&amp;bstrParent);
+          if (hr == S_OK)
+          {
+            /*
+            Bind to server object and get the DNS name of 
+            the server.
+            */
+            wcscpy_s(szPath,bstrParent);
+            hr = ADsOpenObject(szPath,
+               NULL,
+               NULL,
+               ADS_SECURE_AUTHENTICATION,
+               IID_IADs,
+               (void**)&amp;pServer);
+            if (hr == S_OK)
+            {
+              // Get the dns name of the server.
+              hr = pServer-&gt;Get(CComBSTR(&quot;dNSHostName&quot;), 
+                  &amp;varComputer);
+              if (hr == S_OK)
+              {
+                    wcscpy_s(szPath,L&quot;LDAP://&quot;);
+                    wcscat_s(szPath,varComputer.bstrVal);
+                    wcscat_s(szPath,L&quot;/&quot;);
+                    wcscat_s(szPath,var.bstrVal);
+                    hr = ADsOpenObject(szPath,
+                         NULL,
+                         NULL,
+                         ADS_SECURE_AUTHENTICATION,
+                         IID_IADs,
+                         (void**)ppSchemaMaster);
+                    if (FAILED(hr))
+                    {
+                      if (*ppSchemaMaster)
+                      {
+                        (*ppSchemaMaster)-&gt;Release();
+                        (*ppSchemaMaster) = NULL;
+                      }
+                    }
+              }
+              VariantClear(&amp;varComputer);
+            }
+            if (pServer)
+              pServer-&gt;Release();
+          }
+          SysFreeString(bstrParent);
+        }
+        if (pNTDS)
+          pNTDS-&gt;Release();
+      }
+      VariantClear(&amp;varRole);
+    }
+    if (pTempSchema)
+      pTempSchema-&gt;Release();
+  }
+  VariantClear(&amp;var);
+}
+if (pObject)
+    pObject-&gt;Release();
+ 
+return hr;
+}
+</code></pre>
+<p>The following code example displays the DNS name for the computer that is the schema master.</p>
+<pre lang="VB"><code>On Error Resume Next
+ 
+'''''''''''''''''''
+' Bind to the rootDSE
+''''''''''''''''''''
+sPrefix = &quot;LDAP://&quot;
+Set root= GetObject(sPrefix &amp; &quot;rootDSE&quot;)
+If (Err.Number &lt;&gt; 0) Then
+   BailOnFailure Err.Number, &quot;on GetObject method&quot;
+End If
+ 
+'''''''''''''''''''
+' Get the DN for the schema
+''''''''''''''''''''
+sSchema = root.Get(&quot;schemaNamingContext&quot;)
+If (Err.Number &lt;&gt; 0) Then
+   BailOnFailure Err.Number, &quot;on Get method&quot;
+End If
+ 
+'''''''''''''''''''
+' Bind to the schema container
+''''''''''''''''''''
+Set Schema= GetObject(sPrefix &amp; sSchema )
+If (Err.Number &lt;&gt; 0) Then
+   BailOnFailure Err.Number, &quot;on GetObject method to bind to schema&quot;
+End If
+''''''''''''''''''''
+' Read the fsmoRoleOwner attribute to see which server is the 
+' schema master.
+''''''''''''''''''''
+sMaster = Schema.Get(&quot;fsmoRoleOwner&quot;)
+If (Err.Number &lt;&gt; 0) Then
+   BailOnFailure Err.Number, &quot;on IADs::Get method for fsmoRoleOwner&quot;
+End If
+''''''''''''''''''''
+' The fsmoRoleOwner attribute returns the nTDSDSA object.
+' The parent is the server object.
+' Bind to NTDSDSA object and get the parent object.
+''''''''''''''''''''
+Set NTDS = GetObject(sPrefix &amp; sMaster)
+If (Err.Number &lt;&gt; 0) Then
+   BailOnFailure Err.Number, &quot;on GetObject method for NTDS&quot;
+End If
+sServer = NTDS.Parent
+If (Err.Number &lt;&gt; 0) Then
+   BailOnFailure Err.Number, &quot;on IADs::get_Parent method&quot;
+End If
+''''''''''''''''''''
+' Bind to server object
+' and get the reference to the computer object.
+''''''''''''''''''''
+Set Server = GetObject(sServer)
+If (Err.Number &lt;&gt; 0) Then
+   BailOnFailure Err.Number, &quot;on GetObject method for &quot; &amp; sServer
+End If
+sComputer = Server.Get(&quot;dNSHostName&quot;)
+''''''''''''''''''''
+' Display the DNS name for the computer.
+''''''''''''''''''''
+strText = &quot;Schema master has the following DNS name: &quot;&amp; sComputer
+WScript.echo strText
+ 
+ 
+ 
+''''''''''''''''''''
+' Display subroutines
+''''''''''''''''''''
+ 
+Sub BailOnFailure(ErrNum, ErrText)
+    strText = &quot;Error 0x&quot; &amp; Hex(ErrNum) &amp; &quot; &quot; &amp; ErrText
+    MsgBox strText, vbInformation, &quot;ADSI Error&quot;
+    WScript.Quit
+End Sub
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

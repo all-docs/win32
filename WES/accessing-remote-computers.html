@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Accessing Remote Computers</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Accessing Remote Computers
+description: You can use the Windows Event Log API to access data on the local computer or on a remote computer.
+ms.assetid: df789981-0e1c-4d68-9bd5-5d054f1724d4
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Accessing Remote Computers</h1>
+<p>You can use the Windows Event Log API to access data on the local computer or on a remote computer. To access data on a remote computer, you need to call the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtopensession"><strong>EvtOpenSession</strong></a> function to create a remote session context. When you call this function, you specify the name of the remote computer that you want to connect to, the user credentials to use to make the connection, and the type of authentication to use to authenticate the user. To specify the current user, set the Domain, User, and Password members to <strong>NULL</strong>.</p>
+<p>When you call Windows Event Log API, you pass the handle to the remote session context that the <a href="/windows/desktop/api/WinEvt/nf-winevt-evtopensession"><strong>EvtOpenSession</strong></a> function returns. (To access data on the local computer, pass <strong>NULL</strong> to specify the default session.) To access data on the remote computer, the remote computer must enable the &quot;Remote Event Log Management&quot; Windows Firewall exception; otherwise, when you try to use the session handle, the call will error with RPC_S_SERVER_UNAVAILABLE. The computer to which you are connecting must be running WindowsÂ Vista or later.</p>
+<p>The following example shows how to connect to a remote computer.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;winevt.h&gt;
+
+#pragma comment(lib, &quot;wevtapi.lib&quot;)
+
+EVT_HANDLE ConnectToRemote(LPWSTR lpwszRemote);
+void EnumProviders(EVT_HANDLE hRemote);
+
+void main(void)
+{
+    EVT_HANDLE hRemote = NULL;
+    LPWSTR pwsComputerName = L&quot;&lt;name of the remote computer goes here&gt;&quot;;
+    
+
+    // Enumerate the registered providers on the local computer.
+    wprintf(L&quot;Registered providers on the local computer\n\n&quot;);
+    EnumProviders(hRemote);
+
+    hRemote = ConnectToRemote(pwsComputerName);
+    if (NULL == hRemote)
+    {
+        wprintf(L&quot;Failed to connect to remote computer. Error code is %d.\n&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    // Enumerate the registered providers on the remote computer.
+    // To access a remote computer, the remote computer must enable 
+    // Remote Event Log Management as an exception in the firewall;
+    // otherwise, the remote call fails with RPC_S_SERVER_UNAVAILABLE.
+    wprintf(L&quot;\n\nRegistered providers on the remote computer\n\n&quot;);
+    EnumProviders(hRemote);
+
+cleanup:
+
+    if (hRemote)
+        EvtClose(hRemote);
+}
+
+// Create a session context for the remote computer. Set the 
+// Domain, User, and Password member to NULL to specify
+// the current user.
+EVT_HANDLE ConnectToRemote(LPWSTR lpwszRemote)
+{
+    EVT_HANDLE hRemote = NULL;
+    EVT_RPC_LOGIN Credentials;
+
+    RtlZeroMemory(&amp;Credentials, sizeof(EVT_RPC_LOGIN));
+    Credentials.Server = lpwszRemote;
+    Credentials.Domain = NULL; 
+    Credentials.User = NULL; 
+    Credentials.Password = NULL; 
+    Credentials.Flags = EvtRpcLoginAuthNegotiate; 
+
+    // This call creates a remote session context; it does not actually
+    // create a connection to the remote computer. The connection to
+    // the remote computer happens when you use the context.
+    hRemote = EvtOpenSession(EvtRpcLogin, &amp;Credentials, 0, 0);
+
+    SecureZeroMemory(&amp;Credentials, sizeof(EVT_RPC_LOGIN));
+
+    return hRemote;
+}
+
+// Enumerate the registered providers on the computer.
+void EnumProviders(EVT_HANDLE hRemote)
+{
+    EVT_HANDLE hPublishers = NULL;
+    WCHAR wszPublisherName[255 + 1];
+    DWORD dwBufferUsed = 0;
+    DWORD status = ERROR_SUCCESS;
+
+    hPublishers = EvtOpenPublisherEnum(hRemote, 0);
+    if (NULL == hPublishers)
+    {
+        wprintf(L&quot;EvtOpenPublisherEnum failed with %d\n&quot;, GetLastError());
+        goto cleanup;
+    }
+
+    while (true)
+    {
+        if (EvtNextPublisherId(hPublishers, sizeof(wszPublisherName)/sizeof(WCHAR), wszPublisherName, &amp;dwBufferUsed))
+        {
+            wprintf(L&quot;%s\n&quot;, wszPublisherName);
+        }
+        else
+        {
+            status = GetLastError();
+            if (ERROR_NO_MORE_ITEMS == status)
+            {
+                break;
+            }
+            else
+            {
+                wprintf(L&quot;EvtNextPublisherId failed with 0x%ud\n&quot;, GetLastError());
+            }
+        }
+    }
+
+cleanup:
+
+    if (hPublishers)
+        EvtClose(hPublishers);
+}
+</code></pre>
+</body>

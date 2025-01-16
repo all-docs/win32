@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to save Direct2D content to an image file</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: How to save Direct2D content to an image file
+description: This topic shows how to use IWICImageEncoder to save content in the form of an ID2D1Image to an encoded image file such as JPEG.
+ms.assetid: F0D8BFC7-723A-4577-B2DF-4D656A18E2FC
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to save Direct2D content to an image file</h1>
+<p>This topic shows how to use <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicimageencoder"><strong>IWICImageEncoder</strong></a> to save content in the form of an <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1image"><strong>ID2D1Image</strong></a> to an encoded image file such as JPEG. If you are writing a Windows Store app, you can have the user select a destination file using <a href="/uwp/api/Windows.Storage.Pickers.FileSavePicker"><strong>Windows::Storage::Pickers::FileSavePicker</strong></a>.</p>
+<h2>What you need to know</h2>
+<h3>Technologies</h3>
+<ul>
+<li><a href="./direct2d-portal.html">Direct2D</a></li>
+<li><a href="effects-overview.html">Direct2D effects</a></li>
+<li><a href="/uwp/api/Windows.Storage.Pickers.FileSavePicker"><strong>Windows::Storage::Pickers::FileSavePicker</strong></a></li>
+</ul>
+<h3>Prerequisites</h3>
+<ul>
+<li>You need an <a href="/windows/win32/api/d2d1_1/nn-d2d1_1-id2d1devicecontext"><strong>ID2D1DeviceContext</strong></a> object and an object containing <a href="./direct2d-portal.html">Direct2D</a> content that implements <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1image"><strong>ID2D1Image</strong></a> such as <a href="/windows/win32/api/d2d1_1/nn-d2d1_1-id2d1effect"><strong>ID2D1Effect</strong></a> or <a href="/windows/win32/api/d2d1_1/nn-d2d1_1-id2d1bitmap1"><strong>ID2D1Bitmap1</strong></a>.</li>
+</ul>
+<h2>Instructions</h2>
+<h3>Step 1: Get a destination file and stream</h3>
+<p>If you want to allow the user to select a destination file, you can use <a href="/uwp/api/Windows.Storage.Pickers.FileSavePicker"><strong>FileSavePicker</strong></a>, open the returned file, and obtain an <a href="/windows/desktop/api/objidl/nn-objidl-istream"><strong>IStream</strong></a> to use with WIC.</p>
+<p>Create a <a href="/uwp/api/Windows.Storage.Pickers.FileSavePicker"><strong>Windows::Storage::Pickers::FileSavePicker</strong></a> and set its parameters for image files. Call the <a href="/uwp/api/windows.storage.pickers.filesavepicker.picksavefileasync"><strong>PickSaveFileAsync</strong></a> method.</p>
+<pre lang="C++"><code>    Pickers::FileSavePicker^ savePicker = ref new Pickers::FileSavePicker();
+    auto jpgExtensions = ref new Platform::Collections::Vector&lt;Platform::String^&gt;();
+    pngExtensions-&gt;Append(&quot;.png&quot;);
+    savePicker-&gt;FileTypeChoices-&gt;Insert(&quot;PNG file&quot;, pngExtensions);
+    auto jpgExtensions = ref new Platform::Collections::Vector&lt;Platform::String^&gt;();
+    jpgExtensions-&gt;Append(&quot;.jpg&quot;);
+    savePicker-&gt;FileTypeChoices-&gt;Insert(&quot;JPEG file&quot;, jpgExtensions);
+    savePicker-&gt;DefaultFileExtension = &quot;.jpg&quot;;
+    savePicker-&gt;SuggestedFileName = &quot;SaveScreen&quot;;
+    savePicker-&gt;SuggestedStartLocation = Pickers::PickerLocationId::PicturesLibrary;
+
+    task&lt;StorageFile^&gt; fileTask(savePicker-&gt;PickSaveFileAsync());
+</code></pre>
+<p>Declare a completion handler to run after the file picker async operation returns. Use the <a href="/windows/desktop/WinRT/iasyncaction-getresults"><strong>GetResults</strong></a> method to retrieve the file and to get the file stream object.</p>
+<pre lang="C++"><code>    task&lt;StorageFile^&gt; fileTask(savePicker-&gt;PickSaveFileAsync());
+    fileTask.then([=](StorageFile^ file) {
+        if (file != nullptr)
+        {
+            // User selects a file.
+            GUID wicFormat = GUID_ContainerFormatPng;
+            if (file-&gt;FileType == &quot;.jpg&quot;)
+            {
+                wicFormat = GUID_ContainerFormatJpeg;
+            }
+</code></pre>
+<p>Obtain an <a href="/previous-versions//hh438400(v=vs.85)"><strong>IRandomAccessStream</strong></a> by calling <a href="/uwp/api/windows.storage.storagefile.openasync"><strong>OpenAsync</strong></a> on the file and getting the result of the async operation.</p>
+<pre lang="C++"><code>    task&lt;Streams::IRandomAccessStream^&gt; createStreamTask(file-&gt;OpenAsync(FileAccessMode::ReadWrite));
+    createStreamTask.then([=](Streams::IRandomAccessStream^ randomAccessStream) {
+</code></pre>
+<p>Finally, use the <a href="/windows/desktop/api/shcore/nf-shcore-createstreamoverrandomaccessstream"><strong>CreateStreamOverRandomAccessStream</strong></a> method to convert the file stream. Windows Runtime APIs represent streams with <a href="/previous-versions//hh438400(v=vs.85)"><strong>IRandomAccessStream</strong></a>, while WIC consumes <a href="/windows/desktop/api/objidl/nn-objidl-istream"><strong>IStream</strong></a>.</p>
+<pre lang="C++"><code>    ComPtr&lt;IStream&gt; stream;
+    DX::ThrowIfFailed(
+        CreateStreamOverRandomAccessStream(randomAccessStream, IID_PPV_ARGS(&amp;stream))
+        );
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+To use the <a href="/windows/desktop/api/shcore/nf-shcore-createstreamoverrandomaccessstream"><strong>CreateStreamOverRandomAccessStream</strong></a> function, you should include <strong>shcore.h</strong> in your project.</p>
+</blockquote>
+<p>Â </p>
+<h3>Step 2: Get the WIC bitmap and frame encoder</h3>
+<p><a href="/windows/desktop/wic/-wic-imp-iwicbitmapencoder">IWICBitmapEncoder</a> and <a href="/windows/desktop/wic/-wic-imp-iwicbitmapframeencode">IWICBitmapFrameEncode</a> provide the functionality to save imaging data to an encoded file format.</p>
+<p>Create and initialize the encoder objects.</p>
+<pre lang="C++"><code>    ComPtr&lt;IWICBitmapEncoder&gt; wicBitmapEncoder;
+    DX::ThrowIfFailed(
+        wicFactory2-&gt;CreateEncoder(
+            wicFormat,
+            nullptr,    // No preferred codec vendor.
+            &amp;wicBitmapEncoder
+            )
+        );
+
+    DX::ThrowIfFailed(
+        wicBitmapEncoder-&gt;Initialize(
+            stream,
+            WICBitmapEncoderNoCache
+            )
+        );
+
+    ComPtr&lt;IWICBitmapFrameEncode&gt; wicFrameEncode;
+    DX::ThrowIfFailed(
+        wicBitmapEncoder-&gt;CreateNewFrame(
+            &amp;wicFrameEncode,
+            nullptr     // No encoder options.
+            )
+        );
+
+    DX::ThrowIfFailed(
+        wicFrameEncode-&gt;Initialize(nullptr)
+        );
+</code></pre>
+<h3>Step 3: Get an IWICImageEncoder</h3>
+<p><a href="/windows/desktop/api/wincodec/nn-wincodec-iwicimageencoder"><strong>IWICImageEncoder</strong></a> is a new interface in WindowsÂ 8. It can be created from <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicimagingfactory2"><strong>IWICImagingFactory2</strong></a>, which extends <strong>IWICImagingFactory</strong> and is also new for WindowsÂ 8.</p>
+<pre lang="C++"><code>ComPtr&lt;IWICImagingFactory2&gt; m_wicFactory;
+
+DX::ThrowIfFailed(
+    CoCreateInstance(
+        CLSID_WICImagingFactory,
+        nullptr,
+        CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&amp;m_wicFactory)
+        )
+    );
+</code></pre>
+<p>Call <a href="/windows/desktop/api/wincodec/nf-wincodec-iwicimagingfactory2-createimageencoder"><strong>IWICImagingFactory2::CreateImageEncoder</strong></a>. The first parameter is an <a href="/windows/win32/api/d2d1_1/nn-d2d1_1-id2d1device"><strong>ID2D1Device</strong></a> and must be the device on which the image you want to encode was created â€“ you cannot mix images from different resource domains within a single <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicimageencoder"><strong>IWICImageEncoder</strong></a>.</p>
+<pre lang="C++"><code>    ComPtr&lt;IWICImageEncoder&gt; imageEncoder;
+    DX::ThrowIfFailed(
+        wicFactory2-&gt;CreateImageEncoder(
+            d2dDevice.Get(),
+            &amp;imageEncoder
+            )
+       );
+</code></pre>
+<h3>Step 4: Write the Direct2D content using IWICImageEncoder</h3>
+<p><a href="/windows/desktop/api/wincodec/nn-wincodec-iwicimageencoder"><strong>IWICImageEncoder</strong></a> can write a <a href="./direct2d-portal.html">Direct2D</a> image into an image frame, a frame thumbnail, or the container thumbnail. You can then use <a href="/windows/desktop/wic/-wic-imp-iwicbitmapencoder">IWICBitmapEncoder</a> and <a href="/windows/desktop/wic/-wic-imp-iwicbitmapframeencode">IWICBitmapFrameEncode</a> to encode the imaging data to a file as normal.</p>
+<p>Write the <a href="./direct2d-portal.html">Direct2D</a> image to the frame. In this snippet we write an <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1bitmap"><strong>ID2D1Bitmap</strong></a> that contains rasterized Direct2D content. However, you can provide any interface that implements <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1image"><strong>ID2D1Image</strong></a>.</p>
+<pre lang="C++"><code>    DX::ThrowIfFailed(
+        imageEncoder-&gt;WriteFrame(
+            d2dBitmap.Get(),
+            wicFrameEncode.Get(),
+            nullptr     // Use default WICImageParameter options.
+            )
+        );
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+The <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1image"><strong>ID2D1Image</strong></a> parameter must have been created on the <a href="/windows/win32/api/d2d1_1/nn-d2d1_1-id2d1device"><strong>ID2D1Device</strong></a> that was passed into <a href="/windows/desktop/api/wincodec/nf-wincodec-iwicimagingfactory2-createimageencoder"><strong>IWICImagingFactory2::CreateImageEncoder</strong></a>.</p>
+</blockquote>
+<p>Â </p>
+<p>Commit the WIC and stream resources to finalize the operation.</p>
+<pre lang="C++"><code>    DX::ThrowIfFailed(
+        wicFrameEncode-&gt;Commit()
+        );
+
+    DX::ThrowIfFailed(
+        wicBitmapEncoder-&gt;Commit()
+        );
+
+    // Flush all memory buffers to the next-level storage object.
+    DX::ThrowIfFailed(
+        stream-&gt;Commit(STGC_DEFAULT)
+        );
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+Some implementations of <a href="/windows/desktop/api/objidl/nn-objidl-istream"><strong>IStream</strong></a> do not implement the <a href="/windows/desktop/api/objidl/nf-objidl-istream-commit"><strong>Commit</strong></a> method and return <strong>E_NOTIMPL</strong>.</p>
+</blockquote>
+<p>Â </p>
+<p>Now you have a file containing the <a href="./direct2d-portal.html">Direct2D</a> image.</p>
+<h2>Complete example</h2>
+<p>Here the full code for this example.</p>
+<pre lang="cpp"><code>ComPtr&lt;IWICImagingFactory2&gt; m_wicFactory;
+
+DX::ThrowIfFailed(
+    CoCreateInstance(
+        CLSID_WICImagingFactory,
+        nullptr,
+        CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&amp;m_wicFactory)
+        )
+    );
+
+void SaveAsImageFile::SaveBitmapToFile()
+{
+    // Prepare a file picker for customers to input image file name.
+    Pickers::FileSavePicker^ savePicker = ref new Pickers::FileSavePicker();
+    auto pngExtensions = ref new Platform::Collections::Vector&lt;Platform::String^&gt;();
+    pngExtensions-&gt;Append(&quot;.png&quot;);
+    savePicker-&gt;FileTypeChoices-&gt;Insert(&quot;PNG file&quot;, pngExtensions);
+    auto jpgExtensions = ref new Platform::Collections::Vector&lt;Platform::String^&gt;();
+    jpgExtensions-&gt;Append(&quot;.jpg&quot;);
+    savePicker-&gt;FileTypeChoices-&gt;Insert(&quot;JPEG file&quot;, jpgExtensions);
+    auto bmpExtensions = ref new Platform::Collections::Vector&lt;Platform::String^&gt;();
+    bmpExtensions-&gt;Append(&quot;.bmp&quot;);
+    savePicker-&gt;FileTypeChoices-&gt;Insert(&quot;BMP file&quot;, bmpExtensions);
+    savePicker-&gt;DefaultFileExtension = &quot;.png&quot;;
+    savePicker-&gt;SuggestedFileName = &quot;SaveScreen&quot;;
+    savePicker-&gt;SuggestedStartLocation = Pickers::PickerLocationId::PicturesLibrary;
+
+    task&lt;StorageFile^&gt; fileTask(savePicker-&gt;PickSaveFileAsync());
+    fileTask.then([=](StorageFile^ file) {
+        if (file != nullptr)
+        {
+            // User selects a file.
+            m_imageFileName = file-&gt;Name;
+            GUID wicFormat = GUID_ContainerFormatPng;
+            if (file-&gt;FileType == &quot;.bmp&quot;)
+            {
+                wicFormat = GUID_ContainerFormatBmp;
+            }
+            else if (file-&gt;FileType == &quot;.jpg&quot;)
+            {
+                wicFormat = GUID_ContainerFormatJpeg;
+            }
+
+            // Retrieve a stream from the file.
+            task&lt;Streams::IRandomAccessStream^&gt; createStreamTask(file-&gt;OpenAsync(FileAccessMode::ReadWrite));
+            createStreamTask.then([=](Streams::IRandomAccessStream^ randomAccessStream) {
+                // Convert the RandomAccessStream to an IStream.
+                ComPtr&lt;IStream&gt; stream;
+                DX::ThrowIfFailed(
+                    CreateStreamOverRandomAccessStream(randomAccessStream, IID_PPV_ARGS(&amp;stream))
+                    );
+
+                SaveBitmapToStream(m_d2dTargetBitmap, m_wicFactory, m_d2dContext, wicFormat, stream.Get());
+            });
+        }
+    });
+}
+
+// Save render target bitmap to a stream using WIC.
+void SaveAsImageFile::SaveBitmapToStream(
+    _In_ ComPtr&lt;ID2D1Bitmap1&gt; d2dBitmap,
+    _In_ ComPtr&lt;IWICImagingFactory2&gt; wicFactory2,
+    _In_ ComPtr&lt;ID2D1DeviceContext&gt; d2dContext,
+    _In_ REFGUID wicFormat,
+    _In_ IStream* stream
+    )
+{
+    // Create and initialize WIC Bitmap Encoder.
+    ComPtr&lt;IWICBitmapEncoder&gt; wicBitmapEncoder;
+    DX::ThrowIfFailed(
+        wicFactory2-&gt;CreateEncoder(
+            wicFormat,
+            nullptr,    // No preferred codec vendor.
+            &amp;wicBitmapEncoder
+            )
+        );
+
+    DX::ThrowIfFailed(
+        wicBitmapEncoder-&gt;Initialize(
+            stream,
+            WICBitmapEncoderNoCache
+            )
+        );
+
+    // Create and initialize WIC Frame Encoder.
+    ComPtr&lt;IWICBitmapFrameEncode&gt; wicFrameEncode;
+    DX::ThrowIfFailed(
+        wicBitmapEncoder-&gt;CreateNewFrame(
+            &amp;wicFrameEncode,
+            nullptr     // No encoder options.
+            )
+        );
+
+    DX::ThrowIfFailed(
+        wicFrameEncode-&gt;Initialize(nullptr)
+        );
+
+    // Retrieve D2D Device.
+    ComPtr&lt;ID2D1Device&gt; d2dDevice;
+    d2dContext-&gt;GetDevice(&amp;d2dDevice);
+
+    // Create IWICImageEncoder.
+    ComPtr&lt;IWICImageEncoder&gt; imageEncoder;
+    DX::ThrowIfFailed(
+        wicFactory2-&gt;CreateImageEncoder(
+            d2dDevice.Get(),
+            &amp;imageEncoder
+            )
+       );
+
+    DX::ThrowIfFailed(
+        imageEncoder-&gt;WriteFrame(
+            d2dBitmap.Get(),
+            wicFrameEncode.Get(),
+            nullptr     // Use default WICImageParameter options.
+            )
+        );
+
+    DX::ThrowIfFailed(
+        wicFrameEncode-&gt;Commit()
+        );
+
+    DX::ThrowIfFailed(
+        wicBitmapEncoder-&gt;Commit()
+        );
+
+    // Flush all memory buffers to the next-level storage object.
+    DX::ThrowIfFailed(
+        stream-&gt;Commit(STGC_DEFAULT)
+        );
+}
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>COM Coding Practices</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: COM Coding Practices
+description: This topic describes ways to make your COM code more effective and robust.
+ms.assetid: 76aca556-b4d6-4e67-a2a3-4439900f0c39
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>COM Coding Practices</h1>
+<p>This topic describes ways to make your COM code more effective and robust.</p>
+<ul>
+<li><a href="/windows">The __uuidof Operator</a></li>
+<li><a href="/windows">The IID_PPV_ARGS Macro</a></li>
+<li><a href="#the-saferelease-pattern">The SafeRelease Pattern</a></li>
+<li><a href="#com-smart-pointers">COM Smart Pointers</a></li>
+</ul>
+<h2>The __uuidof Operator</h2>
+<p>When you build your program, you might get linker errors similar to the following:</p>
+<p><code>unresolved external symbol &quot;struct _GUID const IID_IDrawable&quot;</code></p>
+<p>This error means that a GUID constant was declared with external linkage (<strong>extern</strong>), and the linker could not find the definition of the constant. The value of a GUID constant is usually exported from a static library file. If you are using Microsoft Visual C++, you can avoid the need to link a static library by using the <strong>__uuidof</strong> operator. This operator is a Microsoft language extension. It returns a GUID value from an expression. The expression can be an interface type name, a class name, or an interface pointer. Using <strong>__uuidof</strong>, you can create the Common Item Dialog object as follows:</p>
+<pre lang="C++"><code>IFileOpenDialog *pFileOpen;
+hr = CoCreateInstance(__uuidof(FileOpenDialog), NULL, CLSCTX_ALL, 
+    __uuidof(pFileOpen), reinterpret_cast&lt;void**&gt;(&amp;pFileOpen));
+</code></pre>
+<p>The compiler extracts the GUID value from the header, so no library export is necessary.</p>
+<blockquote>
+<p>[!Note]<br />
+The GUID value is associated with the type name by declaring <code>__declspec(uuid( ... ))</code> in the header. For more information, see the documentation for <strong>__declspec</strong> in the Visual C++ documentation.</p>
+</blockquote>
+<p>Â </p>
+<h2>The IID_PPV_ARGS Macro</h2>
+<p>We saw that both <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> and <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> require coercing the final parameter to a <strong>void**</strong> type. This creates the potential for a type mismatch. Consider the following code fragment:</p>
+<pre lang="C++"><code>// Wrong!
+
+IFileOpenDialog *pFileOpen;
+
+hr = CoCreateInstance(
+    __uuidof(FileOpenDialog), 
+    NULL, 
+    CLSCTX_ALL, 
+    __uuidof(IFileDialogCustomize),       // The IID does not match the pointer type!
+    reinterpret_cast&lt;void**&gt;(&amp;pFileOpen)  // Coerce to void**.
+    );
+</code></pre>
+<p>This code asks for the <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ifiledialogcustomize"><strong>IFileDialogCustomize</strong></a> interface, but passes in an <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ifileopendialog"><strong>IFileOpenDialog</strong></a> pointer. The <strong>reinterpret_cast</strong> expression circumvents the C++ type system, so the compiler will not catch this error. In the best case, if the object does not implement the requested interface, the call simply fails. In the worst case, the function succeeds and you have a mismatched pointer. In other words, the pointer type does not match the actual vtable in memory. As you can imagine, nothing good can happen at that point.</p>
+<blockquote>
+<p>[!Note]<br />
+A <em>vtable</em> (virtual method table) is a table of function pointers. The vtable is how COM binds a method call to its implementation at run time. Not coincidentally, vtables are how most C++ compilers implement virtual methods.</p>
+</blockquote>
+<p>Â </p>
+<p>The <a href="/windows/desktop/api/combaseapi/nf-combaseapi-iid_ppv_args"><strong>IID_PPV_ARGS</strong></a> macro helps to avoid this class of error. To use this macro, replace the following code:</p>
+<pre lang="C++"><code>__uuidof(IFileDialogCustomize), reinterpret_cast&lt;void**&gt;(&amp;pFileOpen)
+</code></pre>
+<p>with this:</p>
+<pre lang="C++"><code>IID_PPV_ARGS(&amp;pFileOpen)
+</code></pre>
+<p>The macro automatically inserts <code>__uuidof(IFileOpenDialog)</code> for the interface identifier, so it is guaranteed to match the pointer type. Here is the modified (and correct) code:</p>
+<pre lang="C++"><code>// Right.
+IFileOpenDialog *pFileOpen;
+hr = CoCreateInstance(__uuidof(FileOpenDialog), NULL, CLSCTX_ALL, 
+    IID_PPV_ARGS(&amp;pFileOpen));
+</code></pre>
+<p>You can use the same macro with <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a>:</p>
+<pre lang="C++"><code>IFileDialogCustomize *pCustom;
+hr = pFileOpen-&gt;QueryInterface(IID_PPV_ARGS(&amp;pCustom));
+</code></pre>
+<h2>The SafeRelease Pattern</h2>
+<p>Reference counting is one of those things in programming that is basically easy, but is also tedious, which makes it easy to get wrong. Typical errors include:</p>
+<ul>
+<li>Failing to release an interface pointer when you are done using it. This class of bug will cause your program to leak memory and other resources, because objects are not destroyed.</li>
+<li>Calling <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> with an invalid pointer. For example, this error can happen if the object was never created. This category of bug will probably cause your program to crash.</li>
+<li>Dereferencing an interface pointer after <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> is called. This bug may cause your program to crash. Worse, it may cause your program to crash at a random later time, making it hard to track down the original error.</li>
+</ul>
+<p>One way to avoid these bugs is to call <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> through a function that safely releases the pointer. The following code shows a function that does this:</p>
+<pre lang="C++"><code>template &lt;class T&gt; void SafeRelease(T **ppT)
+{
+    if (*ppT)
+    {
+        (*ppT)-&gt;Release();
+        *ppT = NULL;
+    }
+}
+</code></pre>
+<p>This function takes a COM interface pointer as a parameter and does the following:</p>
+<ol>
+<li>Checks whether the pointer is <strong>NULL</strong>.</li>
+<li>Calls <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> if the pointer is not <strong>NULL</strong>.</li>
+<li>Sets the pointer to <strong>NULL</strong>.</li>
+</ol>
+<p>Here is an example of how to use <code>SafeRelease</code>:</p>
+<pre lang="C++"><code>void UseSafeRelease()
+{
+    IFileOpenDialog *pFileOpen = NULL;
+
+    HRESULT hr = CoCreateInstance(__uuidof(FileOpenDialog), NULL, 
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&amp;pFileOpen));
+    if (SUCCEEDED(hr))
+    {
+        // Use the object.
+    }
+    SafeRelease(&amp;pFileOpen);
+}
+</code></pre>
+<p>If <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> succeeds, the call to <code>SafeRelease</code> releases the pointer. If <strong>CoCreateInstance</strong> fails, <em>pFileOpen</em> remains <strong>NULL</strong>. The <code>SafeRelease</code> function checks for this and skips the call to <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a>.</p>
+<p>It is also safe to call <code>SafeRelease</code> more than once on the same pointer, as shown here:</p>
+<pre lang="C++"><code>// Redundant, but OK.
+SafeRelease(&amp;pFileOpen);
+SafeRelease(&amp;pFileOpen);
+</code></pre>
+<h2>COM Smart Pointers</h2>
+<p>The <code>SafeRelease</code> function is useful, but it requires you to remember two things:</p>
+<ul>
+<li>Initialize every interface pointer to <strong>NULL</strong>.</li>
+<li>Call <code>SafeRelease</code> before each pointer goes out of scope.</li>
+</ul>
+<p>As a C++ programmer, you are probably thinking that you shouldn't have to remember either of these things. After all, that's why C++ has constructors and destructors. It would be nice to have a class that wraps the underlying interface pointer and automatically initializes and releases the pointer. In other words, we want something like this:</p>
+<pre lang="C++"><code>// Warning: This example is not complete.
+
+template &lt;class T&gt;
+class SmartPointer
+{
+    T* ptr;
+
+ public:
+    SmartPointer(T *p) : ptr(p) { }
+    ~SmartPointer()
+    {
+        if (ptr) { ptr-&gt;Release(); }
+    }
+};
+</code></pre>
+<p>The class definition shown here is incomplete, and is not usable as shown. At a minimum, you would need to define a copy constructor, an assignment operator, and a way to access the underlying COM pointer. Fortunately, you don't need to do any of this work, because Microsoft Visual Studio already provides a smart pointer class as part of the Active Template Library (ATL).</p>
+<p>The ATL smart pointer class is named <strong>CComPtr</strong>. (There is also a <strong>CComQIPtr</strong> class, which is not discussed here.) Here is the <a href="example--the-open-dialog-box.html">Open Dialog Box</a> example rewritten to use <strong>CComPtr</strong>.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;shobjidl.h&gt; 
+#include &lt;atlbase.h&gt; // Contains the declaration of CComPtr.
+
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow)
+{
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | 
+        COINIT_DISABLE_OLE1DDE);
+    if (SUCCEEDED(hr))
+    {
+        CComPtr&lt;IFileOpenDialog&gt; pFileOpen;
+
+        // Create the FileOpenDialog object.
+        hr = pFileOpen.CoCreateInstance(__uuidof(FileOpenDialog));
+        if (SUCCEEDED(hr))
+        {
+            // Show the Open dialog box.
+            hr = pFileOpen-&gt;Show(NULL);
+
+            // Get the file name from the dialog box.
+            if (SUCCEEDED(hr))
+            {
+                CComPtr&lt;IShellItem&gt; pItem;
+                hr = pFileOpen-&gt;GetResult(&amp;pItem);
+                if (SUCCEEDED(hr))
+                {
+                    PWSTR pszFilePath;
+                    hr = pItem-&gt;GetDisplayName(SIGDN_FILESYSPATH, &amp;pszFilePath);
+
+                    // Display the file name to the user.
+                    if (SUCCEEDED(hr))
+                    {
+                        MessageBox(NULL, pszFilePath, L&quot;File Path&quot;, MB_OK);
+                        CoTaskMemFree(pszFilePath);
+                    }
+                }
+
+                // pItem goes out of scope.
+            }
+
+            // pFileOpen goes out of scope.
+        }
+        CoUninitialize();
+    }
+    return 0;
+}
+</code></pre>
+<p>The main difference between this code and the original example is that this version does not explicitly call <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a>. When the <strong>CComPtr</strong> instance goes out of scope, the destructor calls <strong>Release</strong> on the underlying pointer.</p>
+<p><strong>CComPtr</strong> is a class template. The template argument is the COM interface type. Internally, <strong>CComPtr</strong> holds a pointer of that type. <strong>CComPtr</strong> overrides <strong>operator-&gt;()</strong> and <strong>operator&amp;()</strong> so that the class acts like the underlying pointer. For example, the following code is equivalent to calling the <strong>IFileOpenDialog::Show</strong> method directly:</p>
+<pre lang="C++"><code>hr = pFileOpen-&gt;Show(NULL);
+</code></pre>
+<p><strong>CComPtr</strong> also defines a <strong>CComPtr::CoCreateInstance</strong> method, which calls the COM <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> function with some default parameter values. The only required parameter is the class identifier, as the next example shows:</p>
+<pre lang="C++"><code>hr = pFileOpen.CoCreateInstance(__uuidof(FileOpenDialog));
+</code></pre>
+<p>The <strong>CComPtr::CoCreateInstance</strong> method is provided purely as a convenience; you can still call the COM <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> function, if you prefer.</p>
+<h2>Next</h2>
+<p><a href="error-handling-in-com.html">Error Handling in COM</a></p>
+<p>Â </p>
+<p>Â </p>
+</body>

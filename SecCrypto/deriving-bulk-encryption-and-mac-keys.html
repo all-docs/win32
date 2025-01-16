@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Deriving Bulk Encryption and MAC Keys</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Bulk encryption and MAC keys are derived from a master key but can include other sources depending on the protocol and cipher suite used.
+ms.assetid: f78acb54-c32a-46a8-b465-855251069a57
+title: Deriving Bulk Encryption and MAC Keys
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Deriving Bulk Encryption and MAC Keys</h1>
+<p><a href="../secgloss/b-gly.html"><em>Bulk encryption</em></a> and <a href="../secgloss/m-gly.html"><em>MAC keys</em></a> are derived from a <a href="../secgloss/m-gly.html"><em>master key</em></a> but can include other sources depending on the protocol and cipher suite used.</p>
+<p>The process of deriving bulk encryption and MAC keys is the same for both client and server:</p>
+<ol>
+<li>The protocol engine calls <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptsetkeyparam"><strong>CryptSetKeyParam</strong></a> on the master key one or more times to provide the CSP with the information needed to build the keys.</li>
+<li>Because <a href="../secgloss/c-gly.html"><em>CryptoAPI</em></a> keys cannot be derived directly from other keys, a hash object is created from the master key using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptcreatehash"><strong>CryptCreateHash</strong></a>. This <a href="../secgloss/h-gly.html"><em>hash</em></a> is used to create the new keys.</li>
+<li>The two bulk encryption keys and the two MAC keys are created from the &quot;master hash&quot; object using four calls to <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-cryptderivekey"><strong>CryptDeriveKey</strong></a>.</li>
+</ol>
+<blockquote>
+<p>[!Note]
+When performing SSL reconnects, a protocol engine can perform the above procedure several times using the same master key. This enables the client and server to have multiple, often simultaneous connections, each using different <a href="../secgloss/b-gly.html"><em>Bulk encryption</em></a> and MAC keys without additional RSA or Diffie-Hellman operations.</p>
+<p>All CSPs must use good thread-safe practices. Thread counts of several dozen are not unusual.</p>
+</blockquote>
+<p>Â </p>
+<p>The following is typical source code for the protocol engine:</p>
+<pre lang="C++"><code>//--------------------------------------------------------------------
+//   Define and initialize local variables.
+
+BOOL fClient = &lt;TRUE if this is code for the client?&gt;;
+CRYPT_DATA_BLOB Data;
+HCRYPTHASH hMasterHash;
+
+//--------------------------------------------------------------------
+// Finish creating the master_secret.
+
+switch(&lt;protocol being used&gt;)
+{
+    case &lt;PCT 1.0&gt;:
+
+//------------------------------------------------------------
+// Specify clear key value.
+
+        Data.pbData = pClearKey;
+        Data.cbData = cbClearKey;
+        CryptSetKeyParam(
+                   hMasterKey, 
+                   KP_CLEAR_KEY, 
+                   (PBYTE)&amp;Data, 
+                   0);
+
+//------------------------------------------------------------
+// Specify the CH_CHALLENGE_DATA.
+
+        Data.pbData = pChallenge;
+        Data.cbData = cbChallenge;
+        CryptSetKeyParam(
+                    hMasterKey, 
+                    KP_CLIENT_RANDOM, 
+                    (PBYTE)&amp;Data, 
+                    0);
+
+//------------------------------------------------------------
+// Specify the SH_CONNECTION_ID_DATA.
+
+        Data.pbData = pConnectionID;
+        Data.cbData = cbConnectionID;
+        CryptSetKeyParam(
+                    hMasterKey, 
+                    KP_SERVER_RANDOM, 
+                    (PBYTE)&amp;Data, 
+                    0);
+
+//------------------------------------------------------------
+// Specify the SH_CERTIFICATE_DATA.
+        Data.pbData = pbServerCertificate;
+        Data.cbData = cbServerCertificate;
+        CryptSetKeyParam(
+                    hMasterKey, 
+                    KP_CERTIFICATE, 
+                    (PBYTE)&amp;Data, 
+                    0);
+        break;
+
+    case &lt;SSL 2.0&gt;:
+
+//------------------------------------------------------------
+// Specify clear key value.
+
+        Data.pbData = pClearKey;
+        Data.cbData = cbClearKey;
+        CryptSetKeyParam(
+                 hMasterKey, 
+                 KP_CLEAR_KEY, 
+                 (PBYTE)&amp;Data, 
+                 0);
+
+//------------------------------------------------------------
+// Specify the CH_CHALLENGE_DATA.
+
+        Data.pbData = pChallenge;
+        Data.cbData = cbChallenge;
+        CryptSetKeyParam(
+                 hMasterKey, 
+                 KP_CLIENT_RANDOM,
+                 (BYTE*)&amp;Data, 
+                 0);
+
+//------------------------------------------------------------
+// Specify the SH_CONNECTION_ID_DATA.
+
+        Data.pbData = pConnectionID;
+        Data.cbData = cbConnectionID;
+        CryptSetKeyParam(
+                   hMasterKey, 
+                   KP_SERVER_RANDOM,
+                   (BYTE*)&amp;Data, 
+                   0);
+        break;
+
+case &lt;SSL 3.0&gt;:
+case &lt;TLS 1.0&gt;:
+
+
+//------------------------------------------------------------
+// Specify client_random.
+
+        Data.pbData = pClientRandom;
+        Data.cbData = cbClientRandom;
+        CryptSetKeyParam(
+                hMasterKey, 
+                KP_CLIENT_RANDOM, 
+                (PBYTE)&amp;Data, 
+                 0);
+
+//------------------------------------------------------------
+// Specify server_random.
+
+        Data.pbData = pServerRandom;
+        Data.cbData = cbServerRandom;
+        CryptSetKeyParam(
+                  hMasterKey, 
+                  KP_SERVER_RANDOM, 
+                  (PBYTE)&amp;Data, 
+                  0);
+}
+
+//------------------------------------------------------------
+// Create the master hash object from the master key.
+
+CryptCreateHash(
+            hProv, 
+            CALG_SCHANNEL_MASTER_HASH,
+            hMasterKey, 
+            0, 
+            &amp;hMasterHash);
+
+//------------------------------------------------------------
+// Derive read key from the master hash object.
+
+CryptDeriveKey(hProv, 
+               CALG_SCHANNEL_ENC_KEY, 
+               hMasterHash,
+               fClient ? CRYPT_SERVER : 0,
+               &amp;hReadKey);
+
+//------------------------------------------------------------
+// Derive write key from the master hash object.
+
+CryptDeriveKey(
+           hProv,
+           CALG_SCHANNEL_ENC_KEY,
+           hMasterHash,
+           fClient ? 0 : CRYPT_SERVER,
+           &amp;hWriteKey);
+
+if(&lt;protocol being used&gt; != &lt;SSL 2.0&gt;)   // for SSL 2.0, the master 
+                                         // key is also the MAC.
+{
+//------------------------------------------------------------
+// Derive read MAC from the master hash object.
+
+    CryptDeriveKey(
+              hProv,
+              CALG_SCHANNEL_MAC_KEY,
+              hMasterHash,
+              fClient ? CRYPT_SERVER : 0,
+              &amp;hReadMAC);
+
+//------------------------------------------------------------
+// Derive write MAC from the master hash object.
+
+    CryptDeriveKey(
+             hProv,
+             CALG_SCHANNEL_MAC_KEY,
+             hMasterHash,
+             fClient ? 0 : CRYPT_SERVER,
+             &amp;hWriteMAC);
+}
+
+CryptDestroyHash(hMasterHash);
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

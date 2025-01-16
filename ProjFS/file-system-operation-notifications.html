@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>File System Operation Notifications</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: File System Operation Notifications
+description: Describes how a provider can receive notifications of file system operations.
+ms.assetid: <!-- raw HTML omitted -->
+ms.date: 10/04/2018
+ms.topic: article</h2>
+<h1>File System Operation Notifications</h1>
+<p>In addition to required callbacks for handling enumeration, returning file metadata, and file contents, a provider may optionally register a <strong><a href="">PRJ_NOTIFICATION_CB</a></strong> callback in its call to <strong><a href="">PrjStartVirtualizing</a></strong>.  This callback receives notifications of file system operations performed on files and directories beneath the instance's virtualization root.  Some of the notifications are &quot;post-operation&quot; notifications, which tell the provider that an operation has just completed.  The other notifications are &quot;pre-operation&quot; notifications, meaning that the provider is notified before the operation happens.  In a pre-operation notification the provider can veto the operation by returning an error code from the callback.  This causes the operation to fail with the returned error code.</p>
+<h2>How to Specify Notifications to Receive</h2>
+<p>If the provider supplies an implementation of <strong>PRJ_NOTIFICATION_CB</strong> when it starts a virtualization instance, it should also specify which notifications it wishes to receive.  The notifications for which the provider can register are defined in the <a href="/windows/win32/api/projectedfslib/ne-projectedfslib-prj_notification">PRJ_NOTIFICATION</a> enum.</p>
+<p>When the provider specifies the notifications it wishes to receive, it does so using an array of one or more <a href="/windows/desktop/api/projectedfslib/ns-projectedfslib-prj_notification_mapping">PRJ_NOTIFICATION_MAPPING</a> structures.  These define &quot;notification mappings&quot;.  A notification mapping is a pairing between a directory, referred to as a &quot;notification root&quot;, and a set of notifications, expressed as a bit mask, which ProjFS should send for that directory and its descendants.  A notification mapping can also be established for a single file.  A file or directory specified in a notification mapping does not have to exist already at the time the provider calls <strong>PrjStartVirtualizing</strong>, the provider can specify any path and the mapping will apply to it if it is ever created.</p>
+<p>If the provider specifies multiple notification mappings, and some are descendants of others, the mappings must be specified in descending depth.  Notification mappings at deeper levels override higher-level ones for their descendants.</p>
+<p>If the provider does not specify a set of notification mappings, ProjFS will default to sending it PRJ_NOTIFY_FILE_OPENED, PRJ_NOTIFY_NEW_FILE_CREATED, and PRJ_NOTIFY_FILE_OVERWRITTEN for all files and directories beneath the virtualization root.</p>
+<p>The following code snippet illustrates how to register a set of notifications when starting a virtualization instance.</p>
+<pre lang="C++"><code>PRJ_CALLBACKS callbackTable;
+
+// Supply required callbacks.
+callbackTable.StartDirectoryEnumerationCallback = MyStartEnumCallback;
+callbackTable.EndDirectoryEnumerationCallback = MyEndEnumCallback;
+callbackTable.GetDirectoryEnumerationCallback = MyGetEnumCallback;
+callbackTable.GetPlaceholderInfoCallback = MyGetPlaceholderInfoCallback;
+callbackTable.GetFileDataCallback = MyGetFileDataCallback;
+
+// The rest of the callbacks are optional.  We want notifications, so specify
+// our notification callback.
+callbackTable.QueryFileNameCallback = nullptr;
+callbackTable.NotificationCallback = MyNotificationCallback;
+callbackTable.CancelCommandCallback = nullptr;
+
+// Assume the provider has created a new virtualization root at C:\VirtRoot and
+// initialized it with this layout:
+//
+//     C:\VirtRoot
+//     +--- baz
+//     \--- foo
+//          +--- subdir1
+//          \--- subdir2
+//
+// The provider wants these notifications:
+// * Notification of new file/directory creates for all locations within the
+//   virtualization root that are not subject to one of the following more
+//   specific notification mappings.
+// * Notification of new file/directory creates, file opens, post-renames, and
+//   pre- and post-deletes for C:\VirtRoot\foo
+// * No notifications for C:\VirtRoot\foo\subdir1
+PRJ_STARTVIRTUALIZING_OPTIONS startOpts = {};
+PRJ_NOTIFICATION_MAPPING notificationMappings[3];
+
+// Configure default notifications - notify of new files for most of the tree.
+notificationMappings[0].NotificationRoot = L&quot;&quot;;
+notificationMappings[0].NotificationBitMask = PRJ_NOTIFY_NEW_FILE_CREATED;
+
+// Override default notifications - notify of new files, opened files, and file
+// deletes for C:\VirtRoot\foo and its descendants.
+notificationMappings[1].NotificationRoot = L&quot;foo&quot;;
+notificationMappings[1].NotificationBitMask = PRJ_NOTIFY_NEW_FILE_CREATED |
+                                              PRJ_NOTIFY_FILE_OPENED |
+                                              PRJ_NOTIFY_PRE_DELETE |
+                                              PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_DELETED |
+                                              PRJ_NOTIFY_FILE_RENAMED;
+
+// Override all notifications for C:\VirtRoot\foo\subdir1 and its descendants.
+notificationMappings[2].NotificationRoot = L&quot;foo\\subdir1&quot;;
+notificationMappings[2].NotificationBitMask = PRJ_NOTIFY_SUPPRESS_NOTIFICATIONS;
+
+startOpts.NotificationMappings = notificationMappings;
+startOpts.NotificationMappingsCount = ARRAYSIZE(notificationMapping);
+
+// Start the instance and provide our notification mappings.
+HRESULT hr;
+PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT instanceHandle;
+hr = PrjStartVirtualizing(rootName,
+                          &amp;callbackTable,
+                          nullptr,
+                          &amp;startOpts,
+                          &amp;instanceHandle);
+if (FAILED(hr))
+{
+    wprintf(L&quot;Failed to start the virtualization instance (0x%08x)\n&quot;, hr);
+    return;
+}
+</code></pre>
+<h2>Receiving Notifications</h2>
+<p>ProjFS sends notifications of file system operations by calling the provider's <strong>PRJ_NOTIFICATION_CB</strong> callback.  It does this for each operation the provider has registered for.  If, as in the above example, the provider registered for PRJ_NOTIFY_NEW_FILE_CREATED | PRJ_NOTIFY_FILE_OPENED | PRJ_NOTIFY_PRE_DELETE | PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_DELETED | PRJ_NOTIFY_FILE_RENAMED, and an application created a new file in the notification root, ProjFS would call the <strong>PRJ_NOTIFICATION_CB</strong> callback with the new file's path name and the <em>notification</em> parameter set to PRJ_NOTIFICATION_NEW_FILE_CREATED.</p>
+<p>ProjFS sends the notifications in the following list before the associated file system operation takes place.  If the provider returns a failure code from the <strong>PRJ_NOTIFICATION_CB</strong> callback, the file system operation will fail and return the failure code the provider specified.</p>
+<ul>
+<li>PRJ_NOTIFICATION_PRE_DELETE - The file is about to be deleted.</li>
+<li>PRJ_NOTIFICATION_PRE_RENAME - The file is about to be renamed.</li>
+<li>PRJ_NOTIFICATION_PRE_SET_HARDLINK - A hard link is about to be created for the file.</li>
+<li>PRJ_NOTIFICATION_FILE_PRE_CONVERT_TO_FULL - A file is about to be expanded from a placeholder to a full file, which indicates its contents are likely to be modified.</li>
+</ul>
+<p>ProjFS sends the notifications in the following list after the associated file system operation has completed.</p>
+<ul>
+<li>PRJ_NOTIFICATION_FILE_OPENED - An existing file has been opened.
+<ul>
+<li>Even though this notification is sent after the file has been opened, the provider can return a failure code.  In response, ProjFS will cancel the open and return the failure to the caller.</li>
+</ul>
+</li>
+<li>PRJ_NOTIFICATION_NEW_FILE_CREATED - A new file has been created.</li>
+<li>PRJ_NOTIFICATION_FILE_OVERWRITTEN - An existing file has been overwritten, for example by calling <a href="/windows/desktop/api/fileapi/nf-fileapi-createfilew">CreateFileW</a> with the <strong>CREATE_ALWAYS</strong> <em>dwCreationDisposition</em> flag.</li>
+<li>PRJ_NOTIFICATION_FILE_RENAMED - A file has been renamed.</li>
+<li>PRJ_NOTIFICATION_HARDLINK_CREATED - A <a href="/windows/desktop/FileIO/hard-links-and-junctions#hard-links">hard link</a> has been created for a file.</li>
+<li>PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_NO_MODIFICATION - A file handle has been closed, and the file's content was not modified, nor was the file deleted.</li>
+<li>PRJ_NOTIFICATION_FILE_HANLDE_CLOSED_FILE_MODIFIED - A file handle has been closed, and the file's content has been modified.</li>
+<li>PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_DELETED - A file handle has been closed, and the file was deleted as part of closing the handle.</li>
+</ul>
+<p>For more details on each notification refer to the documentation for <strong><a href="/windows/desktop/api/projectedfslib/ne-projectedfslib-prj_notification">PRJ_NOTIFICATION</a></strong>.</p>
+<p>The <strong>PRJ_NOTIFICATION_CB</strong> callback's <em>notificationParameters</em> parameter specifies extra parameters for certain notifications.  If a provider receives a PRJ_NOTIFICATION_FILE_OPENED, PRJ_NOTIFICATION_NEW_FILE_CREATED, or PRJ_NOTIFICATION_FILE_OVERWRITTEN, or PRJ_NOTIFICATION_FILE_RENAMED notification, the provider can specify a new set of notifications to receive for the file. For further details, refer to the documentation for <strong><a href="/windows/desktop/api/projectedfslib/nc-projectedfslib-prj_notification_cb">PRJ_NOTIFICATION_CB</a></strong>.</p>
+<p>The following sample shows simple examples of how a provider might process the notifications it registered for in the code snippet above.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+
+HRESULT
+MyNotificationCallback(
+    _In_ const PRJ_CALLBACK_DATA* callbackData,
+    _In_ BOOLEAN isDirectory,
+    _In_ PRJ_NOTIFICATION notification,
+    _In_opt_z_ PCWSTR destinationFileName,
+    _Inout_ PRJ_NOTIFICATION_PARAMETERS* operationParameters
+    )
+{
+    HRESULT hr = S_OK;
+
+    switch (notification)
+    {
+    case PRJ_NOTIFY_NEW_FILE_CREATED:
+
+        wprintf(L&quot;A new %ls was created at [%ls].\n&quot;,
+                isDirectory ? L&quot;directory&quot; : L&quot;file&quot;,
+                callbackData-&gt;FilePathName);
+
+        // Let's stop getting notifications inside newly-created directories.
+        if (isDirectory)
+        {
+            operationParameters-&gt;PostCreate.NotificationMask = PRJ_NOTIFY_SUPPRESS_NOTIFICATIONS;
+        }
+        break;
+
+    case PRJ_NOTIFY_FILE_OPENED:
+
+        wprintf(L&quot;Handle opened to %ls [%ls].\n&quot;,
+                isDirectory ? L&quot;directory&quot;: L&quot;file&quot;,
+                callbackData-&gt;FilePathName);
+        break;
+
+    case PRJ_NOTIFY_PRE_DELETE:
+
+        wprintf(L&quot;Attempt to delete %ls [%ls]: &quot;,
+                isDirectory ? L&quot;directory&quot;: L&quot;file&quot;,
+                callbackData-&gt;FilePathName);
+
+        // MyAllowDelete is a routine the provider might implement to decide
+        // whether to allow a given file/directory to be deleted.
+        if (!MyAllowDelete(callbackData-&gt;FilePathName, isDirectory))
+        {
+            wprintf(L&quot;DENIED\n&quot;);
+            hr = HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED);
+        }
+        else
+        {
+            wprintf(L&quot;ALLOWED\n&quot;);
+        }
+        break;
+
+    case PRJ_NOTIFY_FILE_HANDLE_CLOSED_FILE_DELETED:
+
+        wprintf(L&quot;The %ls [%ls] was deleted.\n&quot;,
+                isDirectory ? L&quot;directory&quot;: L&quot;file&quot;,
+                callbackData-&gt;FilePathName);
+        break;
+
+    case PRJ_NOTIFY_FILE_RENAMED:
+
+        if (wcslen(callbackData-&gt;FilePathName) == 0)
+        {
+            // If callbackData-&gt;FilePathName is an empty string, then the item
+            // that was renamed was originally in a location not under the
+            // virtualization root.
+            wprintf(L&quot;A %ls was renamed into the virtualization root,\n&quot;,
+                    isDirectory ? L&quot;directory&quot;: L&quot;file&quot;);
+            wprintf(L&quot;Its new location is [%ls].\n&quot;,
+                    destinationFileName);
+        }
+        else if (wcslen(destinationFileName) == 0)
+        {
+            // If destinationFileName is an empty string, then the item that was
+            // renamed is now in a location not under the virtualization root.
+            wprintf(L&quot;A %ls was renamed out of the virtualization root.\n&quot;,
+                    isDirectory ? L&quot;directory&quot;: L&quot;file&quot;);
+            wprintf(L&quot;Its original location was [%ls].\n&quot;,
+                    callbackData-&gt;FilePathName);
+        }
+        else
+        {
+            // If both names are specified, both the new and old names are under
+            // the virtualization root (it is never the case that nether name is
+            // specified).
+            wprintf(L&quot;A %ls [%ls] was renamed.\n&quot;,
+                    isDirectory ? L&quot;directory&quot;: L&quot;file&quot;,
+                    callbackData-&gt;FilePathName);
+            wprintf(L&quot;Its new name is [%ls].\n&quot;, destinationFileName);
+        }
+        break;
+
+    default:
+        wprintf(L&quot;Unrecognized notification: 0x%08x&quot;);
+    }
+
+    // Note that this may be a failure code from MyAllowDelete().
+    return hr;
+}
+</code></pre>
+</body>

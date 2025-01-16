@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Initializing Shell Extension Handlers</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Much of the implementation of a Shell extension handler object is dictated by its type. There are, however, some common elements. This topic discusses those aspects of implementation that are shared by all Shell extension handlers.
+ms.assetid: ce21ca0f-157c-4f69-bcf9-dc259c3bac80
+title: Initializing Shell Extension Handlers
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Initializing Shell Extension Handlers</h1>
+<p>Much of the implementation of a Shell extension handler object is dictated by its type. There are, however, some common elements. This topic discusses those aspects of implementation that are shared by all Shell extension handlers.</p>
+<p>All Shell extension handlers are in-process Component Object Model (COM) objects. They must be assigned a GUID and registered as described in <a href="handlers.html">Registering Shell Extension Handlers</a>. They are implemented as DLLs and must export the following standard functions:</p>
+<ul>
+<li><a href="../dlls/dllmain.html"><strong>DllMain</strong></a>. The standard entry point to the DLL.</li>
+<li><a href="/windows/win32/api/combaseapi/nf-combaseapi-dllgetclassobject"><strong>DllGetClassObject</strong></a>. Exposes the object's class factory.</li>
+<li><a href="/windows/win32/api/combaseapi/nf-combaseapi-dllcanunloadnow"><strong>DllCanUnloadNow</strong></a>. COM calls this function to determine whether the object is serving any clients. If not, the system can unload the DLL and free the associated memory.</li>
+</ul>
+<p>Like all COM objects, Shell extension handlers must implement an <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> interface and a <a href="../com/implementing-iclassfactory.html">class factory</a>. Most must also implement either an <a href="/windows/win32/api/objidl/nn-objidl-ipersistfile"><strong>IPersistFile</strong></a> or <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a> interface in WindowsÂ XP or earlier. These were replaced by <a href="/windows/desktop/api/Propsys/nn-propsys-iinitializewithstream"><strong>IInitializeWithStream</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-iinitializewithitem"><strong>IInitializeWithItem</strong></a> and <a href="/windows/desktop/api/Propsys/nn-propsys-iinitializewithfile"><strong>IInitializeWithFile</strong></a> in WindowsÂ Vista. The Shell uses these interfaces to initialize the handler.</p>
+<p>The <a href="/windows/win32/api/objidl/nn-objidl-ipersistfile"><strong>IPersistFile</strong></a> interface must be implemented by the following:</p>
+<ul>
+<li>Icon handlers</li>
+<li>Data handlers</li>
+<li>Drop handlers</li>
+</ul>
+<p>The <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a> interface must be implemented by the following:</p>
+<ul>
+<li>Shortcut menu handlers</li>
+<li>Drag-and-drop handlers</li>
+<li>Property sheet handlers</li>
+</ul>
+<p>The following subjects are discussed in the remainder of this topic:</p>
+<ul>
+<li><a href="#implementing-ipersistfile">Implementing IPersistFile</a></li>
+<li><a href="#implementing-ishellextinit">Implementing IShellExtInit</a></li>
+<li><a href="#infotip-customization">Infotip Customization</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Implementing IPersistFile</h2>
+<p>The <a href="/windows/win32/api/objidl/nn-objidl-ipersistfile"><strong>IPersistFile</strong></a> interface is designed to permit an object to be loaded from or saved to a disk file. It has six methods in addition to <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a>, five of its own, and the <a href="/windows/win32/api/objidl/nf-objidl-ipersist-getclassid"><strong>GetClassID</strong></a> method that it inherits from <a href="/windows/win32/api/objidl/nn-objidl-ipersist"><strong>IPersist</strong></a>. With Shell extensions, <strong>IPersist</strong> is used only to initialize a Shell extension handler object. Because there is typically no need to read from or write to the disk, only the <strong>GetClassID</strong> and <a href="/windows/win32/api/objidl/nf-objidl-ipersistfile-load"><strong>Load</strong></a> methods require a nontoken implementation.</p>
+<p>The Shell calls <a href="/windows/win32/api/objidl/nf-objidl-ipersist-getclassid"><strong>GetClassID</strong></a> first, and the function returns the class identifier (CLSID) of the extension handler object. The Shell then calls <a href="/windows/win32/api/objidl/nf-objidl-ipersistfile-load"><strong>Load</strong></a> and passes in two values. The first, <em>pszFile</em>, is a Unicode string with the name of the file or folder that Shell is about to operate on. The second is <em>dwMode</em>, which indicates the file access mode. Because there is normally no need to access files, <em>dwMode</em> is typically zero. The method stores these values as needed for later reference.</p>
+<p>The following code fragment illustrates how a typical Shell extension handler implements the <a href="/windows/win32/api/objidl/nf-objidl-ipersist-getclassid"><strong>GetClassID</strong></a> and <a href="/windows/win32/api/objidl/nf-objidl-ipersistfile-load"><strong>Load</strong></a> methods. It is designed to handle either ANSI or Unicode. CLSID_SampleExtHandler is the extension handler object's GUID, and CSampleShellExtension is the name of the class used to implement the interface. The <strong>m_szFileName</strong> and <strong>m_dwMode</strong> variables are private variables that are used to store the file's name and access flags.</p>
+<pre lang="C++"><code>class CSampleShellExtension : public IPersistFile
+{
+    // Method declarations not included
+
+    private:
+    WCHAR m_szFileName[MAX_PATH];    // The file name
+    DWORD m_dwMode;                  // The file access mode
+}
+
+IFACEMETHODIMP CSampleShellExtension::GetClassID(__out CLSID *pCLSID)
+{
+    *pCLSID = CLSID_SampleExtHandler;
+}
+
+IFACEMETHODIMP CSampleShellExtension::Load(PCWSTR pszFile, DWORD dwMode)
+{
+    m_dwMode = dwMode;
+    return StringCchCopy(m_szFileName, ARRAYSIZE(m_szFileName), pszFile); 
+}
+
+// The implementation sample is continued in the next section.
+</code></pre>
+<h2>Implementing IShellExtInit</h2>
+<p>The <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishellextinit"><strong>IShellExtInit</strong></a> interface has only one method, <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellextinit-initialize"><strong>IShellExtInit::Initialize</strong></a>, in addition to <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a>. The method has three parameters that the Shell can use to pass in various types of information. The values passed in depend on the type of handler, and some can be set to <strong>NULL</strong>.</p>
+<ul>
+<li><em>pidlFolder</em> holds a folder's pointer to an item identifier list (PIDL). This is an absolute PIDL. For property sheet extensions, this value is <strong>NULL</strong>. For shortcut menu extensions, it is the PIDL of the folder that contains the item whose shortcut menu is being displayed. For nondefault drag-and-drop handlers, it is the PIDL of the target folder.</li>
+<li><em>pDataObject</em> holds a pointer to a data object's <a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a> interface. The data object holds one or more file names in <a href="dragdrop.html">CF_HDROP</a> format.</li>
+<li><em>hRegKey</em> holds a registry key for the file object or folder type.</li>
+</ul>
+<p>The <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ishellextinit-initialize"><strong>IShellExtInit::Initialize</strong></a> method stores the file name, <a href="/windows/win32/api/objidl/nn-objidl-idataobject"><strong>IDataObject</strong></a> pointer, and registry key as needed for later use. The following code fragment illustrates an implementation of <strong>IShellExtInit::Initialize</strong>. For simplicity, this example assumes that the data object contains only a single file. In general, the data object might contain multiple files, each of which will need to be extracted.</p>
+<pre lang="C++"><code>// This code continues the CSampleShellExtension sample shown in the
+// &quot;Implementing IPersistFile&quot; section above.
+
+class CSampleShellExtension : public IShellExtInit
+{
+    // Method declarations not included
+    
+    private:
+    // IDList of the folder for extensions invoked on the folder, such as 
+    // background context menu handlers or nondefault drag-and-drop handlers. 
+    PIDLIST_ABSOLUTE m_pidlFolder;
+    
+    // The data object contains an expression of the items that the handler is 
+    // being initialized for. Use SHCreateShellItemArrayFromDataObject to 
+    // convert this object to an array of items. Use SHGetItemFromObject if you
+    // are only interested in a single Shell item. If you need a file system
+    // path, use IShellItem::GetDisplayName(SIGDN_FILESYSPATH, ...).
+    IDataObject *m_pdtobj;
+    
+    // For context menu handlers, the registry key provides access to verb 
+    // instance data that might be stored there. This is a rare feature to use 
+    // so most extensions do not need this variable.
+    HKEY m_hRegKey;             
+}
+    
+// This method must be very efficient. Do not do any unnecessary work here.
+// Use Initialize to acquire resources that will be used later.
+
+IFACEMETHODIMP CSampleShellExtension::Initialize(__in_opt PCIDLIST_ABSOLUTE pidlFolder,
+                                                 __in_opt IDataObject *pDataObject, 
+                                                 __in_opt HKEY hRegKey) 
+{ 
+    // In some cases, handlers are initialized multiple times. Therefore, 
+    // clear any previous state here.
+    CoTaskMemFree(m_pidlFolder);
+    m_pidlFolder = NULL;
+    
+    if (m_pdtobj)
+    { 
+        m_pdtobj-&gt;Release(); 
+    }
+    
+    if (m_hRegKey)
+    {
+        RegCloseKey(m_hRegKey);
+        m_hRegKey = NULL;
+    }
+    
+    // Capture the inputs for use later.
+    HRESULT hr = S_OK;
+    
+    if (pidlFolder)
+    {
+        m_pidlFolder = ILClone(pidlFolder);   // Make a copy to use later.
+        hr = m_pidlFolder ? S_OK : E_OUTOFMEMORY;
+    }
+    
+    if (SUCCEEDED(hr))
+    {
+        // If a data object pointer was passed into the method, save it and
+        // extract the file name. 
+        if (pDataObject) 
+        { 
+            m_pdtobj = pDataObject; 
+            m_pdtobj-&gt;AddRef(); 
+        }
+    
+        // It is uncommon to use the registry handle, but if you need it,
+        // duplicate it now.
+        if (hRegKey)
+        {
+            LSTATUS const result = RegOpenKeyEx(hRegKey, NULL, 0, KEY_READ, &amp;m_hRegKey); 
+            hr = HRESULT_FROM_WIN32(result);
+        }
+    }
+    
+    return hr;
+}
+</code></pre>
+<h2>Infotip Customization</h2>
+<p>There are two ways to customize infotips. One way is to implement an object that supports <a href="/windows/win32/api/shlobj_core/nn-shlobj_core-iqueryinfo"><strong>IQueryInfo</strong></a> and then register the object under the proper subkey in the registry (see below). Alternatively, you can specify either a fixed string or a list of certain file properties to be displayed.</p>
+<p>To display a fixed string for a namespace extension, create a subkey called <strong>InfoTip</strong> beneath the CLSID key of your namespace extension. Set the data of that subkey to be the string you want to be displayed.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â CLSID
+Â Â Â Â Â Â {CLSID}
+Â Â Â Â Â Â Â Â Â InfoTip = InfoTip string for your namespace extension
+</code></pre>
+<p>To display a fixed string for a file type, create a subkey called <strong>InfoTip</strong> beneath the <strong>ProgID</strong> key of the file type for which you want to supply infotips. Set the data of that subkey to be the string you want to be displayed.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â ProgID
+Â Â Â Â Â Â InfoTip = InfoTip string for all files of this type
+</code></pre>
+<p>If you want the Shell to show certain file properties in the infotip for a specific file type, create a subkey called <strong>InfoTip</strong> beneath the <strong>ProgID</strong> key of that file type. Set the data of that subkey to be a semicolon-delineated list of canonical property names or {fmtid}, pid pairs where <em>propname</em> is a canonical property name and <em>{fmtid},pid</em> is a <a href="./objects.html"><strong>FMTID/PID pair</strong></a>.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â ProgID
+Â Â Â Â Â Â InfoTip = propname;propname;{fmtid},pid;{fmtid},pid
+</code></pre>
+<p>The following property names can be used.</p>
+<table>
+<thead>
+<tr>
+<th>Property Name</th>
+<th>Description</th>
+<th>Retrieved From</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Author</td>
+<td>Author of the document</td>
+<td><a href="../stg/the-summary-information-property-set.html"><strong>PIDSI_AUTHOR</strong></a></td>
+</tr>
+<tr>
+<td>Title</td>
+<td>Title of the document</td>
+<td><a href="../stg/the-summary-information-property-set.html"><strong>PIDSI_TITLE</strong></a></td>
+</tr>
+<tr>
+<td>Subject</td>
+<td>Subject summary</td>
+<td><a href="../stg/the-summary-information-property-set.html"><strong>PIDSI_SUBJECT</strong></a></td>
+</tr>
+<tr>
+<td>Comment</td>
+<td>Document comments</td>
+<td><a href="../stg/the-summary-information-property-set.html"><strong>PIDSI_COMMENT</strong></a> or folder/drive properties</td>
+</tr>
+<tr>
+<td>PageCount</td>
+<td>Number of pages</td>
+<td><a href="../stg/the-summary-information-property-set.html"><strong>PIDSI_PAGECOUNT</strong></a></td>
+</tr>
+<tr>
+<td>Name</td>
+<td>Friendly name</td>
+<td>Standard folder view</td>
+</tr>
+<tr>
+<td>OriginalLocation</td>
+<td>Location of original file</td>
+<td>Briefcase folder and Recycle Bin folder</td>
+</tr>
+<tr>
+<td>DateDeleted</td>
+<td>Date file was deleted</td>
+<td>Recycle Bin folder</td>
+</tr>
+<tr>
+<td>Type</td>
+<td>Type of file</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>Size</td>
+<td>Size of file</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>SyncCopyIn</td>
+<td>Same as OriginalLocation</td>
+<td>Same as OriginalLocation</td>
+</tr>
+<tr>
+<td>Modified</td>
+<td>Date last modified</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>Created</td>
+<td>Date created</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>Accessed</td>
+<td>Date last accessed</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>InFolder</td>
+<td>Directory containing the file</td>
+<td>Document search results</td>
+</tr>
+<tr>
+<td>Rank</td>
+<td>Quality of search match</td>
+<td>Document search results</td>
+</tr>
+<tr>
+<td>FreeSpace</td>
+<td>Available storage space</td>
+<td>Disk drives</td>
+</tr>
+<tr>
+<td>NumberOfVisits</td>
+<td>Number of visits</td>
+<td>Favorites folder</td>
+</tr>
+<tr>
+<td>Attributes</td>
+<td>File Attributes</td>
+<td>Standard folder details view</td>
+</tr>
+<tr>
+<td>Company</td>
+<td>Company name</td>
+<td><a href="../stg/the-documentsummaryinformation-and-userdefined-property-sets.html"><strong>PIDDSI_COMPANY</strong></a></td>
+</tr>
+<tr>
+<td>Category</td>
+<td>Document category</td>
+<td><a href="../stg/the-documentsummaryinformation-and-userdefined-property-sets.html"><strong>PIDDSI_CATEGORY</strong></a></td>
+</tr>
+<tr>
+<td>Copyright</td>
+<td>Media copyright</td>
+<td><a href="../stg/the-documentsummaryinformation-and-userdefined-property-sets.html"><strong>PIDMSI_COPYRIGHT</strong></a></td>
+</tr>
+<tr>
+<td>HTMLInfoTipFile</td>
+<td>HTML InfoTip file</td>
+<td>Desktop.ini file for folder</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="reg-shell-exts.html">Registering Shell Extension Handlers</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

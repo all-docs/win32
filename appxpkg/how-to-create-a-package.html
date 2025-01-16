@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to create an app package (C++)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: How to create an app package (C++)
+description: Learn how to create an app package for a Windows app using the packaging API.
+ms.assetid: FD677D75-50D5-4228-891F-73B5F40679B0
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to create an app package (C++)</h1>
+<p>Learn how to create an app package for a Windows app using the <a href="interfaces.html">packaging API</a>.</p>
+<p>If you want to create a desktop app package manually, you can also use the MakeAppx.exe tool which utilizes the <a href="interfaces.html">packaging API</a>. See <a href="make-appx-package--makeappx-exe-.html">App packager (MakeAppx.exe)</a> for more information.</p>
+<p>If you are using Visual Studio, it's recommended that you use the Visual Studio packaging wizard to package your app. For more details, see <a href="/windows/msix/package/packaging-uwp-apps">Package a UWP app using Visual Studio</a>.</p>
+<h2>Instructions</h2>
+<h3>Step 1: Create a package writer</h3>
+<p>To create a package writer, call the <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxfactory-createpackagewriter"><strong>IAppxFactory::CreatePackageWriter</strong></a> method. The first parameter is an output stream where the package will be written. The second parameter is a pointer to an <a href="/windows/desktop/api/AppxPackaging/ns-appxpackaging-appx_package_settings"><strong>APPX_PACKAGE_SETTINGS</strong></a> structure that specifies package settings. The third parameter is an output parameter that receives a pointer to an <a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxpackagewriter"><strong>IAppxPackageWriter</strong></a> pointer.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;shlwapi.h&gt;
+#include &lt;AppxPackaging.h&gt;
+
+// We store the produced package under this file name.
+const LPCWSTR OutputPackagePath = L&quot;HelloWorld.appx&quot;;
+
+int wmain()
+{
+    HRESULT hr = S_OK;
+
+    // Specify the appropriate COM threading model
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+    if (SUCCEEDED(hr))
+    {
+        // Create a package writer
+        IAppxPackageWriter* packageWriter = NULL;
+
+        hr = GetPackageWriter(OutputPackagePath, &amp;packageWriter);
+    }
+}
+
+//
+// Creates an app package writer with default settings.
+//
+// Parameters:
+//   outputFileName  
+//     Fully qualified name of the app package (.appx file) to be created.
+//   writer 
+//     On success, receives the created instance of IAppxPackageWriter.
+//
+HRESULT GetPackageWriter(
+    _In_ LPCWSTR outputFileName,
+    _Outptr_ IAppxPackageWriter** writer)
+{
+    const LPCWSTR Sha256AlgorithmUri = L&quot;https://www.w3.org/2001/04/xmlenc#sha256&quot;; 
+    HRESULT hr = S_OK;
+    IStream* outputStream = NULL;
+    IUri* hashMethod = NULL;
+    APPX_PACKAGE_SETTINGS packageSettings = {0};
+    IAppxFactory* appxFactory = NULL;
+
+    // Create a stream over the output file for the package 
+    hr = SHCreateStreamOnFileEx(
+            outputFileName,
+            STGM_CREATE | STGM_WRITE | STGM_SHARE_EXCLUSIVE,
+            0,     // default file attributes
+            TRUE,  // create file if it does not exist
+            NULL,  // no template
+            &amp;outputStream);
+
+    // Create default package writer settings, including hash algorithm URI
+    // and Zip format.
+    if (SUCCEEDED(hr))
+    {        hr = CreateUri(
+                Sha256AlgorithmUri,
+                Uri_CREATE_CANONICALIZE,
+                0, // reserved parameter
+                &amp;hashMethod);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        packageSettings.forceZip32 = TRUE;
+        packageSettings.hashMethod = hashMethod;
+    }
+
+    // Create a new Appx factory
+    if (SUCCEEDED(hr))
+    {
+        hr = CoCreateInstance(
+                __uuidof(AppxFactory),
+                NULL,
+                CLSCTX_INPROC_SERVER,
+                __uuidof(IAppxFactory),
+                (LPVOID*)(&amp;appxFactory));
+    }
+
+    // Create a new package writer using the factory
+    if (SUCCEEDED(hr))
+    {
+        hr = appxFactory-&gt;CreatePackageWriter(
+                outputStream,
+                &amp;packageSettings,
+                writer);
+    }
+
+    // Clean up allocated resources
+    if (appxFactory != NULL)
+    {
+        appxFactory-&gt;Release();
+        appxFactory = NULL;
+    }
+    if (hashMethod != NULL)
+    {
+        hashMethod-&gt;Release();
+        hashMethod = NULL;
+    }
+    if (outputStream != NULL)
+    {
+        outputStream-&gt;Release();
+        outputStream = NULL;
+    }
+    return hr;
+}
+</code></pre>
+<h3>Step 2: Add the payload files for your app to the package</h3>
+<p>Call the <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxpackagewriter-addpayloadfile"><strong>IAppxPackageWriter::AddPayloadFile</strong></a> method to add files to the package. The first parameter is the relative path of the file. The second parameter indicates the content type of the file. The third parameter specifies options from the <a href="/windows/desktop/api/AppxPackaging/ne-appxpackaging-appx_compression_option"><strong>APPX_COMPRESSION_OPTION</strong></a> enumeration. The fourth parameter is the input stream for the file.</p>
+<pre lang="C++"><code>// Path where all input files are stored
+const LPCWSTR DataPath = L&quot;Data\\&quot;;
+
+// Add all payload files to the package writer
+for (int i = 0; SUCCEEDED(hr) &amp;&amp; (i &lt; PayloadFilesCount); i++)
+{
+    IStream* fileStream = NULL;
+
+    hr = GetFileStream(DataPath, PayloadFilesName[i], &amp;fileStream);
+
+    if (SUCCEEDED(hr))
+    {
+        packageWriter-&gt;AddPayloadFile(
+            PayloadFilesName[i],
+            PayloadFilesContentType[i],
+            PayloadFilesCompression[i],
+            fileStream);
+        }
+
+        if (fileStream != NULL)
+        {
+            fileStream-&gt;Release();
+            fileStream = NULL;
+        }
+    }
+}
+</code></pre>
+<p>The previous code uses these variable definitions and <code>GetFileStream</code> helper function.</p>
+<pre lang="C++"><code>#include &lt;strsafe.h&gt;
+#include &lt;shlwapi.h&gt;
+
+// The produced app package's content consists of these files, with
+// corresponding content types and compression options.
+const int PayloadFilesCount = 4;
+const LPCWSTR PayloadFilesName[PayloadFilesCount] = {
+    L&quot;AppTile.png&quot;,
+    L&quot;Default.html&quot;,
+    L&quot;images\\smiley.jpg&quot;,
+    L&quot;Error.html&quot;,
+};
+const LPCWSTR PayloadFilesContentType[PayloadFilesCount] = {
+    L&quot;image/png&quot;,
+    L&quot;text/html&quot;,
+    L&quot;image/jpeg&quot;,
+    L&quot;text/html&quot;,
+};
+const APPX_COMPRESSION_OPTION PayloadFilesCompression[PayloadFilesCount] = {
+    APPX_COMPRESSION_OPTION_NONE,
+    APPX_COMPRESSION_OPTION_NORMAL,
+    APPX_COMPRESSION_OPTION_NONE,
+    APPX_COMPRESSION_OPTION_NORMAL,
+};
+
+//
+// Creates a readable IStream over the specified file. For simplicity, we assume that the fully 
+// qualified file name is 100 characters or less. Your code should 
+// handle longer names, and allocate the buffer dynamically.
+//
+// Parameters:
+//   path 
+//      Path of the folder that contains the file to be opened; must end with a '\'
+//   fileName 
+//      Name, of the file to be opened, not including the path
+//   stream 
+//      On success, receives the created instance of IStream
+//
+HRESULT GetFileStream(
+    _In_ LPCWSTR path,
+    _In_ LPCWSTR fileName,
+    _Outptr_ IStream** stream)
+{
+    HRESULT hr = S_OK;
+    const int MaxFileNameLength = 100;
+    WCHAR fullFileName[MaxFileNameLength + 1];
+
+    // Create full file name by concatenating path and fileName
+    hr = StringCchCopyW(fullFileName, MaxFileNameLength, path);
+    if (SUCCEEDED(hr))
+    {
+        hr = StringCchCat(fullFileName, MaxFileNameLength, fileName);
+    }
+
+    // Create stream for reading the file
+    if (SUCCEEDED(hr))
+    {
+        hr = SHCreateStreamOnFileEx(
+                fullFileName,
+                STGM_READ | STGM_SHARE_EXCLUSIVE,
+                0,      // default file attributes
+                FALSE,  // don't create new file
+                NULL,   // no template
+                stream);
+    }
+    return hr;
+}
+</code></pre>
+<h3>Step 3: Add the package manifest to the package</h3>
+<p>Every package must have a package manifest. To add the package manifest to the package, create an input stream for the file, then call the <a href="/windows/desktop/api/AppxPackaging/nf-appxpackaging-iappxpackagewriter-close"><strong>IAppxPackageWriter::Close</strong></a> method to write the manifest at the end of the package and close the output stream for package writer.</p>
+<p>This code uses the <code>GetFileStream</code> helper function shown in the previous step to create the stream for the package manifest.</p>
+<pre lang="C++"><code>// We read the app package's manifest from this file
+const LPCWSTR ManifestFileName = L&quot;AppxManifest.xml&quot;;
+
+IStream* manifestStream = NULL;
+
+hr = GetFileStream(DataPath, ManifestFileName, &amp;manifestStream);
+
+if (SUCCEEDED(hr))
+{
+    hr = packageWriter-&gt;Close(manifestStream);
+}
+
+if (manifestStream != NULL)
+{
+    manifestStream-&gt;Release();
+    manifestStream = NULL;
+}
+</code></pre>
+<h3>Step 4: Clean up the package writer</h3>
+<p>Before returning from the <code>wmain</code> function, call the <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> method to clean up the package writer and call the <a href="/windows/desktop/api/combaseapi/nf-combaseapi-couninitialize"><strong>CoUninitialize</strong></a> function.</p>
+<pre lang="C++"><code>if (packageWriter != NULL)
+{
+    packageWriter-&gt;Release();
+    packageWriter = NULL;
+}
+CoUninitialize();
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Samples</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/AppxPackingCreateAppx">Create app package sample</a></p>
+<!-- raw HTML omitted -->
+<p><strong>Reference</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/AppxPackaging/nn-appxpackaging-iappxpackagewriter"><strong>IAppxPackageWriter</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

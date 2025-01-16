@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Registering to Execute a Program</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Registering to Execute a Program
+description: You can register to have BITS execute a program based on job transferred and error events, but not job modified events. BITS executes the program in the user's context.
+ms.assetid: f1996d08-0e35-403b-9cdb-dae9e1c42e05
+keywords:</p>
+<ul>
+<li>event notification BITS , command line</li>
+<li>registering for command line notification BITS
+ms.topic: article
+ms.date: 10/04/2018</li>
+</ul>
+<hr />
+<h1>Registering to Execute a Program</h1>
+<p>You can register to have BITS execute a program based on job transferred and error events, but not job modified events. BITS executes the program in the user's context.</p>
+<p><strong>To register to execute a program</strong></p>
+<ol>
+<li>
+<p>Call the <strong>IBackgroundCopyJob::QueryInterface</strong> method to retrieve an <a href="/windows/desktop/api/Bits1_5/nn-bits1_5-ibackgroundcopyjob2"><strong>IBackgroundCopyJob2</strong></a> interface pointer. Specify __uuidof(IBackgroundCopyJob2) as the interface identifier.</p>
+</li>
+<li>
+<p>Call the <a href="/windows/desktop/api/Bits1_5/nf-bits1_5-ibackgroundcopyjob2-setnotifycmdline"><strong>IBackgroundCopyJob2::SetNotifyCmdLine</strong></a> method to specify the program to execute and any arguments required by the program, such as the job identifier.</p>
+</li>
+<li>
+<p>Call the <a href="/windows/desktop/api/Bits/nf-bits-ibackgroundcopyjob-setnotifyflags"><strong>IBackgroundCopyJob::SetNotifyFlags</strong></a> method to specify when the command line executes.</p>
+<p>You can only specify the BG_NOTIFY_JOB_TRANSFERRED and BG_NOTIFY_JOB_ERROR event flags. The BG_NOTIFY_JOB_MODIFICATION flag is ignored.</p>
+</li>
+</ol>
+<p>Note that BITS will not execute the program if you also <a href="registering-a-com-callback.html">registered to receive COM callbacks</a> and the callback interface pointer is valid or the notification method that BITS calls returns a success code. However, if the notification method returns a failure code, such as E_FAIL, BITS will execute the command line.</p>
+<p>BITS calls the <a href="/windows/desktop/api/processthreadsapi/nf-processthreadsapi-createprocessasusera"><strong>CreateProcessAsUser</strong></a> function to launch the program. If you specify a parameter string, the first parameter must be the program name.</p>
+<p>The following example shows how to register to execute a program when the job-transferred event occurs. The example assumes the <a href="/windows/desktop/api/Bits/nn-bits-ibackgroundcopyjob"><strong>IBackgroundCopyJob</strong></a> interface pointer is valid.</p>
+<pre lang="C++"><code>#define MAX_PARAMETER_LEN 4000
+
+HRESULT hr;
+IBackgroundCopyJob* pJob;
+IBackgroundCopyJob2* pJob2 = NULL;
+WCHAR szJobId[48];
+const WCHAR *pProgram = L&quot;c:\\PATHHERE\\PROGRAMNAMEHERE.exe&quot;;
+WCHAR szParameters[MAX_PARAMETER_LEN+1];
+GUID JobId;
+int rc;
+
+hr = pJob-&gt;GetId(&amp;JobId);
+if (SUCCEEDED(hr))
+{
+  rc = StringFromGUID2(JobId, szJobId, ARRAYSIZE(szJobId));
+  if (rc)
+  {
+    StringCchPrintf(szParameters, MAX_PARAMETER_LEN+1, L&quot;%s %s&quot;, pProgram, szJobId);
+    pJob-&gt;QueryInterface(__uuidof(IBackgroundCopyJob2), (void**)&amp;pJob2);
+    hr = pJob2-&gt;SetNotifyCmdLine(pProgram, szParameters);
+    if (SUCCEEDED(hr))
+    {
+      hr = pJob-&gt;SetNotifyFlags(BG_NOTIFY_JOB_TRANSFERRED);
+    }
+    pJob2-&gt;Release();
+    if (FAILED(hr))
+    {
+      //Handle error - unable to register for command line notification.
+    }
+  }
+}
+</code></pre>
+<p>When the state of the job becomes BG_JOB_STATE_TRANSFERRED, BITS executes the program specified in pProgram. The following example is a simple implementation of a program that takes a job identifier as an argument. The program assumes the correct number of arguments are passed to it.</p>
+<pre lang="C++"><code>#define WIN32_LEAN_AND_MEAN // Exclude rarely-used stuff from Windows headers
+#include &lt;windows.h&gt;
+#include &lt;bits.h&gt;
+#include &lt;strsafe.h&gt;
+
+int wmain(int argc, wchar_t *argv[])
+{
+ HRESULT hr;
+ IBackgroundCopyManager *pManager = NULL;
+ IBackgroundCopyJob *pJob = NULL;
+ GUID JobId;
+ LPWSTR pDisplayName = NULL;
+ LPCWSTR pSuccessString = L&quot; completed successfully.&quot;;
+ LPWSTR pMessage;
+
+ hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+ hr = CoCreateInstance(__uuidof(BackgroundCopyManager),
+  NULL, CLSCTX_LOCAL_SERVER,
+  __uuidof(IBackgroundCopyManager), (void**)&amp;pManager);
+
+ if (pManager)
+ {
+  hr = CLSIDFromString(argv[1], &amp;JobId);
+  if (SUCCEEDED(hr))
+  {
+   hr = pManager-&gt;GetJob(JobId, &amp;pJob);
+   if (SUCCEEDED(hr))
+   {
+    hr = pJob-&gt;GetDisplayName(&amp;pDisplayName);
+    if (SUCCEEDED(hr))
+    {
+     int messageLen = wcslen(pDisplayName) + wcslen(pSuccessString) + 1;
+     pMessage = (WCHAR*)malloc(messageLen * sizeof(WCHAR));
+     if (pMessage)
+     {
+      StringCchPrintf(pMessage, messageLen,
+       L&quot;%s%s&quot;, pDisplayName, pSuccessString);
+      MessageBox(HWND_DESKTOP, pMessage, L&quot;MyProgram - Transferred&quot;, MB_OK);
+      free(pMessage);
+     }
+     else
+     {
+      hr = E_OUTOFMEMORY;
+     }
+     CoTaskMemFree(pDisplayName);
+    }
+    pJob-&gt;Release();
+   }
+  }
+  pManager-&gt;Release();
+ }
+
+ CoUninitialize();
+ return(hr);
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

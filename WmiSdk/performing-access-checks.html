@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Performing Access Checks</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: An access check determines whether a security descriptor grants a specified set of access rights to the client or thread identified by an access token.
+ms.assetid: d0259bb1-fd74-4440-ac2a-d6aa84a48d9b
+ms.tgt_platform: multiple
+title: Performing Access Checks
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Performing Access Checks</h1>
+<p>An access check determines whether a security descriptor grants a specified set of access rights to the client or thread identified by an access token. You can call the security function <a href="/windows/desktop/api/securitybaseapi/nf-securitybaseapi-accesscheck"><strong>AccessCheck</strong></a> from WMI client applications or providers written in C++ or C#. Scripts and Visual Basic applications cannot perform access checks using the method described here.</p>
+<p>Client applications should do an access check to determine the identity of the callback when returning results to the sink provided by the client asynchronous call.</p>
+<p>When providers cannot impersonate the client application or script that is requesting data, they should perform access checks for the following situations:</p>
+<ul>
+<li>When accessing resources that are not protected by access control lists (ACL).</li>
+<li>When the client has connected at the <strong>RPC_C_LEVEL_IDENTIFY</strong> impersonation level.</li>
+</ul>
+<blockquote>
+<p>[!Note]<br />
+C++ and C# applications can control whether access checks are performed by a separate process. Scripts and Visual Basic applications can read or change a registry key to ensure that WMI performs access checks. For more information, see <a href="setting-security-on-an-asynchronous-call.html">Setting Security on an Asynchronous Call</a>.</p>
+</blockquote>
+<p>Â </p>
+<p>The code example in this topic requires the following references and #include statements to compile correctly.</p>
+<pre lang="C++"><code>#include &lt;lmcons.h&gt;
+#define _WIN32_DCOM
+#define SECURITY_WIN32
+#include &lt;wbemidl.h&gt;
+#include &lt;security.h&gt;
+#include &lt;safestr.h&gt;
+#pragma comment(lib, &quot;wbemuuid.lib&quot;)
+#pragma comment(lib, &quot;Secur32.lib&quot;)
+</code></pre>
+<p>The following code example shows how to check that the security token of a client application thread contains permissions appropriate to a specified security descriptor. The function takes the string &quot;domain\user&quot; and returns the SID. If the call fails, the function returns <strong>NULL</strong>, otherwise the caller must free the returned pointer.</p>
+<pre lang="C++"><code>BYTE * GetSid(LPWSTR pwcUserName)
+{
+    DWORD dwSidSize = 0, dwDomainSize = 0;
+    SID_NAME_USE use;
+
+    // first call is to get the size
+    BOOL bRet = LookupAccountNameW(
+
+      NULL,            // system name
+      pwcUserName,     // account name
+      NULL,            // security identifier
+      &amp;dwSidSize,      // size of security identifier
+      NULL,            // domain name
+      &amp;dwDomainSize,   // size of domain name
+      &amp;use             // SID-type indicator
+      );    
+
+    if(bRet == FALSE &amp;&amp; ERROR_INSUFFICIENT_BUFFER 
+        != GetLastError())\
+        return NULL;
+
+    BYTE * buff = new BYTE[dwSidSize];
+
+    if(buff == NULL)
+        return NULL;
+
+    WCHAR * pwcDomain = new WCHAR[dwDomainSize];
+
+    if(pwcDomain == NULL)
+
+    {
+        delete [] buff;
+        return FALSE;
+    }
+
+    // Call to LookupAccountNameW actually gets the SID
+    bRet = LookupAccountNameW(
+
+      NULL,           // system name
+      pwcUserName,    // account name
+      buff,           // security identifier
+      &amp;dwSidSize,     // size of security identifier
+      pwcDomain,      // domain name
+      &amp;dwDomainSize,  // size of domain name
+      &amp;use            // SID-type indicator
+      );    
+
+    delete [] pwcDomain;
+
+    if(bRet == FALSE)
+    {
+        delete [] buff;
+        return NULL;
+    }
+
+    return buff;
+}
+
+// This returns true if the caller is coming 
+//   from the expected computer in the expected domain.
+
+BOOL IsAllowed(LPWSTR pwsExpectedDomain, 
+   LPWSTR pwsExpectedMachine)
+{
+
+    WCHAR wCallerName[UNLEN + 1];
+    DWORD nSize = UNLEN + 1;
+
+// Impersonate the caller and get its name
+
+    HRESULT hr = CoImpersonateClient();
+    if(FAILED(hr))
+
+        return FALSE;
+
+    BOOL bRet = GetUserNameExW(NameSamCompatible, 
+       wCallerName, &amp;nSize);
+
+    CoRevertToSelf();
+
+    if(bRet == FALSE)
+
+        return FALSE;
+
+
+    // take the expected domain and lan manager 
+    //   style name and create a SID.  In actual
+    // production code, it would be more efficient 
+    //   to do this only when necessary
+
+    WCHAR wExpectedName[UNLEN + 1];
+
+    HRESULT hrCopyCat;
+    hrCopyCat = StringCchCopy(wExpectedName,
+        sizeof(pwsExpectedDomain)*sizeof(WCHAR)+1, 
+        pwsExpectedDomain);
+    if (FAILED(hrCopyCat))
+    {
+        return FALSE;
+    }
+    hrCopyCat = 
+        StringCchCat(wExpectedName,sizeof(wExpectedName)
+        + 2*sizeof(WCHAR)+1, L&quot;\\&quot;);
+    if (FAILED(hrCopyCat))
+    {
+        return FALSE;
+    }
+    hrCopyCat = StringCchCat(wExpectedName,sizeof(wExpectedName)
+        + sizeof(pwsExpectedMachine)*sizeof(WCHAR)+1, 
+        pwsExpectedMachine);
+    if (FAILED(hrCopyCat))
+    {
+        return FALSE;
+    }
+    hrCopyCat = StringCchCat(wExpectedName,sizeof(wExpectedName)
+        + sizeof(WCHAR)+1, L&quot;$&quot;);
+    if (FAILED(hrCopyCat))
+    {
+        return FALSE;
+    }
+  
+
+    // convert the two names to SIDs and compare.  
+    // Note that SIDs are used since 
+    //   the format of the names might vary.  
+
+    BYTE * pCaller = GetSid(wCallerName);
+
+    if(pCaller == NULL)
+
+        return FALSE;
+
+    BYTE * pExpected = GetSid(wExpectedName);
+
+    if(pExpected == NULL)
+    {
+        delete [] pCaller;
+
+        return FALSE;
+    }
+
+    bRet = EqualSid((PSID)pCaller, (PSID)pExpected);
+
+    delete [] pCaller;
+    delete [] pExpected;
+
+    return bRet;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="choosing-correct-registration.html">Choosing Correct Registration</a></p>
+<!-- raw HTML omitted -->
+<p><a href="maintaining-wmi-security.html">Maintaining WMI Security</a></p>
+<!-- raw HTML omitted -->
+<p><a href="securing-your-provider.html">Securing Your Provider</a></p>
+<!-- raw HTML omitted -->
+<p><a href="access-to-wmi-namespaces.html">Access to WMI Namespaces</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

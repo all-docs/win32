@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Supporting Direct3D 11 Video Decoding in Media Foundation</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to support Microsoft Direct3DÂ 11 in a Microsoft Media Foundation decoder.
+ms.assetid: 656556AA-0266-4318-9D3C-AED75BD728F6
+title: Supporting Direct3D 11 Video Decoding in Media Foundation
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Supporting Direct3D 11 Video Decoding in Media Foundation</h1>
+<p>This topic describes how to support Microsoft Direct3DÂ 11 in a Microsoft Media Foundation decoder. Specifically, it describes the communication between the decoder and the video renderer. This topic does not describe how to implement the decoding operations.</p>
+<ul>
+<li><a href="#overview">Overview</a></li>
+<li><a href="#open-a-device-handle">Open a Device Handle</a></li>
+<li><a href="#find-a-decoder-configuration">Find a Decoder Configuration</a></li>
+<li><a href="#fallback-to-software-decoding">Fallback to Software Decoding</a></li>
+<li><a href="#allocating-uncompressed-buffers">Allocating Uncompressed Buffers</a></li>
+<li><a href="#supporting-direct3d-11-video-decoding-in-media-foundation">Decoding</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Overview</h2>
+<p>In the remainder of this topic, the following terms are used:</p>
+<ul>
+<li><strong>Software decoder</strong>. The software decoder is the Media Foundation transform (MFT) that receives compressed video samples and outputs uncompressed video frames.</li>
+<li><strong>Decoder device</strong>. The decoder device is the video accelerator, and is implemented by the graphics driver. The decoder device performs accelerated decoding operations.</li>
+<li><strong>Pipeline</strong>. The pipeline hosts the software decoder and delivers buffers to and from the software decoder. Depending on the application, the pipeline might be the <a href="media-session.html">Media Session</a>, the <a href="source-reader.html">Source Reader</a>, or application code that directly calls into the MFT.</li>
+</ul>
+<p>To perform decoding using Direct3DÂ 11, the software decoder must have a pointer to a Direct3DÂ 11 device. The Direct3DÂ 11 device is created externally to the software decoder. In a <a href="media-session.html">Media Session</a> scenario, the video renderer creates the Direct3DÂ 11 device. In a <a href="source-reader.html">Source Reader</a> scenario, typically the application creates the Direct3DÂ 11 device.</p>
+<p>The DXGI Device Manager is used to share the Direct3DÂ 11 between components. The DXGI Device Manager exposes the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfdxgidevicemanager"><strong>IMFDXGIDeviceManager</strong></a> interface. The pipeline sets the <strong>IMFDXGIDeviceManager</strong> pointer on the software decoder by sending the <a href="mft-message-set-d3d-manager.html"><strong>MFT_MESSAGE_SET_D3D_MANAGER</strong></a> message.</p>
+<p>The following diagram shows the relation between the software decoder, the Direct3DÂ 11, and the pipeline.</p>
+<p><img src="images/d3d11video01.png" alt="a diagram that shows the software decoder and the dxgi device manager." /></p>
+<p>Here are the basic steps that a software decoder must perform to support Direct3DÂ 11 in Media Foundation:</p>
+<ol>
+<li>Open a handle to the Direct3DÂ 11 device.</li>
+<li>Find a decoder configuration.</li>
+<li>Allocate uncompressed buffers.</li>
+<li>Decode frames.</li>
+</ol>
+<p>These steps are described in more detail in the remainder of this topic.</p>
+<h2>Open a Device Handle</h2>
+<p>The decoder MFT uses the DXGI device manager to get a handle to the Direct3DÂ 11 device. To open the device handle, perform the following steps:</p>
+<ol>
+<li>The decoder MFT must expose the <a href="mf-sa-d3d11-aware.html">MF_SA_D3D11_AWARE</a> attribute with the value <strong>TRUE</strong>.</li>
+<li>The Topology Loader queries this attribute by calling <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getattributes"><strong>IMFTransform::GetAttributes</strong></a>. The value <strong>TRUE</strong> indicates that the MFT supports Direct3DÂ 11.</li>
+<li>The Topology Loader calls <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processmessage"><strong>IMFTransform::ProcessMessage</strong></a> with the <a href="mft-message-set-d3d-manager.html"><strong>MFT_MESSAGE_SET_D3D_MANAGER</strong></a> message. The <em>ulParam</em> parameter is an <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> pointer to the DXGI device manager. Query this pointer for the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfdxgidevicemanager"><strong>IMFDXGIDeviceManager</strong></a> interface.</li>
+<li>Call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfdxgidevicemanager-opendevicehandle"><strong>IMFDXGIDeviceManager::OpenDeviceHandle</strong></a> to get a handle to the Direct3DÂ 11 device.</li>
+<li>To get a pointer to the Direct3DÂ 11 device, call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfdxgidevicemanager-getvideoservice"><strong>IMFDXGIDeviceManager::GetVideoService</strong></a>. Pass in the device handle and the value <strong>IID_ID3D11Device</strong>. The method returns a pointer to the <a href="/windows/win32/api/d3d11/nn-d3d11-id3d11device"><strong>ID3D11Device</strong></a> interface.</li>
+<li>To get a pointer to the video accelerator, call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfdxgidevicemanager-getvideoservice"><strong>IMFDXGIDeviceManager::GetVideoService</strong></a> again. This time, pass in the device handle and the value <strong>IID_ID3D11VideoDevice</strong>. The method returns a pointer to the <a href="/windows/desktop/api/d3d11/nn-d3d11-id3d11videodevice"><strong>ID3D11VideoDevice</strong></a> interface.</li>
+<li>Call <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11device-getimmediatecontext"><strong>ID3D11Device::GetImmediateContext</strong></a> to get an <a href="/windows/win32/api/d3d11/nn-d3d11-id3d11devicecontext"><strong>ID3D11DeviceContext</strong></a> pointer.</li>
+<li>Call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> on the <a href="/windows/win32/api/d3d11/nn-d3d11-id3d11devicecontext"><strong>ID3D11DeviceContext</strong></a> to get an <a href="/windows/desktop/api/d3d11/nn-d3d11-id3d11videocontext"><strong>ID3D11VideoContext</strong></a> pointer.</li>
+<li>It is recommended that you use multi-thread protection on the device context to prevent deadlock issues that can sometimes happen when you call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videocontext-getdecoderbuffer"><strong>ID3D11VideoContext::GetDecoderBuffer</strong></a> or <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videocontext-releasedecoderbuffer"><strong>ID3D11VideoContext::ReleaseDecoderBuffer</strong></a>. To set multi-thread protection, first call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> on <a href="/windows/win32/api/d3d11/nn-d3d11-id3d11device"><strong>ID3D11Device</strong></a> to get an <a href="/windows/win32/api/d3d10/nn-d3d10-id3d10multithread"><strong>ID3D10Multithread</strong></a> pointer. Then call <a href="/windows/win32/api/d3d10/nf-d3d10-id3d10multithread-setmultithreadprotected"><strong>ID3D10Multithread::SetMultithreadProtected</strong></a>, passing in <strong>true</strong> for <em>bMTProtect</em>.</li>
+</ol>
+<h2>Find a Decoder Configuration</h2>
+<p>To perform decoding, the software decoder must find a compatible configuration that is supported by the decoder device, including a render-target format. This step occurs inside the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setinputtype"><strong>IMFTransform::SetInputType</strong></a> method, as follows.</p>
+<ol>
+<li>Validate the input media type. If the type is rejected, skip the remaining steps and return an error code.</li>
+<li>Call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videodevice-getvideodecoderprofilecount"><strong>ID3D11VideoDevice::GetVideoDecoderProfileCount</strong></a> to get the number of supported profiles.</li>
+<li>Call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videodevice-getvideodecoderprofile"><strong>ID3D11VideoDevice::GetVideoDecoderProfile</strong></a> to enumerate the profiles and get the profile GUIDs.</li>
+<li>Look for a profile GUID that matches the video format and the capabilities of the software decoder. For example, an MPEG-2 decoder would look for <strong>D3D11_DECODER_PROFILE_MPEG2_MOCOMP</strong>,<strong>D3D11_DECODER_PROFILE_MPEG2_IDCT</strong>, and <strong>D3D11_DECODER_PROFILE_MPEG2_VLD</strong>.</li>
+<li>If a suitable decoder GUID is found, check the output format by calling the <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videodevice-checkvideodecoderformat"><strong>ID3D11VideoDevice::CheckVideoDecoderFormat</strong></a> method. Pass in the decoder GUID and a <strong>DXGI_FORMAT</strong> value that specifies the render-target format.</li>
+<li>Next, find a suitable configuration for the decoder.
+<ol>
+<li>Call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videodevice-getvideodecoderconfigcount"><strong>ID3D11VideoDevice::GetVideoDecoderConfigCount</strong></a> to get the number of decoder configurations. Pass in the same decoder device GUID, along with a <a href="/windows/desktop/api/d3d11/ns-d3d11-d3d11_video_decoder_desc"><strong>D3D11_VIDEO_DECODER_DESC</strong></a> structure that describes the proposed render-target format.</li>
+<li>Call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videodevice-getvideodecoderconfig"><strong>ID3D11VideoDevice::GetVideoDecoderConfig</strong></a> to enumerate the decoder configurations.</li>
+</ol>
+</li>
+</ol>
+<p>In the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getoutputavailabletype"><strong>IMFTransform::GetOutputAvailableType</strong></a> method, return an uncompressed video format based on the proposed render-target format.</p>
+<p>In the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setoutputtype"><strong>IMFTransform::SetOutputType</strong></a> method, check the media type against the render target format.</p>
+<h2>Fallback to Software Decoding</h2>
+<p>The MFT might be unable to find a configuration. For example, the graphics driver might not support the right capabilities. In that case, the MFT must fall back to software decoding, as follows.</p>
+<ol>
+<li>The <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setinputtype"><strong>SetInputType</strong></a> and <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-setoutputtype"><strong>SetOutputType</strong></a> methods should both return <strong>MF_E_UNSUPPORTED_D3D_TYPE</strong>.</li>
+<li>In response, the Topology Loader will send the <a href="mft-message-set-d3d-manager.html"><strong>MFT_MESSAGE_SET_D3D_MANAGER</strong></a> message with the value <strong>NULL</strong> for the <em>ulParam</em> parameter.</li>
+<li>The MFT releases its pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfdxgidevicemanager"><strong>IMFDXGIDeviceManager</strong></a> interface.</li>
+<li>The Topology Loader renegotiates the media type.</li>
+</ol>
+<p>At this point, the MFT can use software decoding.</p>
+<h2>Allocating Uncompressed Buffers</h2>
+<p>The decoder is responsible for allocating Direct3DÂ 11 textures to use as uncompressed video buffers. The <a href="mf-sa-minimum-output-sample-count.html">MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT</a> attribute in the output stream attributes (see<a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getoutputstreamattributes"><strong>IMFTransform::GetOutputStreamAttributes</strong></a>) is used to determine how many surfaces the decoder should allocate for the video renderer to use for deinterlacing . A decoder should use this value bounding it for some reasonable upper and lower limits, for example 3-32. For progressive content see <a href="mf-sa-minimum-output-sample-count-progressive.html">MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT_PROGRESSIVE</a>.</p>
+<p>In the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getoutputstreaminfo"><strong>IMFTransform::GetOutputStreamInfo</strong></a> method, set the <strong>MFT_OUTPUT_STREAM_PROVIDES_SAMPLES</strong> flag in the <a href="/windows/win32/api/mftransform/ne-mftransform-_mft_output_stream_info_flags"><strong>MFT_OUTPUT_STREAM_INFO</strong></a> structure. This flag notifies the Media Session that the MFT allocates its own output samples. To allocate the output samples, the MFT performs the following steps:</p>
+<ol>
+<li>
+<p>Create a 2D texture array by calling <a href="/windows/win32/api/d3d11/nf-d3d11-id3d11device-createtexture2d"><strong>ID3D11Device::CreateTexture2D</strong></a>. In the <a href="/windows/win32/api/d3d11/ns-d3d11-d3d11_texture2d_desc"><strong>D3D11_TEXTURE2D_DESC</strong></a> structure, set <strong>ArraySize</strong> equal to the number of surfaces that the decoder needs. This includes:</p>
+<ul>
+<li>Surfaces for reference frames.</li>
+<li>Surfaces for deinterlacing (three surfaces).</li>
+<li>Surfaces that the decoder needs for buffering.</li>
+</ul>
+<p>The binding flags (<strong>BindFlags</strong>) should include the <strong>D3D11_BIND_DECODER</strong> flag and any bind flags set through the <a href="mf-sa-d3d11-bindflags.html">MF_SA_D3D11_BINDFLAGS</a> attribute in the output stream attributes.</p>
+</li>
+<li>
+<p>For each surface in the texture array, call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videodevice-createvideodecoderoutputview"><strong>ID3D11VideoDevice::CreateVideoDecoderOutputView</strong></a> to create a video decoder output view. During decoding, these output views will be passed to the <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videocontext-decoderbeginframe"><strong>ID3D11VideoContext::DecoderBeginFrame</strong></a> method.</p>
+</li>
+<li>
+<p>For each surface in the texture array, create a media sample as follows:</p>
+<ol>
+<li>Create a DXGI media buffer by calling the <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreatedxgisurfacebuffer"><strong>MFCreateDXGISurfaceBuffer</strong></a> function. Pass in the <a href="/windows/win32/api/d3d11/nn-d3d11-id3d11texture2d"><strong>ID3D11Texture2D</strong></a> pointer and the offset for each element in the texture array. The function returns an <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfmediabuffer"><strong>IMFMediaBuffer</strong></a> pointer.</li>
+<li>Create an empty media sample by calling the <a href="/windows/desktop/api/evr/nc-evr-mfcreatevideosamplefromsurface"><strong>MFCreateVideoSampleFromSurface</strong></a> function. Set the <em>pUnkSurface</em> parameter equal to <strong>NULL</strong>. The function returns an <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfsample"><strong>IMFSample</strong></a> pointer.</li>
+<li>Call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfsample-addbuffer"><strong>IMFSample::AddBuffer</strong></a> to add the media buffer to the sample.</li>
+</ol>
+</li>
+</ol>
+<p>You should destroy all the textures you create at the same time, rather than destroying only some and continuing to use the reminder.</p>
+<h2>Decoding</h2>
+<p>To create the decoder device, call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videodevice-createvideodecoder"><strong>ID3D11VideoDevice::CreateVideoDecoder</strong></a>. The method returns a pointer to the <a href="/windows/desktop/api/d3d11/nn-d3d11-id3d11videodecoder"><strong>ID3D11VideoDecoder</strong></a> interface. Decoding should occur inside the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-processoutput"><strong>IMFTransform::ProcessOutput</strong></a> method. On each frame, call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfdxgidevicemanager-testdevice"><strong>IMFDXGIDeviceManager::TestDevice</strong></a> to test the availability of the DXGI. If the device has changed, the software decoder must recreate the decoder device, as follows:</p>
+<ol>
+<li>Close the device handle by calling <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfdxgidevicemanager-closedevicehandle"><strong>IMFDXGIDeviceManager::CloseDeviceHandle</strong></a>.</li>
+<li>Release all resources associated with the previous Direct3DÂ 11 device, including the <a href="/windows/desktop/api/d3d11/nn-d3d11-id3d11videodecoder"><strong>ID3D11VideoDecoder</strong></a>, <a href="/windows/desktop/api/d3d11/nn-d3d11-id3d11videocontext"><strong>ID3D11VideoContext</strong></a>, <a href="/windows/win32/api/d3d11/nn-d3d11-id3d11texture2d"><strong>ID3D11Texture2D</strong></a>, and <a href="/windows/desktop/api/d3d11/nn-d3d11-id3d11videodecoderoutputview"><strong>ID3D11VideoDecoderOutputView</strong></a> interfaces.</li>
+<li>Open a new device handle.</li>
+<li>Negotiate a new decoder configuration, as described previously in <a href="#find-a-decoder-configuration">Find a Decoder Configuration</a>. This step is necessary because the device capabilities might have changed.</li>
+<li>Create a new decoder device.</li>
+</ol>
+<p>Assuming that the device handle is valid, the decoding process works as follows:</p>
+<ol>
+<li>Get an available surface that is not currently in use. Initially, all of the surfaces are available.</li>
+<li>Query the media sample for the <a href="/windows/win32/api/mfidl/nn-mfidl-imftrackedsample"><strong>IMFTrackedSample</strong></a> interface.</li>
+<li>Call <a href="/windows/win32/api/mfidl/nf-mfidl-imftrackedsample-setallocator"><strong>IMFTrackedSample::SetAllocator</strong></a> and provide a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasynccallback"><strong>IMFAsyncCallback</strong></a> interface. (The software decoder must implement this interface.) When the video renderer releases the sample, the callback will be invoked. Use this callback to keep track of which samples are currently available and which are in use.</li>
+<li>Call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videocontext-decoderbeginframe"><strong>ID3D11VideoContext::DecoderBeginFrame</strong></a>. Pass in the pointers to the <a href="/windows/desktop/api/d3d11/nn-d3d11-id3d11videodecoder"><strong>ID3D11VideoDecoder</strong></a> interface for the decoder device and the <a href="/windows/desktop/api/d3d11/nn-d3d11-id3d11videodecoderoutputview"><strong>ID3D11VideoDecoderOutputView</strong></a> interface for the output view.</li>
+<li>Do the following one or more times:
+<ol>
+<li>Call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videocontext-getdecoderbuffer"><strong>ID3D11VideoContext::GetDecoderBuffer</strong></a> to get a buffer.</li>
+<li>Fill the buffer.</li>
+<li>Call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videocontext-releasedecoderbuffer"><strong>ID3D11VideoContext::ReleaseDecoderBuffer</strong></a>.</li>
+<li>Call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videocontext-submitdecoderbuffers"><strong>ID3D11VideoContext::SubmitDecoderBuffer</strong></a>. This method instructs the decoder device to perform the decoding operations on the frame.</li>
+</ol>
+</li>
+<li>Call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videocontext-decoderendframe"><strong>ID3D11VideoContext::DecoderEndFrame</strong></a> to signal the end of decoding for the current frame.</li>
+</ol>
+<p>Direct3DÂ 11 uses the same data structures as DXVA 2.0 for decoding operations. For the original set of DXVA profiles (for H.261, H.263, and MPEG-2), these data structures are described in the <a href="/windows-hardware/drivers/display/directx-video-acceleration">DXVA 1.0 specification</a>.</p>
+<p>Within each pair of <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videocontext-decoderbeginframe"><strong>DecoderBeginFrame</strong></a> and <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videocontext-submitdecoderbuffers"><strong>SubmitDecoderBuffer</strong></a> calls, you may call <a href="/windows/desktop/api/d3d11/nf-d3d11-id3d11videocontext-getdecoderbuffer"><strong>GetDecoderBuffer</strong></a> multiple times, but only once for each type of buffer. If you use the same buffer type twice without calling <strong>SubmitDecoderBuffer</strong>, you will overwrite the data in the buffer.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="direct3d-11-video-apis.html">Direct3D 11 Video APIs</a></p>
+<!-- raw HTML omitted -->
+<p><a href="directx-video-acceleration-2-0.html">DirectX Video Acceleration 2.0</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

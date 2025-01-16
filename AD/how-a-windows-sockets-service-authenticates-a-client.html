@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How a Windows Sockets Service Authenticates a Client</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: How a Windows Sockets Service Authenticates a Client
+description: When a client connects to the Windows Sockets service, the service begins its operations for the mutual authentication sequence, which is shown in the following code examples.
+ms.assetid: 32f62fb9-41c6-4932-9b91-753174919707
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>How a Windows Sockets Service Authenticates a Client AD
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>How a Windows Sockets Service Authenticates a Client</h1>
+<p>When a client connects to the Windows Sockets service, the service begins its operations for the mutual authentication sequence, which is shown in the following code examples.</p>
+<p>The <strong>DoAuthentication</strong> routine uses the socket handle to receive the first authentication packet from the client. The client buffer is passed to the <strong>GenServerContext</strong> function, which then passes the buffer to the SSPI security package for authentication. <strong>DoAuthentication</strong> then sends the security package output back to the client. This loop is repeated until the authentication fails or <strong>GenServerContext</strong> sets a flag indicating the authentication succeeded.</p>
+<p><strong>GenServerContext</strong> calls the following functions from an SSPI security package:</p>
+<ul>
+<li><a href="../SecAuthN/acquirecredentialshandle--general.html"><strong>AcquireCredentialsHandle</strong></a> extracts the service credentials from the service security context that was established when the service started.</li>
+<li><a href="../SecAuthN/acceptsecuritycontext--general.html"><strong>AcceptSecurityContext</strong></a> attempts to perform the mutual authentication using the service credentials and the authentication data received from the client. To request mutual authentication, the <strong>AcceptSecurityContext</strong> call must specify the ASC_REQ_MUTUAL_AUTH flag.</li>
+<li><a href="/windows/desktop/api/sspi/nf-sspi-completeauthtoken"><strong>CompleteAuthToken</strong></a> is called, if necessary, to complete the authentication operation.</li>
+</ul>
+<p>The following code example uses the negotiate package from the Secur32.dll library of security packages.</p>
+<pre lang="C++"><code>/***************************************************************/
+//   DoAuthentication routine for the service
+//
+//   Manages the service authentication communication with the client 
+//   using the supplied socket handle.
+//
+//   Returns TRUE if the mutual authentication succeeds.
+//   Otherwise, it returns FALSE.
+//
+/***************************************************************/
+ 
+BOOL DoAuthentication (SOCKET s)
+{
+DWORD cbIn, cbOut;
+BOOL done = FALSE;
+
+if(s==INVALID_SOCKET)
+{
+    return(FALSE);
+}
+ 
+// Receive authentication data from the client and pass
+// it to the security package. Send the package output back
+// to the client. Repeat until complete.
+do 
+{
+    if (!ReceiveMsg (s, g_pInBuf, g_cbMaxMessage, &amp;cbIn))
+        return(FALSE);
+ 
+    cbOut = g_cbMaxMessage;
+    if (!GenServerContext (s, g_pInBuf, cbIn, g_pOutBuf, 
+                               &amp;cbOut, &amp;done))
+        return(FALSE);
+ 
+    if (!SendMsg (s, g_pOutBuf, cbOut))
+        return(FALSE);
+} 
+while(!done);
+ 
+return(TRUE);
+}
+ 
+/***************************************************************/
+//   GenServerContext routine 
+//
+//   Handles the service interactions with the security package.
+//   Takes an input buffer coming from the client and generates a 
+//   buffer of data to send back to the client. Also returns 
+//   an indication when the authentication is complete.
+//
+//   Returns TRUE if the mutual authentication is successful.
+//   Otherwise, it returns FALSE.
+//
+/***************************************************************/
+BOOL GenServerContext (
+            DWORD dwKey,
+            BYTE *pIn,
+            DWORD cbIn,
+            BYTE *pOut,
+            DWORD *pcbOut,
+            BOOL *pfDone)
+{
+SECURITY_STATUS  ssStatus;
+TimeStamp        Lifetime;
+SecBufferDesc    OutBuffDesc;
+SecBuffer        OutSecBuff;
+SecBufferDesc    InBuffDesc;
+SecBuffer        InSecBuff;
+ULONG            ContextAttributes = 0;
+PAUTH_SEQ        pAS = null;
+
+if((pIn==NULL &amp;&amp; cbIn&gt;0) || (pOut==NULL) || (pcbOut==NULL) || (pfDone==NULL))
+{
+    return(FALSE);
+}
+ 
+// Get a structure that contains the state of the authentication sequence.
+if (!GetEntry (dwKey, (PVOID*) &amp;pAS))
+    return(FALSE);
+ 
+if (pAS-&gt;_fNewConversation)  
+{
+    ssStatus = g_pFuncs-&gt;AcquireCredentialsHandle (
+                        NULL,    // principal
+                        PACKAGE_NAME,
+                        SECPKG_CRED_INBOUND,
+                        NULL,    // LOGON id
+                        NULL,    // authentication data
+                        NULL,    // get key function
+                        NULL,    // get key argument
+                        &amp;pAS-&gt;_hcred,
+                        &amp;Lifetime
+                        );
+    if (SEC_SUCCESS (ssStatus))
+        pAS-&gt;_fHaveCredHandle = TRUE;
+    else
+    {
+        fprintf (stderr, &quot;AcquireCredentialsHandle failed: %u\n&quot;, 
+                 ssStatus);
+        return(FALSE);
+    }
+}
+ 
+// Prepare the output buffer.
+OutBuffDesc.ulVersion = 0;
+OutBuffDesc.cBuffers  = 1;
+OutBuffDesc.pBuffers  = &amp;OutSecBuff;
+ 
+OutSecBuff.cbBuffer   = *pcbOut;
+OutSecBuff.BufferType = SECBUFFER_TOKEN;
+OutSecBuff.pvBuffer   = pOut;
+ 
+// Prepare the input buffer.
+InBuffDesc.ulVersion  = 0;
+InBuffDesc.cBuffers   = 1;
+InBuffDesc.pBuffers   = &amp;InSecBuff;
+ 
+InSecBuff.cbBuffer    = cbIn;
+InSecBuff.BufferType  = SECBUFFER_TOKEN;
+InSecBuff.pvBuffer    = pIn;
+ 
+ssStatus = g_pFuncs-&gt;AcceptSecurityContext (
+                    &amp;pAS-&gt;_hcred,
+                    pAS-&gt;_fNewConversation ? NULL : &amp;pAS-&gt;_hctxt,
+                    &amp;InBuffDesc,
+                    ASC_REQ_MUTUAL_AUTH,  // Context requirements.
+                    SECURITY_NATIVE_DREP,
+                    &amp;pAS-&gt;_hctxt,
+                    &amp;OutBuffDesc,
+                    &amp;ContextAttributes,
+                    &amp;Lifetime
+                    );
+if (!SEC_SUCCESS (ssStatus))  
+{
+    fprintf (stderr, &quot;AcceptSecurityContext failed: %u\n&quot;, ssStatus);
+    return FALSE;
+}
+if (!(ContextAttributes &amp;&amp; ASC_RET_MUTUAL_AUTH)) 
+    _tprintf(TEXT(&quot;Mutual Auth not set in returned context.\n&quot;));
+ 
+pAS-&gt;_fHaveCtxtHandle = TRUE;
+ 
+// Complete the authentication token, if necessary.
+if ((SEC_I_COMPLETE_NEEDED == ssStatus) || 
+                        (SEC_I_COMPLETE_AND_CONTINUE == ssStatus)) 
+{
+    if (g_pFuncs-&gt;CompleteAuthToken) 
+    {
+        ssStatus = g_pFuncs-&gt;CompleteAuthToken (&amp;pAS-&gt;_hctxt, 
+                                                &amp;OutBuffDesc);
+        if (!SEC_SUCCESS(ssStatus)) 
+        {
+            fprintf (stderr, &quot;complete failed: %u\n&quot;, ssStatus);
+            return FALSE;
+        }
+    } else 
+    {
+        fprintf (stderr, &quot;Complete not supported.\n&quot;);
+        return FALSE;
+    }
+}
+ 
+*pcbOut = OutSecBuff.cbBuffer;
+ 
+if (pAS-&gt;_fNewConversation)
+    pAS-&gt;_fNewConversation = FALSE;
+ 
+*pfDone = !((SEC_I_CONTINUE_NEEDED == ssStatus) ||
+                (SEC_I_COMPLETE_AND_CONTINUE == ssStatus));
+ 
+return TRUE;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

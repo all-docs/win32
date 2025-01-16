@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WIC Metadata Overview</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic introduces the imaging metadata support provided by the Windows Imaging Component (WIC).
+ms.assetid: 35727810-3c4c-4c11-a4a2-3ae2cf3b8142
+title: WIC Metadata Overview
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>WIC Metadata Overview</h1>
+<p>This topic introduces the imaging metadata support provided by the Windows Imaging Component (WIC). It provides an introduction to reading and writing image metadata, the metadata query language, and metadata handler extensibility.</p>
+<p>Image metadata is data embedded inside an image file that provides additional information about the image, such as the device used to capture the image or the dimensions of the image. Although it is contained within the image file itself, this metadata is not part of the rendering data. WIC provides interfaces that enable you to read and write this metadata for several common metadata formats including Extensible Metadata Platform (XMP), Exchangeable Image File (EXIF), and Png Textual Data (tEXt).</p>
+<p>This topic contains the following sections.</p>
+<ul>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#introduction">Introduction</a></li>
+<li><a href="#reading-image-metadata">Reading Image Metadata</a></li>
+<li><a href="#writing-image-metadata">Writing Image Metadata</a></li>
+<li><a href="#metadata-extensibility">Metadata Extensibility</a></li>
+<li><a href="#supported-metadata-formats">Supported Metadata Formats</a></li>
+<li><a href="#metadata-component-summary">Metadata Component Summary</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Prerequisites</h2>
+<p>To understand this topic, you should be familiar with the WIC encoder and decoder interfaces and their related Component Object Model (COM) components, as described in the <a href="-wic-about-windows-imaging-codec.html">Windows Imaging Component Overview</a>. It also helps to have a general familiarity with some of the imaging metadata formats in use today.</p>
+<h2>Introduction</h2>
+<p>Metadata provides extended information about an image. This information can be used in several ways. An image might contain metadata such as a description, rating, category tags, and copyright information. Accessing the metadata makes it easier to perform tasks such as asset management, file location, or determining copyright information. For example, the Windows Photo Gallery in WindowsÂ Vista enables you to add descriptions and category tags to images. This allows for better discoverability of images and a convenient way to categorize images. Using the WICÂ APIs and common metadata formats, applications can easily write or read this type of metadata to or from images.</p>
+<p>The following diagram illustrates the contents of a JPEG file that includes embedded metadata blocks and metadata items.</p>
+<p><img src="graphics/jpeg.png" alt="jpeg image with rating metadata" /></p>
+<p>In this example image, the metadata is embedded in the image file within an image frame. The JPEG format does not support multiple image frames, so the metadata is conceptually attached to this single frame. Formats that support multiple frames, such as TIFF, may have metadata attached to each image frame as this diagram shows. Though not common today and not supported by the native image codecs, some image formats may also support metadata outside of an image frame. WIC is flexible enough to handle both frame-level metadata and metadata outside of an image's individual frame.</p>
+<h2>Reading Image Metadata</h2>
+<p>The WICÂ APIs provide COM components that make it easy for applications to read and write image metadata.</p>
+<p>The primary way to read metadata is to use a metadata query reader (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicmetadataqueryreader"><strong>IWICMetadataQueryReader</strong></a>) to access specific metadata items. The metadata query reader component is implemented by the codec and can be accessed at the decoder level or through individual image frames, which is the more common method. The following code demonstrates how to access a query reader for an individual frame by using the query reader's <strong>GetMetadataQueryReader</strong> method.</p>
+<pre><code>// Get the query reader
+if (SUCCEEDED(hr))
+{
+    hr = pFrameDecode-&gt;GetMetadataQueryReader(&amp;pQueryReader);
+}
+</code></pre>
+<p>A query reader provides methods to obtain information about specific metadata, and a means to specify a metadata item to retrieve. The following code uses a query expression to request a specific metadata item within the App1 nested image file directory (IFD) block. This is done by using the query reader's <strong>GetMetadataByName</strong> method. The following code demonstrates using the query reader to obtain the MicrosoftPhoto rating value.</p>
+<pre><code>PROPVARIANT value;
+PropVariantInit(&amp;value);
+
+LPCWSTR pwzRatingQuery = L&quot;/app1/ifd/{ushort=18249}&quot;;
+
+if (SUCCEEDED(hr))
+{
+    hr = pQueryReader-&gt;GetMetadataByName(pwzRatingQuery, &amp;value);
+}
+</code></pre>
+<p>The pwzRatingQuery variable in the preceding example is the query string to access the metadata item MicrosoftPhoto rating. This string is created by using the metadata query language. To create this string, knowledge of the metadata format and the metadata query language is needed to retrieve individual metadata items. For more information about the metadata query language, see the <a href="-wic-codec-metadataquerylanguage.html">Metadata Query Language Overview</a>.</p>
+<p>Behind the scenes, a query reader uses a metadata reader (<a href="/windows/desktop/api/Wincodecsdk/nn-wincodecsdk-iwicmetadatareader"><strong>IWICMetadataReader</strong></a>) to access the metadata described by the query expression. In addition to using a query reader, you can also access a metadata reader directly to read metadata. You can obtain a metadata reader from the decoder or individual frames by querying for a block reader (<a href="/windows/desktop/api/Wincodecsdk/nn-wincodecsdk-iwicmetadatablockreader"><strong>IWICMetadataBlockReader</strong></a>) interface.</p>
+<h2>Writing Image Metadata</h2>
+<p>The process of writing metadata is similar to the way it is read except that a metadata query writer (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicmetadataquerywriter"><strong>IWICMetadataQueryWriter</strong></a>) is used. The query writer interface is implemented by the image encoder and, as in the query reader, metadata is accessed both on the encoder and on individual frames (depending on image format support).</p>
+<p>The following code demonstrates how to obtain a query writer from an encoder frame and remove the rating value that was previously read.</p>
+<pre><code>// Get the frame's query writer
+if (SUCCEEDED(hr))
+{
+    hr = pFrameEncode-&gt;GetMetadataQueryWriter(&amp;pFrameQWriter);
+}
+
+if (SUCCEEDED(hr))
+{
+    hr = pFrameQWriter-&gt;RemoveMetadataByName(L&quot;/app1/ifd/{ushort=18249}&quot;);
+}
+</code></pre>
+<p>Another way to write metadata is through fast metadata updates. Fast metadata encoding is a way to write image metadata without having to re-encode an image file. This is done by writing new metadata information to a padded region of the metadata format. The fast metadata encoder (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicfastmetadataencoder"><strong>IWICFastMetadataEncoder</strong></a>) is obtained from the component factory, based on the image decoder. The fast metadata encoder then obtains a query writer that is used to write the metadata. Finally, the fast encoder commits the change.</p>
+<p>The following code demonstrates how to obtain a fast metadata encoder and use it to write the MicrosoftRating value.</p>
+<pre><code>if (SUCCEEDED(hr))
+{
+    IWICFastMetadataEncoder *pFME = NULL;
+    IWICMetadataQueryWriter *pFMEQW = NULL;
+
+    hr = pFactory-&gt;CreateFastMetadataEncoderFromFrameDecode(
+        pFrameDecode,
+        &amp;pFME);
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pFME-&gt;GetMetadataQueryWriter(&amp;pFMEQW);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Add additional metadata
+        PROPVARIANT value;
+
+        PropVariantInit(&amp;value);
+
+        value.vt = VT_UI4;
+        value.uiVal = 99;
+        hr = pFMEQW-&gt;SetMetadataByName(L&quot;/app1/ifd/{ushort=18249}&quot;, &amp;value);
+
+        PropVariantClear(&amp;value);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pFME-&gt;Commit();
+    }
+}
+</code></pre>
+<p>Not all metadata formats support fast metadata. To see which natively supported formats support fast metadata encoding, see the table in the <a href="#supported-metadata-formats">Supported Metadata Formats</a> section later in this document.</p>
+<p>Behind the scenes, a query writer uses a metadata writer (<a href="/windows/desktop/api/Wincodecsdk/nn-wincodecsdk-iwicmetadatawriter"><strong>IWICMetadataWriter</strong></a>) to write the metadata described by the query expression. In addition to using a query reader, you can also access a metadata writer directly to write metadata. You can obtain a metadata writer from the decoder or individual frames using querying for a block writer (<a href="/windows/desktop/api/Wincodecsdk/nn-wincodecsdk-iwicmetadatablockwriter"><strong>IWICMetadataBlockWriter</strong></a>) interface.</p>
+<h2>Metadata Extensibility</h2>
+<p>As mentioned previously, WIC provides several metadata handlers to read and write metadata for common metadata formats. However, there are some metadata formats that are not natively supported. Therefore, WIC provides APIs for creating additional metadata handlers that can extend metadata support to other formats.</p>
+<p>To fully support other metadata formats, two types of handlers must be developed â€” a metadata reader to read metadata and a metadata writer to write metadata. Although these two handlers are usually implemented in pairs for a specific format, that is not a requirement. There might be some cases in which only the read ability or only the write ability is needed.</p>
+<p>For more information on metadata extensibility using the WICÂ APIs, see the <a href="-wic-codec-metadatahandlers.html">Metadata Extensibility Overview</a>.</p>
+<h2>Supported Metadata Formats</h2>
+<p>WIC provides support for several common metadata formats. The following table lists the supported metadata formats, their versions, the image formats that support the metadata format, and whether the metadata format supports fast metadata encoding. For more information about fast metadata encoding, see the <a href="#writing-image-metadata">Writing Image Metadata</a> section earlier in this document.</p>
+<table>
+<thead>
+<tr>
+<th>Supported metadata formats</th>
+<th>Metadata specification version</th>
+<th>Image format support</th>
+<th>Supports fast metadata encoding</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>App0</td>
+<td>JFIF 1.02</td>
+<td>JPEG</td>
+<td>No</td>
+</tr>
+<tr>
+<td>App1</td>
+<td>JFIF 1.02</td>
+<td>JPEG, TIFF</td>
+<td>No</td>
+</tr>
+<tr>
+<td>App13</td>
+<td>Unknown</td>
+<td>JPEG, TIFF</td>
+<td>No</td>
+</tr>
+<tr>
+<td>IFD</td>
+<td>TIFF 6.0</td>
+<td>JPEG, TIFF</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>IRB</td>
+<td>Unknown</td>
+<td>JPEG, TIFF</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Exif</td>
+<td>Exif 2.2</td>
+<td>JPEG, TIFF</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>XMP</td>
+<td>XMP 1.0 (Sept 2005)</td>
+<td>JPEG, TIFF</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>GPS</td>
+<td>Exif 2.2</td>
+<td>JPEG, TIFF</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>IPTC</td>
+<td>IPTC 4.0</td>
+<td>JPEG, TIFF</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>tEXt</td>
+<td>PNG 1.2</td>
+<td>PNG</td>
+<td>No</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<blockquote>
+<p>[!Note]<br />
+IPTC only supports FME if the blocks grow in size, as IPTC does not support padding.</p>
+</blockquote>
+<p>Â </p>
+<h2>Metadata Component Summary</h2>
+<p>The following table describes the WIC interfaces that support metadata, and their corresponding components. These components provide the access to an image's metadata. For more information about these components, see the <a href="-wic-about-windows-imaging-codec.html">Windows Imaging Component Overview</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Bitmap Decoder (<!-- raw HTML omitted --><!-- raw HTML omitted -->IWICBitmapDecoder<!-- raw HTML omitted --><!-- raw HTML omitted -->)</td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->Reads an image stream and produces a usable bitmap source. Associated with a container format such as Tagged Image File Format (TIFF) or Joint Photographic Experts Group (JPEG).<!-- raw HTML omitted --><!-- raw HTML omitted -->Implements an <!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataBlockReader<!-- raw HTML omitted --><!-- raw HTML omitted --> interface to enumerate all of the metadata blocks in the decoder's data stream that are not inside a frame.<!-- raw HTML omitted --><!-- raw HTML omitted -->Exposes a query reader to read the metadata associated with the image that is not inside a frame.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Bitmap Frame Decode (<!-- raw HTML omitted --><!-- raw HTML omitted -->IWICBitmapFrameDecode<!-- raw HTML omitted --><!-- raw HTML omitted -->)</td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->Accesses individual frames from the image stream held by the decoder.<!-- raw HTML omitted --><!-- raw HTML omitted -->Implements an <!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataBlockReader<!-- raw HTML omitted --><!-- raw HTML omitted --> interface to enumerate all of the metadata blocks in the frame's data stream.<!-- raw HTML omitted --><!-- raw HTML omitted -->Exposes a query reader to read the metadata associated with the frame, using query expressions.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Bitmap Encoder (<!-- raw HTML omitted --><!-- raw HTML omitted -->IWICBitmapEncoder<!-- raw HTML omitted --><!-- raw HTML omitted -->)</td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->Writes a bitmap source to an image stream. Associated with a container format such as TIFF or JPEG.<!-- raw HTML omitted --><!-- raw HTML omitted -->Implements an <!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataBlockWriter<!-- raw HTML omitted --><!-- raw HTML omitted --> interface to build up a list of metadata blocks to write into the data stream of the encoder.<!-- raw HTML omitted --><!-- raw HTML omitted -->Exposes a query writer to write the metadata associated with the image, using query expressions.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Bitma Frame Encode (<!-- raw HTML omitted --><!-- raw HTML omitted -->IWICBitmapFrameEncode<!-- raw HTML omitted --><!-- raw HTML omitted -->)</td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->Creates a frame that will be encoded into the stream held by the encoder.<!-- raw HTML omitted --><!-- raw HTML omitted -->Implements an <!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataBlockWriter<!-- raw HTML omitted --><!-- raw HTML omitted --> interface to build up a list of metadata blocks to write into the frame's data stream.<!-- raw HTML omitted --><!-- raw HTML omitted -->Exposes a query writer to write the metadata associated with the frame, using query expressions.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The following table describes the WIC metadata components. These components enable you to read and write the metadata in an image exposed by the components listed in the previous table.</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Metadata Query Reader (<!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataQueryReader<!-- raw HTML omitted --><!-- raw HTML omitted -->)</td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->Takes a query string and navigates the underlying metadata hierarchy to get metadata.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Metadata Query Writer (<!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataQueryWriter<!-- raw HTML omitted --><!-- raw HTML omitted -->)</td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->Takes a query string and navigates the underlying metadata hierarchy to get, set, and remove metadata.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Metadata Block Reader (<!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataBlockReader<!-- raw HTML omitted --><!-- raw HTML omitted -->)</td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->Manages a read-only collection of <!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataReader<!-- raw HTML omitted --><!-- raw HTML omitted --> objects at the top of the metadata hierarchy and enables enumeration of all metadata blocks.<!-- raw HTML omitted --><!-- raw HTML omitted -->Implemented by a bitmap decoder and a decoded bitmap frame.<!-- raw HTML omitted --><!-- raw HTML omitted -->Implemented by third-party component developers for custom codecs.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Metadata Block Writer (<!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataBlockWriter<!-- raw HTML omitted --><!-- raw HTML omitted -->)</td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->Manages a read and write collection of <!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataWriter<!-- raw HTML omitted --><!-- raw HTML omitted --> objects at the top of the metadata hierarchy.<!-- raw HTML omitted --><!-- raw HTML omitted -->Implemented by a bitmap encoder and a bitmap frame encode.<!-- raw HTML omitted --><!-- raw HTML omitted -->Implemented by third-party component developers for custom codecs.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Metadata Reader (<!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataReader<!-- raw HTML omitted --><!-- raw HTML omitted -->)</td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->Parses a stream of metadata and manages a read-only collection of the metadata items. Associated with a metadata format such as EXIF, IFD, and XMP.<!-- raw HTML omitted --><!-- raw HTML omitted -->Acts as a dictionary, returning a value when given a format and ID pair.<!-- raw HTML omitted --><!-- raw HTML omitted -->Implemented by third-party component developers for custom metadata types.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Metadata Writer (<!-- raw HTML omitted --><!-- raw HTML omitted -->IWICMetadataWriter<!-- raw HTML omitted --><!-- raw HTML omitted -->)</td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->Parses and serializes a stream of metadata and manages a read/write collection of metadata items.<!-- raw HTML omitted --><!-- raw HTML omitted -->Implemented by third-party component developers for custom metadata types.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Fast Metadata Encoder<!-- raw HTML omitted --><!-- raw HTML omitted -->IWICFastMetadataEncoder<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->Exposes semantics for writing on a metadata hierarchy that will update metadata in place without re-encoding the image.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Conceptual</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-about-windows-imaging-codec.html">Windows Imaging Component Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-metadataquerylanguage.html">Metadata Query Language Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-readingwritingmetadata.html">Overview of Reading and Writing Image Metadata</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-metadatahandlers.html">Metadata Extensibility Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-jpegmetadataencoding.html">How-to: Re-encode a JPEG Image with Metadata</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

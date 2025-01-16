@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Controlling a Capture Graph</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Controlling a Capture Graph
+ms.assetid: e7afafca-e993-4096-bad4-399ee6c67fe9
+title: Controlling a Capture Graph
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Controlling a Capture Graph</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>The Filter Graph Manager's <a href="/windows/desktop/api/Control/nn-control-imediacontrol"><strong>IMediaControl</strong></a> interface has methods for running, stopping, and pausing the entire graph. If the filter graph has capture and preview streams, however, you probably want to control the two streams independently. For example, you might want to preview the video without capturing it. You can do this through the <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-controlstream"><strong>ICaptureGraphBuilder2::ControlStream</strong></a> method.</p>
+<blockquote>
+<p>[!Note]<br />
+This method does not work when capturing to an Advanced Systems Format (ASF) file.</p>
+</blockquote>
+<p>Â </p>
+<p>Controlling the Capture Stream</p>
+<p>The following code sets the video capture stream to run for four seconds, starting one second after the graph runs:</p>
+<pre lang="C++"><code>// Control the video capture stream. 
+REFERENCE_TIME rtStart = 10000000, rtStop = 50000000;
+const WORD wStartCookie = 1, wStopCookie = 2;  // Arbitrary values.
+hr = pBuild-&gt;ControlStream(
+    &amp;PIN_CATEGORY_CAPTURE, // Pin category.
+    &amp;MEDIATYPE_Video,      // Media type.
+    pCap,                 // Capture filter.
+    &amp;rtStart, &amp;rtStop,     // Start and stop times.
+    wStartCookie, wStopCookie  // Values for the start and stop events.
+);
+pControl-&gt;Run();
+</code></pre>
+<p>The first parameter specifies which stream to control, as a pin category GUID. The second parameter gives the media type. The third parameter is a pointer to the capture filter. To control all the capture streams in the graph, set the second and third parameters to <strong>NULL</strong>.</p>
+<p>The next two parameters define the times when the stream will start and stop, relative to the time when the graph starts running. Call <a href="/windows/desktop/api/Control/nf-control-imediacontrol-run"><strong>IMediaControl::Run</strong></a> to run the graph. Until you run the graph, the <strong>ControlStream</strong> method has no effect. If the graph is already running, the settings take effect immediately.</p>
+<p>The last two parameters are used for getting event notifications when the stream starts and stops. For each stream that you control using this method, the filter graph sends a pair of events: <a href="ec-stream-control-started.html"><strong>EC_STREAM_CONTROL_STARTED</strong></a> when the stream starts, and <a href="ec-stream-control-stopped.html"><strong>EC_STREAM_CONTROL_STOPPED</strong></a> when the stream stops. The values of <strong>wStartCookie</strong> and <strong>wStopCookie</strong> are used as the second event parameter. Thus, <em>lParam2</em> in the start event equals <strong>wStartCookie</strong>, and <em>lParam2</em> in the stop event equals <strong>wStopCookie</strong>. The following code shows how to get these events:</p>
+<pre lang="C++"><code>while (hr = pEvent-&gt;GetEvent(&amp;evCode, &amp;param1, &amp;param2, 0), SUCCEEDED(hr))
+{
+    switch (evCode)
+    {
+    case EC_STREAM_CONTROL_STARTED: 
+    // param2 == wStartCookie
+    break;
+
+    case EC_STREAM_CONTROL_STOPPED: 
+    // param2 == wStopCookie
+    break;
+    
+    } 
+    pEvent-&gt;FreeEventParams(evCode, param1, param2);
+}
+</code></pre>
+<p>The <strong>ControlStream</strong> method defines some special values for the start and stop times.</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Start</th>
+<th>Stop</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MAXLONGLONG</td>
+<td>Never start this stream.</td>
+<td>Do not stop until the graph stops.</td>
+</tr>
+<tr>
+<td><strong>NULL</strong></td>
+<td>Start immediately when the graph runs.</td>
+<td>Stop immediately.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>For example, the following code stops the capture stream immediately:</p>
+<pre lang="C++"><code>pBuild-&gt;ControlStream(&amp;PIN_CATEGORY_CAPTURE, &amp;MEDIATYPE_Video, pCap,
+    0, 0,     // Start and stop times.
+    wStartCookie, wStopCookie); 
+</code></pre>
+<p>Although you can stop the capture stream and restart it later, this will create a gap in the time stamps. On playback, the video will appear to stall during the gap (depending on the file format).</p>
+<p>Controlling the Preview Stream</p>
+<p>To control the preview pin, call <strong>ControlStream</strong> but set the first parameter to PIN_CATEGORY_PREVIEW. This works just like it does for PIN_CATEGORY_CAPTURE, except that you cannot use reference times to specify the start and stop, because the preview frames do not have time stamps. Therefore, you must use <strong>NULL</strong> or MAXLONGLONG. Use <strong>NULL</strong> to start the preview stream:</p>
+<pre lang="C++"><code>pBuild-&gt;ControlStream(&amp;PIN_CATEGORY_PREVIEW, &amp;MEDIATYPE_Video, pCap,
+    NULL,    // Start now.
+    0,       // (Don't care.)
+    wStartCookie, wStopCookie); 
+</code></pre>
+<p>Use MAXLONGLONG to stop the preview stream:</p>
+<pre lang="C++"><code>pBuild-&gt;ControlStream(&amp;PIN_CATEGORY_PREVIEW, &amp;MEDIATYPE_Video, pCap,
+    0,               // (Don't care.)
+    MAXLONGLONG,     // Stop now.
+    wStartCookie, wStopCookie); 
+</code></pre>
+<p>It does not matter whether the preview stream comes from a preview pin on the capture filter, or from the Smart Tee filter. The <strong>ControlStream</strong> method works either way.</p>
+<p>For video port pins, however, the method will fail. In that case, another approach is to hide the video window. Query the graph for <strong>IVideoWindow</strong>, and use the <a href="/windows/desktop/api/Control/nf-control-ivideowindow-put_visible"><strong>IVideoWindow::put_Visible</strong></a> method to show or hide the window.</p>
+<pre lang="C++"><code>// Hide the video window.
+IVideoWindow *pVidWin = 0;
+hr = pGraph-&gt;QueryInterface(IID_IVideoWindow, (void**)&amp;pVidWin);
+if (SUCCEEDED(hr))
+{
+    pVidWin-&gt;put_Visible(OAFALSE);
+    pVidWin-&gt;Release();
+}
+</code></pre>
+<p>Also, if you call <a href="/windows/desktop/api/Control/nf-control-ivideowindow-put_autoshow"><strong>IVideoWindow::put_AutoShow</strong></a> with the value OAFALSE before you run the graph, the Video Renderer filter hides the window until you specify otherwise. By default, the Video Renderer shows the window when you run the graph.</p>
+<p>Remarks about Stream Control</p>
+<p>The default behavior for a pin is to deliver samples when the graph runs. For example, suppose that you call <strong>ControlStream</strong> with PIN_CATEGORY_CAPTURE but not with PIN_CATEGORY_PREVIEW. When you run the graph, the preview stream will run immediately, while the capture stream will run at whatever time you specified in <strong>ControlStream</strong>.</p>
+<p>If you are capturing more than one stream and sending them to a mux filter â€” for example, if you are capturing audio and video to an AVI file â€” you should control both streams in tandem. Otherwise, the mux filter might block waiting for one stream, as it tries to interleave the two streams. Set the same start and stop times on all capture streams before running the graph:</p>
+<pre lang="C++"><code>pBuild-&gt;ControlStream(&amp;PIN_CATEGORY_CAPTURE, 
+    
+NULL, NULL,       // All capture streams.
+    &amp;rtStart, rtStop, 
+    wStartCookie, wStopCookie); 
+</code></pre>
+<p>Internally, the <strong>ControlStream</strong> method uses the <a href="/windows/desktop/api/Strmif/nn-strmif-iamstreamcontrol"><strong>IAMStreamControl</strong></a> interface, which is exposed on the pins of the capture filter, the Smart Tee filter (if present), and possibly the mux filter. You can use this interface directly, instead of calling <strong>ControlStream</strong>, although there is no particular advantage to doing so.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="video-capture.html">Video Capture</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

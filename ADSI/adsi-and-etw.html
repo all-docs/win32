@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Event Tracing in ADSI</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Event Tracing in ADSI
+description: Windows Server 2008 and Windows Vista introduce Event Tracing in Active Directory Service Interfaces (ADSI).
+ms.assetid: 743aeeba-5b48-47c7-aaf5-0e9b48e206db
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>event tracing ADSI
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Event Tracing in ADSI</h1>
+<p>Windows Server 2008 and Windows Vista introduce <a href="/windows/desktop/ETW/event-tracing-portal">Event Tracing</a> in <a href="active-directory-service-interfaces-adsi.html">Active Directory Service Interfaces</a> (ADSI). Certain areas of the ADSI LDAP Provider have an underlying implementation that is complex or that involves a sequence of steps that makes it difficult to diagnose problems. To help application developers troubleshoot, Event Tracing has been added to the following areas:</p>
+<h2>Schema Parsing and Downloading</h2>
+<p>The IADs interface in ADSI requires that the LDAP schema be cached on the client so that attributes can be marshaled correctly (as described in the <a href="adsi-schema-model.html">ADSI Schema Model</a>). To achieve this, ADSI loads the schema for each process (and for each LDAP server/domain) into memory either from a schema (.sch) file that is saved on the local disk or by downloading it from the LDAP server. Different processes on the same client machine use the cached schema on disk if it is available and applicable.</p>
+<p>If the schema cannot be obtained from the disk or the server, ADSI uses a hardcoded default schema. When this occurs, attributes that are not part of this default schema cannot be marshaled and ADSI returns an error while retrieving these attributes. A number of factors could cause this to happen, including problems in parsing the schema, and insufficient privileges to download the schema. It is often difficult to determine why a certain default schema is being used. Using Event Tracing in this area will help to more quickly diagnose the problem and fix it.</p>
+<h2>Changing and Setting the Password</h2>
+<p><a href="/windows/desktop/api/Iads/nf-iads-iadsuser-changepassword"><strong>ChangePassword</strong></a> and <a href="/windows/desktop/api/Iads/nf-iads-iadsuser-setpassword"><strong>SetPassword</strong></a> employ more than one mechanism to perform the requested operation based on the available configuration (as described in <a href="setting-user-passwords-for-ldap-providers.html">Setting and Changing User Passwords with the LDAP Provider</a>). When <strong>ChangePassword</strong> and <strong>SetPassword</strong> fail, it can be difficult to determine exactly why, and Event Tracing will help to troubleshoot problems with these methods.</p>
+<h2>ADSI Bind Cache</h2>
+<p>ADSI internally tries to reuse LDAP connections whenever possible (see <a href="connection-caching.html">Connection Caching</a>). When troubleshooting, it is useful to trace whether a new connection was opened for communication with the server or whether an existing connection was used. It can also be useful to trace the lifecycle of the connection cache (sometimes referred to as the bind cache) and its creation or closure, and whether a connection referral took place. In the case of a <a href="/windows/desktop/AD/serverless-binding-and-rootdse">serverless bind</a>, ADSI calls the DC locator to select a server for the domain of the user's context. ADSI then maintains a cache of the domain-server mapping for subsequent connections. Event Tracing helps to trace the selection of the DC, and is therefore helpful in troubleshooting connection-related issues.</p>
+<h2>Enabling Tracing and Starting a Tracing Session</h2>
+<p>To turn on ADSI tracing, create the following registry key:</p>
+<p><strong>HKEY_LOCAL_MACHINE</strong>\<strong>System</strong>\<strong>CurrentControlSet</strong>\<strong>Services</strong>\<strong>adsi</strong>\<strong>Tracing</strong>\<em><strong>ProcessName</strong></em></p>
+<p><em>ProcessName</em> is the full name of the process that you want to trace, including its extension (for example, &quot;Svchost.exe&quot;). In addition, you can place an optional value of type <strong>DWORD</strong> named PID in this key. It is highly recommended that you set this value and thereby trace only a particular process. Otherwise, all instances of the application specified by <em>ProcessName</em> will be traced.</p>
+<p>Then execute the following command:</p>
+<p><strong>tracelog.exe -start</strong> <em>sessionname</em> **-guid #**<em>provider_guid</em> <strong>-f</strong> <em>filename</em> <strong>-flag</strong> <em>traceFlags</em> <strong>-level</strong> <em>traceLevel</em></p>
+<p><em>sessionname</em> is simply an arbitrary identifier that is used to label the tracing session (you will need to refer to this session name later when you stop the tracing session). The GUID for the ADSI tracking provider is &quot;7288c9f8-d63c-4932-a345-89d6b060174d&quot;. <em>filename</em> specifies the logfile to which events will be written. <em>traceFlags</em> should be one of the following values:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DEBUG_SCHEMA</strong><!-- raw HTML omitted --></td>
+<td>0x00000001<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><strong>DEBUG_CHANGEPWD</strong><!-- raw HTML omitted --></td>
+<td>0x00000002<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><strong>DEBUG_SETPWD</strong><!-- raw HTML omitted --></td>
+<td>0x00000004<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><strong>DEBUG_BINDCACHE</strong><!-- raw HTML omitted --></td>
+<td>0x00000008<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>These flags determine which <a href="active-directory-service-interfaces-adsi.html">ADSI</a> methods will be traced, according to the following table:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><!-- raw HTML omitted -->DEBUG_SCHEMA<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->LdapGetSchema<!-- raw HTML omitted --><!-- raw HTML omitted -->GetSchemaInfoTime<!-- raw HTML omitted --><!-- raw HTML omitted -->LdapReadSchemaInfoFromServer<!-- raw HTML omitted --><!-- raw HTML omitted -->ProcessSchemaInfo<!-- raw HTML omitted --><!-- raw HTML omitted -->HelperReadLdapSchemaInfo<!-- raw HTML omitted --><!-- raw HTML omitted -->ProcessClassInfoArray<!-- raw HTML omitted --><!-- raw HTML omitted -->ReadSchemaInfoFromRegistry<!-- raw HTML omitted --><!-- raw HTML omitted -->StoreSchemaInfoFromRegistry<!-- raw HTML omitted --><!-- raw HTML omitted -->AttributeTypeDescription<!-- raw HTML omitted --><!-- raw HTML omitted -->ObjectClassDescription<!-- raw HTML omitted --><!-- raw HTML omitted -->DITContentRuleDescription<!-- raw HTML omitted --><!-- raw HTML omitted -->DirectoryString<!-- raw HTML omitted --><!-- raw HTML omitted -->DirectoryStrings<!-- raw HTML omitted --><!-- raw HTML omitted -->DITContentRuleDescription<!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted -->DEBUG_CHANGEPWD<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->CADsUser::ChangePassword<!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted -->DEBUG_SETPWD<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->CADsUser::SetPassword<!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted -->DEBUG_BINDCACHE<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted -->GetServerBasedObject<!-- raw HTML omitted --><!-- raw HTML omitted -->GetServerLessBasedObject<!-- raw HTML omitted --><!-- raw HTML omitted -->GetGCDomainName<!-- raw HTML omitted --><!-- raw HTML omitted -->GetDefaultDomainName<!-- raw HTML omitted --><!-- raw HTML omitted -->GetUserDomainFlatName<!-- raw HTML omitted --><!-- raw HTML omitted -->BindCacheLookup<!-- raw HTML omitted --><!-- raw HTML omitted -->EquivalentPortNumbers<!-- raw HTML omitted --><!-- raw HTML omitted -->CanCredentialsBeReused<!-- raw HTML omitted --><!-- raw HTML omitted -->BindCacheAdd<!-- raw HTML omitted --><!-- raw HTML omitted -->BindCacheAddRef<!-- raw HTML omitted --><!-- raw HTML omitted -->AddReferralLink<!-- raw HTML omitted --><!-- raw HTML omitted -->CommonRemoveEntry<!-- raw HTML omitted --><!-- raw HTML omitted -->BindCacheDerefHelper<!-- raw HTML omitted --><!-- raw HTML omitted -->NotifyNewConnection<!-- raw HTML omitted --><!-- raw HTML omitted -->QueryForConnection<!-- raw HTML omitted --><!-- raw HTML omitted -->LdapOpenBindWithCredentials<!-- raw HTML omitted --><!-- raw HTML omitted -->LdapOpenBindWithDefaultCredentials<!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>You can combine flags by combining the appropriate bits in the <em>traceFlags</em> argument. For example, to specify the <strong>DEBUG_SCHEMA</strong> and <strong>DEBUG_BINDCACHE</strong> flags, the appropriate <em>traceFlags</em> value would be 0x00000009.</p>
+<p>Finally, the <em>traceLevel</em> flag should be one of the following values:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>TRACE_LEVEL_ERROR</strong><!-- raw HTML omitted --></td>
+<td>0x00000002<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><strong>TRACE_LEVEL_INFORMATION</strong><!-- raw HTML omitted --></td>
+<td>0x00000004<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p><strong>TRACE_LEVEL_INFORMATION</strong> causes the tracing process to record all events, whereas <strong>TRACE_LEVEL_ERROR</strong> causes the tracing process to record only error events.</p>
+<p>To terminate tracing, run the following command:</p>
+<p><strong>tracelog.exe -stop</strong> <em>sessionname</em></p>
+<p>In the previous example, <em>sessionname</em> is the same name as the one that was provided with the command that started the tracing section.</p>
+<h2>Remarks</h2>
+<p>It is more effective to trace only specific processes by specifying a particular PID than to trace all processes on a computer. If you do need to trace multiple applications on the same machine, there might be a performance impact; there is substantial debugging output in performance-oriented sections of the code. Also, administrators must be careful to properly set the permissions of the log files when tracing multiple processes; otherwise, any user might be able to read the tracing logs, and other users will be able to trace processes that contain secure information.</p>
+<p>For example, presume the administrator sets up tracing for an application &quot;Test.exe&quot;, and does not specify a PID in the registry to trace multiple instances of the process. Now another user wants to trace the application &quot;Secure.exe&quot;. If the tracing log files are not properly restricted, all that user needs to do is rename &quot;Secure.exe&quot; to &quot;Test.exe&quot;, and it will be traced. In general, it is best to trace only specific processes while troubleshooting, and to remove the tracing registry key as soon as troubleshooting is done.</p>
+<p>Since enabling Event Tracing will produce extra log files, administrators should carefully monitor log file sizes; lack of disk space on the local computer can cause a denial-of-service.</p>
+<h2>Example Scenarios</h2>
+<p>Scenario 1: The administrator sees an unexpected error in an application that sets passwords for user accounts, so they would take the following steps to fix the problem using Event Tracing.</p>
+<ol>
+<li>
+<p>Write a script that reproduces the problem, and create the registry key</p>
+<p><strong>HKEY_LOCAL_MACHINE</strong>\<strong>System</strong>\<strong>CurrentControlSet</strong>\<strong>Services</strong>\<strong>adsi</strong>\<strong>Tracing</strong>\<strong>cscript.exe</strong></p>
+</li>
+<li>
+<p>Start a tracing session, setting <em>traceFlags</em> to 0x2 (<strong>DEBUG_CHANGEPASSWD</strong>) and <em>traceLevel</em> to 0x4 (<strong>TRACE_LEVEL_INFORMATION</strong>), using the following command:</p>
+<p><strong>tracelog.exe -start scripttrace -guid #7288c9f8-d63c-4932-a345-89d6b060174d -f .\adsi.etl -flag 0x2 -level 0x4</strong></p>
+</li>
+<li>
+<p>Run cscript.exe with their test script to reproduce the problem, and then terminate the tracing session:</p>
+<p><strong>tracelog.exe -stop scripttrace</strong></p>
+</li>
+<li>
+<p>Delete the registry key</p>
+<p><strong>HKEY_LOCAL_MACHINE</strong>\<strong>System</strong>\<strong>CurrentControlSet</strong>\<strong>Services</strong>\<strong>adsi</strong>\<strong>Tracing</strong>\<strong>cscript.exe</strong></p>
+</li>
+<li>
+<p>Run the ETW tool Tracerpt.exe to parse the tracing information from the log:</p>
+<p><strong>tracelog.exe -start scripttrace -guid #7288c9f8-d63c-4932-a345-89d6b060174d -f .\adsi.etl -flag 0x2 -level 0x4</strong></p>
+</li>
+</ol>
+<p>Scenario 2: The administrator wants to trace the schema parsing and download operations in an <a href="https://msdn.microsoft.com/asp.net/default.aspx">ASP</a> application named w3wp.exe that is already running. To do this, the administrator would take the following steps:</p>
+<ol>
+<li>
+<p>Create the registry key</p>
+<p><strong>HKEY_LOCAL_MACHINE</strong>\<strong>System</strong>\<strong>CurrentControlSet</strong>\<strong>Services</strong>\<strong>adsi</strong>\<strong>Tracing</strong>\<strong>w3wp.exe</strong></p>
+<p>and inside that key, create a value of type DWORD that is named PID and set it to the process ID of the instance of w3wp.exe that is currently running on the local computer.</p>
+</li>
+<li>
+<p>Then they create a tracing session, setting <em>traceFlags</em> to 0x1 (<strong>DEBUG_SCHEMA</strong>) and <em>traceLevel</em> to 0x4 (<strong>TRACE_LEVEL_INFORMATION</strong>):</p>
+<p><strong>tracelog.exe -start w3wptrace -guid #7288c9f8-d63c-4932-a345-89d6b060174d -f .\w3wp.etl -flag 0x1 -level 0x4</strong></p>
+</li>
+<li>
+<p>Reproduce the operation that needs troubleshooting.</p>
+</li>
+<li>
+<p>Terminate the tracing session:</p>
+<p><strong>tracelog.exe -stop w3wptrace</strong></p>
+</li>
+<li>
+<p>Delete the registry key <strong>HKEY_LOCAL_MACHINE</strong>\<strong>System</strong>\<strong>CurrentControlSet</strong>\<strong>Services</strong>\<strong>adsi</strong>\<strong>Tracing</strong>\<strong>w3wp.exe</strong>.</p>
+</li>
+<li>
+<p>Run the ETW tool tracerpt.exe to parse the tracing information from the log:</p>
+<p><strong>tracerpt.exe .\w3wp.etl -o -report</strong></p>
+</li>
+</ol>
+</body>

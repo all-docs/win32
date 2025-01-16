@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Host a UI Automation Windowless ActiveX Control</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Host a UI Automation Windowless ActiveX Control
+description: Learn how to create a control container that can host windowless Microsoft ActiveX controls that implement Microsoft UI Automation.
+ms.assetid: A0F82968-F434-4F5E-8052-CF7CE65DB120
+keywords:</p>
+<ul>
+<li>UI Automation, Windowless ActiveX control</li>
+<li>Windowless ActiveX control, UI Automation
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Host a UI Automation Windowless ActiveX Control</h1>
+<p>Learn how to create a control container able to host windowless Microsoft ActiveX controls that implement Microsoft UI Automation. By using the steps described here, you can ensure that any UI Automation windowless controls hosted in your control container are accessible to assistive technology (AT) client applications.</p>
+<h2>What you need to know</h2>
+<h3>Technologies</h3>
+<ul>
+<li><a href="/windows/desktop/com/activex-controls">ActiveX Controls</a></li>
+<li><a href="entry-uiauto-win32.html">UI Automation</a></li>
+</ul>
+<h3>Prerequisites</h3>
+<ul>
+<li>C/C++</li>
+<li>Microsoft Win32 and Component Object Model (COM) programming</li>
+<li>Windowless ActiveX controls</li>
+<li>UI Automation providers</li>
+</ul>
+<h2>Instructions</h2>
+<h3>Step 1: Provide the IRawElementProviderSimple interface on behalf of the windowless control.</h3>
+<p>Whenever the system needs the <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-irawelementprovidersimple"><strong>IRawElementProviderSimple</strong></a> pointer for the root of a windowless control, the system queries the control container. To retrieve the pointer, the container calls the windowless control's implementation of the <a href="/previous-versions/windows/internet-explorer/ie-developer/platform-apis/cc678966(v=vs.85)"><strong>IServiceProvider::QueryService</strong></a> method.</p>
+<p>If the control container has a UI Automation implementation, it can return the windowless control's <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-irawelementprovidersimple"><strong>IRawElementProviderSimple</strong></a> pointer to the system.</p>
+<p>If the control container has a Microsoft Active Accessibility implementation, call the <a href="/windows/desktop/api/uiautomationcoreapi/nf-uiautomationcoreapi-uiaiaccessiblefromprovider"><strong>UiaIAccessibleFromProvider</strong></a> function to obtain an <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface pointer that represents the control, and then return the <strong>IAccessible</strong> interface pointer to the system.</p>
+<h3>Step 2: Implement the IRawElementProviderWindowlessSite interface.</h3>
+<p>A control container implements the <a href="/windows/desktop/api/uiautomationcore/nn-uiautomationcore-irawelementproviderwindowlesssite"><strong>IRawElementProviderWindowlessSite</strong></a> interface to enable a UI Automation-based windowless control to communicate its accessibility information.</p>
+<ol>
+<li>
+<p>Implement <a href="/windows/desktop/api/uiautomationcore/nf-uiautomationcore-irawelementproviderwindowlesssite-getruntimeidprefix"><strong>IRawElementProviderWindowlessSite::GetRuntimeIdPrefix</strong></a>.</p>
+<p>A windowless control fragment must create a unique runtime ID for itself. To create its runtime ID, a windowless control fragment retrieves a prefix value by calling the control site's <a href="/windows/desktop/api/uiautomationcore/nf-uiautomationcore-irawelementproviderwindowlesssite-getruntimeidprefix"><strong>GetRuntimeIdPrefix</strong></a> method, and then appends to the prefix an integer value that is unique relative to all other fragments in the windowless control.</p>
+<p>The control site for a windowless control should implement the <a href="/windows/desktop/api/uiautomationcore/nf-uiautomationcore-irawelementproviderwindowlesssite-getruntimeidprefix"><strong>GetRuntimeIdPrefix</strong></a> method by forming a <strong>SAFEARRAY</strong> that contains the constant <strong>UiaAppendRuntimeId</strong>, followed by an integer value that is unique to the site.</p>
+<p>This example shows how to return a runtime ID prefix for a windowless control.</p>
+<pre lang="C++"><code>IFACEMETHODIMP CProviderWindowlessSite::GetRuntimeIdPrefix(   
+     SAFEARRAY **ppsaPrefix)   
+{   
+    if (ppsaPrefix == NULL) 
+    {
+        return E_INVALIDARG;
+    }
+
+    // m_siteIndex is the index of the windowless control's
+    // site. It is defined by the control container.
+    int rId[] = { UiaAppendRuntimeId, m_siteIndex };
+    SAFEARRAY *psa = SafeArrayCreateVector(VT_I4, 0, 2);  
+    if (psa == NULL)
+    {
+        return E_OUTOFMEMORY;
+    }
+
+    for (LONG i = 0; i &lt; 2; i++)
+    {
+        SafeArrayPutElement(psa, &amp;i, (void*)&amp;(rId[i]));
+    }
+
+    *ppsaPrefix = psa;  
+    return S_OK;  
+}  
+</code></pre>
+</li>
+<li>
+<p>Implement the <a href="/windows/desktop/api/uiautomationcore/nf-uiautomationcore-irawelementproviderwindowlesssite-getadjacentfragment"><strong>IRawElementProviderWindowlessSite::GetAdjacentFragment</strong></a> method.</p>
+<p>A control that implements UI Automation must return a pointer to the control's parent fragment provider.</p>
+<p>To return the parent of the fragment, an object that implements the <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-irawelementproviderfragment"><strong>IRawElementProviderFragment</strong></a> interface must be able to implement the <a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-irawelementproviderfragment-navigate"><strong>Navigate</strong></a> method. Implementing <strong>Navigate</strong> is difficult for a windowless control because the control might be unable to determine its location in the accessible tree of the parent object. The <a href="/windows/desktop/api/uiautomationcore/nf-uiautomationcore-irawelementproviderwindowlesssite-getadjacentfragment"><strong>IRawElementProviderWindowlessSite::GetAdjacentFragment</strong></a> method enables the windowless control to query its site for the adjacent fragment, and then return that fragment to the client that called <strong>Navigate</strong>.</p>
+<p>This example shows how a control container retrieves the parent fragment of a windowless control.</p>
+<pre lang="C++"><code>IFACEMETHODIMP CProviderWindowlessSite::GetAdjacentFragment(
+        enum NavigateDirection direction, IRawElementProviderFragment **ppFragment)   
+{
+    if (ppFragment == NULL)
+    {
+        return E_INVALIDARG;
+    }
+    
+    *ppFragment = NULL;
+    HRESULT hr = S_OK;
+
+    switch (direction)
+    {
+        case NavigateDirection_Parent:
+            {  
+                IRawElementProviderSimple *pSimple = NULL;
+
+                // Call an application-defined function to retrieve the
+                // parent provider interface.
+                hr = GetParentProvider(&amp;pSimple);  
+                if (SUCCEEDED(hr))  
+                {  
+                    // Get the parent's IRawElementProviderFragment interface.
+                    hr = pSimple-&gt;QueryInterface(IID_PPV_ARGS(ppFragment));  
+                    pSimple-&gt;Release();  
+                } 
+            }  
+            break;  
+  
+        case NavigateDirection_FirstChild:
+        case NavigateDirection_LastChild:
+            hr = E_INVALIDARG;
+            break;
+
+        // Ignore NavigateDirection_NextSibling and NavigateDirection_PreviousSibling
+        // because there are no adjacent fragments.
+        default:  
+            break;  
+    }  
+  
+    return hr;  
+}   
+</code></pre>
+</li>
+</ol>
+<h3>Step 3: Optional: Implement the IRawElementProviderHostingAccessibles interface.</h3>
+<p>Implement the <a href="/windows/desktop/api/uiautomationcore/nn-uiautomationcore-irawelementproviderhostingaccessibles"><strong>IRawElementProviderHostingAccessibles</strong></a> interface if your control container has a UI Automation provider implementation that is the root of an accessibility tree that includes windowless ActiveX controls that support Microsoft Active Accessibility. The <strong>IRawElementProviderHostingAccessibles</strong> interface has a single method, <a href="/windows/desktop/api/uiautomationcore/nf-uiautomationcore-irawelementproviderhostingaccessibles-getembeddedaccessibles"><strong>GetEmbeddedAccessibles</strong></a>, which retrieves the <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface pointers of all Microsoft Active Accessibility-based windowless ActiveX controls hosted by your control container.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="host-an-msaa-windowless-activex-control.html">How to Host an MSAA Windowless ActiveX Control</a></p>
+<!-- raw HTML omitted -->
+<p><a href="windowless-activex-control-accessibility.html">Windowless ActiveX Control Accessibility</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

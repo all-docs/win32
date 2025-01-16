@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Modifying the DACL for a Service</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: A service control program can create or modify the DACL associated with a service to control access.
+ms.assetid: 24bfb2b5-34be-4d38-a690-90d29f5d4f9c
+title: Modifying the DACL for a Service
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Modifying the DACL for a Service</h1>
+<p>A <a href="service-control-programs.html">service control program</a> can create or modify the DACL associated with a service to control access. To retrieve the DACL associated with a service object, use the <a href="/windows/desktop/api/winsvc/nf-winsvc-queryserviceobjectsecurity"><strong>QueryServiceObjectSecurity</strong></a> function. To set the DACL, use the <a href="/windows/desktop/api/winsvc/nf-winsvc-setserviceobjectsecurity"><strong>SetServiceObjectSecurity</strong></a> function. Any changes made to the <a href="/windows/desktop/api/winnt/ns-winnt-security_descriptor"><strong>SECURITY_DESCRIPTOR</strong></a> associated with the service object are persistent until the service is removed from the system.</p>
+<p>The following example creates and sets a new DACL for the service. The code merges one access control entry (ACE) to the existing DACL for the service. The new ACE grants the Guest account start, stop, delete, and READ_CONTROL access to the specified service. Access to the service can be modified by the <em>AccessPermissions</em> parameter passed to the <a href="/windows/desktop/api/aclapi/nf-aclapi-buildexplicitaccesswithnamea"><strong>BuildExplicitAccessWithName</strong></a> function.</p>
+<p>The szSvcName variable is a global variable that contains the name of the service. For the complete example that sets this variable, see <a href="svccontrol-cpp.html">SvcControl.cpp</a>.</p>
+<pre lang="C++"><code>//
+// Purpose: 
+//   Updates the service DACL to grant start, stop, delete, and read
+//   control access to the Guest account.
+//
+// Parameters:
+//   None
+// 
+// Return value:
+//   None
+//
+VOID __stdcall DoUpdateSvcDacl()
+{
+    EXPLICIT_ACCESS      ea;
+    SECURITY_DESCRIPTOR  sd;
+    PSECURITY_DESCRIPTOR psd            = NULL;
+    PACL                 pacl           = NULL;
+    PACL                 pNewAcl        = NULL;
+    BOOL                 bDaclPresent   = FALSE;
+    BOOL                 bDaclDefaulted = FALSE;
+    DWORD                dwError        = 0;
+    DWORD                dwSize         = 0;
+    DWORD                dwBytesNeeded  = 0;
+
+    // Get a handle to the SCM database. 
+ 
+    schSCManager = OpenSCManager( 
+        NULL,                    // local computer
+        NULL,                    // ServicesActive database 
+        SC_MANAGER_ALL_ACCESS);  // full access rights 
+ 
+    if (NULL == schSCManager) 
+    {
+        printf(&quot;OpenSCManager failed (%d)\n&quot;, GetLastError());
+        return;
+    }
+
+    // Get a handle to the service
+
+    schService = OpenService( 
+        schSCManager,              // SCManager database 
+        szSvcName,                 // name of service 
+        READ_CONTROL | WRITE_DAC); // access
+ 
+    if (schService == NULL)
+    { 
+        printf(&quot;OpenService failed (%d)\n&quot;, GetLastError()); 
+        CloseServiceHandle(schSCManager);
+        return;
+    }    
+
+    // Get the current security descriptor.
+
+    if (!QueryServiceObjectSecurity(schService,
+        DACL_SECURITY_INFORMATION, 
+        &amp;psd,           // using NULL does not work on all versions
+        0, 
+        &amp;dwBytesNeeded))
+    {
+        if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+        {
+            dwSize = dwBytesNeeded;
+            psd = (PSECURITY_DESCRIPTOR)HeapAlloc(GetProcessHeap(),
+                    HEAP_ZERO_MEMORY, dwSize);
+            if (psd == NULL)
+            {
+                // Note: HeapAlloc does not support GetLastError.
+                printf(&quot;HeapAlloc failed\n&quot;);
+                goto dacl_cleanup;
+            }
+  
+            if (!QueryServiceObjectSecurity(schService,
+                DACL_SECURITY_INFORMATION, psd, dwSize, &amp;dwBytesNeeded))
+            {
+                printf(&quot;QueryServiceObjectSecurity failed (%d)\n&quot;, GetLastError());
+                goto dacl_cleanup;
+            }
+        }
+        else 
+        {
+            printf(&quot;QueryServiceObjectSecurity failed (%d)\n&quot;, GetLastError());
+            goto dacl_cleanup;
+        }
+    }
+
+    // Get the DACL.
+
+    if (!GetSecurityDescriptorDacl(psd, &amp;bDaclPresent, &amp;pacl,
+                                   &amp;bDaclDefaulted))
+    {
+        printf(&quot;GetSecurityDescriptorDacl failed(%d)\n&quot;, GetLastError());
+        goto dacl_cleanup;
+    }
+
+    // Build the ACE.
+
+    BuildExplicitAccessWithName(&amp;ea, TEXT(&quot;GUEST&quot;),
+        SERVICE_START | SERVICE_STOP | READ_CONTROL | DELETE,
+        SET_ACCESS, NO_INHERITANCE);
+
+    dwError = SetEntriesInAcl(1, &amp;ea, pacl, &amp;pNewAcl);
+    if (dwError != ERROR_SUCCESS)
+    {
+        printf(&quot;SetEntriesInAcl failed(%d)\n&quot;, dwError);
+        goto dacl_cleanup;
+    }
+
+    // Initialize a new security descriptor.
+
+    if (!InitializeSecurityDescriptor(&amp;sd, 
+        SECURITY_DESCRIPTOR_REVISION))
+    {
+        printf(&quot;InitializeSecurityDescriptor failed(%d)\n&quot;, GetLastError());
+        goto dacl_cleanup;
+    }
+
+    // Set the new DACL in the security descriptor.
+
+    if (!SetSecurityDescriptorDacl(&amp;sd, TRUE, pNewAcl, FALSE))
+    {
+        printf(&quot;SetSecurityDescriptorDacl failed(%d)\n&quot;, GetLastError());
+        goto dacl_cleanup;
+    }
+
+    // Set the new DACL for the service object.
+
+    if (!SetServiceObjectSecurity(schService, 
+        DACL_SECURITY_INFORMATION, &amp;sd))
+    {
+        printf(&quot;SetServiceObjectSecurity failed(%d)\n&quot;, GetLastError());
+        goto dacl_cleanup;
+    }
+    else printf(&quot;Service DACL updated successfully\n&quot;);
+
+dacl_cleanup:
+    CloseServiceHandle(schSCManager);
+    CloseServiceHandle(schService);
+
+    if(NULL != pNewAcl)
+        LocalFree((HLOCAL)pNewAcl);
+    if(NULL != psd)
+        HeapFree(GetProcessHeap(), 0, (LPVOID)psd);
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="the-complete-service-sample.html">The Complete Service Sample</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

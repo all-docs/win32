@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementation Guidelines for Serializing IWICDevelopRaw Settings</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Implementation Guidelines for Serializing IWICDevelopRaw Settings
+ms.assetid: 4ecff5cc-24f3-4b89-b681-85c867b053e7
+title: Implementation Guidelines for Serializing IWICDevelopRaw Settings
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Implementation Guidelines for Serializing IWICDevelopRaw Settings</h1>
+<p>The <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicdevelopraw"><strong>IWICDevelopRaw</strong></a> interface exposes settings that the application can use to modify the processing of the RAW image. The settings should be able to be serialized so that they persist across sessions. Although this can be done in several ways, it is recommended to encode this data in a manner that is consistent with other metadata.</p>
+<p>The following are some general implementation guidelines:</p>
+<ul>
+<li>
+<p>Any settings made via <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicdevelopraw"><strong>IWICDevelopRaw</strong></a> (such as rotation or white balance) should avoid overwriting camera setting or &quot;as-shot&quot; data unless the tag is commonly used as a &quot;current setting.&quot; For example, EXIF orientation tags can be used to persist rotation.</p>
+</li>
+<li>
+<p>It is preferable not to have to save the entire file (including the mosaic pixel data) each time that the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicdevelopraw"><strong>IWICDevelopRaw</strong></a> settings are asked to be serialized.</p>
+</li>
+<li>
+<p>The process of serializing <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicdevelopraw"><strong>IWICDevelopRaw</strong></a> settings will generally follow this order of events. The application:</p>
+<ol>
+<li>
+<p>Instantiates an <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapdecoder"><strong>IWICBitmapDecoder</strong></a> on a RAW file.</p>
+</li>
+<li>
+<p>Calls <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapdecoder"><strong>IWICBitmapDecoder</strong></a>::<a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapdecoder-getframe"><strong>GetFrame</strong></a> to get an <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframedecode"><strong>IWICBitmapFrameDecode</strong></a> for the RAW frame.</p>
+</li>
+<li>
+<p>Calls QueryInterface on the IWICBitmapFrameDecode interface for the IWICDevelopRaw interface.</p>
+</li>
+<li>
+<p>Calls <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicdevelopraw"><strong>IWICDevelopRaw</strong></a>::<a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicdevelopraw-getcurrentparameterset"><strong>GetCurrentParameterSet</strong></a>, which returns an IPropertyBag2 interface with all of the current properties stored in it.</p>
+<p>At this point of the process, the goal is to serialize the settings in the IPropertyBag2 interface into the RAW file. To do so requires spinning up an encoder and so on, which is detailed in the following steps.</p>
+</li>
+<li>
+<p>Creates an <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapencoder"><strong>IWICBitmapEncoder</strong></a> for the RAW file.</p>
+</li>
+<li>
+<p>Calls <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapencoder"><strong>IWICBitmapEncoder</strong></a>::<a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapencoder-initialize"><strong>Initialize</strong></a>, passing in a new (blank) stream to encode.</p>
+</li>
+<li>
+<p>Calls <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapencoder"><strong>IWICBitmapEncoder</strong></a>::<a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapencoder-createnewframe"><strong>CreateNewFrame</strong></a> to create a new IWICBitmapFrameEncode for the RAW frame.</p>
+</li>
+<li>
+<p>Calls <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a>::<a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapencoder-initialize"><strong>Initialize</strong></a>, and passes in the IPropertyBag2 interface from step 4.</p>
+</li>
+<li>
+<p>Calls <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a>::<a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapframeencode-writesource"><strong>WriteSource</strong></a> with <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapsource"><strong>IWICBitmapSource</strong></a> from decoder's RAW image frame.</p>
+</li>
+<li>
+<p>Calls <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a>::<a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapencoder-commit"><strong>Commit</strong></a>. The codec then serializes the properties in the IPropertyBag2 from step 8 into the file. The most common method of serializing the properties is assumed to be by writing them out as metadata in the file.</p>
+</li>
+<li>
+<p>Calls <a href="/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapencoder"><strong>IWICBitmapEncoder</strong></a>::<a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicbitmapencoder-commit"><strong>Commit</strong></a>.</p>
+</li>
+<li>
+<p>Calls IStream::Commit on the stream in step 6.</p>
+</li>
+</ol>
+<p>The settings are serialized in the file.</p>
+<p>This method does incur the cost of rewriting the entire RAW file each time the settings are serialized. This can be avoided if you implement <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicfastmetadataencoder"><strong>IWICFastMetadataEncoder</strong></a> or if your image file format supports XMP or EXIF, as WIC provides <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicfastmetadataencoder"><strong>IWICFastMetadataEncoder</strong></a> for both of these formats. Also, if your codec writes changes to the end of the image file, then you won't end up rewriting the entire image file.</p>
+</li>
+<li>
+<p>Parameter sets are loaded from the serialized state when the application sets the <a href="/windows/desktop/api/Wincodec/ne-wincodec-wicrawparameterset"><strong>WICRawParameterSet.WICUserAdjustedParameterSet</strong></a> enumeration on the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicdevelopraw"><strong>IWICDevelopRaw</strong></a>::<a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicdevelopraw-loadparameterset"><strong>LoadParameterSet</strong></a> method. The <a href="/windows/desktop/api/Wincodec/ne-wincodec-wicrawparameterset"><strong>WICRawParameterSet.WICUserAdjustedParameterSet</strong></a> flag refers to the last-saved parameter set, so a load with this flag should result in restoring parameters to the last-saved state.</p>
+</li>
+<li>
+<p>Upon initial load, the last-saved parameter set should be loaded, if available. If not, then the &quot;as-shot&quot; settings should be used as presets on the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicdevelopraw"><strong>IWICDevelopRaw</strong></a> interface variables. These as-shot settings can also be loaded by using the <a href="/windows/desktop/api/Wincodec/ne-wincodec-wicrawparameterset"><strong>WICRawParameterSet.WICAsShotParameterSet</strong></a> flag.</p>
+</li>
+<li>
+<p>The identifier <a href="/windows/desktop/api/Wincodec/ne-wincodec-wicrawparameterset"><strong>WICRawParameterSet.WICAutoAdjustedParameterSet</strong></a> is meant to represent an &quot;Auto&quot; setting. The codec designer can elect any of the following approaches on how to set <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicdevelopraw"><strong>IWICDevelopRaw</strong></a> parameters when this setting is made:</p>
+<ul>
+<li>Perform an algorithmic optimization of some parameters, such as exposure or color. This is how Auto functions in typical image editors and is based primarily on pixel data analysis.</li>
+<li>Set camera settings similar to how an Auto setting would have behaved. This is useful if the image was shot on a Manual setting and allows the user to override manual settings.</li>
+<li>Do nothing. Not all controls need to be set when Auto is selected, and it is OK to leave settings unchanged.</li>
+</ul>
+</li>
+</ul>
+<p>The Windows Vista Photo Gallery and Windows Live Photo Gallery editing tools and other editing applications use the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicdevelopraw"><strong>IWICDevelopRaw</strong></a> Auto parameter load when the user selects Auto Correct for all normal codec control adjustments such as color and exposure to get the best results.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Conceptual</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-about-windows-imaging-codec.html">Windows Imaging Component Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-rawguidelines.html">WIC Guidelines for Camera RAW Image Formats</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-howtowriteacodec.html">How to Write a WIC-Enabled CODEC</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

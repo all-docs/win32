@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using Resource Enumeration</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example shows how to use the VerifierEnumerateResource function and related programming elements to abstract and categorize process-specific resource information.
+ms.assetid: e0c2c795-2960-44f9-8b63-2329f5b42e15
+title: Using Resource Enumeration
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using Resource Enumeration</h1>
+<p>The following example shows how to use the <a href="/windows/desktop/api/Avrfsdk/nf-avrfsdk-verifierenumerateresource"><strong>VerifierEnumerateResource</strong></a> function and related programming elements to abstract and categorize process-specific resource information.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;avrfsdk.h&gt;
+ 
+//
+// helper class for local cleanup
+//
+template &lt;typename T, typename FT, FT F&gt; class OnDelete
+{
+private:
+    T Val_;
+public:
+    OnDelete(T Val) :Val_(Val) {};
+    ~OnDelete() { F(Val_); };
+};
+ 
+//
+// prototype for the API
+//
+typedef ULONG (WINAPI * VerifierEnumResourceFn)(
+    HANDLE Process,
+    ULONG  Flags,
+    ULONG  ResourceType,
+    AVRF_RESOURCE_ENUMERATE_CALLBACK ResourceCallback,
+    PVOID  EnumerationContext
+    );
+ 
+//
+// enumeration context for heap allocations
+//
+typedef struct _HEAP_ENUM_CONTEXT 
+{
+    ULONG64 AddressToSearch;
+} HEAP_ENUM_CONTEXT,*PHEAP_ENUM_CONTEXT;
+ 
+ULONG WINAPI FindHeapAllocationCallback(
+    PAVRF_HEAP_ALLOCATION HeapAllocation,
+    PVOID EnumerationContext,
+    PULONG EnumerationLevel
+    )
+/*++
+ 
+Description:
+ 
+    callback function for the handle trace enumeration function
+ 
+--*/
+{
+    UNREFERENCED_PARAMETER(EnumerationLevel);
+ 
+    PHEAP_ENUM_CONTEXT HeapEnumCtx = (PHEAP_ENUM_CONTEXT)EnumerationContext;
+ 
+    //
+    // shik the heap metadata allocations
+    //
+    if (HeapAllocation-&gt;HeapState &amp; HeapMetadata) 
+    {
+        return 0;
+    }
+ 
+    if ((HeapEnumCtx-&gt;AddressToSearch &gt;= HeapAllocation-&gt;UserAllocation &amp;&amp;
+         HeapEnumCtx-&gt;AddressToSearch &lt; (HeapAllocation-&gt;UserAllocation + 
+                                         HeapAllocation-&gt;UserAllocationSize)) ||
+        (HeapEnumCtx-&gt;AddressToSearch &gt;= HeapAllocation-&gt;Allocation &amp;&amp;
+         HeapEnumCtx-&gt;AddressToSearch &lt; (HeapAllocation-&gt;Allocation + 
+                                         HeapAllocation-&gt;AllocationSize)))
+    {
+ 
+        //
+        // print the &quot;boundaries&quot; of the user allocation
+        //
+        printf(&quot;          %I64p - %I64p\n&quot;,
+               HeapAllocation-&gt;UserAllocation,
+               HeapAllocation-&gt;UserAllocationSize);
+ 
+        //
+        // print the stack trace information, if any
+        //
+        if (HeapAllocation-&gt;BackTraceInformation)
+        {
+        
+            PAVRF_BACKTRACE_INFORMATION BackTrace = 
+                HeapAllocation-&gt;BackTraceInformation;
+            
+            if (BackTrace-&gt;Depth) 
+            {
+ 
+                printf(&quot;--------- BackTrace %04x Depth %04x\n&quot;,
+                       BackTrace-&gt;Index,
+                       BackTrace-&gt;Depth);
+                //
+                // display the address from the stack trace
+                //
+                ULONG Iter;                
+                for (Iter = 0;Iter &lt; BackTrace-&gt;Depth ; Iter++)
+                {
+                    printf(&quot;          %I64p\n&quot;,
+                    BackTrace-&gt;ReturnAddresses[Iter]);
+                }
+            } 
+            else 
+            {
+                printf(&quot;--------- BackTrace with 0 Depth\n&quot;);
+            }
+        } 
+        else 
+        {
+            printf(&quot;--------- NO BackTrace\n&quot;);
+        }
+         
+    }
+    
+    return ERROR_SUCCESS;
+}
+ 
+//
+// enumeration context for handle operations
+//
+typedef struct _HANDLE_ENUM_CONTEXT 
+{
+    ULONG64 HandleToSearch;
+} HANDLE_ENUM_CONTEXT,*PHANDLE_ENUM_CONTEXT;
+ 
+ULONG WINAPI FindHandleOperationCallback(
+    PAVRF_HANDLE_OPERATION HandleOperation,
+    PVOID EnumerationContext,
+    PULONG EnumerationLevel
+    )
+/*++
+ 
+Description:
+ 
+    callback function for the handle trace enumeration function
+ 
+--*/
+{
+    UNREFERENCED_PARAMETER(EnumerationLevel);
+ 
+    PHANDLE_ENUM_CONTEXT HandleEnum = (PHANDLE_ENUM_CONTEXT)EnumerationContext;
+ 
+    if (HandleOperation-&gt;Handle == HandleEnum-&gt;HandleToSearch)
+    {
+ 
+        printf(&quot;PID.TID %x.%x - operation %d on handle %I64x\n&quot;,
+               HandleOperation-&gt;ProcessId,
+               HandleOperation-&gt;ThreadId,
+               HandleOperation-&gt;OperationType,
+               HandleEnum-&gt;HandleToSearch);    
+    }
+ 
+    return ERROR_SUCCESS;
+}        
+ 
+
+int __cdecl wmain(
+    /* __in */ int argc, 
+    /* __in_ecount(argc) */ LPWSTR * argv
+    )
+/*++
+ 
+Description:
+ 
+    This function takes a process identifier, 
+    the kind of resource to enumerate, and the address of 
+    a resource. Resource here is the entity used by APIs instrumented
+    by Verifier (handles and heap allocations for now) 
+    and for which there is additional information
+    useful to debug and diagnose an issue flagged by Verifier.
+    This code sample uses the Enumeration API to find additional
+    information about a given resource. The additional information
+    is printed on the console.
+ 
+--*/
+{
+ 
+    if (argc &lt; 4)
+    {
+        printf(&quot;usage: verifenum PID ProcessId Handle|Heap Resource\n&quot;
+               &quot;\n&quot;
+               &quot;Sample:\n&quot;
+               &quot;  verifenum.exe 1289 Handle 0x4\n&quot;
+               &quot;  - finds all the operations for handle 4 in process 1289\n&quot;
+               &quot;  verifenum.exe 1289 Heap 0x123456\n&quot;
+               &quot;  - finds all the details of heap allocation at address\n&quot;
+               &quot;    0x123456 in process 1289\n&quot;);
+        return 1;
+    }
+ 
+    WCHAR * StringPid  = argv[1];
+    WCHAR * StringType = argv[2];
+    WCHAR * StringRes  = argv[3];
+ 
+    //
+    // convert the command line param to a Process Id
+    //
+    ULONG   Pid = wcstoul(StringPid,0,10);
+    //
+    // convert the command line param to a resource address
+    //    
+    ULONG64 Resource = _wcstoui64(StringRes,0,0x10);
+ 
+    //
+    // Load verifier.dll 
+    //
+    HMODULE hMod = LoadLibraryExW(L&quot;verifier.dll&quot;,0,0);
+    if (NULL == hMod)
+    {
+        return GetLastError();
+    }
+    OnDelete&lt;HMODULE,BOOL(WINAPI *)(HMODULE),FreeLibrary&gt; fm(hMod);
+ 
+    //
+    // discover the entry point VerifierEnumResource
+    //
+    VerifierEnumResourceFn VerifierEnumResource_;
+    *(FARPROC *)&amp;VerifierEnumResource_ = GetProcAddress(
+                                             hMod,
+                                             &quot;VerifierEnumerateResource&quot;
+                                         );
+    if (NULL == VerifierEnumResource_) 
+    {
+        printf(&quot;could not find entry point %s in verifier.dll\n&quot;,
+               &quot;VerifierEnumerateResource&quot;);
+        return GetLastError();
+    }
+ 
+    //
+    // open the process with the required access for the operation
+    //
+    HANDLE hProcess = OpenProcess(PROCESS_VM_READ|PROCESS_QUERY_INFORMATION,
+                                  FALSE,
+                                  Pid);
+    if (NULL == hProcess) 
+    {
+        return GetLastError();
+    }
+    OnDelete&lt;HANDLE,BOOL(WINAPI *)(HANDLE),CloseHandle&gt; cm(hProcess);        
+ 
+    //
+    // dispatch the enumeration to the proper resource type
+    //
+    if (0 == _wcsicmp(StringType,L&quot;Heap&quot;))
+    {
+ 
+        HEAP_ENUM_CONTEXT HeapEnumCtx = { Resource };
+ 
+        VerifierEnumResource_(
+            hProcess,
+            0,
+            AvrfResourceHeapAllocation,
+            (AVRF_RESOURCE_ENUMERATE_CALLBACK)FindHeapAllocationCallback,
+            &amp;HeapEnumCtx
+        );
+    
+    } 
+    else if (0 == _wcsicmp(StringType,L&quot;Handle&quot;)) 
+    {
+ 
+        HANDLE_ENUM_CONTEXT HandleEnumCtx = { Resource };
+ 
+        VerifierEnumResource_(
+            hProcess,
+            0,
+            AvrfResourceHandleTrace,
+            (AVRF_RESOURCE_ENUMERATE_CALLBACK)FindHandleOperationCallback,
+            &amp;HandleEnumCtx
+        );
+    
+    } 
+    else 
+    {
+        printf(&quot;Unrecognized resource type\n&quot;);
+        return 1;
+    }
+ 
+    return 0;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

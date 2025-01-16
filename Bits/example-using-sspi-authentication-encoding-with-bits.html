@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example: Using SSPI Authentication Encoding with BITS</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Example Using SSPI Authentication Encoding with BITS
+description: Describes how to use SSPI authentication and BITS methods to get user credentials, encode the credentials, and set them on a BITS transfer job.
+ms.assetid: 5c8a6df7-0056-463e-8d73-1695dc75e023
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example: Using SSPI Authentication Encoding with BITS</h1>
+<p>You can use Security Support Provider Interface (SSPI) Authentication and Background Intelligent Transfer Service (BITS) methods to get the credentials from a user, encode the credentials, and set the encoded credentials on a BITS transfer job. Encoding is required to convert credentials structure into strings that can be passed to a BITS transfer job.</p>
+<p>For more information about SSPI authentication and methods, see <a href="../secauthn/sspi.html">SSPI</a>.</p>
+<p>The following procedure prompts for credentials from the user by using the Negotiate security package. The program creates an authentication identity structure and populates the structure with the encoded strings that represent the user name, domain, and password of the user. Then the program creates a BITS download job and sets the encoded user name and password as the credentials for the job. The program frees the authentication identity structure after it is no longer needed.</p>
+<p>This example uses the header and implementation defined in <a href="common-classes.html">Example: Common Classes</a>.</p>
+<p><strong>To use SSPI authentication encoding with BITS transfer jobs</strong></p>
+<ol>
+<li>Initialize COM parameters by calling the CCoInitializer function. For more information about the CCoInitializer function, see <a href="common-classes.html">Example: Common Classes</a>.</li>
+<li>Get pointers for the <a href="/windows/desktop/api/Bits/nn-bits-ibackgroundcopymanager"><strong>IBackgroundCopyManager</strong></a>, <a href="/windows/desktop/api/Bits/nn-bits-ibackgroundcopyjob"><strong>IBackgroundCopyJob</strong></a>, <a href="/windows/desktop/api/bits1_5/nn-bits1_5-ibackgroundcopyjob2"><strong>IBackgroundCopyJob2</strong></a> interfaces. This example uses the <a href="/cpp/atl/reference/ccomptr-class">CComPtr Class</a> to manage COM interface pointers.</li>
+<li>Create a <a href="/windows/win32/api/wincred/ns-wincred-credui_infoa">CREDUI_INFO</a> structure that contains information for customizing the appearance of the dialog box for the <a href="/windows/win32/api/sspi/nf-sspi-sspipromptforcredentialsa">SspiPromptForCredentials Function</a>. Then prompt for credentials from the user. For more information, see the <a href="/windows/win32/api/sspi/nf-sspi-sspipromptforcredentialsa">SspiPromptForCredentials Function</a>.</li>
+<li>Encode credential structure as strings that can be passed to a BITS transfer job by using the <a href="/windows/win32/api/sspi/nf-sspi-sspiencodeauthidentityasstrings">SspiEncodeAuthIdentityAsStrings</a> function.</li>
+<li>Prepare a <a href="/windows/desktop/api/bits1_5/ns-bits1_5-bg_auth_credentials"><strong>BG_AUTH_CREDENTIALS</strong></a> structure.</li>
+<li>Initialize COM process security by calling <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity">CoInitializeSecurity</a>. BITS requires at least the IMPERSONATE level of impersonation. BITS fails with <strong>E_ACCESSDENIED</strong> if the correct impersonation level is not set.</li>
+<li>Obtain the initial locator to BITS by calling the <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance">CoCreateInstance</a> function.</li>
+<li>Create a BITS transfer job by calling the <a href="/windows/desktop/api/Bits/nf-bits-ibackgroundcopymanager-createjob"><strong>IBackgroundCopyManager::CreateJob</strong></a> method.</li>
+<li>Get the identifier for the <a href="/windows/desktop/api/bits1_5/nn-bits1_5-ibackgroundcopyjob2"><strong>IBackgroundCopyJob2</strong></a> interface, and call the <strong>IBackgroundCopyJob::QueryInterface</strong> method.</li>
+<li>Populate the <a href="/windows/desktop/api/bits1_5/ns-bits1_5-bg_auth_credentials"><strong>BG_AUTH_CREDENTIALS</strong></a> structure with the encoded user name and password strings, and set the authentication scheme to Negotiate (<strong>BG_AUTH_SCHEME_NEGOTIATE</strong>).</li>
+<li>Use the <a href="/windows/desktop/api/bits1_5/nn-bits1_5-ibackgroundcopyjob2"><strong>IBackgroundCopyJob2</strong></a> pointer to make requests to BITS. This program uses the <a href="/windows/desktop/api/bits1_5/nf-bits1_5-ibackgroundcopyjob2-setcredentials"><strong>IBackgroundCopyJob2::SetCredentials</strong></a> method to set the credentials for the BITS transfer job.</li>
+<li>Add files, modify properties, or resume the BITS transfer job.</li>
+<li>After the BITS transfer job is complete, remove the job from the queue by calling <a href="/windows/desktop/api/Bits/nf-bits-ibackgroundcopyjob-complete"><strong>IBackgroundCopyJob::Complete</strong></a>.</li>
+<li>Finally, free the authentication identity structure by calling the <a href="/windows/win32/api/sspi/nf-sspi-sspifreeauthidentity">SspiFreeAuthIdentity</a> function.</li>
+</ol>
+<p>The following code example demonstrates how to use SSPI Authentication Encoding with BITS transfer jobs.</p>
+<pre lang="C++"><code>#define SECURITY_WIN32
+#define _SEC_WINNT_AUTH_TYPES
+
+#include &lt;windows.h&gt;
+#include &lt;ntsecapi.h&gt;
+#include &lt;bits.h&gt;
+#include &lt;sspi.h&gt;
+#include &lt;wincred.h&gt;
+#include &lt;iostream&gt;
+#include &lt;atlbase.h&gt;
+#include &quot;CommonCode.h&quot;
+
+void PromptForCredentials(PWSTR pwTargetName)
+{
+    HRESULT hr;
+    
+    // If CoInitializeEx fails, the exception is unhandled and the program terminates
+    CCoInitializer coInitializer(COINIT_APARTMENTTHREADED);
+    
+    CComPtr&lt;IBackgroundCopyManager&gt; pQueueMgr;
+    CComPtr&lt;IBackgroundCopyJob&gt; pJob;
+    CComPtr&lt;IBackgroundCopyJob2&gt; pJob2;
+
+    PSEC_WINNT_AUTH_IDENTITY_OPAQUE pAuthIdentityEx2 = NULL;
+    DWORD dwFlags = 0;
+    BOOL fSave = FALSE;
+    BOOL bReturn = TRUE;
+
+    CREDUI_INFO creduiInfo = { 0 };
+    creduiInfo.cbSize = sizeof(creduiInfo);
+    // Change the message text and caption to the actual text for your dialog.
+    creduiInfo.pszMessageText = pwTargetName;
+    creduiInfo.pszCaptionText = L&quot;SSPIPFC title for the dialog box&quot;;
+
+    try {
+        // Prompt for credentials from user using Negotiate security package.
+        DWORD dwRet = SspiPromptForCredentials(
+            pwTargetName,
+            &amp;creduiInfo,
+            0,
+            L&quot;Negotiate&quot;, 
+            NULL,
+            &amp;pAuthIdentityEx2,
+            &amp;fSave,
+            dwFlags
+            );
+
+        if (SEC_E_OK != dwRet) 
+        {
+            // Prompt for credentials failed.
+            throw MyException(dwRet, L&quot;SspiPromptForCredentials&quot;);
+        }
+
+        if (NULL != pAuthIdentityEx2) 
+        {
+            GUID guidJob;
+            BG_AUTH_CREDENTIALS authCreds;
+
+            PCWSTR pwUserName = NULL;
+            PCWSTR pwDomainName = NULL;
+            PCWSTR pwPassword = NULL;
+
+            // Encode credential structure as strings that can
+            // be passed to a BITS job.
+            SECURITY_STATUS secStatus = SspiEncodeAuthIdentityAsStrings(
+                pAuthIdentityEx2,
+                &amp;pwUserName,
+                &amp;pwDomainName,
+                &amp;pwPassword
+                );
+
+            if(SEC_E_OK != secStatus) 
+            {
+                // Encode authentication identity as strings.
+                throw MyException(secStatus, L&quot;SspiEncodeAuthIdentityAsStrings&quot;);   
+            }
+
+            // Show the encoded user name and domain name.
+            wprintf(
+                L&quot;User Name: %s\nDomain Name: %s&quot;,
+                pwUserName,
+                pwDomainName
+                );
+
+            //The impersonation level must be at least RPC_C_IMP_LEVEL_IMPERSONATE.
+            HRESULT hr = CoInitializeSecurity(
+                NULL,
+                -1,
+                NULL,
+                NULL,
+                RPC_C_AUTHN_LEVEL_CONNECT,
+                RPC_C_IMP_LEVEL_IMPERSONATE,
+                NULL,
+                EOAC_DYNAMIC_CLOAKING,
+                0
+                );
+            
+            if (FAILED(hr))
+            {
+                throw MyException(hr, L&quot;CoInitializeSecurity&quot;);
+            }
+
+            // Connect to BITS.
+            hr = CoCreateInstance(__uuidof(BackgroundCopyManager), NULL,
+                CLSCTX_LOCAL_SERVER,
+                __uuidof(IBackgroundCopyManager),
+                (void**) &amp;pQueueMgr);
+
+            if (FAILED(hr))
+            {
+                // Failed to connect.
+                throw MyException(hr, L&quot;CoCreateInstance&quot;);
+            }
+
+            // Create a job.
+            hr = pQueueMgr-&gt;CreateJob(
+                L&quot;EncodeSample&quot;, 
+                BG_JOB_TYPE_DOWNLOAD, 
+                &amp;guidJob, 
+                &amp;pJob
+                );
+
+            if(FAILED(hr))
+            {   
+                // Failed to create a BITS job.
+                throw MyException(hr, L&quot;CreateJob&quot;);
+            }
+
+            // Get IBackgroundCopyJob2 interface.
+            hr = pJob-&gt;QueryInterface(__uuidof(IBackgroundCopyJob2), (void**)&amp;pJob2);
+            if (FAILED(hr)) 
+            {
+                // Failed to get a reference to the IBackgroundCopyJob2 interface.
+                throw MyException(hr, L&quot;QueryInterface(IBackgroundCopyJob2)&quot;);
+            }
+
+            // Create a BITS authentication structure from the encoded strings.
+            authCreds.Target = BG_AUTH_TARGET_SERVER;
+            authCreds.Scheme = BG_AUTH_SCHEME_NEGOTIATE;
+            authCreds.Credentials.Basic.UserName = (LPWSTR)pwUserName;
+            authCreds.Credentials.Basic.Password = (LPWSTR)pwPassword;
+
+            // Set the credentials for the job.
+            hr = pJob2-&gt;SetCredentials(&amp;authCreds);
+            if (FAILED(hr)) 
+            {
+                // Failed to set credentials.
+                throw MyException(hr, L&quot;SetCredentials&quot;);
+            }
+
+            // Modify the job's property values.
+            // Add files to the job.
+            // Activate (resume) the job in the transfer queue.
+
+            // Remove the job from the transfer queue.
+            hr = pJob-&gt;Complete();
+            if (FAILED(hr)) 
+            {
+                // Failed to complete the job.
+                throw MyException(hr, L&quot;Complete&quot;);
+            }
+        }
+    }
+    catch(std::bad_alloc &amp;)
+    {
+        wprintf(L&quot;Memory allocation failed&quot;);
+        if (pJob != NULL)
+        {
+            pJob-&gt;Cancel();
+        }
+    }
+    catch(MyException &amp;ex)
+    {
+        wprintf(L&quot;Error %x occurred during operation&quot;, ex.Error);
+        if (pJob != NULL)
+        {
+            pJob-&gt;Cancel();
+        }
+    }
+
+    // Free the auth identity structure.
+    if (NULL != pAuthIdentityEx2)
+    {
+        SspiFreeAuthIdentity(pAuthIdentityEx2);
+        pAuthIdentityEx2 = NULL;
+    }
+
+    return;
+}
+
+void _cdecl _tmain(int argc, LPWSTR* argv)
+{
+    PromptForCredentials(L&quot;Target&quot;);
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="../secauthn/sspi.html">SSPI</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Bits/nn-bits-ibackgroundcopymanager"><strong>IBackgroundCopyManager</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Bits/nn-bits-ibackgroundcopyjob"><strong>IBackgroundCopyJob</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/bits1_5/nn-bits1_5-ibackgroundcopyjob2"><strong>IBackgroundCopyJob2</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="common-classes.html">Example: Common Classes</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

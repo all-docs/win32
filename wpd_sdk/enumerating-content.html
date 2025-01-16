@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Enumerating Content</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Enumerating Content
+ms.assetid: 86782a09-4fca-4ae0-beaf-296069e061dc
+title: Enumerating Content
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Enumerating Content</h1>
+<p>The content on a device (whether that content is a folder, a phone book, a video, or a still image) is called an object in the WPD API. These objects are referenced by object identifiers and described by properties. You can enumerate the objects on a device by calling methods in the <a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-iportabledevice"><strong>IPortableDevice interface</strong></a>, the <a href="/windows/desktop/api/portabledeviceapi/nn-portabledeviceapi-iportabledevicecontent"><strong>IPortableDeviceContent interface</strong></a>, and the <a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-ienumportabledeviceobjectids"><strong>IEnumPortableDeviceObjectIDs interface</strong></a>.</p>
+<p>The sample application demonstrates content enumeration in the EnumerateAllContent function that is found in the ContentEnumeration.cpp module. This function, in turn, calls a RecursiveEnumerate function that walks the hierarchy of objects found on the selected device and returns an object identifier for each object.</p>
+<p>As noted, the RecursiveEnumerate function retrieves an object identifier for each object found on the device. The object identifier is a string value. Once your application retrieves this identifier, it can obtain more descriptive object information (such as the object's name, the identifier for the object's parent, and so on). This descriptive information is referred to as object properties (or metadata). Your application can retrieve these properties by calling members of the <a href="/windows/desktop/api/portabledeviceapi/nn-portabledeviceapi-iportabledeviceproperties"><strong>IPortableDeviceProperties interface</strong></a>.</p>
+<p>The EnumerateAllContent function begins by retrieving a pointer to an <a href="/windows/desktop/api/portabledeviceapi/nn-portabledeviceapi-iportabledevicecontent"><strong>IPortableDeviceContent interface</strong></a>. It retrieves this pointer by calling the <a href="/windows/desktop/api/PortableDeviceApi/nf-portabledeviceapi-iportabledevice-content"><strong>IPortableDevice::Content</strong></a> method.</p>
+<pre lang="C++"><code>void EnumerateAllContent(
+    IPortableDevice* pDevice)
+{
+    HRESULT                         hr = S_OK;
+    CComPtr&lt;IPortableDeviceContent&gt; pContent;
+
+    if (pDevice == NULL)
+    {
+        printf(&quot;! A NULL IPortableDevice interface pointer was received\n&quot;);
+        return;
+    }
+
+    // Get an IPortableDeviceContent interface from the IPortableDevice interface to
+    // access the content-specific methods.
+    hr = pDevice-&gt;Content(&amp;pContent);
+    if (FAILED(hr))
+    {
+        printf(&quot;! Failed to get IPortableDeviceContent from IPortableDevice, hr = 0x%lx\n&quot;,hr);
+    }
+
+    // Enumerate content starting from the &quot;DEVICE&quot; object.
+    if (SUCCEEDED(hr))
+    {
+        printf(&quot;\n&quot;);
+        RecursiveEnumerate(WPD_DEVICE_OBJECT_ID, pContent);
+    }
+}
+</code></pre>
+<p>Once it retrieves the pointer to the IPortableDeviceContent interface, the EnumerateAllContent function calls the RecursiveEnumerate function, which walks the hierarchy of objects found on the given device and returns an object identifier for each.</p>
+<p>The RecursiveEnumerate function begins by retrieving a pointer to an <a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-ienumportabledeviceobjectids"><strong>IEnumPortableDeviceObjectIDs interface</strong></a>. This interface exposes the methods that an application uses to navigate the list of objects found on a given device.</p>
+<p>In this sample, the RecursiveEnumerate function calls the <a href="/windows/desktop/api/PortableDeviceApi/nf-portabledeviceapi-ienumportabledeviceobjectids-next"><strong>IEnumPortableDeviceObjectIDs::Next</strong></a> method to traverse the list of objects.</p>
+<p>Each call to the <a href="/windows/desktop/api/PortableDeviceApi/nf-portabledeviceapi-ienumportabledeviceobjectids-next"><strong>IEnumPortableDeviceObjects::Next</strong></a> method requests a batch of 10 identifiers. (This value is specified by the NUM_OBJECTS_TO_REQUEST constant that is supplied as the first argument.)</p>
+<pre lang="C++"><code>#define NUM_OBJECTS_TO_REQUEST  10
+
+// Recursively called function which enumerates using the specified
+// object identifier as the parent.
+void RecursiveEnumerate(
+    PCWSTR                  pszObjectID,
+    IPortableDeviceContent* pContent)
+{
+    CComPtr&lt;IEnumPortableDeviceObjectIDs&gt; pEnumObjectIDs;
+
+    // Print the object identifier being used as the parent during enumeration.
+    printf(&quot;%ws\n&quot;,pszObjectID);
+
+    // Get an IEnumPortableDeviceObjectIDs interface by calling EnumObjects with the
+    // specified parent object identifier.
+    HRESULT hr = pContent-&gt;EnumObjects(0,               // Flags are unused
+                                       pszObjectID,     // Starting from the passed in object
+                                       NULL,            // Filter is unused
+                                       &amp;pEnumObjectIDs);
+    if (FAILED(hr))
+    {
+        printf(&quot;! Failed to get IEnumPortableDeviceObjectIDs from IPortableDeviceContent, hr = 0x%lx\n&quot;,hr);
+    }
+
+    // Loop calling Next() while S_OK is being returned.
+    while(hr == S_OK)
+    {
+        DWORD  cFetched = 0;
+        PWSTR  szObjectIDArray[NUM_OBJECTS_TO_REQUEST] = {0};
+        hr = pEnumObjectIDs-&gt;Next(NUM_OBJECTS_TO_REQUEST,   // Number of objects to request on each NEXT call
+                                  szObjectIDArray,          // Array of PWSTR array which will be populated on each NEXT call
+                                  &amp;cFetched);               // Number of objects written to the PWSTR array
+        if (SUCCEEDED(hr))
+        {
+            // Traverse the results of the Next() operation and recursively enumerate
+            // Remember to free all returned object identifiers using CoTaskMemFree()
+            for (DWORD dwIndex = 0; dwIndex &lt; cFetched; dwIndex++)
+            {
+                RecursiveEnumerate(szObjectIDArray[dwIndex],pContent);
+
+                // Free allocated PWSTRs after the recursive enumeration call has completed.
+                CoTaskMemFree(szObjectIDArray[dwIndex]);
+                szObjectIDArray[dwIndex] = NULL;
+            }
+        }
+    }
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-ienumportabledeviceobjectids"><strong>IEnumPortableDeviceObjectIDs Interface</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/PortableDeviceApi/nn-portabledeviceapi-iportabledevice"><strong>IPortableDevice Interface</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/portabledeviceapi/nn-portabledeviceapi-iportabledevicecontent"><strong>IPortableDeviceContent Interface</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/portabledeviceapi/nn-portabledeviceapi-iportabledeviceproperties"><strong>IPortableDeviceProperties Interface</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="programming-guide.html"><strong>Programming Guide</strong></a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

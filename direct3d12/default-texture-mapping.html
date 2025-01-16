@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UMA Optimizations: CPU Accessible Textures and Standard Swizzle</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: UMA Optimizations CPU Accessible Textures and Standard Swizzle
+description: Unified Memory Architecture (UMA) GPUs offer some efficiency advantages over discrete GPUs, especially when optimizing for mobile devices.
+ms.assetid: 26C41948-9625-4786-BBDF-552D1F8A2437
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>UMA Optimizations: CPU Accessible Textures and Standard Swizzle</h1>
+<p>Unified Memory Architecture (UMA) GPUs offer some efficiency advantages over discrete GPUs, especially when optimizing for mobile devices. Giving resources CPU access when the GPU is UMA can reduce the amount of copying that occurs between CPU and GPU. While we donâ€™t recommend applications blindly give CPU access to all resources on UMA designs, there are opportunities to improve efficiencies by giving the right resources CPU access. Unlike discrete GPUs, the CPU can technically have a pointer to all resources that the GPU can access.</p>
+<ul>
+<li><a href="#overview-of-cpu-accessible-textures">Overview of CPU accessible textures</a></li>
+<li><a href="#overview-of-standard-swizzle">Overview of Standard Swizzle</a></li>
+<li><a href="#apis">APIs</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Overview of CPU accessible textures</h2>
+<p>CPU accessible textures, in the graphics pipeline, are a feature of UMA architecture, enabling CPUs read and write access to textures. On the more common discrete GPUs, the CPU does not have access to textures in the graphics pipeline.</p>
+<p>The general best practice advice for textures is to accommodate discrete GPUs, which typically involves following the processes in <a href="upload-and-readback-of-texture-data.html">Uploading Texture Data Through Buffers</a>, summarized as:</p>
+<ul>
+<li>Not having any CPU access for the majority of textures.</li>
+<li>Setting the texture layout to D3D12_TEXTURE_LAYOUT_UNKNOWN.</li>
+<li>Uploading the textures to the GPU with <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copytextureregion"><strong>CopyTextureRegion</strong></a>.</li>
+</ul>
+<p>However, for certain cases, the CPU and GPU may interact so frequently on the same data, that mapping textures becomes helpful to save power, or to speed up a particular design on particular adapters or architectures. Applications should detect these cases and optimize out the unnecessary copies. In this case, for best performance consider the following:</p>
+<ul>
+<li>
+<p>Only start entertaining the better performance of mapping textures when <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_feature_data_architecture"><strong>D3D12_FEATURE_DATA_ARCHITECTURE</strong></a>::UMA is TRUE. Then pay attention to <em>CacheCoherentUMA</em> if deciding which CPU cache properties to choose on the heap.</p>
+</li>
+<li>
+<p>Leveraging CPU access for textures is more complicated than for buffers. The most efficient texture layouts for GPUs are rarely row_major. In fact, some GPUs can only support row_major textures when copying texture data around.</p>
+</li>
+<li>
+<p>UMA GPUs should universally benefit from a simple optimization to reduce level-load times. After recognizing UMA, the application can optimize out the initial <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copytextureregion"><strong>CopyTextureRegion</strong></a> to populate textures that the GPU will not modify. Instead of creating the texture in a heap with D3D12_HEAP_TYPE_DEFAULT, and marshalling the texture data through, the application can use <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-writetosubresource"><strong>WriteToSubresource</strong></a> to avoid understanding the actual texture layout.</p>
+</li>
+<li>
+<p>In D3D12, textures created with D3D12_TEXTURE_LAYOUT_UNKNOWN and no CPU access are the most efficient for frequent GPU rendering and sampling. When performance testing, those textures should be compared against D3D12_TEXTURE_LAYOUT_UNKNOWN with CPU access, and D3D12_TEXTURE_LAYOUT_STANDARD_SWIZZLE with CPU access, and D3D12_TEXTURE_LAYOUT_ROW_MAJOR for cross-adapter support.</p>
+</li>
+<li>
+<p>Using D3D12_TEXTURE_LAYOUT_UNKNOWN with CPU access enables the methods <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-writetosubresource"><strong>WriteToSubresource</strong></a>, <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-readfromsubresource"><strong>ReadFromSubresource</strong></a>, <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-map"><strong>Map</strong></a> (precluding application access to pointer), and <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-unmap"><strong>Unmap</strong></a>; but can sacrifice efficiency of GPU access.</p>
+</li>
+<li>
+<p>Using D3D12_TEXTURE_LAYOUT_STANDARD_SWIZZLE with CPU access enables <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-writetosubresource"><strong>WriteToSubresource</strong></a>, <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-readfromsubresource"><strong>ReadFromSubresource</strong></a>, <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-map"><strong>Map</strong></a> (which returns a valid pointer to application), and <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-unmap"><strong>Unmap</strong></a>. It can also sacrifice the efficiency of GPU access more than D3D12_TEXTURE_LAYOUT_UNKNOWN with CPU access.</p>
+</li>
+</ul>
+<h2>Overview of Standard Swizzle</h2>
+<p>D3D12 (and D3D11.3) introduce a standard multi-dimensional data layout. This is done to enable multiple processing units to operate on the same data without copying the data or swizzling the data between multiple layouts. A standardized layout enables efficiency gains through network effects and allows algorithms to make short-cuts assuming a particular pattern.</p>
+<p>For a detailed description of the texture layouts, refer to <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_texture_layout"><strong>D3D12_TEXTURE_LAYOUT</strong></a>.</p>
+<p>Note though that this standard swizzle is a hardware feature, and may not be supported by all GPUs.</p>
+<p>For background information on swizzling, refer to <a href="https://en.wikipedia.org/wiki/Z-order_curve">Z-order curve</a>.</p>
+<h2>APIs</h2>
+<p>Unlike D3D11.3, D3D12 supports texture mapping by default, so there is no need to query <a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_feature_data_d3d12_options"><strong>D3D12_FEATURE_DATA_D3D12_OPTIONS</strong></a>. However D3D12 does not always support standard swizzle - this feature will need to be queried for with a call to <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-checkfeaturesupport"><strong>CheckFeatureSupport</strong></a> and checking the <em>StandardSwizzle64KBSupported</em> field of <strong>D3D12_FEATURE_DATA_D3D12_OPTIONS</strong>.</p>
+<p>The following APIs reference texture mapping:</p>
+<p>Enums</p>
+<ul>
+<li><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_texture_layout"><strong>D3D12_TEXTURE_LAYOUT</strong></a> : controls the swizzle pattern of default textures and enable map support on CPU accessible textures.</li>
+</ul>
+<p>Structures</p>
+<ul>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_resource_desc"><strong>D3D12_RESOURCE_DESC</strong></a> : describes a resource, such as a texture, this is an extensively used structure.</li>
+<li><a href="/windows/desktop/api/d3d12/ns-d3d12-d3d12_heap_desc"><strong>D3D12_HEAP_DESC</strong></a> : describes a heap.</li>
+</ul>
+<p>Methods</p>
+<ul>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-createcommittedresource"><strong>ID3D12Device::CreateCommittedResource</strong></a> : creates a single resource and backing heap of the right size and alignment.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-createheap"><strong>ID3D12Device::CreateHeap</strong></a> : creates a heap for a buffer or texture.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-createplacedresource"><strong>ID3D12Device::CreatePlacedResource</strong></a> : creates a resource that is placed in a specific heap, usually a faster method of creating a resource than <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-createheap"><strong>CreateHeap</strong></a>.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-createreservedresource"><strong>ID3D12Device::CreateReservedResource</strong></a> : creates a resource that is reserved but not yet committed or placed in a heap.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-updatetilemappings"><strong>ID3D12CommandQueue::UpdateTileMappings</strong></a> : updates mappings of tile locations in tiled resources to memory locations in a resource heap.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-map"><strong>ID3D12Resource::Map</strong></a> : gets a pointer to the specified data in the resource, and denies the GPU access to the subresource.</li>
+<li><a href="id3d12resource-getdesc.html"><strong>ID3D12Resource::GetDesc</strong></a> : gets the resource properties.</li>
+<li><a href="id3d12heap-getdesc.html"><strong>ID3D12Heap::GetDesc</strong></a> gets the heap properties.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-readfromsubresource"><strong>ReadFromSubresource</strong></a> : copies data from a texture which was mapped using <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-map"><strong>Map</strong></a>.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-writetosubresource"><strong>WriteToSubresource</strong></a> : copies data into a texture which was mapped using <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-map"><strong>Map</strong></a>.</li>
+</ul>
+<p>Resources and parent heaps have alignment requirements:</p>
+<ul>
+<li>D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT (4MB) for multi-sample textures.</li>
+<li>D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT (64KB) for single sample textures and buffers.</li>
+<li>Linear subresource copying must be aligned to D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT (512 bytes), with row pitch being aligned to D3D12_TEXTURE_DATA_PITCH_ALIGNMENT (256 bytes).</li>
+<li>Constant buffer views must be aligned to D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT (256 bytes).</li>
+</ul>
+<p>Textures smaller than 64KB should be processed through <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-createcommittedresource"><strong>CreateCommittedResource</strong></a>.</p>
+<p>With dynamic textures (textures that change every frame) the CPU will write linearly to the upload heap, followed by a GPU copy operation.</p>
+<p>Typically to create dynamic resources create a large buffer in an upload heap (refer to <a href="large-buffers.html">Suballocation Within Buffers</a>). To create staging resources, create a large buffer in a readback heap. To create default static resources, create adjacent resources in a default heap. To create default aliased resources, create overlapping resources in a default heap.</p>
+<p><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-writetosubresource"><strong>WriteToSubresource</strong></a> and <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12resource-readfromsubresource"><strong>ReadFromSubresource</strong></a> rearrange texture data between a row-major layout and an undefined resource layout. The operation is synchronous, so the application should keep CPU scheduling in mind. The application can always break up the copying into smaller regions or schedule this operation in another task. MSAA resources and depth-stencil resources with opaque resource layouts are not supported by these CPU copy operations, and will cause a failure. Formats which donâ€™t have a power-of-two element size are also not supported and will also cause a failure. Out of memory return codes can occur.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="constants.html"><strong>Core Constants</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/d3d12/nn-d3d12-id3d12heap"><strong>ID3D12Heap</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="resource-binding.html">Resource Binding</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

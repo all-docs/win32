@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using the Multiple Document Interface</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This section explains how to perform tasks associated with the Multiple Document Interface.
+ms.assetid: 024744d3-362f-4162-8d0a-d4dac61de808
+title: Using the Multiple Document Interface
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using the Multiple Document Interface</h1>
+<p>This section explains how to perform the following tasks:</p>
+<ul>
+<li><a href="#registering-child-and-frame-window-classes">Registering Child and Frame Window Classes</a></li>
+<li><a href="#creating-frame-and-child-windows">Creating Frame and Child Windows</a></li>
+<li><a href="#writing-the-main-message-loop">Writing the Main Message Loop</a></li>
+<li><a href="#writing-the-frame-window-procedure">Writing the Frame Window Procedure</a></li>
+<li><a href="#writing-the-child-window-procedure">Writing the Child Window Procedure</a></li>
+<li><a href="#creating-a-child-window">Creating a Child Window</a></li>
+</ul>
+<p>To illustrate these tasks, this section includes examples from Multipad, a typical multiple-document interface (MDI) application.</p>
+<h2>Registering Child and Frame Window Classes</h2>
+<p>A typical MDI application must register two window classes: one for its frame window and one for its child windows. If an application supports more than one type of document (for example, a spreadsheet and a chart), it must register a window class for each type.</p>
+<p>The class structure for the frame window is similar to the class structure for the main window in nonâ€“MDI applications. The class structure for the MDI child windows differs slightly from the structure for child windows in nonâ€“MDI applications as follows:</p>
+<ul>
+<li>The class structure should have an icon, because the user can minimize an MDI child window as if it were a normal application window.</li>
+<li>The menu name should be <strong>NULL</strong>, because an MDI child window cannot have its own menu.</li>
+<li>The class structure should reserve extra space in the window structure. With this space, the application can associate data, such as a filename, with a particular child window.</li>
+</ul>
+<p>The following example shows how Multipad registers its frame and child window classes.</p>
+<pre><code>BOOL WINAPI InitializeApplication() 
+{ 
+    WNDCLASS wc; 
+ 
+    // Register the frame window class. 
+ 
+    wc.style         = 0; 
+    wc.lpfnWndProc   = (WNDPROC) MPFrameWndProc; 
+    wc.cbClsExtra    = 0; 
+    wc.cbWndExtra    = 0; 
+    wc.hInstance     = hInst; 
+    wc.hIcon         = LoadIcon(hInst, IDMULTIPAD); 
+    wc.hCursor       = LoadCursor((HANDLE) NULL, IDC_ARROW); 
+    wc.hbrBackground = (HBRUSH) (COLOR_APPWORKSPACE + 1); 
+    wc.lpszMenuName  = IDMULTIPAD; 
+    wc.lpszClassName = szFrame; 
+ 
+    if (!RegisterClass (&amp;wc) ) 
+        return FALSE; 
+ 
+    // Register the MDI child window class. 
+ 
+    wc.lpfnWndProc   = (WNDPROC) MPMDIChildWndProc; 
+    wc.hIcon         = LoadIcon(hInst, IDNOTE); 
+    wc.lpszMenuName  = (LPCTSTR) NULL; 
+    wc.cbWndExtra    = CBWNDEXTRA; 
+    wc.lpszClassName = szChild; 
+ 
+    if (!RegisterClass(&amp;wc)) 
+        return FALSE; 
+ 
+    return TRUE; 
+} 
+</code></pre>
+<h2>Creating Frame and Child Windows</h2>
+<p>After registering its window classes, an MDI application can create its windows. First, it creates its frame window by using the <a href="/windows/win32/api/winuser/nf-winuser-createwindowa"><strong>CreateWindow</strong></a> or <a href="/windows/win32/api/winuser/nf-winuser-createwindowexa"><strong>CreateWindowEx</strong></a> function. After creating its frame window, the application creates its client window, again by using <strong>CreateWindow</strong> or <strong>CreateWindowEx</strong>. The application should specify MDICLIENT as the client window's class name; <strong>MDICLIENT</strong> is a preregistered window class defined by the system. The <em>lpvParam</em> parameter of <strong>CreateWindow</strong> or <strong>CreateWindowEx</strong> should point to a <a href="/windows/win32/api/winuser/ns-winuser-clientcreatestruct"><strong>CLIENTCREATESTRUCT</strong></a> structure. This structure contains the members described in the following table:</p>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>hWindowMenu</strong></td>
+<td>Handle to the window menu used for controlling MDI child windows. As child windows are created, the application adds their titles to the window menu as menu items. The user can then activate a child window by clicking its title on the window menu.</td>
+</tr>
+<tr>
+<td><strong>idFirstChild</strong></td>
+<td>Specifies the identifier of the first MDI child window. The first MDI child window created is assigned this identifier. Additional windows are created with incremented window identifiers. When a child window is destroyed, the system immediately reassigns the window identifiers to keep their range contiguous.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>When a child window's title is added to the window menu, the system assigns an identifier to the child window. When the user clicks a child window's title, the frame window receives a <a href="../menurc/wm-command.html"><strong>WM_COMMAND</strong></a> message with the identifier in the <em>wParam</em> parameter. You should specify a value for the <strong>idFirstChild</strong> member that does not conflict with menu-item identifiers in the frame window's menu.</p>
+<p>Multipad's frame window procedure creates the MDI client window while processing the <a href="wm-create.html"><strong>WM_CREATE</strong></a> message. The following example shows how the client window is created.</p>
+<pre><code>case WM_CREATE: 
+    { 
+        CLIENTCREATESTRUCT ccs; 
+ 
+        // Retrieve the handle to the window menu and assign the 
+        // first child window identifier. 
+ 
+        ccs.hWindowMenu = GetSubMenu(GetMenu(hwnd), WINDOWMENU); 
+        ccs.idFirstChild = IDM_WINDOWCHILD; 
+ 
+        // Create the MDI client window. 
+ 
+        hwndMDIClient = CreateWindow( &quot;MDICLIENT&quot;, (LPCTSTR) NULL, 
+            WS_CHILD | WS_CLIPCHILDREN | WS_VSCROLL | WS_HSCROLL, 
+            0, 0, 0, 0, hwnd, (HMENU) 0xCAC, hInst, (LPSTR) &amp;ccs); 
+ 
+        ShowWindow(hwndMDIClient, SW_SHOW); 
+    } 
+    break; 
+</code></pre>
+<p>Titles of child windows are added to the bottom of the window menu. If the application adds strings to the window menu by using the <a href="/windows/win32/api/winuser/nf-winuser-appendmenua"><strong>AppendMenu</strong></a> function, these strings can be overwritten by the titles of the child windows when the window menu is repainted (whenever a child window is created or destroyed). An MDI application that adds strings to its window menu should use the <a href="/windows/win32/api/winuser/nf-winuser-insertmenua"><strong>InsertMenu</strong></a> function and verify that the titles of child windows have not overwritten these new strings.</p>
+<p>Use the <strong>WS_CLIPCHILDREN</strong> style to create the MDI client window to prevent the window from painting over its child windows.</p>
+<h2>Writing the Main Message Loop</h2>
+<p>The main message loop of an MDI application is similar to that of a non-MDI application handling accelerator keys. The difference is that the MDI message loop calls the <a href="/windows/win32/api/winuser/nf-winuser-translatemdisysaccel"><strong>TranslateMDISysAccel</strong></a> function before checking for application-defined accelerator keys or before dispatching the message.</p>
+<p>The following example shows the message loop of a typical MDI application. Note that <a href="/windows/win32/api/winuser/nf-winuser-getmessage"><strong>GetMessage</strong></a> can return -1 if there is an error.</p>
+<pre><code>MSG msg;
+BOOL bRet;
+
+while ((bRet = GetMessage(&amp;msg, (HWND) NULL, 0, 0)) != 0)
+{
+    if (bRet == -1)
+    {
+        // handle the error and possibly exit
+    }
+    else 
+    { 
+        if (!TranslateMDISysAccel(hwndMDIClient, &amp;msg) &amp;&amp; 
+                !TranslateAccelerator(hwndFrame, hAccel, &amp;msg))
+        { 
+            TranslateMessage(&amp;msg); 
+            DispatchMessage(&amp;msg); 
+        } 
+    } 
+}
+</code></pre>
+<p>The <a href="/windows/win32/api/winuser/nf-winuser-translatemdisysaccel"><strong>TranslateMDISysAccel</strong></a> function translates <a href="../inputdev/wm-keydown.html"><strong>WM_KEYDOWN</strong></a> messages into <a href="../menurc/wm-syscommand.html"><strong>WM_SYSCOMMAND</strong></a> messages and sends them to the active MDI child window. If the message is not an MDI accelerator message, the function returns <strong>FALSE</strong>, in which case the application uses the <a href="/windows/win32/api/winuser/nf-winuser-translateacceleratora"><strong>TranslateAccelerator</strong></a> function to determine whether any of the application-defined accelerator keys were pressed. If not, the loop dispatches the message to the appropriate window procedure.</p>
+<h2>Writing the Frame Window Procedure</h2>
+<p>The window procedure for an MDI frame window is similar to that of a nonâ€“MDI application's main window. The difference is that a frame window procedure passes all messages it does not handle to the <a href="/windows/win32/api/winuser/nf-winuser-defframeproca"><strong>DefFrameProc</strong></a> function rather than to the <a href="/windows/desktop/api/winuser/nf-winuser-defwindowproca"><strong>DefWindowProc</strong></a> function. In addition, the frame window procedure must also pass some messages that it does handle, including those listed in the following table.</p>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../menurc/wm-command.html"><strong>WM_COMMAND</strong></a></td>
+<td>Activates the MDI child window that the user chooses. This message is sent when the user chooses an MDI child window from the window menu of the MDI frame window. The window identifier accompanying this message identifies the MDI child window to be activated.</td>
+</tr>
+<tr>
+<td><a href="../menurc/wm-menuchar.html"><strong>WM_MENUCHAR</strong></a></td>
+<td>Opens the window menu of the active MDI child window when the user presses the ALT+ â€“ (minus) key combination.</td>
+</tr>
+<tr>
+<td><a href="../inputdev/wm-setfocus.html"><strong>WM_SETFOCUS</strong></a></td>
+<td>Passes the keyboard focus to the MDI client window, which in turn passes it to the active MDI child window.</td>
+</tr>
+<tr>
+<td><a href="wm-size.html"><strong>WM_SIZE</strong></a></td>
+<td>Resizes the MDI client window to fit in the new frame window's client area. If the frame window procedure sizes the MDI client window to a different size, it should not pass the message to the <a href="/windows/desktop/api/winuser/nf-winuser-defwindowproca"><strong>DefWindowProc</strong></a> function.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The frame window procedure in Multipad is called MPFrameWndProc. The handling of other messages by MPFrameWndProc is similar to that of nonâ€“MDI applications. <a href="../menurc/wm-command.html"><strong>WM_COMMAND</strong></a> messages in Multipad are handled by the locally defined CommandHandler function. For command messages Multipad does not handle, CommandHandler calls the <a href="/windows/win32/api/winuser/nf-winuser-defframeproca"><strong>DefFrameProc</strong></a> function. If Multipad does not use <strong>DefFrameProc</strong> by default, the user can't activate a child window from the window menu, because the <strong>WM_COMMAND</strong> message sent by clicking the window's menu item would be lost.</p>
+<h2>Writing the Child Window Procedure</h2>
+<p>Like the frame window procedure, an MDI child window procedure uses a special function for processing messages by default. All messages that the child window procedure does not handle must be passed to the <a href="/windows/win32/api/winuser/nf-winuser-defmdichildproca"><strong>DefMDIChildProc</strong></a> function rather than to the <a href="/windows/desktop/api/winuser/nf-winuser-defwindowproca"><strong>DefWindowProc</strong></a> function. In addition, some window-management messages must be passed to <strong>DefMDIChildProc</strong>, even if the application handles the message, in order for MDI to function correctly. Following are the messages the application must pass to <strong>DefMDIChildProc</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="wm-childactivate.html"><strong>WM_CHILDACTIVATE</strong></a></td>
+<td>Performs activation processing when MDI child windows are sized, moved, or displayed. This message must be passed.</td>
+</tr>
+<tr>
+<td><a href="wm-getminmaxinfo.html"><strong>WM_GETMINMAXINFO</strong></a></td>
+<td>Calculates the size of a maximized MDI child window, based on the current size of the MDI client window.</td>
+</tr>
+<tr>
+<td><a href="../menurc/wm-menuchar.html"><strong>WM_MENUCHAR</strong></a></td>
+<td>Passes the message to the MDI frame window.</td>
+</tr>
+<tr>
+<td><a href="wm-move.html"><strong>WM_MOVE</strong></a></td>
+<td>Recalculates MDI client scroll bars, if they are present.</td>
+</tr>
+<tr>
+<td><a href="../inputdev/wm-setfocus.html"><strong>WM_SETFOCUS</strong></a></td>
+<td>Activates the child window, if it is not the active MDI child window.</td>
+</tr>
+<tr>
+<td><a href="wm-size.html"><strong>WM_SIZE</strong></a></td>
+<td>Performs operations necessary for changing the size of a window, especially for maximizing or restoring an MDI child window. Failing to pass this message to the <a href="/windows/win32/api/winuser/nf-winuser-defmdichildproca"><strong>DefMDIChildProc</strong></a> function produces highly undesirable results.</td>
+</tr>
+<tr>
+<td><a href="../menurc/wm-syscommand.html"><strong>WM_SYSCOMMAND</strong></a></td>
+<td>Handles window (formerly known as system) menu commands: <strong>SC_NEXTWINDOW</strong>, <strong>SC_PREVWINDOW</strong>, <strong>SC_MOVE</strong>, <strong>SC_SIZE</strong>, and <strong>SC_MAXIMIZE</strong>.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h2>Creating a Child Window</h2>
+<p>To create an MDI child window, an application can either call the <a href="/windows/win32/api/winuser/nf-winuser-createmdiwindowa"><strong>CreateMDIWindow</strong></a> function or send an <a href="wm-mdicreate.html"><strong>WM_MDICREATE</strong></a> message to the MDI client window. (The application can use the <a href="/windows/win32/api/winuser/nf-winuser-createwindowexa"><strong>CreateWindowEx</strong></a> function with the <strong>WS_EX_MDICHILD</strong> style to create MDI child windows.) A single-threaded MDI application can use either method to create a child window. A thread in a multithreaded MDI application must use the <strong>CreateMDIWindow</strong> or <strong>CreateWindowEx</strong> function to create a child window in a different thread.</p>
+<p>The <em>lParam</em> parameter of a <a href="wm-mdicreate.html"><strong>WM_MDICREATE</strong></a> message is a far pointer to an <a href="/windows/win32/api/winuser/ns-winuser-mdicreatestructa"><strong>MDICREATESTRUCT</strong></a> structure. The structure includes four dimension members: <strong>x</strong> and <strong>y</strong>, which indicate the horizontal and vertical positions of the window, and <strong>cx</strong> and <strong>cy</strong>, which indicate the horizontal and vertical extents of the window. Any of these members may be assigned explicitly by the application, or they may be set to <strong>CW_USEDEFAULT</strong>, in which case the system selects a position, size, or both, according to a cascading algorithm. In any case, all four members must be initialized. Multipad uses <strong>CW_USEDEFAULT</strong> for all dimensions.</p>
+<p>The last member of the <a href="/windows/win32/api/winuser/ns-winuser-mdicreatestructa"><strong>MDICREATESTRUCT</strong></a> structure is the <strong>style</strong> member, which may contain style bits for the window. To create an MDI child window that can have any combination of window styles, specify the <strong>MDIS_ALLCHILDSTYLES</strong> window style. When this style is not specified, an MDI child window has the <strong>WS_MINIMIZE</strong>, <strong>WS_MAXIMIZE</strong>, <strong>WS_HSCROLL</strong>, and <strong>WS_VSCROLL</strong> styles as default settings.</p>
+<p>Multipad creates its MDI child windows by using its locally defined AddFile function (located in the source file MPFILE.C). The AddFile function sets the title of the child window by assigning the <strong>szTitle</strong> member of the window's <a href="/windows/win32/api/winuser/ns-winuser-mdicreatestructa"><strong>MDICREATESTRUCT</strong></a> structure to either the name of the file being edited or to &quot;Untitled.&quot; The <strong>szClass</strong> member is set to the name of the MDI child window class registered in Multipad's InitializeApplication function. The <strong>hOwner</strong> member is set to the application's instance handle.</p>
+<p>The following example shows the AddFile function in Multipad.</p>
+<pre><code>HWND APIENTRY AddFile(pName) 
+TCHAR * pName; 
+{ 
+    HWND hwnd; 
+    TCHAR sz[160]; 
+    MDICREATESTRUCT mcs; 
+ 
+    if (!pName) 
+    { 
+ 
+        // If the pName parameter is NULL, load the &quot;Untitled&quot; 
+        // string from the STRINGTABLE resource and set the szTitle 
+        // member of MDICREATESTRUCT. 
+ 
+        LoadString(hInst, IDS_UNTITLED, sz, sizeof(sz)/sizeof(TCHAR)); 
+        mcs.szTitle = (LPCTSTR) sz; 
+    } 
+    else 
+ 
+        // Title the window with the full path and filename, 
+        // obtained by calling the OpenFile function with the 
+        // OF_PARSE flag, which is called before AddFile(). 
+ 
+        mcs.szTitle = of.szPathName; 
+ 
+    mcs.szClass = szChild; 
+    mcs.hOwner  = hInst; 
+ 
+    // Use the default size for the child window. 
+ 
+    mcs.x = mcs.cx = CW_USEDEFAULT; 
+    mcs.y = mcs.cy = CW_USEDEFAULT; 
+ 
+    // Give the child window the default style. The styleDefault 
+    // variable is defined in MULTIPAD.C. 
+ 
+    mcs.style = styleDefault; 
+ 
+    // Tell the MDI client window to create the child window. 
+ 
+    hwnd = (HWND) SendMessage (hwndMDIClient, WM_MDICREATE, 0, 
+        (LONG) (LPMDICREATESTRUCT) &amp;mcs); 
+ 
+    // If the file is found, read its contents into the child 
+    // window's client area. 
+ 
+    if (pName) 
+    { 
+        if (!LoadFile(hwnd, pName)) 
+        { 
+ 
+            // Cannot load the file; close the window. 
+ 
+            SendMessage(hwndMDIClient, WM_MDIDESTROY, 
+                (DWORD) hwnd, 0L); 
+        } 
+    } 
+    return hwnd; 
+} 
+</code></pre>
+<p>The pointer passed in the <em>lParam</em> parameter of the <a href="wm-mdicreate.html"><strong>WM_MDICREATE</strong></a> message is passed to the <a href="/windows/win32/api/winuser/nf-winuser-createwindowa"><strong>CreateWindow</strong></a> function and appears as the first member in the <a href="/windows/win32/api/winuser/ns-winuser-createstructa"><strong>CREATESTRUCT</strong></a> structure, passed in the <a href="wm-create.html"><strong>WM_CREATE</strong></a> message. In Multipad, the child window initializes itself during <strong>WM_CREATE</strong> message processing by initializing document variables in its extra data and by creating the edit control's child window.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

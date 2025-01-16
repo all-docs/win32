@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RPC over HTTP Security</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: RPC over HTTP Security
+description: RPC over HTTP provides three types of security in addition to standard RPC security, which results in RPC over HTTP traffic being protected once by RPC, and then doubly protected by the tunneling mechanism provided by RPC over HTTP.
+ms.assetid: 3a44c72b-b74c-433a-8826-1f76ca019f40
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>RPC over HTTP Security</h1>
+<p>RPC over HTTP provides three types of security in addition to standard RPC security, which results in RPC over HTTP traffic being protected once by RPC, and then doubly protected by the tunneling mechanism provided by RPC over HTTP. For a description of standard RPC security mechanisms, see <a href="security.html">Security</a>. The RPC over HTTP tunneling mechanism adds to normal RPC security in the following manner:</p>
+<ul>
+<li>Provides security through the IIS (available for RPC over HTTP v2 only).</li>
+<li>Provides SSL encryption and RPC Proxy verification (mutual authentication). Also available in RPC over HTTP v2 only.</li>
+<li>Provides restrictions on the RPC Proxy level dictating which machines on the server network are allowed to receive RPC over HTTP calls.</li>
+</ul>
+<p>Each of these three security features is described in more detail in following sections.</p>
+<h2>IIS Authentication</h2>
+<p>RPC over HTTP can leverage the normal authentication mechanism of IIS. The virtual directory for RPC Proxy can be configured using the Rpc node under the Default Web Site in the IIS MMC snap-in:</p>
+<p><img src="images/rpc-http-1.png" alt="Screenshot showing the Rpc node under the Default Web Site in the IIS MMC snap-in." /></p>
+<p>IIS can be configured to disable anonymous access and require authentication to the virtual directory for the RPC Proxy. To do this, right click the Rpc node and select <strong>Properties</strong>. Select the <strong>Directory Security</strong> tab and click the <strong>Edit</strong> button in the <strong>Authentication and Access Control</strong> group, as illustrated here:</p>
+<p><img src="images/rpc-http-2.png" alt="Screenshot showing the RPC Properties dialog box." /></p>
+<p>Although you can use RPC over HTTP even when the RPC Proxy virtual directory allows anonymous access, Microsoft strongly recommends disabling anonymous access to that virtual directory for security reasons. Rather, for RPC over HTTP enable Basic Authentication, Windows Integrated Authentication or both. Remember that only RPC over HTTP v2 is able to authenticate against RPC Proxy requiring Basic or Windows-integrated authentication; RPC over HTTP v1 will not be able to connect if <strong>Disallow Anonymous Access</strong> is disabled. Since RPC over HTTP v2 is the more secure and robust implementation, using a version of Windows that supports it will improve the security of your installations.</p>
+<blockquote>
+<p>[!Note]<br />
+By default, the RPC proxy virtual directory is marked to allow anonymous access. However, the RPC proxy for RPC over HTTP v2 rejects requests that are not authenticated by default.</p>
+</blockquote>
+<p>Â </p>
+<h2>Traffic Encryption</h2>
+<p>RPC over HTTP can encrypt traffic between the RPC over HTTP client and the RPC proxy with SSL. The traffic between the RPC proxy and RPC over HTTP server is encrypted using normal RPC security mechanisms and does not use SSL (even if SSL between the client and the RPC proxy is chosen). This is because that portion of the traffic travels within an organization's network and behind a firewall.</p>
+<p>Traffic between the RPC over HTTP client and the RPC proxy, which generally travels over the Internet, can be encrypted with SSL in addition to which encryption mechanism was chosen for RPC. In this case, traffic on the Internet portion of the route becomes doubly encrypted. Encrypting traffic through the RPC proxy provides a secondary defense, in case the RPC proxy or other machines in the perimeter network are compromised. Since the RPC proxy cannot decrypt the secondary encryption layer, the RPC proxy does not have access to the data being sent. See <a href="rpc-over-http-deployment-recommendations.html">RPC over HTTP Deployment Recommendations</a> for more information. SSL encryption is available only with RPC over HTTP v2.</p>
+<h2>Restricting RPC over HTTP Calls to Certain Computers</h2>
+<p>The IIS security configuration is based on allowed computer and port ranges. The capability to use RPC over HTTP is controlled by two registry entries on the computer running IIS and the RPC proxy. The first entry is a flag that toggles RPC proxy functionality. The second is an optional list of computers to which the proxy can forward RPC calls.</p>
+<p>By default, a client that contacts the RPC proxy to tunnel RPC over HTTP calls cannot access any RPC server processes except the RPC over HTTP server processes running on the same machine as the RPC proxy. If the ENABLED flag is not defined or set to a zero value, IIS disables the RPC proxy. If the ENABLED flag is defined and set to a nonzero value, a client can connect to RPC over HTTP servers on the computer running IIS. To enable the client to tunnel to an RPC over HTTP server process on another computer, you must add a registry entry to the IIS computer's list of RPC over HTTP servers.</p>
+<p>RPC servers cannot accept RPC over HTTP calls unless they specifically requested RPC to listen on RPC over HTTP.</p>
+<p>The following example demonstrates how to configure the registry to allow clients to connect to servers across the Internet:</p>
+<pre><code>HKEY_LOCAL_MACHINE\
+Â Â Â Software\Microsoft\Rpc\RpcProxy\Enabled:REG_DWORD
+Â Â Â Software\Microsoft\Rpc\RpcProxy\ValidPorts:REG_SZ
+</code></pre>
+<p>The <strong>ValidPorts</strong> entry is a REG_SZ entry containing a list of computers to which the IIS RPC proxy is allowed to forward RPC calls, and the ports it should use to connect to the RPC servers. The REG_SZ entry takes the following form: Rosco:593;Rosco:2000-8000;Data*:4000-8000.</p>
+<p>In this example, IIS can forward RPC over HTTP calls to the server &quot;Rosco&quot; on ports 593 and 2000 through 8000. It can also send calls to any server whose name begins with &quot;Data&quot;. It will connect on ports 4000 through 8000. In addition, before forwarding traffic to a given port on the RPC over HTTP server, the RPC proxy performs a special packet exchange with the RPC service listening on that port to verify it is willing to accept requests over HTTP.</p>
+<p>For an example based on these example settings, if an RPC service listens on port 4500 on server &quot;Data1&quot; but has not called one of the <a href="/windows/desktop/api/Rpcdce/nf-rpcdce-rpcserveruseprotseq"><strong>RpcServerUseProtseq*</strong></a> functions with <strong>ncacn_http</strong>, it will reject the request. This behavior provides additional protection for servers that listen on an opened port due to configuration error; unless the server specifically requested to listen on RPC over HTTP, it will not receive calls originating from outside the firewall.</p>
+<p>Entries in the <strong>ValidPorts</strong> key must be an exact match of the RPC over HTTP server asked for by the client (it is not case-sensitive). To streamline processing, the RPC proxy does not perform canonicalization of the name provided by the RPC over HTTP client. Therefore, if the client asks for rosco.microsoft.com, and in <strong>ValidPorts</strong> contain Rosco only, the RPC proxy will not match the names, even though both names may refer to the same machine. Additionally, if the IP address of Rosco is 66.77.88.99, and the client asks for 66.77.88.99 but the <strong>ValidPorts</strong> key contains Rosco only, the RPC proxy will refuse the connection. If a client may ask for the RPC over HTTP server by name, or by IP address, insert both in the <strong>ValidPorts</strong> key.</p>
+<blockquote>
+<p>[!Note]<br />
+Although RPC is IPv6 enabled, the RPC proxy does not support IPv6 addresses in the <strong>ValidPorts</strong> key. If IPv6 is used to connect the RPC proxy and the RPC over HTTP server, only DNS names can be used.</p>
+</blockquote>
+<p>Â </p>
+<p>IIS reads the <strong>Enabled</strong> and <strong>ValidPorts</strong> registry entries on startup. In addition, RPC over HTTP rereads the contents of the <strong>ValidPorts</strong> key approximately every 5 minutes. If the <strong>ValidPorts</strong> entry is changed, the changes are implemented within 5 minutes.</p>
+<p><strong>RPC over HTTP v1:</strong> The WEB service must be stopped and restarted using the Internet Service Manager for new values in the registry entries to be implemented.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

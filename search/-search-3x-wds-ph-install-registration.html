@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Installing and Registering Protocol Handlers (Windows Search)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Installing a protocol handler involves copying the DLL(s) to an appropriate location in the Program Files directory, and then registering the protocol handler through the registry.
+ms.assetid: 07c40c0c-2729-462c-ba40-e05ffea2b889
+title: Installing and Registering Protocol Handlers (Windows Search)
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Installing and Registering Protocol Handlers (Windows Search)</h1>
+<p>Installing a protocol handler involves copying the DLL(s) to an appropriate location in the Program Files directory, and then registering the protocol handler through the registry. The installation application can also add a search root and scope rules to define a default crawl scope for the Shell data source.</p>
+<p>This topic is organized as follows:</p>
+<ul>
+<li><a href="#about-urls">About URLs</a></li>
+<li><a href="#implementing-protocol-handler-interfaces">Implementing Protocol Handler Interfaces</a>
+<ul>
+<li><a href="#isearchprotocol-and-isearchprotocol2">ISearchProtocol and ISearchProtocol2</a></li>
+<li><a href="#iurlaccessor-iurlaccessor2-iurlaccessor3-and-iurlaccessor4">IUrlAccessor, IUrlAccessor2, IUrlAccessor3, and IUrlAccessor4</a></li>
+<li><a href="#iprotocolhandlersite">IProtocolHandlerSite</a></li>
+</ul>
+</li>
+<li><a href="#implementing-filter-handlers-for-containers">Implementing Filter Handlers for Containers</a></li>
+<li><a href="#installing-and-registering-a-protocol-handler">Installing and Registering a Protocol Handler</a>
+<ul>
+<li><a href="#guidelines-for-registering-a-protocol-handler">Guidelines for Registering a Protocol Handler</a></li>
+<li><a href="#installing-and-registering-a-protocol-handler">Registering a Protocol Handler</a></li>
+<li><a href="#registering-the-protocol-handlers-file-type-handler">Registering the Protocol Handler's File Type Handler</a></li>
+</ul>
+</li>
+<li><a href="#ensuring-that-your-items-are-indexed">Ensuring that Your Items are Indexed</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>About URLs</h2>
+<p>Windows Search uses URLs to uniquely identify items in the hierarchy of your Shell data source. The URL that is the first node in the hierarchy is called the <a href="-search-3x-wds-extidx-csm-searchroots.html">search root</a>; Windows Search will begin indexing at the search root, requesting that the protocol handler enumerate child links for each URL.</p>
+<p>The typical URL structure is:</p>
+<pre><code>&lt;protocol&gt;:// [{user SID}/] &lt;localhost&gt;/&lt;path&gt;/[&lt;ItemID&gt;]
+</code></pre>
+<p>The URL syntax is described in the following table.</p>
+<table>
+<thead>
+<tr>
+<th>Syntax</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>&lt;protocol&gt;</td>
+<td>Identifies which protocol handler to invoke for the URL.</td>
+</tr>
+<tr>
+<td>{user SID}</td>
+<td>Identifies the user security context under which the protocol handler is called. If no user security identifier (SID) is identified, the protocol handler is called in the security context of the system service.</td>
+</tr>
+<tr>
+<td>&lt;path&gt;</td>
+<td>Defines the hierarchy of the store, where each forward slash ('/') is a separator between folder names.</td>
+</tr>
+<tr>
+<td>&lt;ItemID&gt;</td>
+<td>Represents a unique string that identifies the child item (for example, the file name).</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The Windows Search Indexer trims the final slash from URLs. As a result you cannot rely on the existence of a final slash to identify a directory versus an item. Your protocol handler must be able to handle this URL syntax. Ensure that the protocol name that you select to identify your Shell data source does not conflict with current ones. We recommend this naming convention: <code>companyName.scheme</code>.</p>
+<p>For more information on creating a Shell data source, see <a href="/previous-versions/windows/desktop/legacy/cc144093(v=vs.85)">Implementing the Basic Folder Object Interfaces</a>.</p>
+<h2>Implementing Protocol Handler Interfaces</h2>
+<p>Creating a protocol handler requires the implementation of the following three interfaces:</p>
+<ul>
+<li><a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchprotocol"><strong>ISearchProtocol</strong></a> to manage UrlAccessor objects.</li>
+<li><a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor"><strong>IUrlAccessor</strong></a> to expose properties and identify appropriate filters for items in the Shell data source.</li>
+<li><a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a> to filter proprietary files or to enumerate and filter hierarchically stored files.</li>
+</ul>
+<p>Other than the three mandatory interfaces listed, the other interfaces are optional, and you are at liberty to implement whichever optional interfaces are most appropriate for the task at hand.</p>
+<h3>ISearchProtocol and ISearchProtocol2</h3>
+<p>The SearchProtocol interfaces initialize and manage your protocol handler UrlAccessor objects. The <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchprotocol2"><strong>ISearchProtocol2</strong></a> interface is an optional extension of <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchprotocol"><strong>ISearchProtocol</strong></a>, and includes an extra method to specify more information about the user and the item.</p>
+<h3>IUrlAccessor, IUrlAccessor2, IUrlAccessor3, and IUrlAccessor4</h3>
+<p>The <a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor"><strong>IUrlAccessor</strong></a> interfaces are described in the following table.</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor"><strong>IUrlAccessor</strong></a></td>
+<td>For a specified URL, the <a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor"><strong>IUrlAccessor</strong></a> interface provides access to the properties of the item that is exposed in the URL. It can also bind those properties to a protocol handler-specific filter (that is, a filter other than the one associated with the file name).</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor2"><strong>IUrlAccessor2</strong></a> (optional)</td>
+<td>The <a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor2"><strong>IUrlAccessor2</strong></a> interface extends <a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor"><strong>IUrlAccessor</strong></a> with methods that get a code page for the item's properties and its display URL, and that get the type of item in the URL (document or directory).</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor3"><strong>IUrlAccessor3</strong></a> (optional)</td>
+<td>The <a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor3"><strong>IUrlAccessor3</strong></a> interface extends <a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor2"><strong>IUrlAccessor2</strong></a> with a method that gets an array of user SIDs, enabling the search protocol host to impersonate these users to index the item.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor4"><strong>IUrlAccessor4</strong></a> (optional)</td>
+<td>The <a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor4"><strong>IUrlAccessor4</strong></a> interface extends the functionality of the <a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor3"><strong>IUrlAccessor3</strong></a> interface with a method that identifies whether the content of the item should be indexed.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The UrlAccessor object is instantiated and initialized by a SearchProtocol object. The <a href="/windows/desktop/api/Searchapi/nn-searchapi-iurlaccessor"><strong>IUrlAccessor</strong></a> interfaces provide access to important pieces of information through the methods described in the following table.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-iurlaccessor-getlastmodified"><strong>IUrlAccessor::GetLastModified</strong></a></td>
+<td>Returns the time that the URL was last modified. If this time is more recent than the last time the indexer processed this URL, filter handlers (implementations of the <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a> interface) are called to extract the (possibly) changed data for that item. Modified times for directories are ignored.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-iurlaccessor-isdirectory"><strong>IUrlAccessor::IsDirectory</strong></a></td>
+<td>Identifies whether the URL represents a folder containing a child URLs.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-iurlaccessor-bindtostream"><strong>IUrlAccessor::BindToStream</strong></a></td>
+<td>Binds to an <a href="/windows/win32/api/objidl/nn-objidl-istream">IStream interface</a> that represents the data of a file in a custom data store.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-iurlaccessor-bindtofilter"><strong>IUrlAccessor::BindToFilter</strong></a></td>
+<td>Binds to a protocol handler-specific <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a>, which can expose properties for the item.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Searchapi/nf-searchapi-iurlaccessor4-shouldindexitemcontent"><strong>IUrlAccessor4::ShouldIndexItemContent</strong></a></td>
+<td>Identifies whether the content of the item should be indexed.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h3>IProtocolHandlerSite</h3>
+<p>The <a href="/windows/desktop/api/Searchapi/nn-searchapi-iprotocolhandlersite"><strong>IProtocolHandlerSite</strong></a> interface is used to instantiate a filter handler, which is hosted in an isolated process. The appropriate filter handler is obtained for a specified persistent class identifier (CLSID), document storage class, or file name extension. The benefit of asking the host process to bind to <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a> is that the host process can manage the process of locating an appropriate filter handler, and control the security involved in calling the handler.</p>
+<h2>Implementing Filter Handlers for Containers</h2>
+<p>If you are implementing a hierarchical protocol handler, then you must implement a filter handler for a container that enumerates child URLs. A filter handler is an implementation of the <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a> interface. The enumeration process is a loop through the <a href="/windows/win32/api/filter/nf-filter-ifilter-getchunk"><strong>IFilter::GetChunk</strong></a> and <a href="/windows/win32/api/filter/nf-filter-ifilter-getvalue"><strong>IFilter::GetValue</strong></a> methods of the <strong>IFilter</strong> interface; each child URL is exposed as the value of the property.</p>
+<p><a href="/windows/win32/api/filter/nf-filter-ifilter-getchunk"><strong>IFilter::GetChunk</strong></a> returns the properties of the container. To enumerate child URLs, <strong>IFilter::GetChunk</strong> returns either of the following:</p>
+<ul>
+<li>
+<p><a href="/previous-versions/windows/desktop/legacy/bb760177(v=vs.85)">PKEY_Search_UrlToIndex</a>:</p>
+<p>The URL to the item without the last modified time. <a href="/windows/win32/api/filter/nf-filter-ifilter-getvalue"><strong>IFilter::GetValue</strong></a> returns a PROPVARIANT containing the child URL.</p>
+</li>
+<li>
+<p><a href="../properties/props-system-search-urltoindexwithmodificationtime.html">PKEY_Search_UrlToIndexWithModificationTime</a>:</p>
+<p>The URL and the last modified time. <a href="/windows/win32/api/filter/nf-filter-ifilter-getvalue"><strong>IFilter::GetValue</strong></a> returns a PROPVARIANT containing a vector of the child URL and the last modified time.</p>
+</li>
+</ul>
+<p>Returning <a href="../properties/props-system-search-urltoindexwithmodificationtime.html">PKEY_Search_UrlToIndexWithModificationTime</a> is more efficient because the indexer can immediately determine whether the item needs to be indexed without calling the <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchprotocol-createaccessor"><strong>ISearchProtocol::CreateAccessor</strong></a> and <a href="/windows/desktop/api/Searchapi/nf-searchapi-iurlaccessor-getlastmodified"><strong>IUrlAccessor::GetLastModified</strong></a> methods.</p>
+<p>The following example code demonstrates how to return the <a href="../properties/props-system-search-urltoindexwithmodificationtime.html">PKEY_Search_UrlToIndexWithModificationTime</a> property.</p>
+<blockquote>
+<p>[!IMPORTANT]</p>
+<p>Copyright (c) Microsoft Corporation. All rights reserved.</p>
+</blockquote>
+<p>Â </p>
+<pre><code>// Parameters are assumed to be valid
+
+HRESULT GetPropVariantForUrlAndTime
+    (PCWSTR pszUrl, const FILETIME &amp;ftLastModified, PROPVARIANT **ppPropValue)
+{
+    *ppPropValue = NULL;
+
+    // Allocate the propvariant pointer.
+    size_t const cbAlloc = sizeof(**ppPropValue);
+    *ppPropValue = (PROPVARIANT *)CoTaskMemAlloc(cbAlloc));
+
+    HRESULT hr = *ppPropValue ? S_OK : E_OUTOFMEMORY;
+
+    if (SUCCEEDED(hr))
+    {
+        PropVariantInit(*ppPropValue);  // Zero init the value
+
+        // Now allocate enough memory for 2 nested PropVariants.
+        // PKEY_Search_UrlToIndexWithModificationTime is an array of two PROPVARIANTs.
+        PROPVARIANT *pVector = (PROPVARIANT *)CoTaskMemAlloc(sizeof(*pVector) * 2);
+        hr = pVector ? S_OK : E_OUTOFMEMORY;
+
+        if (SUCCEEDED(hr))
+        {
+            // Set the container PROPVARIANT to be a vector of two PROPVARIANTS.
+            (*ppPropValue)-&gt;vt = VT_VARIANT | VT_VECTOR;
+            (*ppPropValue)-&gt;capropvar.cElems = 2;
+            (*ppPropValue)-&gt;capropvar.pElems = pVector;
+            PWSTR pszUrlAlloc;
+            hr = SHStrDup(pszUrl, &amp;pszUrlAlloc);
+
+            if (SUCCEEDED(hr))
+            {
+                // Now fill the array of PROPVARIANTS.
+                // Put the pointer to the URL into the vector.
+                (*ppPropValue)-&gt;capropvar.pElems[0].vt = VT_LPWSTR; 
+                (*ppPropValue)-&gt;capropvar.pElems[0].pwszVal = pszUrlAlloc;
+
+                 // Put the FILETIME into vector.
+                (*ppPropValue)-&gt;capropvar.pElems[1].vt = VT_FILETIME; 
+                (*ppPropValue)-&gt;capropvar.pElems[1].filetime = ftLastModified;
+            }
+
+            else
+            {
+                CoTaskMemFree(pVector);
+            }
+        }
+ 
+        if (FAILED(hr))
+        {
+            CoTaskMemFree(*ppPropValue);
+            *ppPropValue = NULL;
+        }
+    }
+    return S_OK;
+}
+
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+A container <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a> component should always enumerate all child URLs even if the child URLs have not changed, because the indexer detects deletions through the enumeration process. If the date output in a <a href="../properties/props-system-search-urltoindexwithmodificationtime.html">PKEY_Search_UrlToIndexWithModificationTime</a> indicates that the data has not changed, the indexer does not update the data for that URL.</p>
+</blockquote>
+<p>Â </p>
+<h2>Installing and Registering a Protocol Handler</h2>
+<p>Installing protocol handlers involves copying the DLL(s) to an appropriate location in the Program Files directory, and then registering the DLL(s). Protocol handlers should implement self-registration for installation. The installation application can also add a search root, and scope rules to define a default crawl scope for the Shell data source, which is discussed in <a href="#ensuring-that-your-items-are-indexed">Ensuring that Your Items are Indexed</a> at the end of this topic.</p>
+<h3>Guidelines for Registering a Protocol Handler</h3>
+<p>You should follow these guidelines when registering a protocol handler:</p>
+<ul>
+<li>The installer must use either EXE or MSI installer.</li>
+<li>Release notes must be provided.</li>
+<li>An Add/Remove Programs entry must be created for each add-in installed.</li>
+<li>The installer must take over all registry settings for the particular file type or store that the current add-in understands.</li>
+<li>If a previous add-in is being overwritten, the installer should notify the user.</li>
+<li>If a newer add-in has overwritten the previous add-in, there should be the ability to restore the previous add-in's functionality and make it the default add-in for that file type again.</li>
+<li>The installer should define a default crawl scope for the indexer by adding a search root, and scope rules using the Crawl Scope Manager (CSM).</li>
+</ul>
+<h3>Registering a Protocol Handler</h3>
+<p>You need to make fourteen entries in the registry to register the protocol handler component, where:</p>
+<ul>
+<li><em>Ver_Ind_ProgID</em> is the version independent ProgID of the protocol handler implementation.</li>
+<li><em>Ver_Dep_ProgID</em> is the version dependent ProgID of the protocol handler implementation.</li>
+<li><em>CLSID_1</em> is the CLSID of the protocol handler implementation.</li>
+</ul>
+<p><strong>To register a protocol handler:</strong></p>
+<ol>
+<li>
+<p>Register the version independent ProgID with the following keys and values:</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â &lt;Ver_Ind_ProgID&gt;
+Â Â Â Â Â Â (Default) = &lt;Protocol Handler Class Description&gt;
+</code></pre>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â &lt;Ver_Ind_ProgID&gt;
+Â Â Â Â Â Â CLSID
+Â Â Â Â Â Â Â Â Â (Default) = {CLSID_1}
+</code></pre>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â &lt;Ver_Ind_ProgID&gt;
+Â Â Â Â Â Â CurVer
+Â Â Â Â Â Â Â Â Â (Default) = &lt;Ver_Dep_ProgID&gt;
+</code></pre>
+</li>
+<li>
+<p>Register the version dependent ProgID with the following keys and values:</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â &lt;Ver_Dep_ProgID&gt;
+Â Â Â Â Â Â (Default) = &lt;Protocol Handler Class Description&gt;
+</code></pre>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â &lt;Ver_Dep_ProgID&gt;
+Â Â Â Â Â Â CLSID
+Â Â Â Â Â Â Â Â Â (Default) = {CLSID_1}
+</code></pre>
+</li>
+<li>
+<p>Register the protocol handler's CLSID with the following keys and values:</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â {CLSID_1}
+Â Â Â Â Â Â (Default) = &lt;Protocol Handler Class Description&gt;
+</code></pre>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â {CLSID_1}
+Â Â Â Â Â Â {InprocServer32}
+Â Â Â Â Â Â Â Â Â (Default) = &lt;DLL Install Path&gt;
+Â Â Â Â Â Â Â Â Â Threading Model = Both
+</code></pre>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â {CLSID_1}
+Â Â Â Â Â Â &lt;ProgID&gt;
+Â Â Â Â Â Â Â Â Â (Default) = &lt;Ver_Dep_ProgID&gt;
+</code></pre>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â {CLSID_1}
+Â Â Â Â Â Â &lt;ShellFolder&gt;
+Â Â Â Â Â Â Â Â Â Attributes = dword:a0180000
+</code></pre>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â {CLSID_1}
+Â Â Â Â Â Â TypeLib
+Â Â Â Â Â Â Â Â Â (Default) = {LIBID of PH Component}
+</code></pre>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â {CLSID_1}
+Â Â Â Â Â Â VersionIndependentProgID
+Â Â Â Â Â Â Â Â Â (Default) = &lt;Ver_Ind_ProgID&gt;
+</code></pre>
+</li>
+<li>
+<p>Register the protocol handler with Windows Search. In the following example, &lt;Protocol Name&gt; is the name of the protocol itself, such as file, mapi, and so forth:</p>
+<pre><code>HKEY_LOCAL_MACHINE
+Â Â Â SOFTWARE
+Â Â Â Â Â Â Microsoft
+Â Â Â Â Â Â Â Â Â Windows Search
+Â Â Â Â Â Â Â Â Â Â Â Â ProtocolHandlers
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â &lt;Protocol Name&gt; = &lt;Ver_Dep_ProgID&gt;
+</code></pre>
+<pre><code>HKEY_CURRENT_USER
+Â Â Â SOFTWARE
+Â Â Â Â Â Â Microsoft
+Â Â Â Â Â Â Â Â Â Windows Search
+Â Â Â Â Â Â Â Â Â Â Â Â ProtocolHandlers
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â &lt;Protocol Name&gt; = &lt;Ver_Dep_ProgID&gt;
+</code></pre>
+<p>Prior to Windows Vista:</p>
+<pre><code>HKEY_CURRENT_USER
+Â Â Â SOFTWARE
+Â Â Â Â Â Â Microsoft
+Â Â Â Â Â Â Â Â Â Windows Desktop Search
+Â Â Â Â Â Â Â Â Â Â Â Â DS
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Index
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â ProtocolHandlers
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â &lt;Protocol Name&gt;
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â HasRequirements = dword:00000000
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â HasStartPage = dword:00000000
+</code></pre>
+</li>
+</ol>
+<h3>Registering the Protocol Handler's File Type Handler</h3>
+<p>You need to make two entries in the registry to register the protocol handler's file type handler (which is also known as a Shell extension).</p>
+<ol>
+<li>
+<pre><code>HKEY_LOCAL_MACHINE
+Â Â Â SOFTWARE
+Â Â Â Â Â Â Microsoft
+Â Â Â Â Â Â Â Â Â Windows
+Â Â Â Â Â Â Â Â Â Â Â Â CurrentVersion
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Explorer
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Desktop
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â NameSpace
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â {CLSID of PH Implementation}
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â (Default) = &lt;Shell Implementation Description&gt;
+</code></pre>
+</li>
+<li>
+<pre><code>HKEY_LOCAL_MACHINE
+Â Â Â SOFTWARE
+Â Â Â Â Â Â Microsoft
+Â Â Â Â Â Â Â Â Â Windows
+Â Â Â Â Â Â Â Â Â Â Â Â CurrentVersion
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Explorer
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Shell Extensions
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Approved
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â {CLSID of PH Implementation} = &lt;Shell Implementation Description&gt;
+</code></pre>
+</li>
+</ol>
+<h2>Ensuring that Your Items are Indexed</h2>
+<p>After you have implemented your protocol handler, you must specify which Shell items your protocol handler is to index. You can use the Catalog Manager to initiate re-indexing (for more information, see <a href="-search-3x-wds-mngidx-catalog-manager.html">Using the Catalog Manager</a>). Or you can also use the Crawl Scope Manager (CSM) to set up default rules indicating the URLs that you want the indexer to crawl (for more information, see <a href="-search-3x-wds-extidx-csm.html">Using the Crawl Scope Manager</a> and <a href="-search-3x-wds-extidx-csm-scoperules.html">Managing Scope Rules</a>). You can also add a search root (for more information, see <a href="-search-3x-wds-extidx-csm-searchroots.html">Managing Search Roots</a>). Another option available to you is to follow the procedure in the ReIndex sample in <a href="-search-samples-ovw.html">Windows Search Code Samples</a>.</p>
+<p>The <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchcrawlscopemanager"><strong>ISearchCrawlScopeManager</strong></a> interface provides methods that notify the search engine of containers to crawl and/or watch, and items under those containers to include or exclude when crawling or watching. In WindowsÂ 7Â and later, <a href="/windows/desktop/api/Searchapi/nn-searchapi-isearchcrawlscopemanager2"><strong>ISearchCrawlScopeManager2</strong></a> extends <strong>ISearchCrawlScopeManager</strong> with the <a href="/windows/desktop/api/Searchapi/nf-searchapi-isearchcrawlscopemanager2-getversion"><strong>ISearchCrawlScopeManager2::GetVersion</strong></a> method that gets the version, which informs clients whether the state of the CSM has changed.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Conceptual</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-extidx-prot-implementing.html">Understanding Protocol Handlers</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-phaddins.html">Developing Protocol Handlers</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-notifyingofchanges.html">Notifying the Index of Changes</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-ph-ui-extensions.html">Adding Icons and Context Menus</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-ph-ui-samplecode.html">Code Sample: Shell Extensions for Protocol Handlers</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-3x-wds-ph-search-connector.html">Creating a Search Connector for a Protocol Handler</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-search-ws-protocolhandlertesting.html">Debugging Protocol Handlers</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

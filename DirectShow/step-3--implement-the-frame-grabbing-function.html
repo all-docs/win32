@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 3: Implement the Frame-Grabbing Function</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Step 3 Implement the Frame-Grabbing Function
+ms.assetid: 4ec2e4a4-3ab0-45f1-b29a-313599fe9e7d
+title: Step 3 Implement the Frame-Grabbing Function
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Step 3: Implement the Frame-Grabbing Function</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>[This API is not supported and may be altered or unavailable in the future.]</p>
+<p>This topic is Step 3 of <a href="grabbing-a-poster-frame.html">Grabbing a Poster Frame</a>.</p>
+<p>The next step is to implement the GetBitmap function, which uses the Media Detector to grab a poster frame. Inside this function, perform the following steps:</p>
+<ol>
+<li>Create the Media Detector.</li>
+<li>Specify a media file.</li>
+<li>Examine each stream in the file. If it is a video stream, get the native dimensions of the video.</li>
+<li>Obtain a poster frame, specifying the seek time and the target dimension.</li>
+</ol>
+<p>Create the Media Detector object by calling <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a>:</p>
+<pre lang="C++"><code>CComPtr&lt;IMediaDet&gt; pDet;
+hr = pDet.CoCreateInstance(__uuidof(MediaDet));
+</code></pre>
+<p>Specify a file name, using the <a href="imediadet-put-filename.html"><strong>IMediaDet::put_Filename</strong></a> method. This method takes a <strong>BSTR</strong> parameter.</p>
+<pre lang="C++"><code>hr = pDet-&gt;put_Filename(bstrFilename);
+</code></pre>
+<p>Get the number of streams, and loop through each stream checking the media type. The <a href="imediadet-get-outputstreams.html"><strong>IMediaDet::get_OutputStreams</strong></a> method retrieves the number of streams, and the <a href="imediadet-put-currentstream.html"><strong>IMediaDet::put_CurrentStream</strong></a> method specifies which stream to examine. Exit the loop on the first video stream.</p>
+<pre lang="C++"><code>long lStreams;
+bool bFound = false;
+hr = pDet-&gt;get_OutputStreams(&amp;lStreams);
+for (long i = 0; i &lt; lStreams; i++)
+{
+    GUID major_type;
+    hr = pDet-&gt;put_CurrentStream(i);
+    hr = pDet-&gt;get_StreamType(&amp;major_type);
+    if (major_type == MEDIATYPE_Video)  // Found a video stream.
+    {
+        bFound = true;
+        break;
+    }
+}
+if (!bFound) return VFW_E_INVALIDMEDIATYPE;
+</code></pre>
+<p>If no video stream was found, the function exits.</p>
+<p>In the previous code, the <a href="imediadet-get-streamtype.html"><strong>IMediaDet::get_StreamType</strong></a> method returns just the major type GUID. This is convenient if you do not need to examine the complete media type. To get the video dimensions, however, it is necessary to examine the format block, so the full media type is needed. You can retrieve that by calling the <a href="imediadet-get-streammediatype.html"><strong>IMediaDet::get_StreamMediaType</strong></a> method, which fills in an <a href="/windows/win32/api/strmif/ns-strmif-am_media_type"><strong>AM_MEDIA_TYPE</strong></a> structure. The Media Detector converts all video streams into uncompressed format, with a <a href="/previous-versions/windows/desktop/api/amvideo/ns-amvideo-videoinfoheader"><strong>VIDEOINFOHEADER</strong></a> format block.</p>
+<pre lang="C++"><code>long width = 0, height = 0; 
+AM_MEDIA_TYPE mt;
+hr = pDet-&gt;get_StreamMediaType(&amp;mt);
+if (mt.formattype == FORMAT_VideoInfo) 
+{
+    VIDEOINFOHEADER *pVih = (VIDEOINFOHEADER*)(mt.pbFormat);
+    width = pVih-&gt;bmiHeader.biWidth;
+    height = pVih-&gt;bmiHeader.biHeight;
+    
+    // We want the absolute height, and don't care about up-down orientation.
+    if (height &lt; 0) height *= -1;
+}
+else {
+    return VFW_E_INVALIDMEDIATYPE; // This should not happen, in theory.
+}
+FreeMediaType(mt);
+</code></pre>
+<p>The <a href="imediadet-get-streammediatype.html"><strong>get_StreamMediaType</strong></a> method allocates the format block, which the caller must free. This example uses the <a href="freemediatype.html"><strong>FreeMediaType</strong></a> function from the base class library.</p>
+<p>Now you are ready to get the poster frame. First call the <a href="imediadet-getbitmapbits.html"><strong>IMediaDet::GetBitmapBits</strong></a> method with a <strong>NULL</strong> pointer for the buffer:</p>
+<pre lang="C++"><code>long lSize;
+hr = pDet-&gt;GetBitmapBits(0, &amp;lSize, NULL, width, height);
+</code></pre>
+<p>This call returns the required buffer size in the <em>lSize</em> parameter. The first parameter specifies the stream time to seek to; this example uses time zero. For the width and height, this example uses the native video dimensions obtained earlier. If you specify other values, the Media Detector will stretch the bitmap to match.</p>
+<p>If the method succeeds, allocate the buffer and call <a href="imediadet-getbitmapbits.html"><strong>GetBitmapBits</strong></a> again:</p>
+<pre lang="C++"><code>if (SUCCEEDED(hr)) 
+{
+    char *pBuffer = new char[lSize];
+    if (!pBuffer) return E_OUTOFMEMORY;
+    hr = pDet-&gt;GetBitmapBits(0, NULL, pBuffer, width, height);
+    if (FAILED(hr))
+        delete [] pBuffer;
+}
+</code></pre>
+<p>Here is the complete function, with somewhat better error handling.</p>
+<pre lang="C++"><code>HRESULT GetBitmap(LPTSTR pszFileName, BITMAPINFOHEADER** ppbmih)
+{
+    HRESULT hr;
+    CComPtr&lt;IMediaDet&gt; pDet;
+    hr = pDet.CoCreateInstance(__uuidof(MediaDet));
+    if (FAILED(hr)) return hr;
+
+    // Convert the file name to a BSTR.
+    CComBSTR bstrFilename(pszFileName);
+    hr = pDet-&gt;put_Filename(bstrFilename);
+    if (FAILED(hr)) return hr;
+
+    long lStreams;
+    bool bFound = false;
+    hr = pDet-&gt;get_OutputStreams(&amp;lStreams);
+    if (FAILED(hr)) return hr;
+
+    for (long i = 0; i &lt; lStreams; i++)
+    {
+        GUID major_type;
+        hr = pDet-&gt;put_CurrentStream(i);
+        if (SUCCEEDED(hr))
+        {
+            hr = pDet-&gt;get_StreamType(&amp;major_type);
+        }
+        if (FAILED(hr)) break;
+
+        if (major_type == MEDIATYPE_Video)
+        {
+            bFound = true;
+            break;
+        }
+    }
+    if (!bFound) return VFW_E_INVALIDMEDIATYPE;
+
+    long width = 0, height = 0; 
+    AM_MEDIA_TYPE mt;
+    hr = pDet-&gt;get_StreamMediaType(&amp;mt);
+    if (SUCCEEDED(hr)) 
+    {
+        if ((mt.formattype == FORMAT_VideoInfo) &amp;&amp; 
+            (mt.cbFormat &gt;= sizeof(VIDEOINFOHEADER)))
+        {
+            VIDEOINFOHEADER *pVih = (VIDEOINFOHEADER*)(mt.pbFormat);
+            width = pVih-&gt;bmiHeader.biWidth;
+            height = pVih-&gt;bmiHeader.biHeight;
+        
+            // We want the absolute height, don't care about orientation.
+            if (height &lt; 0) height *= -1;
+        }
+        else
+        {
+            hr = VFW_E_INVALIDMEDIATYPE; // Should not happen, in theory.
+        }
+        FreeMediaType(mt);
+    }
+    if (FAILED(hr)) return hr;
+    
+    // Find the required buffer size.
+    long size;
+    hr = pDet-&gt;GetBitmapBits(0, &amp;size, NULL, width, height);
+    if (SUCCEEDED(hr)) 
+    {
+        char *pBuffer = new char[size];
+        if (!pBuffer) return E_OUTOFMEMORY;
+        try {
+            hr = pDet-&gt;GetBitmapBits(0, NULL, pBuffer, width, height);
+            if (SUCCEEDED(hr))
+            {
+                // Delete the old image, if any.
+                if (*ppbmih) delete[] (*ppbmih);
+                (*ppbmih) = (BITMAPINFOHEADER*)pBuffer;
+            }
+            else
+            {
+                delete [] pBuffer;
+            }
+        }
+        catch (...) {
+            delete [] pBuffer;
+            return E_OUTOFMEMORY;
+        }
+    }
+    return hr;
+}
+</code></pre>
+<p>Next: <a href="step-4--draw-the-bitmap-on-the-client-area.html">Step 4: Draw the Bitmap on the Client Area</a></p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="grabbing-a-poster-frame.html">Grabbing a Poster Frame</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Protocol-Independent Out-of-Band Data</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The stream socket abstraction includes the notion of out of band (OOB) data.
+ms.assetid: 1a517885-2688-421f-9389-2d329e5c3d56
+title: Protocol-Independent Out-of-Band Data
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Protocol-Independent Out-of-Band Data</h1>
+<p>The stream socket abstraction includes the notion of out of band (OOB) data. Many protocols allow portions of incoming data to be marked as special in some way, and these special data blocks can be delivered to the user out of the normal sequence. Examples include expedited data in X.25 and other OSI protocols, and urgent data in BSD UNIX's use of TCP. The following section describes OOB data handling in a protocol-independent manner. A discussion of OOB data implemented using TCP urgent data follows the protocol-independent explanation. In each discussion, the use of <a href="/windows/desktop/api/winsock/nf-winsock-recv"><strong>recv</strong></a> also implies <a href="/windows/desktop/api/winsock/nf-winsock-recvfrom"><strong>recvfrom</strong></a>, <a href="/windows/desktop/api/Winsock2/nf-winsock2-wsarecv"><strong>WSARecv</strong></a>, and <a href="/windows/desktop/api/Winsock2/nf-winsock2-wsarecvfrom"><strong>WSARecvFrom</strong></a>, and references to <a href="/windows/desktop/api/winsock/nf-winsock-wsaasyncselect"><strong>WSAAsyncSelect</strong></a> also apply to <a href="/windows/desktop/api/Winsock2/nf-winsock2-wsaeventselect"><strong>WSAEventSelect</strong></a>.</p>
+<h2>Protocol Independent OOB Data</h2>
+<p>OOB data is a logically independent transmission channel associated with each pair of connected stream sockets. OOB data may be delivered to the user independently of normal data. The abstraction defines that the OOB data facilities must support the reliable delivery of at least one OOB data block at a time. This data block can contain at least one byte of data, and at least one OOB data block can be pending delivery to the user at any one time. For communications protocols that support in-band signaling (such as TCP, where the urgent data is delivered in sequence with the normal data), the system normally extracts the OOB data from the normal data stream and stores it separately (leaving a gap in the normal data stream). This allows users to choose between receiving the OOB data in order and receiving it out of sequence without having to buffer all the intervening data. It is possible to peek at out-of-band (OOB) data.</p>
+<p>A user can determine if any OOB data is waiting to be read using the <a href="/windows/desktop/api/winsock/nf-winsock-ioctlsocket"><strong>ioctlsocket</strong></a> or <a href="/windows/desktop/api/Winsock2/nf-winsock2-wsaioctl"><strong>WSAIoctl</strong></a> function with the <strong>SIOCATMARK</strong> IOCTL. For protocols where the concept of the position of the OOB data block within the normal data stream is meaningful, such as TCP, a Windows Sockets service provider maintains a conceptual marker indicating the position of the last byte of OOB data within the normal data stream. This is not necessary for the implementation of the <strong>ioctlsocket</strong> or <strong>WSAIoctl</strong> functions that support <strong>SIOCATMARK</strong>. The presence or absence of OOB data is all is required.</p>
+<p>For protocols where the concept of the position of the OOB data block within the normal data stream is meaningful, an application might process out-of-band data inline, as part of the normal data stream. This is achieved by setting the socket option SO_OOBINLINE with the <a href="/windows/desktop/api/winsock/nf-winsock-setsockopt"><strong>setsockopt</strong></a> function. For other protocols where the OOB data blocks are truly independent of the normal data stream, attempting to set SO_OOBINLINE results in an error. An application can use the <a href="/windows/desktop/api/winsock/nf-winsock-ioctlsocket"><strong>ioctlsocket</strong></a> or <a href="/windows/desktop/api/Winsock2/nf-winsock2-wsaioctl"><strong>WSAIoctl</strong></a> function with the <strong>SIOCATMARK</strong> IOCTL to determine whether there is any unread OOB data preceding the mark. For example, it can use this information to resynchronize with its peer by ensuring that all data up to the mark in the data stream is discarded when appropriate.</p>
+<p>With SO_OOBINLINE disabled (the default setting):</p>
+<ul>
+<li>Windows Sockets notifies an application of an FD_OOB event, if the application registered for notification with <a href="/windows/desktop/api/winsock/nf-winsock-wsaasyncselect"><strong>WSAAsyncSelect</strong></a>, in exactly the same way FD_READ is used to notify of the presence of normal data. That is, FD_OOB is posted when OOB data arrives with no OOB data previously queued. The FD_OOB is also posted when data is read using the MSG_OOB flag while some OOB data remains queued after the read operation has returned. FD_READ messages are not posted for OOB data.</li>
+<li>Windows Sockets returns from <a href="/windows/desktop/api/Winsock2/nf-winsock2-select"><strong>select</strong></a> with the appropriate <em>exceptfds</em> socket set if OOB data is queued on the socket.</li>
+<li>The application can call <a href="/windows/desktop/api/winsock/nf-winsock-recv"><strong>recv</strong></a> with MSG_OOB to read the urgent data block at any time. The block of OOB data jumps the queue.</li>
+<li>The application can call <a href="/windows/desktop/api/winsock/nf-winsock-recv"><strong>recv</strong></a> without MSG_OOB to read the normal data stream. The OOB data block does not appear in the data stream with normal data. If OOB data remains after any call to <strong>recv</strong>, Windows Sockets notifies the application with FD_OOB or with <em>exceptfds</em> when using <a href="/windows/desktop/api/Winsock2/nf-winsock2-select"><strong>select</strong></a>.</li>
+<li>For protocols where the OOB data has a position within the normal data stream, a single <a href="/windows/desktop/api/winsock/nf-winsock-recv"><strong>recv</strong></a> operation does not span that position. One <strong>recv</strong> returns the normal data before the mark, and a second <strong>recv</strong> is required to begin reading data after the mark.</li>
+</ul>
+<p>With SO_OOBINLINE enabled:</p>
+<ul>
+<li>FD_OOB messages are not posted for OOB data. OOB data is treated as normal for the purpose of the <a href="/windows/desktop/api/Winsock2/nf-winsock2-select"><strong>select</strong></a> and <a href="/windows/desktop/api/winsock/nf-winsock-wsaasyncselect"><strong>WSAAsyncSelect</strong></a> functions, and indicated by setting the socket in <em>readfds</em> or by sending an FD_READ message respectively.</li>
+<li>The application cannot call <a href="/windows/desktop/api/winsock/nf-winsock-recv"><strong>recv</strong></a> with the MSG_OOB flag set to read the OOB data block. The error code WSAEINVAL is returned.</li>
+<li>The application can call <a href="/windows/desktop/api/winsock/nf-winsock-recv"><strong>recv</strong></a> without the MSG_OOB flag set. Any OOB data is delivered in its correct order within the normal data stream. OOB data is never mixed with normal data. There must be three read requests to get past the OOB data. The first returns the normal data prior to the OOB data block, the second returns the OOB data, the third returns the normal data following the OOB data. In other words, the OOB data block boundaries are preserved.</li>
+</ul>
+<p>The <a href="/windows/desktop/api/winsock/nf-winsock-wsaasyncselect"><strong>WSAAsyncSelect</strong></a> routine is particularly well suited to handling notification of the presence of out-of-band-data when SO_OOBINLINE is off.</p>
+<h2>OOB Data in TCP</h2>
+<blockquote>
+<p>[!IMPORTANT]
+The following discussion of out-of-band data (OOB), implemented using TCP urgent data, follows the model used in the Berkeley software distribution. Users and implementers should be aware that:</p>
+</blockquote>
+<p>Â </p>
+<ul>
+<li>
+<p>There are, at present, two conflicting interpretations of <a href="https://www.ietf.org/rfc/rfc793.txt">RFC 793</a> (where the concept is introduced).</p>
+</li>
+<li>
+<p>The implementation of OOB data in the Berkeley Software Distribution (BSD) does not conform to the Host Requirements specified in <a href="https://www.ietf.org/rfc/rfc1122.txt">RFC 1122</a>.</p>
+<p>Specifically, the TCP urgent pointer in BSD points to the byte after the urgent data byte, and an RFC-compliant TCP urgent pointer points to the urgent data byte. As a result, if an application sends urgent data from a BSD-compatible implementation to an implementation compatible with RFC 1122, the receiver reads the wrong urgent data byte (it reads the byte located after the correct byte in the data stream as the urgent data byte).</p>
+<p>To minimize interoperability problems, applications writers are advised not to use OOB data unless this is required to interoperate with an existing service. Windows Sockets suppliers are urged to document the OOB semantics (BSD or RFC 1122) that their product implements.</p>
+</li>
+</ul>
+<p>The arrival of a TCP segment with the URG (for urgent) flag set indicates the existence of a single byte of OOB data within the TCP data stream. The OOB data block is one byte in size. The urgent pointer is a positive offset from the current sequence number in the TCP header that indicates the location of the OOB data block (ambiguously, as noted in the preceding). It might, therefore, point to data that has not yet been received.</p>
+<p>If SO_OOBINLINE is disabled (the default) when the TCP segment containing the byte pointed to by the urgent pointer arrives, the OOB data block (one byte) is removed from the data stream and buffered. If a subsequent TCP segment arrives with the urgent flag set (and a new urgent pointer), the OOB byte currently queued can be lost as it is replaced by the new OOB data block (as occurs in Berkeley Software Distribution). It is never replaced in the data stream, however.</p>
+<p>With SO_OOBINLINE enabled, the urgent data remains in the data stream. As a result, the OOB data block is never lost when a new TCP segment arrives containing urgent data. The existing OOB data mark is updated to the new position.</p>
+<blockquote>
+<p>[!Note]<br />
+When the SO_OOBINLINE socket option is set, the SIOCATMARK IOCTL always returns <strong>TRUE</strong>, and OOB data is returned to the user as normal data.</p>
+</blockquote>
+<p>Â </p>
+<p>Â </p>
+<p>Â </p>
+</body>

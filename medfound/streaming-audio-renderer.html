@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Streaming Audio Renderer</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The streaming audio renderer (SAR) is a media sink that renders audio.
+ms.assetid: 5884a128-597d-432b-a706-e10c894d7965
+title: Streaming Audio Renderer
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Streaming Audio Renderer</h1>
+<p>The streaming audio renderer (SAR) is a media sink that renders audio. Each instance of the SAR renders a single audio stream. To render multiple streams, use multiple instances of the SAR.</p>
+<p>To create the SAR, call either of the following functions:</p>
+<ul>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreateaudiorenderer"><strong>MFCreateAudioRenderer</strong></a>. Returns a pointer to the SAR.</li>
+<li><a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreateaudiorendereractivate"><strong>MFCreateAudioRendererActivate</strong></a>. Returns a pointer to an activation object, which can be used to create the SAR.</li>
+</ul>
+<p>The second function, which returns an activation object, is required if you are playing protected content, because the activation object must be serialized to the protected process. For clear content, you can use either function.</p>
+<p>The SAR can receive uncompressed audio in either PCM or IEEE floating-point format. If the playback rate is faster or slower than 1Ã—, the SAR automatically adjusts the pitch.</p>
+<h2>Configuring the Audio Renderer</h2>
+<p>The SAR supports several configuration attributes. The mechanism for setting these attributes depends on which function you call to create the SAR. If you use the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreateaudiorenderer"><strong>MFCreateAudioRenderer</strong></a> function, do the following:</p>
+<ol>
+<li>Create a new attribute store by calling <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreateattributes"><strong>MFCreateAttributes</strong></a>.</li>
+<li>Add the attributes to the attribute store.</li>
+<li>Pass the attribute store to the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreateaudiorenderer"><strong>MFCreateAudioRenderer</strong></a> function in the <em>pAudioAttributes</em> parameter.</li>
+</ol>
+<p>If you use the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreateaudiorendereractivate"><strong>MFCreateAudioRendererActivate</strong></a> function, the function returns a pointer to the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfattributes"><strong>IMFAttributes</strong></a> interface in the <em>ppActivate</em> parameter. Use this pointer to add the attributes.</p>
+<p>For a list of configuration attributes, see <a href="audio-renderer-attributes.html">Audio Renderer Attributes</a>.</p>
+<h2>Selecting the Audio Endpoint Device</h2>
+<p>An <em>audio endpoint device</em> is a hardware device that either renders or captures audio. Examples include speakers, headphones, microphones, and CD players. The SAR always uses an audio rendering device. There are two ways to select the device.</p>
+<p>The first approach is to enumerate the audio rendering devices on the system, using the <a href="/windows/win32/api/mmdeviceapi/nn-mmdeviceapi-immdeviceenumerator"><strong>IMMDeviceEnumerator</strong></a> interface. This interface is documented in the core audio API documentation.</p>
+<ol>
+<li>Create the device enumerator object.</li>
+<li>Use the device enumerator to enumerate audio rendering devices. Each device is represented by a pointer to the <a href="/windows/win32/api/mmdeviceapi/nn-mmdeviceapi-immdevice"><strong>IMMDevice</strong></a> interface.</li>
+<li>Select a device, based on the device properties or the user's selection.</li>
+<li>Call <a href="/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdevice-getid"><strong>IMMDevice::GetId</strong></a> to get the device identifier.</li>
+<li>Set the device identifier as the value of the <a href="mf-audio-renderer-attribute-endpoint-id-attribute.html"><strong>MF_AUDIO_RENDERER_ATTRIBUTE_ENDPOINT_ID</strong></a> attribute.</li>
+</ol>
+<p>Rather than enumerate devices, you can specify the audio device by its <em>role</em>. An audio role identifies a general category of usage. For example, the <em>console</em> role is defined for games and system notifications, while the <em>multimedia</em> role is defined for music and movies. Each role has one audio rendering device assigned to it, and the user can change these assignments. If you specify a device role, the SAR uses whatever audio device has been assigned for that role. To specify the device role, set the <a href="mf-audio-renderer-attribute-endpoint-role-attribute.html"><strong>MF_AUDIO_RENDERER_ATTRIBUTE_ENDPOINT_ROLE</strong></a> attribute.</p>
+<p>The two attributes listed in this section are mutually exclusive. If you do not set either of them, the SAR uses the audio device that is assigned to the <strong>eConsole</strong> role.</p>
+<p>The following code enumerates the audio rendering devices and assigns the first device in the list to the SAR. This example uses the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreateaudiorenderer"><strong>MFCreateAudioRenderer</strong></a> function to create the SAR.</p>
+<pre lang="C++"><code>#include &lt;mmdeviceapi.h&gt;
+
+HRESULT hr = S_OK;
+
+IMMDeviceEnumerator *pEnum = NULL;      // Audio device enumerator.
+IMMDeviceCollection *pDevices = NULL;   // Audio device collection.
+IMMDevice *pDevice = NULL;              // An audio device.
+IMFAttributes *pAttributes = NULL;      // Attribute store.
+IMFMediaSink *pSink = NULL;             // Streaming audio renderer (SAR)
+
+LPWSTR wstrID = NULL;                   // Device ID.
+
+// Create the device enumerator.
+hr = CoCreateInstance(
+    __uuidof(MMDeviceEnumerator), 
+    NULL,
+    CLSCTX_ALL, 
+    __uuidof(IMMDeviceEnumerator), 
+    (void**)&amp;pEnum
+    );
+
+// Enumerate the rendering devices.
+if (SUCCEEDED(hr))
+{
+    hr = pEnum-&gt;EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &amp;pDevices);
+}
+
+// Get ID of the first device in the list.
+if (SUCCEEDED(hr))
+{
+    hr = pDevices-&gt;Item(0, &amp;pDevice);
+}
+
+if (SUCCEEDED(hr))
+{
+    hr = pDevice-&gt;GetId(&amp;wstrID);
+}
+
+// Create an attribute store and set the device ID attribute.
+if (SUCCEEDED(hr))
+{
+    hr = MFCreateAttributes(&amp;pAttributes, 2);
+}
+
+if (SUCCEEDED(hr))
+{
+    hr = pAttributes-&gt;SetString(
+        MF_AUDIO_RENDERER_ATTRIBUTE_ENDPOINT_ID, 
+        wstrID
+        );
+}
+
+// Create the audio renderer.
+if (SUCCEEDED(hr))
+{
+    hr = MFCreateAudioRenderer(pAttributes, &amp;pSink);    
+}
+
+SAFE_RELEASE(pEnum);
+SAFE_RELEASE(pDevices);
+SAFE_RELEASE(pDevice); 
+SAFE_RELEASE(pAttributes);
+CoTaskMemFree(wstrID);
+</code></pre>
+<p>To create the activation object for the SAR, change the code that appears after the call to <a href="/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdevice-getid"><strong>IMMDevice::GetId</strong></a> to the following:</p>
+<pre lang="C++"><code>IMFActivate *pActivate = NULL;          // Activation object.
+
+if (SUCCEEDED(hr))
+{
+    hr = MFCreateAudioRendererActivate(&amp;pActivate);    
+}
+
+if (SUCCEEDED(hr))
+{
+    hr = pActivate-&gt;SetString(
+        MF_AUDIO_RENDERER_ATTRIBUTE_ENDPOINT_ID, 
+        wstrID
+        );
+}
+
+SAFE_RELEASE(pActivate);
+</code></pre>
+<h2>Selecting the Audio Session</h2>
+<p>An audio session is a group of related audio streams that an application can manage collectively. The application can control the volume level and mute state of each session. Sessions are identified by GUID. To specify the audio session for the SAR, use the <a href="mf-audio-renderer-attribute-session-id-attribute.html">MF_AUDIO_RENDERER_ATTRIBUTE_SESSION_ID</a> attribute. If you do not set this attribute, the SAR joins the default session for that process, identified by <strong>GUID_NULL</strong>.</p>
+<p>By default, an audio session is process-specific, meaning it contains only streams from the calling process. To join a cross-process session, set the <a href="mf-audio-renderer-attribute-flags-attribute.html">MF_AUDIO_RENDERER_ATTRIBUTE_FLAGS</a> attribute with the value <strong>MF_AUDIO_RENDERER_ATTRIBUTE_FLAGS_CROSSPROCESS</strong>.</p>
+<p>After you create the SAR, you use the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfaudiopolicy"><strong>IMFAudioPolicy</strong></a> interface to join the session to a group of sessions, all of which are controlled by the same volume control in the control panel. You can also use this interface to set the display name and the icon that appear in the volume control.</p>
+<h2>Controlling Volume Levels</h2>
+<p>To control the master volume level of all the streams in the SAR's audio session, use the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfsimpleaudiovolume"><strong>IMFSimpleAudioVolume</strong></a> interface. To control the volume of an individual stream, or to control the volume of individual channels within a stream, use the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfaudiostreamvolume"><strong>IMFAudioStreamVolume</strong></a> interface. Both interfaces are obtained by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfgetservice-getservice"><strong>IMFGetService::GetService</strong></a>. You can call <strong>GetService</strong> directly on the SAR, or call it on the Media Session. Volume levels are expressed as attenuation values. For each channel, the attenuation level is the product of the master volume and the channel volume.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="audio-video-playback.html">Audio/Video Playback</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

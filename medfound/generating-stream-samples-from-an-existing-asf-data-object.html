@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Generating Stream Samples from an Existing ASF Data Object</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Generating Stream Samples from an Existing ASF Data Object
+ms.assetid: eb27f122-d958-495d-98ea-8befd105a9a8
+title: Generating Stream Samples from an Existing ASF Data Object
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Generating Stream Samples from an Existing ASF Data Object</h1>
+<p>The ASF <em>splitter</em> object is a WMContainer layer component that parses the ASF Data Object of an Advanced Systems Format (ASF) file.</p>
+<p>Before passing data packets to the splitter, the application must initialize, configure, and select streams on the splitter in order to prepare it for the parsing process. For information, see <a href="creating-the-asf-splitter-object.html">Creating the ASF Splitter Object</a> and <a href="configuring-the-asf-splitter-object.html">Configuring the ASF Splitter Object</a>.</p>
+<p>The methods required for parsing the ASF Data Object are:</p>
+<ul>
+<li><a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfsplitter-parsedata"><strong>IMFASFSplitter::ParseData</strong></a> that starts the parsing process by pushing the buffer containing data packets to the splitter.</li>
+<li><a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfsplitter-getnextsample"><strong>IMFASFSplitter::GetNextSample</strong></a> that collects stream samples that were generated from the buffer passed to splitter.</li>
+</ul>
+<h2>Finding the Data Offset</h2>
+<p>Before starting the parsing process, the application must locate the Data Object within the ASF file. There are two ways to get the offset of the Data Object from the start of the file:</p>
+<ul>
+<li>
+<p>Before you have initialized the ContentInfo object, you can call the <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfcontentinfo-getheadersize"><strong>IMFASFContentInfo::GetHeaderSize</strong></a> method. This method requires a buffer that contains the first 30 bytes of the ASF header. It returns the size of the entire header that indicates the offset to the first data packet. This value also includes the Data Object header size of 50 bytes.</p>
+</li>
+<li>
+<p>After you have initialized the ContentInfo object, you can get the presentation descriptor by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfcontentinfo-generatepresentationdescriptor"><strong>IMFASFContentInfo::GeneratePresentationDescriptor</strong></a>, and then querying the presentation descriptor for the <a href="mf-pd-asf-data-start-offset-attribute.html"><strong>MF_PD_ASF_DATA_START_OFFSET</strong></a> attribute. The value of this attribute is the header size.</p>
+<blockquote>
+<p>[!Note]<br />
+The <a href="mf-pd-asf-data-length-attribute.html"><strong>MF_PD_ASF_DATA_LENGTH</strong></a> attribute on the presentation descriptor specifies the length of the ASF Data Object.</p>
+</blockquote>
+<p>Â </p>
+</li>
+</ul>
+<p>In both cases, the returned value is the size of the Header Object plus the size of the header section of the Data Object. Therefore, the resulting value is the offset to the start of the data packets in the ASF Data Object. When you begin sending data to the splitter, the data must start at this offset from the beginning of the ASF file.</p>
+<p>The offset value is passed as a parameter to <strong>ParseData</strong> that starts the parsing process.</p>
+<p>The Data Object is divided into data packets. Each data packet contains a data packet header that provides packet parsing information and the payload dataâ€”the actual digital media data. In a seeking scenario, the application might want the splitter to start parsing at a particular data packet. To do this, you can use the ASF Indexer is used to retrieve the offset. The indexer returns an offset value that starts at the packet boundary. If you are not using the indexer, make sure that the offset starts at the start of the data packet header. If an invalid offset is passed to the splitter, such as the value does not point at the packet boundary, <strong>ParseHeader</strong> and <strong>GetNextSample</strong> calls succeed but <strong>GetNextSample</strong> does not retrieve any samples and <strong>NULL</strong> is received in the <em>pSample</em> parameter.</p>
+<p>If the splitter is configured to parse in the reverse direction, then the splitter always starts parsing at the end of the media buffer that is passed to <strong>ParseData</strong>. Therefore, for reverse parsing in the call to <strong>ParseData</strong>, pass the offset in the <em>cbLength</em> parameter, which specifies the length of the data and set <em>cbBufferOffset</em> to zero.</p>
+<h2>Generating Samples for ASF Data Packets</h2>
+<p>An application starts the parsing process by passing the data packets to the splitter. The input to the splitter is a series of media buffers that contain the entire or fragments of the Data Object. The output from the splitter is a series of media samples that contain the packet data.</p>
+<p>To pass input data to the splitter, create a media buffer and fill it with data from the Data Object section of the ASF file. (For more information about media buffers, see <a href="media-buffers.html">Media Buffers</a>.) Then, pass the media buffer to the <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfsplitter-parsedata"><strong>IMFASFSplitter::ParseData</strong></a> method. You can also specify:</p>
+<ul>
+<li>The offset into the buffer where the splitter should start parsing. If the offset is zero, parsing begins at the start of the buffer. For information about setting the data offset, see the &quot;Finding the Data Offset&quot; section in this topic.</li>
+<li>The amount of data to parse. If this value is zero, the splitter parses until it reaches the end of the buffer, as specified by the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediabuffer-getcurrentlength"><strong>IMFMediaBuffer::GetCurrentLength</strong></a> method.</li>
+</ul>
+<p>The splitter generates media samples by referencing the data in the media buffers. The client can retrieve the output samples by calling <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfsplitter-getnextsample"><strong>IMFASFSplitter::GetNextSample</strong></a> in a loop until there is no more data to parse. If <strong>GetNextSample</strong> returns the ASF_STATUSFLAGS_INCOMPLETE flag in the <em>pdwStatusFlags</em> parameter, it means there are more samples to retrieve, and the application can call <strong>GetNextSample</strong> again. Otherwise, call <strong>ParseData</strong> to pass more data to the splitter. For the generated samples, the splitter sets the following information:</p>
+<ul>
+<li>The splitter sets a time stamp on all the samples that it generates. The sample time represents the presentation time and does not include the preroll time. The application can call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfsample-getsampletime"><strong>IMFSample::GetSampleTime</strong></a> to get the presentation time, in 100-nanosecond units.</li>
+<li>If a break occurs during sample generation, the splitter sets the <a href="mfsampleextension-discontinuity-attribute.html"><strong>MFSampleExtension_Discontinuity</strong></a> attribute on the first sample after the discontinuity. Discontinuities are usually caused by dropped packets on a network connection, corrupt file data, or the splitter switching from one source stream to another.</li>
+<li>For video, the splitter checks whether the sample contains a key frame. If it does, the splitter sets the <a href="mfsampleextension-cleanpoint-attribute.html"><strong>MFSampleExtension_CleanPoint</strong></a> attribute on the sample.</li>
+</ul>
+<p>If the splitter is parsing data packets that are received from a media server, it is possible that the packet length is variable. In this case, the client must call <strong>ParseData</strong> for each packet and set the <a href="mfasfsplitter-packet-boundary-attribute.html"><strong>MFASFSPLITTER_PACKET_BOUNDARY</strong></a> attribute on each buffer that is sent to the splitter. This attribute indicates to the splitter whether the media buffer contains the start of an ASF packet. Set the attribute to <strong>TRUE</strong> if the buffer contains the start of a new packet. If the buffer contains a continuation of the previous packet, set the attribute to <strong>FALSE</strong>. The buffers cannot span multiple packets.</p>
+<p>Before passing new media buffers to the splitter, the application must call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfsplitter-flush"><strong>IMFASFSplitter::Flush</strong></a>. This method resets the splitter and clears any partial frame that is waiting to be completed. This is useful in a seeking scenario where the offset is at a different location.</p>
+<h3>Example</h3>
+<p>The following code example shows how to parse data packets. This example parses from the beginning of the Data Object to the end of the stream and displays information about the samples that contain key frames. For a complete example that uses this code, see <a href="tutorial--reading-an-asf-file.html">Tutorial: Reading an ASF File</a>.</p>
+<pre lang="C++"><code>// Parse the video stream and display information about the video samples.
+//
+// The current read position of the byte stream must be at the start of the ASF
+// Data Object.
+
+HRESULT DisplayKeyFrames(IMFByteStream *pStream, IMFASFSplitter *pSplitter)
+{
+    const DWORD cbReadSize = 2048;  // Read size (arbitrary value)
+
+    IMFMediaBuffer *pBuffer = NULL;
+    IMFSample *pSample = NULL;
+
+    HRESULT hr = S_OK;
+    while (SUCCEEDED(hr))
+    {
+        // The parser must get a newly allocated buffer each time.
+        hr = MFCreateMemoryBuffer(cbReadSize, &amp;pBuffer);
+        if (FAILED(hr))
+        {
+            break;
+        }
+
+        // Read data into the buffer.
+        hr = ReadFromByteStream(pStream, pBuffer, cbReadSize);
+        if (FAILED(hr)) 
+        {
+            break; 
+        }
+
+        // Get the amound of data that was read.
+        DWORD cbData;
+        hr = pBuffer-&gt;GetCurrentLength(&amp;cbData);
+        if (FAILED(hr)) 
+        { 
+            break; 
+        }
+
+        if (cbData == 0)
+        {
+            break; // End of file.
+        }
+
+        // Send the data to the ASF splitter.
+        hr = pSplitter-&gt;ParseData(pBuffer, 0, 0);
+        SafeRelease(&amp;pBuffer);
+        if (FAILED(hr)) 
+        { 
+            break; 
+        }
+
+        // Pull samples from the splitter.
+        DWORD parsingStatus = 0;
+        do
+        {
+            WORD streamID;
+            hr = pSplitter-&gt;GetNextSample(&amp;parsingStatus, &amp;streamID, &amp;pSample);
+            if (FAILED(hr)) 
+            { 
+                break; 
+            }
+            if (pSample == NULL)
+            {
+                // No samples yet. Parse more data.
+                break;
+            }
+            if (IsRandomAccessPoint(pSample))
+            {
+                DisplayKeyFrame(pSample);
+            }
+            SafeRelease(&amp;pSample);
+            
+        } while (parsingStatus &amp; ASF_STATUSFLAGS_INCOMPLETE);
+    }
+    SafeRelease(&amp;pSample);
+    SafeRelease(&amp;pBuffer);
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="asf-splitter.html">ASF Splitter</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

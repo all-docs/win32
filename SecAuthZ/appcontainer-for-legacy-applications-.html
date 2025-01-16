@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AppContainer for legacy apps</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: AppContainer for legacy apps
+description: The AppContainer environment is a restrictive process execution environment that can be used for legacy apps in order to provide resource security.
+ms.assetid: 28498D4E-DCA4-4A85-B474-C3C328BD3022
+ms.topic: article
+ms.date: 07/24/2023</h2>
+<h1>AppContainer for legacy apps</h1>
+<p>The AppContainer environment is a restrictive process execution environment that can be used for legacy apps in order to provide resource security. An AppContainer app's process and its child processes run inside a lightweight app container where they can access only the resources that are specifically granted to them. And they're isolated using file system and registry virtualization. As a result, apps implemented in an AppContainer can't be hacked to allow malicious actions outside of the limited assigned resources.</p>
+<p>For both packaged and unpackaged apps, AppContainer represents a good, secure engineering practice.</p>
+<blockquote>
+<p>[!TIP]
+AppContainer was originally named <em>LowBox</em> (prior to the release of Windows 8). That legacy name can be seen in API names such as <a href="/windows/win32/secauthz/ntcreatelowboxtoken"><strong>NtCreateLowBoxToken</strong></a>.</p>
+</blockquote>
+<h2>Packaged apps</h2>
+<p>You can take an app that's packaged using MSIX, and easily configure it to run in the AppContainer environment. Universal Windows Platform (UWP) apps are automatically AppContainer apps. But you can also configure your desktop app that's packaged with MSIX to be an AppContainer app. It's particularly easy to use AppContainer if you package using MSIX. For more info, scenarios, and configuration examples, see <a href="/windows/msix/msix-container">MSIX AppContainer apps</a>.</p>
+<h2>Unpackaged apps</h2>
+<p>An unpackaged app can run in an app container, too. To create a process in an app container, you need an AppContainer definition (or profile). And this is why using AppContainer with a packaged app is easier. When you register a package for a user, the Deployment stack calls certain Win32 APIs for you in order to create the necessary AppContainer profile (for example, <a href="/windows/win32/api/userenv/nf-userenv-createappcontainerprofile"><strong>CreateAppContainerProfile</strong></a>). And when you unregister a package for a user, the Deployment stack does the work to remove the AppContainer profile (<a href="/windows/win32/api/userenv/nf-userenv-deleteappcontainerprofile"><strong>DeleteAppContainerProfile</strong></a>). If you're not packaging your app, then you have to do the same things by calling those Win32 APIs yourself; but it can be complicated.</p>
+<p>Most unpackaged apps that used the low integrily level now use AppContainer as a better way to provide a constrained execution environment.</p>
+<p>When an unpackaged process running in an app container calls <strong>CreateProcess</strong>, the child process typically inherits the parent's token. That token includes the integrity level (IL) and app container info. It's best not to think of a single axis with the values elevated/medium/low/appContainer on it. Instead, being or not being in an app container is a second and orthogonal property. That said, if you <em>are</em> in an app container, then the integrity level (IL) is always <em>low</em>.</p>
+<h2>Benefits of using an AppContainer environment</h2>
+<p>A key goal of The AppContainer environment is to separate app state from system state as much as possible, while maintaining compatibility with other apps. Windows accomplishes that by detecting and redirecting certain changes that it makes to the file system and registry at runtime (known as <em>virtualizing</em>). An AppContainer app writes to its own virtual registry and application data folder, and that data is deleted when the app is uninstalled or reset. Other apps don't have access to the virtual registry or virtual file system of an AppContainer app.</p>
+<p>So the AppContainer environment provides secure sandboxing of apps. Isolating the app from accessing hardware, files, registry, other apps, network connectivity, and network resources without specific permission. Individual resources can be targeted without exposing other resources. Additionally, user identity is protected by using a unique identity that is a concatenation of the user and the app; and resources are granted using a least-privilege model. That further protects against an app impersonating the user to gain access to other resources.</p>
+<h2>Example code to test for running in an app container</h2>
+<p>In a C# or C++ project, you can use the appropriate one of the code examples below to determine whether or not a process is running inside an app container. For each example, after the code has run, if the value of <em>isAppContainer</em> is non-zero (or <code>true</code>), then the process is running inside an app container.</p>
+<h3>C# (P/Invoke)</h3>
+<pre lang="csharp"><code>[DllImport(&quot;kernel32.dll&quot;, SetLastError = true)]
+public static extern IntPtr GetCurrentProcess();
+
+[DllImport(&quot;advapi32.dll&quot;, SetLastError = true)]
+[return: MarshalAs(UnmanagedType.Bool)]
+static extern bool OpenProcessToken(
+    IntPtr ProcessHandle,
+    UInt32 DesiredAccess,
+    out IntPtr TokenHandle);
+
+[DllImport(&quot;advapi32.dll&quot;, SetLastError = true)]
+[return: MarshalAs(UnmanagedType.Bool)]
+static extern bool GetTokenInformation(
+    IntPtr TokenHandle,
+    uint TokenInformationClass,
+    out uint TokenInformation,
+    uint TokenInformationLength,
+    out uint ReturnLength);
+
+UInt32 TOKEN_QUERY = 0x0008;
+IntPtr tokenHandle;
+
+if (!OpenProcessToken(
+    GetCurrentProcess(),
+    TOKEN_QUERY,
+    out tokenHandle))
+{
+    // Handle the error.
+}
+
+uint isAppContainer;
+uint TokenIsAppContainer = 29;
+uint tokenInformationLength = sizeof(uint);
+
+if (!GetTokenInformation(
+    tokenHandle,
+    TokenIsAppContainer,
+    out isAppContainer,
+    tokenInformationLength,
+    out tokenInformationLength))
+{
+    // Handle the error.
+}
+</code></pre>
+<h3>C++ (WIL)</h3>
+<p>This example uses the <a href="https://github.com/Microsoft/wil">Windows Implementation Libraries (WIL)</a>). A convenient way to install WIL is to go to Visual Studio, click <strong>Project</strong> &gt; <strong>Manage NuGet Packages...</strong> &gt; <strong>Browse</strong>, type or paste <strong>Microsoft.Windows.ImplementationLibrary</strong> in the search box, select the item in search results, and then click <strong>Install</strong> to install the package for that project.</p>
+<pre lang="cpp"><code>#include &lt;wil\token_helpers.h&gt;
+...
+bool isAppContainer = wil::get_token_is_app_container();
+</code></pre>
+<p>The functions <strong>wil::get_token_is_app_container_nothrow</strong> and <strong>wil::get_token_is_app_container_failfast</strong> offer alternative error-handling strategies. See <code>wil\token_helpers.h</code> for more info.</p>
+<h3>C++ (canonical)</h3>
+<pre lang="cpp"><code>#include &lt;windows.h&gt;
+...
+HANDLE tokenHandle{};
+DWORD isAppContainer{};
+DWORD tokenInformationLength{ sizeof(DWORD) };
+
+if (!::OpenProcessToken(
+    GetCurrentProcess(),
+    TOKEN_QUERY,
+    &amp;tokenHandle))
+{
+    // Handle the error.
+}
+
+if (!::GetTokenInformation(
+    tokenHandle,
+    TOKEN_INFORMATION_CLASS::TokenIsAppContainer,
+    &amp;isAppContainer,
+    tokenInformationLength,
+    &amp;tokenInformationLength
+))
+{
+    // Handle the error.
+}
+</code></pre>
+<h2>In this section</h2>
+<p>For more information about using AppContainer for legacy apps, see the following topics.</p>
+<table>
+<thead>
+<tr>
+<th>Topic</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="appcontainer-isolation.html">AppContainer isolation</a></td>
+<td>Isolation is the primary goal of an AppContainer execution environment. By isolating an app from unneeded resources and other apps, opportunities for malicious manipulation are minimized. Granting access based upon least-privilege prevents apps and users from accessing resources beyond their rights. Controlling access to resources protects the process, the device, and the network.</td>
+</tr>
+<tr>
+<td><a href="implementing-an-appcontainer.html">Implement an AppContainer</a></td>
+<td>An AppContainer is implemented by adding new information to the process token, changing <a href="/windows-hardware/drivers/ddi/content/wdm/nf-wdm-seaccesscheck"><strong>SeAccessCheck()</strong></a> so that all legacy, unmodified access control list (ACL) objects block access requests from AppContainer processes by default, and re-ACL objects that should be available to AppContainers.</td>
+</tr>
+</tbody>
+</table>
+</body>

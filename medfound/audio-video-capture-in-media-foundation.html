@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Audio/Video Capture in Media Foundation</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Microsoft Media Foundation supports audio and video capture.
+ms.assetid: 8a9d96f8-1096-4b66-a2ec-8a95d754ea72
+title: Audio/Video Capture in Media Foundation
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Audio/Video Capture in Media Foundation</h1>
+<p>Microsoft Media Foundation supports audio and video capture. Video capture devices are supported through the UVC class driver and must be compatible with UVC 1.1. Audio capture devices are supported through Windows Audio Session API (WASAPI).</p>
+<p>A capture device is represented in Media Foundation by a media source object, which exposes the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasource"><strong>IMFMediaSource</strong></a> interface. In most cases, the application will not use this interface directly, but will use a higher-level API such as the <a href="source-reader.html">Source Reader</a> to control the capture device.</p>
+<h2>Enumerate Capture Devices</h2>
+<p>To enumerate the capture devices on the system, perform the following steps:</p>
+<ol>
+<li>
+<p>Call the <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreateattributes"><strong>MFCreateAttributes</strong></a> function to create an attribute store.</p>
+</li>
+<li>
+<p>Set the <a href="mf-devsource-attribute-source-type.html">MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE</a> attribute to one of the following values:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_AUDCAP_GUID</strong></td>
+<td>Enumerate audio capture devices.</td>
+</tr>
+<tr>
+<td><strong>MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID</strong></td>
+<td>Enumerate video capture devices.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+</li>
+<li>
+<p>Call the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfenumdevicesources"><strong>MFEnumDeviceSources</strong></a> function. This function allocates an array of <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfactivate"><strong>IMFActivate</strong></a> pointers. Each pointer represents an activation object for one device on the system.</p>
+</li>
+<li>
+<p>Call the <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfactivate-activateobject"><strong>IMFActivate::ActivateObject</strong></a> method to create an instance of the media source from one of the activation objects.</p>
+</li>
+</ol>
+<p>The following example creates a media source for the first video capture device in the enumeration list:</p>
+<pre lang="C++"><code>HRESULT CreateVideoCaptureDevice(IMFMediaSource **ppSource)
+{
+    *ppSource = NULL;
+
+    UINT32 count = 0;
+
+    IMFAttributes *pConfig = NULL;
+    IMFActivate **ppDevices = NULL;
+
+    // Create an attribute store to hold the search criteria.
+    HRESULT hr = MFCreateAttributes(&amp;pConfig, 1);
+
+    // Request video capture devices.
+    if (SUCCEEDED(hr))
+    {
+        hr = pConfig-&gt;SetGUID(
+            MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, 
+            MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID
+            );
+    }
+
+    // Enumerate the devices,
+    if (SUCCEEDED(hr))
+    {
+        hr = MFEnumDeviceSources(pConfig, &amp;ppDevices, &amp;count);
+    }
+
+    // Create a media source for the first device in the list.
+    if (SUCCEEDED(hr))
+    {
+        if (count &gt; 0)
+        {
+            hr = ppDevices[0]-&gt;ActivateObject(IID_PPV_ARGS(ppSource));
+        }
+        else
+        {
+            hr = MF_E_NOT_FOUND;
+        }
+    }
+
+    for (DWORD i = 0; i &lt; count; i++)
+    {
+        ppDevices[i]-&gt;Release();
+    }
+    CoTaskMemFree(ppDevices);
+    return hr;
+}
+</code></pre>
+<p>You can query the activation objects for various attributes, including the following:</p>
+<ul>
+<li>The <a href="mf-devsource-attribute-friendly-name.html">MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME</a> attribute contains the display name of the device. The display name is suitable for showing to the user, but might not be unique.</li>
+<li>For video devices, the <a href="mf-devsource-attribute-source-type-vidcap-symbolic-link.html">MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK</a> attribute contains the symbolic link to the device. The symbolic link uniquely identifies the device on the system, but is not a readable string.</li>
+<li>For audio devices, the <a href="mf-devsource-attribute-source-type-audcap-endpoint-id.html">MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_AUDCAP_ENDPOINT_ID</a> attribute contains the audio endpoint ID of the device. The audio endpoint ID is similar to a symbolic link. It uniquely identifies the device on the system, but is not a readable string.</li>
+</ul>
+<p>The following example takes an array of <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfactivate"><strong>IMFActivate</strong></a> pointers and prints the display name of each device to the debug window:</p>
+<pre lang="C++"><code>void DebugShowDeviceNames(IMFActivate **ppDevices, UINT count)
+{
+    for (DWORD i = 0; i &lt; count; i++)
+    {
+        HRESULT hr = S_OK;
+        WCHAR *szFriendlyName = NULL;
+    
+        // Try to get the display name.
+        UINT32 cchName;
+        hr = ppDevices[i]-&gt;GetAllocatedString(
+            MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
+            &amp;szFriendlyName, &amp;cchName);
+
+        if (SUCCEEDED(hr))
+        {
+            OutputDebugString(szFriendlyName);
+            OutputDebugString(L&quot;\n&quot;);
+        }
+        CoTaskMemFree(szFriendlyName);
+    }
+}
+</code></pre>
+<p>If you already know the symbolic link for a video device, there is another way to create the media source for the device:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreateattributes"><strong>MFCreateAttributes</strong></a> to create an attribute store.</li>
+<li>Set the <a href="mf-devsource-attribute-source-type.html">MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE</a> attribute to <strong>MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID</strong>.</li>
+<li>Set the <a href="mf-devsource-attribute-source-type-vidcap-symbolic-link.html">MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK</a> attribute to the symbolic link.</li>
+<li>Call either the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatedevicesource"><strong>MFCreateDeviceSource</strong></a> or <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatedevicesourceactivate"><strong>MFCreateDeviceSourceActivate</strong></a> function. The former returns an <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasource"><strong>IMFMediaSource</strong></a> pointer. The latter returns an <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfactivate"><strong>IMFActivate</strong></a> pointer to an activation object. You can use the activation object to create the source. (An activation object can be marshaled to another process, so it is useful if you want to create the source in another process. For more information, see <a href="activation-objects.html">Activation Objects</a>.)</li>
+</ol>
+<p>The following example takes the symbolic link of a video device and creates a media source.</p>
+<pre lang="C++"><code>HRESULT CreateVideoCaptureDevice(PCWSTR *pszSymbolicLink, IMFMediaSource **ppSource)
+{
+    *ppSource = NULL;
+    
+    IMFAttributes *pAttributes = NULL;
+    IMFMediaSource *pSource = NULL;
+
+    HRESULT hr = MFCreateAttributes(&amp;pAttributes, 2);
+
+    // Set the device type to video.
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetGUID(
+            MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+            MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID
+            );
+    }
+
+
+    // Set the symbolic link.
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetString(
+            MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+            (LPCWSTR)pszSymbolicLink
+            );            
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = MFCreateDeviceSource(pAttributes, ppSource);
+    }
+
+    SafeRelease(&amp;pAttributes);
+    return hr;    
+}
+</code></pre>
+<p>There is an equivalent way to create an audio device from the audio endpoint ID:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreateattributes"><strong>MFCreateAttributes</strong></a> to create an attribute store.</li>
+<li>Set the <a href="mf-devsource-attribute-source-type.html">MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE</a> attribute to <strong>MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_AUDCAP_GUID</strong>.</li>
+<li>Set the <a href="mf-devsource-attribute-source-type-audcap-endpoint-id.html">MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_AUDCAP_ENDPOINT_ID</a> attribute to the endpoint ID.</li>
+<li>Call either the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatedevicesource"><strong>MFCreateDeviceSource</strong></a> or <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatedevicesourceactivate"><strong>MFCreateDeviceSourceActivate</strong></a> function.</li>
+</ol>
+<p>The following example takes an audio endpoint ID and creates a media source.</p>
+<pre lang="C++"><code>HRESULT CreateAudioCaptureDevice(PCWSTR *pszEndPointID, IMFMediaSource **ppSource)
+{
+    *ppSource = NULL;
+    
+    IMFAttributes *pAttributes = NULL;
+    IMFMediaSource *pSource = NULL;
+
+    HRESULT hr = MFCreateAttributes(&amp;pAttributes, 2);
+
+    // Set the device type to audio.
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetGUID(
+            MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+            MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_AUDCAP_GUID
+            );
+    }
+
+    // Set the endpoint ID.
+    if (SUCCEEDED(hr))
+    {
+        hr = pAttributes-&gt;SetString(
+            MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_AUDCAP_ENDPOINT_ID,
+            (LPCWSTR)pszEndPointID
+            ); 
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = MFCreateDeviceSource(pAttributes, ppSource);
+    }
+
+    SafeRelease(&amp;pAttributes);
+    return hr;    
+}
+</code></pre>
+<h2>Use a capture device</h2>
+<p>After you create the media source for a capture device, use the <a href="source-reader.html">Source Reader</a> to get data from the device. The Source Reader delivers media samples that contain the capture audio data or video frames. The next step depends on your application scenario:</p>
+<ul>
+<li>Video preview: Use Microsoft Direct3D or Direct2D to display the video.</li>
+<li>File capture: Use the <a href="sink-writer.html">Sink Writer</a> to encode the file.</li>
+<li>Audio preview: Use <a href="/windows/desktop/CoreAudio/wasapi">WASAPI</a>.</li>
+</ul>
+<p>If you want to combine audio capture with video capture, use the <em>aggregate media source</em>. The aggregate media source contains a collection of media sources and combines all of their streams into a single media source object. To create an instance of the aggregate media source, call the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreateaggregatesource"><strong>MFCreateAggregateSource</strong></a> function.</p>
+<h2>Shut down the capture device</h2>
+<p>When the capture device is no longer needed, you must shut down the device by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-imfmediasource-shutdown"><strong>Shutdown</strong></a> on the <a href="/windows/desktop/api/mfidl/nn-mfidl-imfmediasource"><strong>IMFMediaSource</strong></a> object you obtained by calling <a href="/windows/desktop/api/mfidl/nf-mfidl-mfcreatedevicesource"><strong>MFCreateDeviceSource</strong></a> or <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfactivate-activateobject"><strong>IMFActivate::ActivateObject</strong></a>. Failure to call <strong>Shutdown</strong> can result in memory leaks because the system may keep a reference to <strong>IMFMediaSource</strong> resources until <strong>Shutdown</strong> is called.</p>
+<pre lang="C++"><code>if (g_pSource)
+{
+    g_pSource-&gt;Shutdown();
+    g_pSource-&gt;Release();
+    g_pSource = NULL;
+}
+</code></pre>
+<p>If you allocated a string containing the symbolic link to a capture device, you should release this object as well.</p>
+<pre lang="C++"><code>    CoTaskMemFree(g_pwszSymbolicLink);
+    g_pwszSymbolicLink = NULL;
+
+    g_cchSymbolicLink = 0;
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="audio-video-capture.html">Audio/Video Capture</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

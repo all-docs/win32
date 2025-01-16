@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mixed-Mode DPI Scaling and DPI-aware APIs</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Mixed-Mode DPI Scaling and DPI-aware APIs
+description: Mixed-Mode DPI Scaling and DPI-aware APIs
+ms.assetid: 44AC0B29-3283-4801-90F5-3E78CCD87B9F
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Mixed-Mode DPI Scaling and DPI-aware APIs</h1>
+<h2>Sub-Process DPI Awareness Support</h2>
+<p><a href="/windows/desktop/api/Winuser/nf-winuser-setthreaddpiawarenesscontext"><strong>SetThreadDpiAwarenessContext</strong></a> enables the use of different DPI scaling modes within a single process. Prior to the Windows 10 Anniversary Update, a window s DPI awareness was bound to the process-wide DPI awareness mode (DPI unaware, System DPI aware, or Per-Monitor DPI aware). But now, with <strong>SetThreadDpiAwarenessContext</strong>, top-level windows can have a DPI awareness mode that is different than that of the process-wide DPI awareness mode. This also effects child windows, as they will always have the same DPI awareness mode as their parent window.</p>
+<p>The use of <strong>SetThreadDpiAwarenessContext</strong> enables developers to decide where they want to focus their development efforts when defining DPI-specific behavior for desktop applications. For example, an application's primary top-level window could be scaled on a per-monitor basis while secondary top-level windows could be scaled via bitmap-scaling by the operating system.</p>
+<h2>The DPI Awareness Context</h2>
+<p>Prior to the availability of <strong>SetThreadDpiAwarenessContext</strong> the DPI awareness of a process was defined either in the manifest of the application binary or via a call to <a href="/windows/desktop/api/ShellScalingAPI/nf-shellscalingapi-setprocessdpiawareness"><strong>SetProcessDpiAwareness</strong></a> during process initialization. With <strong>SetThreadDpiAwarenessContext</strong>, each thread can have an individual DPI awareness context that may be different than that of the process-wide DPI awareness mode. The DPI awareness context of a thread is represented with the <a href="dpi-awareness-context.html"><strong>DPI_AWARENESS_CONTEXT</strong></a> type, and behaves in the following ways:</p>
+<ul>
+<li>A thread can have its DPI awareness context changed at any time.</li>
+<li>Any API calls that are made after the context is changed will run in the corresponding DPI context (and may be virtualized).</li>
+<li>When a window is created, its DPI awareness is defined as the DPI awareness of the calling thread at that time.</li>
+<li>When the window procedure for a window is called, the thread is automatically switched to the DPI awareness context that was in use when the window was created.</li>
+</ul>
+<p>A common scenario for the use of <strong>SetThreadDpiAwarenessContext</strong> is as follows: Begin with a thread that is running with one context (such as <strong>DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE</strong>) temporarily switch to a different context (<strong>DPI_AWARENESS_CONTEXT_UNAWARE</strong>), create a window, and then immediately switch the thread context back to its previous state. The created window will have a DPI context of <strong>DPI_AWARENESS_CONTEXT_UNAWARE</strong>, while the calling thread s context will be restored to <strong>DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE</strong> with a subsequent call to <strong>SetThreadDpiAwarenessContext</strong>. In this scenario, the window associated with the calling thread would run with a per-monitor context (and therefore not be bitmap-stretched by the operating system) while the newly-created window would not be DPI aware (and therefore would be automatically bitmap stretched on a display set to &gt;100% scaling).</p>
+<p>Figure 1 illustrates how the main process thread executes with <strong>DPI_AWARENESS_CONTEXT_PER_MONITOR</strong>, switches its context to <strong>DPI_AWARENESS_CONTEXT_UNAWARE</strong>, and creates a new window. The newly created window then executes with a DPI awareness context of <strong>DPI_AWARENESS_CONTEXT_UNAWARE</strong> whenever a message is dispatched to it or API calls are made from it. Immediately after creating the new window the main thread is restored to its previous context of <strong>DPI_AWARENESS_CONTEXT_PER_MONITOR</strong>.</p>
+<p><img src="images/dpi-awareness-context.png" alt="diagram showing per-monitor dpi awareness in action" /></p>
+<h2>New DPI-related APIs</h2>
+<p>In addition to the support for different DPI awareness modes within a single process that <strong>SetThreadDpiAwarenessContext</strong> offers, the following DPI-specific functionality has been added for desktop applications:<!-- raw HTML omitted --> <!-- raw HTML omitted --><a href="/windows/desktop/api/Winuser/nf-winuser-enablenonclientdpiscaling"><strong>EnableNonClientDpiScaling</strong></a><!-- raw HTML omitted --> <!-- raw HTML omitted --></p>
+<blockquote>
+<p>[!Note]<br />
+The <strong>Per Monitor V2</strong> DPI awareness mode automatically enables this functionality, and calling <strong>EnableNonClientDpiScaling</strong> is therefore unnecessary in applications using it.</p>
+</blockquote>
+<p>Calling <strong>EnableNonClientDpiScaling</strong> from within a window s <strong>WM_NCCREATE</strong> handler will result in the non-client area of a top-level window automatically scaling for DPI. If the top-level window is per-monitor DPI-aware (whether because the process itself is per-monitor DPI-aware or because the window was created within a per-monitor DPI-aware thread), the caption bar, scroll bars, menus, and menu bars of these windows will DPI-scale whenever the window s DPI changes.</p>
+<!-- raw HTML omitted -->
+<p>Note that non-client areas of a child window, such as non-client scroll bars of a child edit control, will not DPI scale automatically when this API is used.</p>
+<!-- raw HTML omitted -->
+<blockquote>
+<p>[!Note]<br />
+<strong>EnableNonClientDpiScaling</strong> must be called from the <strong>WM_NCCREATE</strong> handler.</p>
+</blockquote>
+<!-- raw HTML omitted -->
+<ul>
+<li>
+<p>Several frequently-used APIs such as <a href="/windows/desktop/api/winuser/nf-winuser-getsystemmetrics"><strong>GetSystemMetrics</strong></a> do not have any context of an HWND and therefore have no way of deducing the proper DPI awareness for their return values. Calling these APIs from a thread that is running in a different DPI awareness mode or context may return values that are not scaled for the context of the calling thread. <a href="/windows/desktop/api/Winuser/nf-winuser-getsystemmetricsfordpi"><strong>GetSystemMetricForDpi</strong></a>, <a href="/windows/desktop/api/Winuser/nf-winuser-systemparametersinfofordpi"><strong>SystemParametersInfoForDpi</strong></a>, and <a href="/windows/desktop/api/Winuser/nf-winuser-adjustwindowrectexfordpi"><strong>AdjustWindowRectExForDpi</strong></a> will perform the same functionality as their DPI unaware counterparts, but take a DPI as an argument and infer the dpi awareness from the current thread's context.</p>
+</li>
+<li>
+<p><strong>GetSystemMetricForDpi</strong> and <strong>SystemParametersInfoForDpi</strong> will return DPI-scaled system metric values and system parameter values in accordance to this equation:</p>
+<p>GetSystemMetrics(...) @ dpi == GetSystemMetricsForDpi(..., dpi)</p>
+<p>Therefore, calling <strong>GetSystemMetrics</strong> (or <strong>SystemParametersInfoForDpi</strong>), while running on a device with a certain system DPI value will return the same value that their DPI aware variants (<strong>GetSystemMetricsForDpi</strong> and <strong>SystemParametersInfoForDpi</strong>) will, given the same DPI value as input.</p>
+</li>
+<li>
+<p><a href="/windows/desktop/api/Winuser/nf-winuser-adjustwindowrectexfordpi"><strong>AdjustWindowRectExForDpi</strong></a> takes an HWND and will calculate the required size of a window rectangle in a DPI-sensitive way.</p>
+</li>
+</ul>
+<!-- raw HTML omitted -->
+<!-- raw HTML omitted -->
+<table>
+<thead>
+<tr>
+<th>DPI Awareness mode of HWND</th>
+<th>Return value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Unaware</td>
+<td>96</td>
+</tr>
+<tr>
+<td>System</td>
+<td>The system DPI</td>
+</tr>
+<tr>
+<td>Per-Monitor</td>
+<td>The DPI of display that the associated top-level window is primarily located on <!-- raw HTML omitted --> (If a child window is provided, the DPI of the corresponding top-level parent window will be returned)<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<!-- raw HTML omitted -->
+<p>Calling <strong>GetDpiForSystem</strong> is more efficient than calling <a href="/windows/desktop/api/winuser/nf-winuser-getdc"><strong>GetDC</strong></a> and <a href="/windows/desktop/api/wingdi/nf-wingdi-getdevicecaps"><strong>GetDeviceCaps</strong></a> to obtain the system DPI.</p>
+<!-- raw HTML omitted -->
+<p>Any component that could be running in an application that uses sub-process DPI awareness should not assume that the system DPI is static during the lifecycle of the process. For example, if a thread that is running under <strong>DPI_AWARENESS_CONTEXT_UNAWARE</strong> awareness context queries the system DPI, the answer will be 96. However, if that same thread switched to <strong>DPI_AWARENESS_CONTEXT_SYSTEM</strong> awareness context and queried the system DPI again, the answer could be different. To avoid the use of a cached (and possibly stale) system-DPI value, use <strong>GetDpiForSystem</strong> to retrieve the system DPI relative to the DPI awareness mode of the calling thread.</p>
+<!-- raw HTML omitted -->
+</body>

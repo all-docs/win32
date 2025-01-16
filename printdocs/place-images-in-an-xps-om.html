@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Place Images in an XPS OM</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Describes how to place images in an XPS OM.
+ms.assetid: 4c7e3630-7331-47d7-91cc-da3cc2b7f8c9
+title: Place Images in an XPS OM
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Place Images in an XPS OM</h1>
+<p>Describes how to place images in an XPS OM.</p>
+<p>To place images in an XPS OM, create a path object that defines the location and outline of an image, then use an image brush to fill the path. Add the created path object to the page's or canvas' list of visual objects, so that it can be rendered with the other visual content.</p>
+<p>Before using these code examples in your program, read the disclaimer in <a href="common-xps-document-tasks.html">Common XPS Document Programming Tasks</a>.</p>
+<h2>Code Example</h2>
+<h3>Create image resource</h3>
+<p>If the source image is not available in the XPS OM as an image resource, first create the image resource:</p>
+<pre lang="C++"><code>    HRESULT                hr = S_OK;
+    IStreamPtr             imageStream; // the resulting image stream
+    IOpcPartUri            *imagePartUri;
+    IXpsOMImageResource    *imageResource;
+
+     XPS_RECT    rect = {0.0f, 0.0f, 0.0f, 0.0f}; // set to image size
+
+    hr = xpsFactory-&gt;CreateReadOnlyStreamOnFile ( 
+            imageFileName, &amp;imageStream );
+
+    hr = xpsFactory-&gt;CreatePartUri( imagePartName, &amp;imagePartUri );
+
+    imageType; // set to type of image being read in
+    hr = xpsFactory-&gt;CreateImageResource ( 
+        imageStream,
+        imageType,
+        imagePartUri,
+        &amp;imageResource);
+    imagePartUri-&gt;Release();
+    imageStream-&gt;Release();
+
+    // imageResource can now be used by other parts in the XPS OM.
+</code></pre>
+<h3>Place image into visual collection</h3>
+<p>If the source image is available in the XPS OM as an image resource, it can be used to create an image brush object and added as the fill brush to the path that describes the image location and size in the page.</p>
+<pre lang="C++"><code>    // These variables are initialized outside of this code example,
+    //  for example, as the parameters of a method or from some 
+    //  preceding program code.
+
+    // dimensions of the image in pixels
+    XPS_SIZE    bmpDim = {0,0} ; 
+
+    // DPI resolution values obtained from image
+    FLOAT        dpiX = 96.0f;
+    FLOAT        dpiY = 96.0f;
+    
+    // initialize viewport values 
+    XPS_RECT    viewPort = {0.0,0.0,0.0,0.0};
+
+    // initialize viewbox values
+    XPS_RECT    viewBox = {0.0,0.0,0.0,0.0}; 
+
+    // These are part of this code example.
+    IXpsOMPath *imageRectPath;
+    IXpsOMImageBrush *imageBrush;
+    IXpsOMVisualCollection *pageVisuals;
+
+    // Describe image source dimensions and set viewbox to be the 
+    // entire image DIP width of image. 
+    //  Example: 
+    //    600 image pixels, 300 dpi -&gt; 2 inches -&gt; 2 * 96 = 192 DIP width
+    viewBox.width = FLOAT((double)bmpDim.width * 96.0 / dpiX); 
+    viewBox.height = FLOAT((double)bmpDim.height * 96.0 / dpiY);
+
+    // Describe the size and position of the image destination.
+    //  rect is an XPS_RECT structure that is initialized outside
+    //  of this sample for example, it might be passed in as a parameter.
+
+    // destination rectangle
+    viewPort.x = rect.x;
+    viewPort.y = rect.y;
+    viewPort.width = rect.width;
+    viewPort.height = rect.height;
+
+    // Create the image brush.
+    hr = xpsFactory-&gt;CreateImageBrush(imageResource, &amp;viewBox, &amp;viewPort, 
+        reinterpret_cast&lt;IXpsOMImageBrush**&gt;(&amp;imageBrush));
+
+    // Create the path that describes the outline of the image on the page.
+    //  This step uses the function described in the next code example.
+    hr = CreateRectanglePath(xpsFactory, &amp;rect,
+        reinterpret_cast&lt;IXpsOMPath**&gt;(&amp;imageRectPath));
+
+    // Set the accessibility description for the path object as required.
+    hr = imageRectPath-&gt;SetAccessibilityShortDescription( shortDescText );
+
+    // Set the image brush to be the fill brush for this path.
+    hr = imageRectPath-&gt;SetFillBrushLocal( imageBrush );
+
+    // Get the list of visuals for this page...
+    hr = xpsPage-&gt;GetVisuals( &amp;pageVisuals );
+
+    // ...and add the completed path to the list.
+    hr = pageVisuals-&gt;Append( imageRectPath );
+
+    // Release locally created interfaces.
+    if (NULL != pageVisuals) pageVisuals-&gt;Release();
+    if (NULL != imageRectPath) imageRectPath-&gt;Release();
+    if (NULL != imageBrush) imageBrush-&gt;Release();
+
+</code></pre>
+<h3>Create path object for image</h3>
+<p>The following method accepts an <strong>XPS_RECT</strong> structure and creates a rectangular path.</p>
+<pre lang="C++"><code>HRESULT 
+CreateRectanglePath(
+    __in  IXpsOMObjectFactory   *xpsFactory,
+    __in  const XPS_RECT        *rect,
+    __out IXpsOMPath            **rectPath
+)
+{
+   
+    HRESULT hr = S_OK;
+
+    IXpsOMGeometryFigure           *rectFigure;
+    IXpsOMGeometry                 *imageRectGeometry;
+    IXpsOMGeometryFigureCollection *geomFigureCollection;
+
+    // Define start point and three of the four sides of the rectangle.
+    //  The fourth side is implied by setting the path type to CLOSED.
+    XPS_POINT            startPoint = {rect-&gt;x, rect-&gt;y};
+    XPS_SEGMENT_TYPE     segmentTypes[3] = {
+        XPS_SEGMENT_TYPE_LINE, 
+        XPS_SEGMENT_TYPE_LINE, 
+        XPS_SEGMENT_TYPE_LINE
+    };
+    FLOAT segmentData[6] = {
+        rect-&gt;x,              rect-&gt;y+rect-&gt;height, 
+        rect-&gt;x+rect-&gt;width,  rect-&gt;y+rect-&gt;height, 
+        rect-&gt;x+rect-&gt;width,  rect-&gt;y 
+    };
+    BOOL segmentStrokes[3] = {
+        TRUE, TRUE, TRUE
+    };
+
+    // Create a closed geometry figure using the three 
+    //  segments defined above.
+
+    hr = xpsFactory-&gt;CreateGeometryFigure( &amp;startPoint, &amp;rectFigure );
+    hr = rectFigure-&gt;SetIsClosed( TRUE );
+    hr = rectFigure-&gt;SetIsFilled( TRUE );
+    hr = rectFigure-&gt;SetSegments( 3, 6, 
+            segmentTypes, segmentData, segmentStrokes );
+
+    // Create a geometry that consists of the figure created above.
+    hr = xpsFactory-&gt;CreateGeometry( &amp;imageRectGeometry );
+    hr = imageRectGeometry-&gt;GetFigures( &amp;geomFigureCollection );
+    hr = geomFigureCollection-&gt;Append( rectFigure );
+
+    // Create the path that consists of the geometry created above
+    //  and return the pointer in the parameter passed in to the function.
+    hr = xpsFactory-&gt;CreatePath( reinterpret_cast&lt;IXpsOMPath**&gt;(rectPath) );
+    hr = (*rectPath)-&gt;SetGeometryLocal( imageRectGeometry );
+
+    // The calling method will release these interfaces when 
+    //  it is done with them.
+
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Next Steps</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="navigate-the-xps-om.html">Navigate the XPS OM</a></p>
+<!-- raw HTML omitted -->
+<p><a href="write-text-to-an-xps-om.html">Write Text to an XPS OM</a></p>
+<!-- raw HTML omitted -->
+<p><a href="draw-graphics-in-an-xps-om.html">Draw Graphics in an XPS OM</a></p>
+<!-- raw HTML omitted -->
+<p><a href="write-an-xps-om-to-an-xps-document.html">Write an XPS OM to an XPS Document</a></p>
+<!-- raw HTML omitted -->
+<p><a href="print-an-xps-om.html">Print an XPS OM</a></p>
+<!-- raw HTML omitted -->
+<p><strong>Used in This Page</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="/previous-versions/windows/desktop/api/msopc/nn-msopc-iopcparturi"><strong>IOpcPartUri</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsomimagebrush"><strong>IXpsOMImageBrush</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsomimageresource"><strong>IXpsOMImageResource</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsomgeometry"><strong>IXpsOMGeometry</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsomgeometryfigure"><strong>IXpsOMGeometryFigure</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsomgeometryfigurecollection"><strong>IXpsOMGeometryFigureCollection</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsomobjectfactory"><strong>IXpsOMObjectFactory</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsompackage"><strong>IXpsOMPackage</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsompath"><strong>IXpsOMPath</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsomvisualcollection"><strong>IXpsOMVisualCollection</strong></a></p>
+<!-- raw HTML omitted -->
+<p><strong>For More Information</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="xps-object-model-initialization.html">Initialize an XPS OM</a></p>
+<!-- raw HTML omitted -->
+<p><a href="xps-programming-reference.html">XPS Document API Reference</a></p>
+<!-- raw HTML omitted -->
+<p><a href="https://en.wikipedia.org/wiki/Open_XML_Paper_Specification">XML Paper Specification</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Invoking Creation Wizards from Your Application</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Invoking Creation Wizards from Your Application
+description: An application or component can use the same directory service object creation wizards used by the Active Directory administrative MMC snap-ins. This is accomplished with the IDsAdminCreateObj interface.
+ms.assetid: be4b6101-f795-403b-b93e-960759ac4f14
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Invoking Creation Wizards from Your Application AD
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Invoking Creation Wizards from Your Application</h1>
+<p>An application or component can use the same directory service object creation wizards used by the Active Directory administrative MMC snap-ins. This is accomplished with the <a href="/windows/desktop/api/DSAdmin/nn-dsadmin-idsadmincreateobj"><strong>IDsAdminCreateObj</strong></a> interface.</p>
+<h2>Using the IDsAdminCreateObj Interface</h2>
+<p>An application or component (client) creates an instance of the <a href="/windows/desktop/api/DSAdmin/nn-dsadmin-idsadmincreateobj"><strong>IDsAdminCreateObj</strong></a> interface by calling <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> with the <strong>CLSID_DsAdminCreateObj</strong> class identifier. COM must be initialized by calling <a href="/windows/win32/api/objbase/nf-objbase-coinitialize"><strong>CoInitialize</strong></a> before <strong>CoCreateInstance</strong> is called.</p>
+<p>The client then calls <a href="/windows/desktop/api/DSAdmin/nf-dsadmin-idsadmincreateobj-initialize"><strong>IDsAdminCreateObj::Initialize</strong></a> to initialize the <a href="/windows/desktop/api/DSAdmin/nn-dsadmin-idsadmincreateobj"><strong>IDsAdminCreateObj</strong></a> object. <strong>IDsAdminCreateObj::Initialize</strong> accepts an <a href="/windows/desktop/api/iads/nn-iads-iadscontainer"><strong>IADsContainer</strong></a> interface pointer that represents the container that the object should be created in, and the class name of the object to be created. When creating user objects, it is also possible to specify an existing object that will be copied to the new object.</p>
+<p>When the <a href="/windows/desktop/api/DSAdmin/nn-dsadmin-idsadmincreateobj"><strong>IDsAdminCreateObj</strong></a> object has been initialized, the client calls <a href="/windows/desktop/api/DSAdmin/nf-dsadmin-idsadmincreateobj-createmodal"><strong>IDsAdminCreateObj::CreateModal</strong></a> to display the object creation wizard.</p>
+<p>Unlike most class and interface identifiers, <strong>CLSID_DsAdminCreateObj</strong> and <strong>IID_ADsAdminCreateObj</strong> are not defined in a library file. This means you must define the storage for these identifiers within your application. To do this, you must include the file initguid.h immediately before including dsadmin.h. The initguid.h file must only be included once in an application. The following code example shows how to include these files.</p>
+<pre lang="C++"><code>#include &lt;initguid.h&gt;
+#include &lt;dsadmin.h&gt;
+</code></pre>
+<p>The following code example shows how the <a href="/windows/desktop/api/DSAdmin/nn-dsadmin-idsadmincreateobj"><strong>IDsAdminCreateObj</strong></a> interface can be created and used to start the object creation wizard for a user object.</p>
+<pre lang="C++"><code>//  Add activeds.lib to your project
+//  Add adsiid.lib to your project
+
+#include &quot;stdafx.h&quot;
+#include &lt;atlbase.h&gt;
+#include &lt;atlstr.h&gt;
+#include &quot;activeds.h&quot;
+#include &lt;initguid.h&gt; // Only include this in one source file
+#include &lt;dsadmin.h&gt;
+
+//  GetUserContainer() function binds to the user container
+IADsContainer* GetUserContainer(void)
+{
+    IADsContainer *pUsers = NULL;
+    HRESULT hr;
+    IADs *pRoot;
+
+    //  Bind to the rootDSE.
+    hr = ADsGetObject(L&quot;LDAP://rootDSE&quot;, IID_IADs, (LPVOID*)&amp;pRoot);
+
+    if(SUCCEEDED(hr))
+    {
+        VARIANT var;
+        VariantInit(&amp;var);
+        CComBSTR sbstr(L&quot;defaultNamingContext&quot;);
+
+        //  Get the default naming context (domain) DN.
+        hr = pRoot-&gt;Get(sbstr, &amp;var);
+        if(SUCCEEDED(hr) &amp;&amp; (VT_BSTR == var.vt))
+        {
+            CStringW sstr(L&quot;LDAP://CN=Users,&quot;);
+            sstr += var.bstrVal;
+
+            //  Bind to the User container.
+            hr = ADsGetObject(sstr, IID_IADsContainer, (LPVOID*)&amp;pUsers);
+
+            VariantClear(&amp;var);
+        }
+    }
+
+    return pUsers;
+}
+
+
+//  The LaunchNewUserWizard() function launches the user wizard.
+HRESULT LaunchNewUserWizard(IADs** ppAdsOut)
+{
+    if(NULL == ppAdsOut)
+    {
+        return E_INVALIDARG;
+    }
+
+    HRESULT hr;
+    IDsAdminCreateObj* pCreateObj = NULL;
+
+    hr = ::CoCreateInstance(CLSID_DsAdminCreateObj,
+                            NULL, 
+                            CLSCTX_INPROC_SERVER,
+                            IID_IDsAdminCreateObj,
+                            (void**)&amp;pCreateObj);
+
+    if(SUCCEEDED(hr))
+    {
+        IADsContainer *pContainer;
+
+        pContainer = GetUserContainer();
+
+        if(pContainer)
+        {
+            hr = pCreateObj-&gt;Initialize(pContainer, NULL, L&quot;user&quot;);
+            if(SUCCEEDED(hr))
+            {
+                HWND    hwndParent;
+
+                hwndParent = GetDesktopWindow();
+
+                hr = pCreateObj-&gt;CreateModal(hwndParent, ppAdsOut);
+            }
+
+            pContainer-&gt;Release();
+        }
+
+        pCreateObj-&gt;Release();
+    }
+
+    return hr;    
+}
+
+//  Entry point to the application
+int main(void)
+{
+    HRESULT hr;
+    IADs *pAds = NULL;
+
+    CoInitialize(NULL);
+
+    hr = LaunchNewUserWizard(&amp;pAds);
+    if((S_OK == hr) &amp;&amp; (NULL != pAds))
+    {
+        pAds-&gt;Release();
+    }
+
+    CoUninitialize();
+
+    return 0;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

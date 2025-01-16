@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Direct3D-Aware MFTs</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to implement a Direct3D-aware Media Foundation transform (MFT) for video.
+ms.assetid: 8ec7e678-8477-41fa-9726-54df5ed187cd
+title: Direct3D-Aware MFTs
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Direct3D-Aware MFTs</h1>
+<p>This topic describes how to implement a <em>Direct3D-aware</em> Media Foundation transform (MFT) for video.</p>
+<p>An video MFT is considered <em>Direct3D-aware</em> if it can process samples that contain Direct3D surfaces. The typical reason for supporting Direct3D in a video MFT is to enable hardware-accelerated decoding, using DirectX Video Acceleration (DXVA).</p>
+<p>This topic describes the steps that are required to make your MFT Direct3D-aware. This topic does not cover the mechanics of DXVA decoding. For information about DXVA, see <a href="directx-video-acceleration-2-0.html">DirectX Video Acceleration 2.0</a>.</p>
+<blockquote>
+<p>[!IMPORTANT]
+Beginning in WindowsÂ 8, <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfdxgidevicemanager"><strong>IMFDXGIDeviceManager</strong></a> can be used instead of the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirect3ddevicemanager9"><strong>IDirect3DDeviceManager9</strong></a>. For Windows Store apps, you must use <strong>IMFDXGIDeviceManager</strong> and Microsoft Direct3DÂ 11. For more info, see the <a href="direct3d-11-video-apis.html">Direct3D 11 Video APIs</a>.</p>
+</blockquote>
+<p>Â </p>
+<ol>
+<li>Implement the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getattributes"><strong>IMFTransform::GetAttributes</strong></a> method. This method returns a pointer to an attribute store.</li>
+<li>The MFT must set the value of the <a href="mf-sa-d3d-aware-attribute.html"><strong>MF_SA_D3D_AWARE</strong></a> attribute to <strong>TRUE</strong> on its own attribute store. Beginning in WindowsÂ 8, if using Direct3D 11 use <a href="mf-sa-d3d11-aware.html">MF_SA_D3D11_AWARE</a>.</li>
+<li>During format negotiation, if the <a href="mf-sa-d3d-aware-attribute.html"><strong>MF_SA_D3D_AWARE</strong></a> (or <a href="mf-sa-d3d11-aware.html">MF_SA_D3D11_AWARE</a> if using Direct3DÂ 11) attribute is <strong>TRUE</strong>, the client may send the <a href="mft-message-set-d3d-manager.html"><strong>MFT_MESSAGE_SET_D3D_MANAGER</strong></a> message to the MFT. The <em>ulParam</em> event parameter is a pointer to the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirect3ddevicemanager9"><strong>IDirect3DDeviceManager9</strong></a> interface. Beginning in WindowsÂ 8, you can use <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfdxgidevicemanager"><strong>IMFDXGIDeviceManager</strong></a> instead of <strong>IDirect3DDeviceManager9</strong>. The client is not required to send this message.</li>
+<li>The MFT calls <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirect3ddevicemanager9-getvideoservice"><strong>IDirect3DDeviceManager9::GetVideoService</strong></a> to query for the DXVA service it needs. Beginning in WindowsÂ 8, if <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfdxgidevicemanager"><strong>IMFDXGIDeviceManager</strong></a> was used the MFT calls <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfdxgidevicemanager-getvideoservice"><strong>IMFDXGIDeviceManager::GetVideoService</strong></a>. Typically a decoder would query for <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoderservice"><strong>IDirectXVideoDecoderService</strong></a>, and a video processor would query for <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideoprocessorservice"><strong>IDirectXVideoProcessorService</strong></a>.</li>
+<li>Assuming the previous step is successful, the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getinputavailabletype"><strong>IMFTransform::GetInputAvailableType</strong></a> and <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getoutputavailabletype"><strong>IMFTransform::GetOutputAvailableType</strong></a> methods must return DXVA-compatible formats.</li>
+<li>The client configures the media types on the MFT. If a media type is not compatible with DXVA, the MFT must return the error code <strong>MF_E_UNSUPPORTED_D3D_TYPE</strong>.</li>
+<li>At this point, there are two options, depending on whether the client finds a suitable DXVA format.
+<ul>
+<li>If the client successfully configures a DXVA format, it may begin processing. At this point, the MFT can use DXVA for processing, or fall back to software processing.</li>
+<li>Alternatively, if the client does not find an acceptable DXVA format, the client may send another <a href="mft-message-set-d3d-manager.html"><strong>MFT_MESSAGE_SET_D3D_MANAGER</strong></a> message, this time setting <em>ulParam</em> to <strong>NULL</strong>. The MFT must release the <a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirect3ddevicemanager9"><strong>IDirect3DDeviceManager9</strong></a> pointer (the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfdxgidevicemanager"><strong>IMFDXGIDeviceManager</strong></a> pointer, if <strong>IMFDXGIDeviceManager</strong> was used) and any other DXVA interfaces, and revert to software processing. At this point, the MFT must not use DXVA processing.</li>
+</ul>
+</li>
+</ol>
+<p>A Direct3D-aware MFT must be prepared to handle samples that contain a Direct3D surface. The sample will contain exactly one media buffer. To get the Direct3D surface from the buffer, call the <a href="/windows/desktop/api/mfidl/nf-mfidl-mfgetservice"><strong>MFGetService</strong></a> function and specify the <strong>MR_BUFFER_SERVICE</strong> service. For more information, see <a href="directx-surface-buffer.html">DirectX Surface Buffer</a>.</p>
+<p>An MFT that uses DXVA must allocate its own output samples, as follows:</p>
+<ol>
+<li>In the <a href="/windows/desktop/api/mftransform/nf-mftransform-imftransform-getoutputstreaminfo"><strong>IMFTransform::GetOutputStreamInfo</strong></a> method, set the <strong>MFT_OUTPUT_STREAM_PROVIDES_SAMPLES</strong> flag.</li>
+<li>Create a pool of DXVA surfaces, as described in the DXVA specification.</li>
+<li>Create media samples by calling <a href="/windows/desktop/api/evr/nc-evr-mfcreatevideosamplefromsurface"><strong>MFCreateVideoSampleFromSurface</strong></a>.</li>
+</ol>
+<p>The MFT should always support software processing as a fallback, because DXVA processing might not available, for several reasons:</p>
+<ul>
+<li>The GPU might not support DXVA.</li>
+<li>The client might not use Direct3D.</li>
+<li>DXVA profiles are not defined for every video format.</li>
+</ul>
+<p>A Direct3D-aware MFT must have a single output stream. It cannot have multiple outputs.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="writing-a-custom-mft.html">Writing a Custom MFT</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

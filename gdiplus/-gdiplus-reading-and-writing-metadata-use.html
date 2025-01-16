@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reading and Writing Metadata</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Some image files contain metadata that you can read to determine features of the image.
+ms.assetid: 2febea35-3fea-4a2d-baaf-7a4f935fc81f
+title: Reading and Writing Metadata
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Reading and Writing Metadata</h1>
+<p>Some image files contain metadata that you can read to determine features of the image. For example, a digital photograph might contain metadata that you can read to determine the make and model of the camera used to capture the image. With Windows GDI+, you can read existing metadata, and you can also write new metadata to image files.</p>
+<p>GDI+ provides a uniform way of storing and retrieving metadata from image files in various formats. In GDI+, a piece of metadata is called a <em>property item</em>. You can store and retrieve metadata by calling the <strong>SetPropertyItem</strong> and <strong>GetPropertyItem</strong> methods of the <a href="/windows/desktop/api/gdiplusheaders/nl-gdiplusheaders-image"><strong>Image</strong></a> class, and you don't have to be concerned about the details of how a particular file format stores that metadata.</p>
+<p>GDI+ currently supports metadata for the TIFF, JPEG, Exif, and PNG file formats. The Exif format, which specifies how to store images captured by digital still cameras, is built on top of the TIFF and JPEG formats. Exif uses the TIFF format for uncompressed pixel data and the JPEG format for compressed pixel data.</p>
+<p>GDI+ defines a set of property tags that identify property items. Certain tags are general-purpose; that is, they are supported by all of the file formats mentioned in the preceding paragraph. Other tags are special-purpose and apply only to certain formats. If you try to save a property item to a file that does not support that property item, GDI+ ignores the request. More specifically, the <a href="/windows/desktop/api/Gdiplusheaders/nf-gdiplusheaders-image-setpropertyitem"><strong>Image::SetPropertyItem</strong></a> method returns PropertyNotSupported.</p>
+<p>You can determine the property items that are stored in an image file by calling <a href="/windows/desktop/api/Gdiplusheaders/nf-gdiplusheaders-image-getpropertyidlist"><strong>Image::GetPropertyIdList</strong></a>. If you try to retrieve a property item that is not in the file, GDI+ ignores the request. More specifically, the <a href="/windows/desktop/api/Gdiplusheaders/nf-gdiplusheaders-image-getpropertyitem"><strong>Image::GetPropertyItem</strong></a> method returns PropertyNotFound.</p>
+<h2>Reading Metadata from a File</h2>
+<p>The following console application calls the <strong>GetPropertySize</strong> method of an <a href="/windows/desktop/api/gdiplusheaders/nl-gdiplusheaders-image"><strong>Image</strong></a> object to determine how many pieces of metadata are in the file FakePhoto.jpg.</p>
+<pre><code>#include &lt;windows.h&gt;
+#include &lt;gdiplus.h&gt;
+#include &lt;stdio.h&gt;
+using namespace Gdiplus;
+INT main()
+{
+   // Initialize &lt;tla rid=&quot;tla_gdiplus&quot;/&gt;.
+   GdiplusStartupInput gdiplusStartupInput;
+   ULONG_PTR gdiplusToken;
+   GdiplusStartup(&amp;gdiplusToken, &amp;gdiplusStartupInput, NULL);
+   UINT    size = 0;
+   UINT    count = 0;
+   Bitmap* bitmap = new Bitmap(L&quot;FakePhoto.jpg&quot;);
+   bitmap-&gt;GetPropertySize(&amp;size, &amp;count);
+   printf(&quot;There are %d pieces of metadata in the file.\n&quot;, count);
+   printf(&quot;The total size of the metadata is %d bytes.\n&quot;, size);
+ 
+   delete bitmap;
+   GdiplusShutdown(gdiplusToken);
+   return 0;
+}
+</code></pre>
+<p>The preceding code, along with a particular file, FakePhoto.jpg, produced the following output:</p>
+<pre><code>There are 7 pieces of metadata in the file.
+The total size of the metadata is 436 bytes.
+</code></pre>
+<p>GDI+ stores an individual piece of metadata in a <a href="/windows/win32/api/gdiplusimaging/nl-gdiplusimaging-propertyitem"><strong>PropertyItem</strong></a> object. You can call the <strong>GetAllPropertyItems</strong> method of the <a href="/windows/desktop/api/gdiplusheaders/nl-gdiplusheaders-image"><strong>Image</strong></a> class to retrieve all the metadata from a file. The <strong>GetAllPropertyItems</strong> method returns an array of <strong>PropertyItem</strong> objects. Before you call <strong>GetAllPropertyItems</strong>, you must allocate a buffer large enough to receive that array. You can call the <strong>GetPropertySize</strong> method of the <strong>Image</strong> class to get the size (in bytes) of the required buffer.</p>
+<p>A <a href="/windows/win32/api/gdiplusimaging/nl-gdiplusimaging-propertyitem"><strong>PropertyItem</strong></a> object has the following four public members:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>id</strong></td>
+<td>A tag that identifies the metadata item. The values that can be assigned to <strong>id</strong> (PropertyTagImageTitle, PropertyTagEquipMake, PropertyTagExifExposureTime, and the like) are defined in Gdiplusimaging.h.</td>
+</tr>
+<tr>
+<td><strong>length</strong></td>
+<td>The length, in bytes, of the array of values pointed to by the <strong>value</strong> data member. Note that if the <strong>type</strong> data member is set to PropertyTagTypeASCII, then the length data member is the <strong>length</strong> of a null-terminated character string, including the NULL terminator.</td>
+</tr>
+<tr>
+<td><strong>type</strong></td>
+<td>The data type of the values in the array pointed to by the value data member. Constants (PropertyTagTypeByte, PropertyTagTypeASCII, and the like) that represent various data types are described in <a href="-gdiplus-constant-image-property-tag-type-constants.html"><strong>Image Property Tag Type Constants</strong></a>.</td>
+</tr>
+<tr>
+<td><strong>value</strong></td>
+<td>A pointer to an array of values.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The following console application reads and displays the seven pieces of metadata in the file FakePhoto.jpg. The main function relies on the helper function PropertyTypeFromWORD, which is shown following the main function.</p>
+<pre><code>#include &lt;windows.h&gt;
+#include &lt;gdiplus.h&gt;
+#include &lt;strsafe.h&gt;
+using namespace Gdiplus;
+
+INT main()
+{
+   // Initialize GDI+
+   GdiplusStartupInput gdiplusStartupInput;
+   ULONG_PTR gdiplusToken;
+   GdiplusStartup(&amp;gdiplusToken, &amp;gdiplusStartupInput, NULL);
+
+   UINT  size = 0;
+   UINT  count = 0;
+
+   #define MAX_PROPTYPE_SIZE 30
+   WCHAR strPropertyType[MAX_PROPTYPE_SIZE] = L&quot;&quot;;
+
+   Bitmap* bitmap = new Bitmap(L&quot;FakePhoto.jpg&quot;);
+
+   bitmap-&gt;GetPropertySize(&amp;size, &amp;count);
+   printf(&quot;There are %d pieces of metadata in the file.\n\n&quot;, count);
+
+   // GetAllPropertyItems returns an array of PropertyItem objects.
+   // Allocate a buffer large enough to receive that array.
+   PropertyItem* pPropBuffer =(PropertyItem*)malloc(size);
+
+   // Get the array of PropertyItem objects.
+   bitmap-&gt;GetAllPropertyItems(size, count, pPropBuffer);
+
+   // For each PropertyItem in the array, display the id, type, and length.
+   for(UINT j = 0; j &lt; count; ++j)
+   {
+      // Convert the property type from a WORD to a string.
+      PropertyTypeFromWORD(
+         pPropBuffer[j].type, strPropertyType, MAX_PROPTYPE_SIZE);
+
+      printf(&quot;Property Item %d\n&quot;, j);
+      printf(&quot;  id: 0x%x\n&quot;, pPropBuffer[j].id);
+      wprintf(L&quot;  type: %s\n&quot;, strPropertyType);
+      printf(&quot;  length: %d bytes\n\n&quot;, pPropBuffer[j].length);
+   }
+
+   free(pPropBuffer);
+   delete bitmap;
+   GdiplusShutdown(gdiplusToken);
+   return 0;
+} // main
+
+// Helper function
+HRESULT PropertyTypeFromWORD(WORD index, WCHAR* string, UINT maxChars)
+{
+   HRESULT hr = E_FAIL;
+
+   WCHAR* propertyTypes[] = {
+      L&quot;Nothing&quot;,                   // 0
+      L&quot;PropertyTagTypeByte&quot;,       // 1
+      L&quot;PropertyTagTypeASCII&quot;,      // 2
+      L&quot;PropertyTagTypeShort&quot;,      // 3
+      L&quot;PropertyTagTypeLong&quot;,       // 4
+      L&quot;PropertyTagTypeRational&quot;,   // 5
+      L&quot;Nothing&quot;,                   // 6
+      L&quot;PropertyTagTypeUndefined&quot;,  // 7
+      L&quot;Nothing&quot;,                   // 8
+      L&quot;PropertyTagTypeSLONG&quot;,      // 9
+      L&quot;PropertyTagTypeSRational&quot;}; // 10
+
+   hr = StringCchCopyW(string, maxChars, propertyTypes[index]);
+   return hr;
+}
+</code></pre>
+<p>The preceding console application produces the following output:</p>
+<pre><code>Property Item 0
+  id: 0x320
+  type: PropertyTagTypeASCII
+  length: 16 bytes
+Property Item 1
+  id: 0x10f
+  type: PropertyTagTypeASCII
+  length: 17 bytes
+Property Item 2
+  id: 0x110
+  type: PropertyTagTypeASCII
+  length: 7 bytes
+Property Item 3
+  id: 0x9003
+  type: PropertyTagTypeASCII
+  length: 20 bytes
+Property Item 4
+  id: 0x829a
+  type: PropertyTagTypeRational
+  length: 8 bytes
+Property Item 5
+  id: 0x5090
+  type: PropertyTagTypeShort
+  length: 128 bytes
+Property Item 6
+  id: 0x5091
+  type: PropertyTagTypeShort
+  length: 128 bytes
+</code></pre>
+<p>The preceding output shows a hexadecimal ID number for each property item. You can look up those ID numbers in <a href="-gdiplus-constant-image-property-tag-constants.html">Image Property Tag Constants</a> and find out that they represent the following property tags.</p>
+<table>
+<thead>
+<tr>
+<th>Hexadecimal value</th>
+<th>Property tag</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0x0320 0x010f<!-- raw HTML omitted -->Â  0x0110<!-- raw HTML omitted -->Â  0x9003<!-- raw HTML omitted -->Â  0x829a<!-- raw HTML omitted -->Â  0x5090<!-- raw HTML omitted -->Â  0x5091<!-- raw HTML omitted --></td>
+<td>PropertyTagImageTitle PropertyTagEquipMake<!-- raw HTML omitted -->Â  PropertyTagEquipModel<!-- raw HTML omitted -->Â  PropertyTagExifDTOriginal<!-- raw HTML omitted -->Â  PropertyTagExifExposureTime<!-- raw HTML omitted -->Â  PropertyTagLuminanceTable<!-- raw HTML omitted -->Â  PropertyTagChrominanceTable<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The second (index 1) property item in the list has <strong>id</strong> PropertyTagEquipMake and <strong>type</strong> PropertyTagTypeASCII. The following example, which is a continuation of the previous console application, displays the value of that property item:</p>
+<pre><code>printf(&quot;The equipment make is %s.\n&quot;, pPropBuffer[1].value);
+</code></pre>
+<p>The preceding line of code produces the following output:</p>
+<pre><code>The equipment make is Northwind Traders.
+</code></pre>
+<p>The fifth (index 4) property item in the list has <strong>id</strong> PropertyTagExifExposureTime and <strong>type</strong> PropertyTagTypeRational. That data type (PropertyTagTypeRational) is a pair of <strong>LONG</strong>s. The following example, which is a continuation of the previous console application, displays those two <strong>LONG</strong> values as a fraction. That fraction, 1/125, is the exposure time measured in seconds.</p>
+<pre><code>long* ptrLong = (long*)(pPropBuffer[4].value);
+printf(&quot;The exposure time is %d/%d.\n&quot;, ptrLong[0], ptrLong[1]);
+</code></pre>
+<p>The preceding code produces the following output:</p>
+<pre><code>The exposure time is 1/125.
+</code></pre>
+<h2>Writing Metadata to a File</h2>
+<p>To write an item of metadata to an <a href="/windows/desktop/api/gdiplusheaders/nl-gdiplusheaders-image"><strong>Image</strong></a> object, initialize a <a href="/windows/win32/api/gdiplusimaging/nl-gdiplusimaging-propertyitem"><strong>PropertyItem</strong></a> object and then pass the address of that <strong>PropertyItem</strong> object to the <strong>SetPropertyItem</strong> method of the <strong>Image</strong> object.</p>
+<p>The following console application writes one item (the image title) of metadata to an <a href="/windows/desktop/api/gdiplusheaders/nl-gdiplusheaders-image"><strong>Image</strong></a> object and then saves the image in the disk file FakePhoto2.jpg. The main function relies on the helper function GetEncoderClsid, which is shown in the topic <a href="-gdiplus-retrieving-the-class-identifier-for-an-encoder-use.html">Retrieving the Class Identifier for an Encoder</a>.</p>
+<pre><code>#include &lt;windows.h&gt;
+#include &lt;gdiplus.h&gt;
+#include &lt;stdio.h&gt;
+using namespace Gdiplus;
+INT main()
+{
+   // Initialize &lt;tla rid=&quot;tla_gdiplus&quot;/&gt;.
+   GdiplusStartupInput gdiplusStartupInput;
+   ULONG_PTR gdiplusToken;
+   GdiplusStartup(&amp;gdiplusToken, &amp;gdiplusStartupInput, NULL);
+   Status stat;
+   CLSID  clsid;
+   char   propertyValue[] = &quot;Fake Photograph&quot;;
+   Bitmap* bitmap = new Bitmap(L&quot;FakePhoto.jpg&quot;);
+   PropertyItem* propertyItem = new PropertyItem;
+   // Get the CLSID of the JPEG encoder.
+   GetEncoderClsid(L&quot;image/jpeg&quot;, &amp;clsid);
+   propertyItem-&gt;id = PropertyTagImageTitle;
+   propertyItem-&gt;length = 16;  // string length including NULL terminator
+   propertyItem-&gt;type = PropertyTagTypeASCII; 
+   propertyItem-&gt;value = propertyValue;
+   bitmap-&gt;SetPropertyItem(propertyItem);
+   stat = bitmap-&gt;Save(L&quot;FakePhoto2.jpg&quot;, &amp;clsid, NULL);
+   if(stat == Ok)
+      printf(&quot;FakePhoto2.jpg saved successfully.\n&quot;);
+   
+   delete propertyItem;
+   delete bitmap;
+   GdiplusShutdown(gdiplusToken);
+   return 0;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

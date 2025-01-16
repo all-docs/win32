@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MF_PD_ASF_LANGLIST attribute</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Specifies a list of language identifiers which specifies the languages contained in an Advanced Systems Format (ASF) file. This attribute corresponds to the Language List Object, defined in the ASF specification.
+ms.assetid: 07b8a991-b392-47c1-a6d7-a1f5dcc82e5c
+title: MF_PD_ASF_LANGLIST attribute (Wmcontainer.h)
+ms.topic: reference
+ms.date: 05/31/2018</h2>
+<h1>MF_PD_ASF_LANGLIST attribute</h1>
+<p>Specifies a list of language identifiers which specifies the languages contained in an Advanced Systems Format (ASF) file. This attribute corresponds to the Language List Object, defined in the ASF specification.</p>
+<h2>Data type</h2>
+<p>Byte array</p>
+<h2>Remarks</h2>
+<p>This attribute applies to presentation descriptors for ASF content.</p>
+<p>The <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfcontentinfo-generatepresentationdescriptor"><strong>IMFASFContentInfo::GeneratePresentationDescriptor</strong></a> method creates the presentation descriptor and generates this attribute from the Language List Object header. The following table shows the format of the blob:</p>
+<table>
+<thead>
+<tr>
+<th>Language List Object field</th>
+<th>Data type</th>
+<th>Size</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Language ID Records Count</td>
+<td><strong>DWORD</strong></td>
+<td>4 bytes</td>
+<td>Number of languages</td>
+</tr>
+<tr>
+<td>Language ID Records</td>
+<td><strong>BYTE</strong>[]</td>
+<td>Varies</td>
+<td>Array of language strings (see below).</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The first <strong>DWORD</strong> is the number of languages, followed by an array of language identifier strings. Each string has the following format:</p>
+<table>
+<thead>
+<tr>
+<th>Language List Object field</th>
+<th>Data type</th>
+<th>Size</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Language ID Length</td>
+<td><strong>DWORD</strong></td>
+<td>4 bytes</td>
+<td>The length of the string in bytes, including the size of the trailing <strong>NULL</strong> character.</td>
+</tr>
+<tr>
+<td>Language ID</td>
+<td><strong>WCHAR</strong>[]</td>
+<td>Varies</td>
+<td>A null-terminated string containing the RFC 1766 language name.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Each string is a language tag compliant with RFC 1766.</p>
+<p>To get the language tag for a particular stream in the ASF file, query the stream descriptor for the <a href="mf-sd-asf-extstrmprop-language-id-index-attribute.html"><strong>MF_SD_ASF_EXTSTRMPROP_LANGUAGE_ID_INDEX</strong></a> attribute.</p>
+<h2>Examples</h2>
+<p>The following example shows how to parse the language list.</p>
+<pre lang="C++"><code>class LanguageList
+{
+private:
+    UINT8   *pRawList;          // Unparsed blob
+    UINT32  cbList;             // Size of the blob, in bytes
+    DWORD   cLangs;             // Number of languages
+    WCHAR   **ppszLanguages;    // Array of pointers to strings.
+                                // These are pointers into pRawList.
+public:
+    LanguageList() : 
+        pRawList(NULL), cbList(0), ppszLanguages(NULL), cLangs(0)
+    {
+    }
+    ~LanguageList()
+    {
+        Clear();
+    }
+
+    // Clear: Clears the list.
+    void Clear()
+    {
+        CoTaskMemFree(pRawList);
+        cbList = 0;
+        cLangs = 0;
+        delete [] ppszLanguages;
+
+        ppszLanguages = NULL;
+    }
+
+    // GetCount: Returns the number of languages.
+    DWORD GetCount() const { return cLangs; }
+
+    // GetLanguage: Return the i'th string in the list.
+    const WCHAR* GetLanguage(DWORD i)
+    {
+        if (i &gt;= cLangs)
+        {
+            return NULL;
+        }
+        return ppszLanguages[i];
+    }
+
+    // Initialize: Get the language list, if specified, and parse it.
+    HRESULT Initialize(IMFPresentationDescriptor *pPD)
+    {
+        if (pPD == NULL)
+        {
+            return E_POINTER;
+        }
+        Clear();
+
+        HRESULT hr = pPD-&gt;GetAllocatedBlob(
+            MF_PD_ASF_LANGLIST, &amp;pRawList, &amp;cbList);
+
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+
+        // Parse the language blob.
+
+        // Record count.
+        if (cbList &lt; sizeof(DWORD))
+        {
+            hr = E_FAIL;
+            goto done;
+        }
+
+        cLangs = ((DWORD*)pRawList)[0];
+
+        // Allocate an array of pointers to language strings.
+        ppszLanguages = new (std::nothrow) WCHAR*[cLangs];
+        if (ppszLanguages == NULL)
+        {
+            hr = E_OUTOFMEMORY;
+            goto done;
+        }
+        ZeroMemory(ppszLanguages, cLangs * sizeof(WCHAR*));
+
+        BYTE *pNext = pRawList + sizeof(DWORD); // Next byte.
+        BYTE *pEnd = pRawList + cbList;         // End of the blob.
+
+        for (DWORD i = 0; i &lt; cLangs; i++)
+        {
+            if (pNext &gt; pEnd - sizeof(DWORD))
+            {
+                hr = E_FAIL;
+                goto done;
+            }
+
+            // Language ID length
+            DWORD cbStr = ((DWORD*)pNext)[0];
+            pNext += sizeof(DWORD);
+
+            // Calculate the pointer to the language ID string.
+            if ((cbStr &gt; (size_t)(pEnd - pNext)) ||
+                (cbStr &lt; sizeof(WCHAR)) || 
+                (cbStr % sizeof(WCHAR) != 0))
+            {
+                hr = E_FAIL;
+                goto done;
+            }
+
+            ppszLanguages[i] = (WCHAR*)pNext;
+
+            // Verify the string is NULL-terminated.
+            if (ppszLanguages[i][(cbStr / sizeof(WCHAR)) - 1] != L'\0')
+            {
+                hr = E_FAIL;
+                goto done;
+            }
+            pNext += cbStr;
+        }
+
+done:
+        if (FAILED(hr))
+        {
+            Clear();
+        }
+
+        if (hr == MF_E_ATTRIBUTENOTFOUND)
+        {
+            // There was no language list attribute in the PD.
+            // This is not a failure case.
+            hr = S_OK;  
+        }
+        return hr;
+    }
+
+private:
+    LanguageList(const LanguageList&amp; lang);
+    LanguageList&amp; operator=(const LanguageList&amp; lang);
+};
+</code></pre>
+<h2>Requirements</h2>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Minimum supported client<!-- raw HTML omitted --></td>
+<td>WindowsÂ Vista [desktop apps only]<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Minimum supported server<!-- raw HTML omitted --></td>
+<td>Windows ServerÂ 2008 [desktop apps only]<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Header<!-- raw HTML omitted --></td>
+<td><!-- raw HTML omitted --> <!-- raw HTML omitted -->Wmcontainer.h<!-- raw HTML omitted --> <!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<h2>See also</h2>
+<!-- raw HTML omitted -->
+<p><a href="alphabetical-list-of-media-foundation-attributes.html">Alphabetical List of Media Foundation Attributes</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfattributes-getblob"><strong>IMFAttributes::GetBlob</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfattributes-setblob"><strong>IMFAttributes::SetBlob</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/mfidl/nn-mfidl-imfpresentationdescriptor"><strong>IMFPresentationDescriptor</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="presentation-descriptor-attributes.html">Presentation Descriptor Attributes</a></p>
+<!-- raw HTML omitted -->
+<p><a href="asf-file-structure.html">ASF Header Object</a></p>
+<!-- raw HTML omitted -->
+<p>ASF Header Object</p>
+<!-- raw HTML omitted -->
+<p><a href="presentation-descriptors.html">Presentation Descriptors</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

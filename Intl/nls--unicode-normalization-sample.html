@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NLS: Unicode Normalization Sample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The sample application described in this topic demonstrates the representation of strings using Unicode normalization.
+ms.assetid: f1f789f9-f12b-465c-8c84-33a8efa6fbc5
+title: 'NLS: Unicode Normalization Sample'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>NLS: Unicode Normalization Sample</h1>
+<p>The sample application described in this topic demonstrates the representation of strings using <a href="using-unicode-normalization-to-represent-strings.html">Unicode normalization</a>.</p>
+<p>The sample application calls all four Unicode normalization forms with the same input string. A call is then made with invalid Unicode to demonstrate how the index of bad character code works. Finally the application passes a string that expands to be abnormally long, requiring multiple string normalization calls to get an appropriate buffer size.</p>
+<p>This sample demonstrates the following NLS API functions:</p>
+<ul>
+<li><a href="/windows/desktop/api/Winnls/nf-winnls-isnormalizedstring"><strong>IsNormalizedString</strong></a></li>
+<li><a href="/windows/desktop/api/Winnls/nf-winnls-normalizestring"><strong>NormalizeString</strong></a></li>
+</ul>
+<pre lang="C++"><code>// THIS CODE AND INFORMATION IS PROVIDED &quot;AS IS&quot; WITHOUT WARRANTY OF 
+// ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO 
+// THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A 
+// PARTICULAR PURPOSE. 
+// 
+// Copyright (c) Microsoft Corporation. All rights reserved. 
+
+// ============ Demonstration of Normalization APIs ============ 
+
+#include &quot;stdafx.h&quot;
+#include &quot;windows.h&quot;
+#include &lt;stdio.h&gt;
+#include &lt;tchar.h&gt;
+#include &quot;malloc.h&quot;
+
+// Print out a string using code points for the non-ASCII values 
+void DumpString(LPWSTR pInput)
+{
+    while (*pInput != 0)
+    {
+        if (*pInput &lt; 0x80)
+            wprintf(L&quot;%c&quot;, *pInput);
+        else
+            wprintf(L&quot;\\x%4.4x&quot;, *pInput);
+        pInput++;
+    }
+    wprintf(L&quot;\n&quot;);
+}
+
+// Check if normalized and display normalized output for a particular normalization form 
+void TryNormalization(NORM_FORM form, LPWSTR strInput)
+{
+    // Test if the string is normalized 
+    if (IsNormalizedString(form, strInput, -1))
+    {
+        wprintf(L&quot;Already normalized in this form\n&quot;);
+    }
+    else
+    {
+        // It was not normalized, so normalize it 
+        int    iSizeGuess;
+        LPWSTR pBuffer;
+
+        // How big is our buffer (quick guess, usually enough) 
+        iSizeGuess = NormalizeString(form, strInput, -1, NULL, 0);
+
+        if (iSizeGuess == 0)
+        {
+            wprintf(L&quot;Error %d checking for size\n&quot;, GetLastError());
+        }
+
+        while(iSizeGuess &gt; 0)
+        {
+            pBuffer = (LPWSTR)malloc(iSizeGuess * sizeof(WCHAR));
+            if (pBuffer)
+            {
+                // Normalize the string 
+                int iActualSize = NormalizeString(form, strInput, -1, pBuffer, iSizeGuess);
+                iSizeGuess = 0;
+                if (iActualSize &lt;= 0 &amp;&amp; GetLastError() != ERROR_SUCCESS)
+                {
+                    // Error during normalization 
+                    wprintf(L&quot;Error %d during normalization\n&quot;, GetLastError());
+                    if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+                    {
+                        // If the buffer is too small, try again with a bigger buffer. 
+                        wprintf(L&quot;Insufficient buffer, new suggested buffer size %d\n&quot;, -iActualSize);
+                        iSizeGuess = -iActualSize;
+                    }
+                    else if (GetLastError() == ERROR_NO_UNICODE_TRANSLATION)
+                    {
+                        wprintf(L&quot;Invalid Unicode found at input character index %d\n&quot;, -iActualSize);
+                    }
+                }
+                else
+                {
+                    // Display the normalized string 
+                    DumpString(pBuffer);
+                }
+
+                // Free the buffer 
+                free (pBuffer);
+            }
+            else
+            {
+                wprintf(L&quot;Error allocating buffer\n&quot;);
+                iSizeGuess = 0;
+            }
+        }
+    }
+}
+
+int __cdecl wmain(int argc, WCHAR* argv[])
+{
+     // TÃ¨st string ï½”ï½ nÃ¸rmÃ¤lize 
+     LPWSTR strInput = L&quot;T\u00e8st string \uFF54\uFF4F n\u00f8rm\u00e4lize&quot;;
+
+    wprintf(L&quot;Comparison of Normalization Forms, input string::\n&quot;);
+    DumpString(strInput);
+
+    // Try it in the 4 forms 
+    wprintf(L&quot;\n&quot;);
+    wprintf(L&quot;String in Form C:\n  &quot;);
+    TryNormalization(NormalizationC, strInput);
+
+    wprintf(L&quot;\n&quot;);
+    wprintf(L&quot;String in Form KC:\n  &quot;);
+    TryNormalization(NormalizationKC, strInput);
+
+    wprintf(L&quot;\n&quot;);
+    wprintf(L&quot;String in Form D:\n  &quot;);
+    TryNormalization(NormalizationD, strInput);
+
+    wprintf(L&quot;\n&quot;);
+    wprintf(L&quot;String in Form KD:\n  &quot;);
+    TryNormalization(NormalizationKD, strInput);
+
+    // Note that invalid Unicode would show an error (illegal lone surrogate in this case) 
+    wprintf(L&quot;\n&quot;);
+    wprintf(L&quot;Attempt to normalize illegal lone surrogate:\n&quot;);
+    TryNormalization(NormalizationC, L&quot;Bad surrogate is here: '\xd800'&quot;);
+
+    // Contrived strings can cause the initial size guess to be low 
+    wprintf(L&quot;\n&quot;);
+    wprintf(L&quot;Attempt to normalize a string that expands beyond the initial guess\n&quot;);
+    TryNormalization(NormalizationC,
+        // These all expand to 2 characters 
+        L&quot;\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958&quot;
+        L&quot;\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958&quot;
+        L&quot;\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958&quot;
+        L&quot;\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958\u0958&quot;
+        // These all expand to 3 characters 
+        L&quot;\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c&quot;
+        L&quot;\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c\ufb2c&quot;);
+}
+
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

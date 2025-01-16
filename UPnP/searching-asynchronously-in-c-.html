@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Searching Asynchronously in C++</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Searching Asynchronously in C++
+description: The following code can be used as a basis for a C++ application that searches for devices asynchronously. The code implements the IUPnPDeviceFinderCallback interface by creating a class that inherits from it.
+ms.assetid: bb874e60-6a93-4d94-be67-ba03ba92eff5
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Searching Asynchronously in C++</h1>
+<p>The following code can be used as a basis for a C++ application that searches for devices asynchronously. The code implements the <a href="/windows/desktop/api/Upnp/nn-upnp-iupnpdevicefindercallback"><strong>IUPnPDeviceFinderCallback</strong></a> interface by creating a class that inherits from it.</p>
+<p>To implement both <a href="/windows/desktop/api/Upnp/nn-upnp-iupnpdevicefindercallback"><strong>IUPnPDeviceFinderCallback</strong></a> and <a href="/windows/desktop/api/Upnp/nn-upnp-iupnpdevicefinderaddcallbackwithinterface"><strong>IUPnPDeviceFinderAddCallbackWithInterface</strong></a>, the class must inherit from both interfaces. Implementation of <strong>IUPnPDeviceFinderAddCallbackWithInterface</strong> is optional, but if you choose to implement it, you must also implement <strong>IUPnPDeviceFinderCallback</strong>.</p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;upnp.h&gt;
+#include &lt;stdio.h&gt;
+
+#pragma comment(lib, &quot;ole32.lib&quot;)
+#pragma comment(lib, &quot;oleaut32.lib&quot;)
+#pragma comment(lib, &quot;user32.lib&quot;)
+
+class CUPnPDeviceFinderCallback : public IUPnPDeviceFinderCallback
+{
+public:
+    CUPnPDeviceFinderCallback()
+    {
+        m_lRefCount = 0;
+    };
+    
+    STDMETHODIMP QueryInterface(REFIID iid, LPVOID* ppvObject)
+    {
+        HRESULT hr = S_OK;
+        
+        if(NULL == ppvObject)
+        {
+            hr = E_POINTER;
+        }
+        else
+        {
+            *ppvObject = NULL;
+        }
+        
+        if(SUCCEEDED(hr))
+        {
+            if(IsEqualIID(iid, IID_IUnknown) || IsEqualIID(iid, IID_IUPnPDeviceFinderCallback))
+            {
+                *ppvObject = static_cast&lt;IUPnPDeviceFinderCallback*&gt;(this);
+                AddRef();
+            }
+            else
+            {
+                hr = E_NOINTERFACE;
+            }
+        }
+        
+        return hr;
+    };
+    
+    STDMETHODIMP_(ULONG) AddRef()
+    {
+        return ::InterlockedIncrement(&amp;m_lRefCount);
+    };
+    
+    STDMETHODIMP_(ULONG) Release()
+    {
+        LONG lRefCount = ::InterlockedDecrement(&amp;m_lRefCount);
+        if(0 == lRefCount)
+        {
+            delete this;
+        }
+        
+        return lRefCount;
+    };
+    
+    STDMETHODIMP DeviceAdded(LONG lFindData, IUPnPDevice* pDevice)
+    {
+        HRESULT hr = S_OK;
+
+        //You should save pDevice so that it is accessible outside the scope of this method.
+
+        BSTR UniqueDeviceName;
+        hr = pDevice-&gt;get_UniqueDeviceName(&amp;UniqueDeviceName);
+        if (SUCCEEDED(hr))
+        {
+            BSTR FriendlyName;
+            hr = pDevice-&gt;get_FriendlyName(&amp;FriendlyName);
+            if (SUCCEEDED(hr))
+            {
+                printf(&quot;Device Added: udn: %S, name: %S\n&quot;, FriendlyName, UniqueDeviceName);
+                ::SysFreeString(FriendlyName);
+            }
+            ::SysFreeString(UniqueDeviceName);
+        }
+        return hr;
+        
+    };
+    
+    STDMETHODIMP DeviceRemoved(LONG lFindData, BSTR bstrUDN)
+    {
+        printf(&quot;Device Removed: udn: %S&quot;, bstrUDN);
+        return S_OK;
+    };
+    
+    STDMETHODIMP SearchComplete(LONG lFindData)
+    {
+        return S_OK;
+    };
+    
+    
+    
+private:
+    LONG m_lRefCount;
+    
+};
+
+HRESULT FindUPnPDevice(BSTR TypeURI)
+{
+    HRESULT hr = S_OK;
+    
+    IUPnPDeviceFinderCallback* pUPnPDeviceFinderCallback = new CUPnPDeviceFinderCallback();
+    if(NULL != pUPnPDeviceFinderCallback)
+    {
+        pUPnPDeviceFinderCallback-&gt;AddRef();
+        IUPnPDeviceFinder* pUPnPDeviceFinder;
+        hr = CoCreateInstance(CLSID_UPnPDeviceFinder, NULL, CLSCTX_INPROC_SERVER, 
+            IID_IUPnPDeviceFinder, reinterpret_cast&lt;void**&gt;(&amp;pUPnPDeviceFinder));
+        if(SUCCEEDED(hr))
+        {
+            LONG lFindData;
+            hr = pUPnPDeviceFinder-&gt;CreateAsyncFind(TypeURI, 0, pUPnPDeviceFinderCallback, &amp;lFindData);
+            if(SUCCEEDED(hr))
+            {
+                hr = pUPnPDeviceFinder-&gt;StartAsyncFind(lFindData);
+                if(SUCCEEDED(hr))
+                {
+                    // STA threads must pump messages
+                    MSG Message;
+                    BOOL bGetMessage;
+                    while(bGetMessage = GetMessage(&amp;Message, NULL, 0, 0) &amp;&amp; -1 != bGetMessage)
+                    {
+                        DispatchMessage(&amp;Message);      
+                    }
+                }
+                pUPnPDeviceFinder-&gt;CancelAsyncFind(lFindData);
+            }
+            pUPnPDeviceFinder-&gt;Release();
+        }
+        pUPnPDeviceFinderCallback-&gt;Release();
+    }
+    else
+    {
+        hr = E_OUTOFMEMORY;
+    }
+   
+    return hr;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Creating a Certificate Chain</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example creates and installs a nondefault certificate chain engine. The engine is used to build certificate chains for each of the certificates in a certificate store.
+ms.assetid: 960f2bb9-130f-494f-9af0-0ab8ae3eb6e2
+title: 'Example C Program: Creating a Certificate Chain'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Creating a Certificate Chain</h1>
+<p>The following example creates and installs a nondefault certificate chain engine. The engine is used to build certificate chains for each of the certificates in a <a href="../secgloss/c-gly.html"><em>certificate store</em></a>.</p>
+<p>This example illustrates the following tasks and <a href="../secgloss/c-gly.html"><em>CryptoAPI</em></a> functions:</p>
+<ul>
+<li>Preparing to create a nondefault certificate chain engine by declaring and initializing a <a href="/windows/desktop/api/Wincrypt/ns-wincrypt-cert_chain_engine_config"><strong>CERT_CHAIN_ENGINE_CONFIG</strong></a> data structure.</li>
+<li>Creating the search engine using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certcreatecertificatechainengine"><strong>CertCreateCertificateChainEngine</strong></a>.</li>
+<li>Using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certopensystemstorea"><strong>CertOpenSystemStore</strong></a> to open the My system store.</li>
+<li>Retrieving all of the certificates from the open store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certenumcertificatesinstore"><strong>CertEnumCertificatesInStore</strong></a> in a loop.</li>
+<li>For each certificate in the open store, retrieving the subject name from the certificate using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certgetnamestringa"><strong>CertGetNameString</strong></a>.</li>
+<li>Building a certificate chain for each certificate using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certgetcertificatechain"><strong>CertGetCertificateChain</strong></a>.</li>
+<li>Creating a duplicate of the certificate chain using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certduplicatecertificatechain"><strong>CertDuplicateCertificateChain</strong></a>.</li>
+<li>Using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certfreecertificatechain"><strong>CertFreeCertificateChain</strong></a> to release each chain before the next chain is built.</li>
+</ul>
+<pre lang="C++"><code>#pragma comment(lib, &quot;crypt32.lib&quot;)
+
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Wincrypt.h&gt;
+
+void MyHandleError(char *s);
+
+void main(void)
+{
+//---------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+// Declare and initialize variables.
+
+HCERTCHAINENGINE         hChainEngine;
+CERT_CHAIN_ENGINE_CONFIG ChainConfig;
+PCCERT_CHAIN_CONTEXT     pChainContext;
+PCCERT_CHAIN_CONTEXT     pDupContext;
+HCERTSTORE               hCertStore;
+PCCERT_CONTEXT           pCertContext = NULL;
+CERT_ENHKEY_USAGE        EnhkeyUsage;
+CERT_USAGE_MATCH         CertUsage;  
+CERT_CHAIN_PARA          ChainPara;
+DWORD                    dwFlags=0;
+LPWSTR                   pszNameString;
+
+
+
+//---------------------------------------------------------
+// Initialize data structures.
+
+if(!(pszNameString=(LPWSTR)malloc(256)))
+    MyHandleError(&quot;Memory allocation failed.&quot;);
+EnhkeyUsage.cUsageIdentifier = 0;
+EnhkeyUsage.rgpszUsageIdentifier=NULL;
+CertUsage.dwType = USAGE_MATCH_TYPE_AND;
+CertUsage.Usage  = EnhkeyUsage;
+ChainPara.cbSize = sizeof(CERT_CHAIN_PARA);
+ChainPara.RequestedUsage=CertUsage;
+
+ChainConfig.cbSize = sizeof(CERT_CHAIN_ENGINE_CONFIG);
+ChainConfig.hRestrictedRoot= NULL ;
+ChainConfig.hRestrictedTrust= NULL ;
+ChainConfig.hRestrictedOther= NULL ;
+ChainConfig.cAdditionalStore=0 ;
+ChainConfig.rghAdditionalStore = NULL ;
+ChainConfig.dwFlags = CERT_CHAIN_CACHE_END_CERT;
+ChainConfig.dwUrlRetrievalTimeout= 0 ;
+ChainConfig.MaximumCachedCertificates=0 ;
+ChainConfig.CycleDetectionModulus = 0;
+
+//---------------------------------------------------------
+// Create the nondefault certificate chain engine.
+
+if(CertCreateCertificateChainEngine(
+         &amp;ChainConfig,
+         &amp;hChainEngine))
+{
+    printf(&quot;A chain engine has been created.\n&quot;);
+}
+else
+{
+    MyHandleError(&quot;The engine creation function failed.&quot;);
+}
+// Open the My system store.
+
+if(hCertStore=CertOpenSystemStore(NULL,L&quot;MY&quot;))
+{
+       printf(&quot;The MY Store is open.\n&quot;);
+}
+else
+{
+       MyHandleError(&quot;The MY system store did not open.&quot;);
+}
+
+//-------------------------------------------------------
+// Loop through the certificates in the store, 
+// and create a chain for each.
+
+while(pCertContext = CertEnumCertificatesInStore(
+             hCertStore,
+             pCertContext))
+{
+//-------------------------------------------------------------------
+// Get and display the name of subject of the certificate.
+
+if(CertGetNameString(   
+   pCertContext,   
+   CERT_NAME_SIMPLE_DISPLAY_TYPE,   
+   0,
+   NULL,   
+   pszNameString,   
+   128))
+{
+   printf(&quot;\nCertificate for %s found.\n&quot;,pszNameString);
+}
+else
+{
+   MyHandleError(&quot;CertGetName failed.&quot;);
+}
+
+//-------------------------------------------------------------------
+// Build a chain using CertGetCertificateChain
+// and the certificate retrieved.
+
+if(CertGetCertificateChain(
+    NULL,                  // use the default chain engine
+    pCertContext,          // pointer to the end certificate
+    NULL,                  // use the default time
+    NULL,                  // search no additional stores
+    &amp;ChainPara,            // use AND logic and enhanced key usage 
+                           //  as indicated in the ChainPara 
+                           //  data structure
+    dwFlags,
+    NULL,                  // currently reserved
+    &amp;pChainContext))       // return a pointer to the chain created
+{
+    printf(&quot;The chain has been created. \n&quot;);
+}
+else
+{
+    MyHandleError(&quot;The chain could not be created.&quot;);
+}
+
+//---------------------------------------------------------------
+// Display some of the contents of the chain.
+
+printf(&quot;The size of the chain context &quot;
+       &quot;is %d. \n&quot;,pChainContext-&gt;cbSize);
+printf(&quot;%d simple chains found.\n&quot;,pChainContext-&gt;cChain);
+printf(&quot;\nError status for the chain:\n&quot;);
+
+DWORD errorStatus = pChainContext-&gt;TrustStatus-&gt;dwErrorStatus;
+
+if((errorStatus &amp; CERT_TRUST_IS_NOT_TIME_VALID) != 0)
+{
+    printf(&quot;This certificate or one of the certificates in the &quot;
+         &quot;certificate chain is not time-valid.\n&quot;);
+}
+if((errorStatus &amp; CERT_TRUST_IS_REVOKED) != 0)
+{
+    printf(&quot;Trust for this certificate or one of the certificates &quot;
+         &quot;in the certificate chain has been revoked.\n&quot;);
+}
+if((errorStatus &amp; CERT_TRUST_IS_NOT_SIGNATURE_VALID) != 0)
+{
+    printf(&quot;The certificate or one of the certificates in the &quot;
+         &quot;certificate chain does not have a valid signature.\n&quot;);
+}
+if((errorStatus &amp; CERT_TRUST_IS_NOT_VALID_FOR_USAGE) != 0)
+{
+    printf(&quot;The certificate or certificate chain is not valid &quot;
+         &quot;in its proposed usage.\n&quot;);
+}
+if((errorStatus &amp; CERT_TRUST_IS_UNTRUSTED_ROOT) != 0)
+{
+    printf(&quot;The certificate or certificate chain is based &quot;
+         &quot;on an untrusted root.\n&quot;);
+}
+if((errorStatus &amp; CERT_TRUST_REVOCATION_STATUS_UNKNOWN) != 0)
+{
+    printf(&quot;The revocation status of the certificate or one of the&quot;
+         &quot;certificates in the certificate chain is unknown.\n&quot;);
+}
+if((errorStatus &amp; CERT_TRUST_IS_CYCLIC) != 0)
+{
+    printf(&quot;One of the certificates in the chain was issued by a &quot;
+         &quot;certification authority that the original certificate &quot;
+         &quot;had certified.\n&quot;);
+}
+if((errorStatus &amp; CERT_TRUST_IS_PARTIAL_CHAIN) != 0)
+{
+    printf(&quot;The certificate chain is not complete.\n&quot;);
+}
+if((errorStatus &amp; CERT_TRUST_CTL_IS_NOT_TIME_VALID) != 0)
+{
+    printf(&quot;A CTL used to create this chain was not time-valid.\n&quot;);
+}
+if((errorStatus &amp; CERT_TRUST_CTL_IS_NOT_SIGNATURE_VALID) != 0)
+{
+    printf(&quot;A CTL used to create this chain did not have a valid &quot;
+         &quot;signature.\n&quot;);
+}
+if((errorStatus &amp; CERT_TRUST_CTL_IS_NOT_VALID_FOR_USAGE) != 0)
+{
+    printf(&quot;A CTL used to create this chain did not have a valid &quot;
+         &quot;signature.\n&quot;);
+}
+else // CERT_TRUST_NO_ERROR 
+{
+    printf(&quot;No error found for this certificate or chain.\n&quot;);
+}
+
+printf(&quot;\nInfo status for the chain:\n&quot;);
+DWORD infoStatus = pChainContext-&gt;TrustStatus.dwInfoStatus;
+
+if((infoStatus &amp; CERT_TRUST_HAS_EXACT_MATCH_ISSUER) != 0)
+{
+    printf(&quot;An exact match issuer certificate has been found for &quot;
+         &quot;this certificate.\n&quot;);
+}
+if((infoStatus &amp; CERT_TRUST_HAS_KEY_MATCH_ISSUER) != 0)
+{
+    printf(&quot;A key match issuer certificate has been found for this &quot;
+        &quot;certificate.\n&quot;);
+}
+if((infoStatus &amp; CERT_TRUST_HAS_NAME_MATCH_ISSUER) != 0)
+{
+    printf(&quot;A name match issuer certificate has been found for this &quot;
+        &quot;certificate.\n&quot;);
+}
+if((infoStatus &amp; CERT_TRUST_IS_SELF_SIGNED) != 0)
+{
+    printf(&quot;This certificate is self-signed.\n&quot;);
+}
+if((infoStatus &amp; CERT_TRUST_IS_COMPLEX_CHAIN) != 0)
+{
+    printf(&quot;The certificate chain created is a complex chain.\n&quot;);
+}
+else // No dwInfoStatus bits set
+{
+    printf(&quot;No information status reported.\n&quot;);
+}
+
+
+//-------------------------------------------------------------------
+// Duplicate the original chain.
+if(pDupContext = CertDuplicateCertificateChain(
+       pChainContext ))
+{
+  printf(&quot;Duplicated the chain.\n&quot;);
+}
+else
+{
+  printf(&quot;Duplication failed.\n&quot;); 
+}
+//-------------------------------------------------------------------
+// Free both chains.
+
+CertFreeCertificateChain(pDupContext);
+printf(&quot;The duplicate chains is free.\n&quot;);
+CertFreeCertificateChain(pChainContext);
+printf(&quot;The Original chain is free.\n&quot;);
+printf(&quot;\nPress Enter to continue.&quot;);
+getchar();
+} // end while loop 
+
+printf(&quot;\nThere are no more certificates in the store. \n&quot;);
+
+//---------------------------------------------------------
+// Free the chain engine.
+
+CertFreeCertificateChainEngine(hChainEngine);
+printf(&quot;The chain engine has been released.\n&quot;);
+
+// Free memory for pszNameString.
+if(pszNameString)
+     free(pszNameString);
+
+printf(&quot;The demo program ran to completion without error.\n&quot;);
+
+
+} // end main
+
+//-------------------------------------------------------------------
+// This example uses the function MyHandleError, a simple error
+// handling function to print an error message and exit 
+// the program. 
+// For most applications, replace this function with one 
+// that does more extensive error reporting.
+
+void MyHandleError(char *s)
+{
+    fprintf(stderr,&quot;An error occurred in running the program. \n&quot;);
+    fprintf(stderr,&quot;%s\n&quot;,s);
+    fprintf(stderr, &quot;Error number %x.\n&quot;, GetLastError());
+    fprintf(stderr, &quot;Program terminating. \n&quot;);
+    exit(1);
+} // end MyHandleError
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

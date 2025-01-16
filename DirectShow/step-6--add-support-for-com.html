@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 6. Add Support for COM</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Add support for COM as part of writing a transform filter. This is the final step in this tutorial.
+ms.assetid: 53e4f5b7-c85d-4b44-9a0c-0ad05ca872cc
+title: Step 6. Add Support for COM
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Step 6. Add Support for COM</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This is step 6 of the tutorial <a href="writing-transform-filters.html">Writing Transform Filters</a>.</p>
+<p>The final step is to add support for COM.</p>
+<h2>Reference Counting</h2>
+<p>You do not have to implement <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-addref"><strong>IUnknown::AddRef</strong></a> or <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release"><strong>IUnknown::Release</strong></a>. All of the filter and pin classes derive from <a href="cunknown.html"><strong>CUnknown</strong></a>, which handles reference counting.</p>
+<h2>QueryInterface</h2>
+<p>All of the filter and pin classes implement <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>IUnknown::QueryInterface</strong></a> for any COM interfaces they inherit. For example, <a href="ctransformfilter.html"><strong>CTransformFilter</strong></a> inherits <a href="/windows/desktop/api/Strmif/nn-strmif-ibasefilter"><strong>IBaseFilter</strong></a> (through <a href="cbasefilter.html"><strong>CBaseFilter</strong></a>). If your filter does not expose any additional interfaces, you do not have to do anything else.</p>
+<p>To expose additional interfaces, override the <a href="cunknown-nondelegatingqueryinterface.html"><strong>CUnknown::NonDelegatingQueryInterface</strong></a> method. For example, suppose your filter implements a custom interface named IMyCustomInterface. To expose this interface to clients, do the following:</p>
+<ul>
+<li>Derive your filter class from that interface.</li>
+<li>Put the <a href="declare-iunknown.html"><strong>DECLARE_IUNKNOWN</strong></a> macro in the public declaration section.</li>
+<li>Override <a href="cunknown-nondelegatingqueryinterface.html"><strong>NonDelegatingQueryInterface</strong></a> to check for the IID of your interface and return a pointer to your filter.</li>
+</ul>
+<p>The following code shows these steps:</p>
+<pre lang="C++"><code>CMyFilter : public CBaseFilter, public IMyCustomInterface
+{
+public:
+    DECLARE_IUNKNOWN
+    STDMETHODIMP NonDelegatingQueryInterface(REFIID iid, void **ppv);
+};
+STDMETHODIMP CMyFilter::NonDelegatingQueryInterface(REFIID iid, void **ppv)
+{
+    if (riid == IID_IMyCustomInterface) {
+        return GetInterface(static_cast&lt;IMyCustomInterface*&gt;(this), ppv);
+    }
+    return CBaseFilter::NonDelegatingQueryInterface(riid,ppv);
+}
+</code></pre>
+<p>For more information, see <a href="how-to-implement-iunknown.html">How to Implement IUnknown</a>.</p>
+<h2>Object Creation</h2>
+<p>If you plan to package your filter in a DLL and make it available to other clients, you must support <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> and other related COM functions. The base class library implements most of this; you just need to provide some information about your filter. This section gives a brief overview of what to do. For details, see <a href="how-to-create-a-dll.html">How to Create a DirectShow Filter DLL</a>.</p>
+<p>First, write a static class method that returns a new instance of your filter. You can name this method anything you like, but the signature must match the one shown in the following example:</p>
+<pre lang="C++"><code>CUnknown * WINAPI CRleFilter::CreateInstance(LPUNKNOWN pUnk, HRESULT *pHr)
+{
+    CRleFilter *pFilter = new CRleFilter();
+    if (pFilter== NULL) 
+    {
+        *pHr = E_OUTOFMEMORY;
+    }
+    return pFilter;
+}
+</code></pre>
+<p>Next, declare a global array of <a href="cfactorytemplate.html"><strong>CFactoryTemplate</strong></a> class instances, named <em>g_Templates</em>. Each <strong>CFactoryTemplate</strong> class contains registry information for one filter. Several filters can reside in a single DLL; simply include additional <strong>CFactoryTemplate</strong> entries. You can also declare other COM objects, such as property pages.</p>
+<pre lang="C++"><code>static WCHAR g_wszName[] = L&quot;My RLE Encoder&quot;;
+CFactoryTemplate g_Templates[] = 
+{
+  { 
+    g_wszName,
+    &amp;CLSID_RLEFilter,
+    CRleFilter::CreateInstance,
+    NULL,
+    NULL
+  }
+};
+</code></pre>
+<p>Define a global integer named <em>g_cTemplates</em> whose value equals the length of the <em>g_Templates</em> array:</p>
+<pre lang="C++"><code>int g_cTemplates = sizeof(g_Templates) / sizeof(g_Templates[0]);  
+</code></pre>
+<p>Finally, implement the DLL registration functions. The following example shows the minimal implementation for these functions:</p>
+<pre lang="C++"><code>STDAPI DllRegisterServer()
+{
+    return AMovieDllRegisterServer2( TRUE );
+}
+STDAPI DllUnregisterServer()
+{
+    return AMovieDllRegisterServer2( FALSE );
+}
+</code></pre>
+<h2>Filter Registry Entries</h2>
+<p>The previous examples show how to register a filter's CLSID for COM. For many filters, this is sufficient. The client is then expected to create the filter using <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> and add it to the filter graph by calling <a href="/windows/desktop/api/Strmif/nf-strmif-ifiltergraph-addfilter"><strong>IFilterGraph::AddFilter</strong></a>. In some cases, however, you might want to provide additional information about the filter in the registry. This information does the following:</p>
+<ul>
+<li>Enables clients to discover the filter using the <a href="filter-mapper.html">Filter Mapper</a> or the <a href="system-device-enumerator.html">System Device Enumerator</a>.</li>
+<li>Enables the Filter Graph Manager to discover the filter during automatic graph building.</li>
+</ul>
+<p>The following example registers the RLE encoder filter in the video compressor category. For details, see <a href="how-to-register-directshow-filters.html">How to Register DirectShow Filters</a>. Be sure to read the section <a href="guidelines-for-registering-filters.html">Guidelines for Registering Filters</a>, which describes the recommended practices for filter registration.</p>
+<pre lang="C++"><code>// Declare media type information.
+FOURCCMap fccMap = FCC('MRLE'); 
+REGPINTYPES sudInputTypes = { &amp;MEDIATYPE_Video, &amp;GUID_NULL };
+REGPINTYPES sudOutputTypes = { &amp;MEDIATYPE_Video, (GUID*)&amp;fccMap };
+
+// Declare pin information.
+REGFILTERPINS sudPinReg[] = {
+    // Input pin.
+    { 0, FALSE, // Rendered?
+         FALSE, // Output?
+         FALSE, // Zero?
+         FALSE, // Many?
+         0, 0, 
+         1, &amp;sudInputTypes  // Media types.
+    },
+    // Output pin.
+    { 0, FALSE, // Rendered?
+         TRUE, // Output?
+         FALSE, // Zero?
+         FALSE, // Many?
+         0, 0, 
+         1, &amp;sudOutputTypes      // Media types.
+    }
+};
+ 
+// Declare filter information.
+REGFILTER2 rf2FilterReg = {
+    1,                // Version number.
+    MERIT_DO_NOT_USE, // Merit.
+    2,                // Number of pins.
+    sudPinReg         // Pointer to pin information.
+};
+
+STDAPI DllRegisterServer(void)
+{
+    HRESULT hr = AMovieDllRegisterServer2(TRUE);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    IFilterMapper2 *pFM2 = NULL;
+    hr = CoCreateInstance(CLSID_FilterMapper2, NULL, CLSCTX_INPROC_SERVER,
+            IID_IFilterMapper2, (void **)&amp;pFM2);
+    if (SUCCEEDED(hr))
+    {
+        hr = pFM2-&gt;RegisterFilter(
+            CLSID_RLEFilter,                // Filter CLSID. 
+            g_wszName,                       // Filter name.
+            NULL,                            // Device moniker. 
+            &amp;CLSID_VideoCompressorCategory,  // Video compressor category.
+            g_wszName,                       // Instance data.
+            &amp;rf2FilterReg                    // Filter information.
+            );
+        pFM2-&gt;Release();
+    }
+    return hr;
+}
+
+STDAPI DllUnregisterServer()
+{
+    HRESULT hr = AMovieDllRegisterServer2(FALSE);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    IFilterMapper2 *pFM2 = NULL;
+    hr = CoCreateInstance(CLSID_FilterMapper2, NULL, CLSCTX_INPROC_SERVER,
+            IID_IFilterMapper2, (void **)&amp;pFM2);
+    if (SUCCEEDED(hr))
+    {
+        hr = pFM2-&gt;UnregisterFilter(&amp;CLSID_VideoCompressorCategory, 
+            g_wszName, CLSID_RLEFilter);
+        pFM2-&gt;Release();
+    }
+    return hr;
+}
+</code></pre>
+<p>Also, filters do not have to be packaged inside DLLs. In some cases, you might write a specialized filter that is designed only for a specific application. In that case, you can compile the filter class directly in your application, and create it with the <code>new</code> operator, as shown in the following example:</p>
+<pre lang="C++"><code>#include &quot;MyFilter.h&quot;  // Header file that declares the filter class.
+// Compile and link MyFilter.cpp.
+int main()
+{
+    IBaseFilter *pFilter = 0;
+    {
+        // Scope to hide pF.
+        CMyFilter* pF = new MyFilter();
+        if (!pF)
+        {
+            printf(&quot;Could not create MyFilter.\n&quot;);
+            return 1;
+        }
+        pF-&gt;QueryInterface(IID_IBaseFilter, 
+            reinterpret_cast&lt;void**&gt;(&amp;pFilter));
+    }
+    
+    /* Now use pFilter as normal. */
+    
+    pFilter-&gt;Release();  // Deletes the filter.
+    return 0;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="intelligent-connect.html">Intelligent Connect</a></p>
+<!-- raw HTML omitted -->
+<p><a href="writing-directshow-filters.html">Writing DirectShow Filters</a></p>
+<!-- raw HTML omitted -->
+<p><a href="writing-transform-filters.html">Writing Transform Filters</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

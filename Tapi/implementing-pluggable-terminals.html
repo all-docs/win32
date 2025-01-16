@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementing Pluggable Terminals</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The general requirements for pluggable terminal implementation are listed below.
+ms.assetid: 7cee19b1-ceea-494a-b576-4deede759905
+title: Implementing Pluggable Terminals
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Implementing Pluggable Terminals</h1>
+<p>The general requirements for pluggable terminal implementation are:</p>
+<ul>
+<li>A pluggable terminal's underlying streaming code should match the capabilities of the desired MSPs.</li>
+<li>The terminal must use DirectShow filters to work with most MSPs (this is assumed from here on).</li>
+<li>Audio terminals must support 8 kHz 16-bit mono linear PCM for most MSPs.</li>
+<li>The terminal should enable free threaded marshalling by implementing <a href="/windows/win32/api/objidlbase/nn-objidlbase-imarshal"><strong>IMarshal</strong></a>. The terminal can do this by calling the COM API <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreatefreethreadedmarshaler"><strong>CoCreateFreeThreadedMarshaler</strong></a> and aggregating <strong>IMarshal</strong> to the returned pointer. The terminal object's destructor should call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release"><strong>IMarshal-&gt;Release</strong></a>.</li>
+<li>The terminal should implement or aggregate any additional terminal-specific interfaces that are appropriate.</li>
+<li>The terminal implementation must be thread-safe.</li>
+<li>The terminal implementation must #include Termmgr.h for the definition of <a href="/windows/desktop/api/Termmgr/nn-termmgr-itterminalcontrol"><strong>ITTerminalControl</strong></a>. This is in addition to the usual includes and libs that are needed for TAPI 3 or TAPI 3 applications under WindowsÂ 2000 SP1.</li>
+</ul>
+<p>Interface and method implementation notes:</p>
+<p>The terminal must implement <a href="/windows/win32/api/tapi3if/nn-tapi3if-itterminal"><strong>ITTerminal</strong></a> (dual interfaceâ€“vtable + <a href="/windows/win32/api/oaidl/nn-oaidl-idispatch"><strong>IDispatch</strong></a>).</p>
+<p><a href="/windows/win32/api/tapi3if/nf-tapi3if-itterminal-get_terminalclass"><strong>ITTerminal::get_TerminalClass</strong></a></p>
+<p>The terminal must return a <strong>BSTR</strong> representation of a GUID you've picked that identifies your type of terminal. Allocate the <strong>BSTR</strong> via <a href="/windows/win32/api/oleauto/nf-oleauto-sysallocstring"><strong>SysAllocString</strong></a>. To convert from GUID to <strong>BSTR</strong>, call <a href="/windows/win32/api/combaseapi/nf-combaseapi-stringfromclsid"><strong>StringFromCLSID</strong></a>, <strong>SysAllocString</strong>, and <a href="/windows/win32/api/combaseapi/nf-combaseapi-cotaskmemfree"><strong>CoTaskMemFree</strong></a>.</p>
+<p><a href="/windows/win32/api/tapi3if/nf-tapi3if-itterminal-get_terminaltype"><strong>ITTerminal::get_TerminalType</strong></a></p>
+<p>The terminal should generally return TT_DYNAMIC if an application implements the terminal. Returning TT_STATIC will also work, and returning this value may be appropriate if the terminal corresponds to a hardware device; however, doing this may be confusing to users because a static terminal will not be present in the MSP's static terminal enumeration.</p>
+<p><a href="/windows/win32/api/tapi3if/nf-tapi3if-itterminal-get_state"><strong>ITTerminal::get_State</strong></a></p>
+<p>If the terminal implementation does not arbitrarily limit the number of streams that the terminal can be concurrently connected to, then the terminal should always return TS_NOTINUSE.</p>
+<p>Otherwise, the terminal implementation arbitrarily limits the number of streams that the terminal can be connected to at a time. In this case, the terminal should keep a count of how many streams it is connected to. The terminal should increment this internal count on a successful <a href="/windows/desktop/api/Termmgr/nf-termmgr-itterminalcontrol-connectterminal"><strong>ITTerminalControl::ConnectTerminal</strong></a> call and decrement it on a successful <a href="/windows/desktop/api/Termmgr/nf-termmgr-itterminalcontrol-disconnectterminal"><strong>ITTerminalControl::DisconnectTerminal</strong></a> call. In <a href="/windows/win32/api/tapi3if/nf-tapi3if-itterminal-get_state"><strong>ITTerminal::get_State</strong></a>, it should return TS_INUSE if this count is equal to the maximum number of streams that the terminal can be selected on at a time; otherwise, it should return TS_NOTINUSE. Note that if the limit is one, the count can simply be a Boolean or a TERMINAL_STATE value.</p>
+<p><a href="/windows/win32/api/tapi3if/nf-tapi3if-itterminal-get_name"><strong>ITTerminal::get_Name</strong></a></p>
+<p>The terminal should return a <strong>BSTR</strong> name of its choice, allocated via <a href="/windows/win32/api/oleauto/nf-oleauto-sysallocstring"><strong>SysAllocString</strong></a>. This name should be meaningful to the user and should be localized.</p>
+<p><a href="/windows/win32/api/tapi3if/nf-tapi3if-itterminal-get_mediatype"><strong>ITTerminal::get_MediaType</strong></a></p>
+<p>The terminal should return its media type, either TAPIMEDIATYPE_AUDIO or TAPIMEDIATYPE_VIDEO.</p>
+<p><a href="/windows/win32/api/tapi3if/nf-tapi3if-itterminal-get_direction"><strong>ITTerminal::get_Direction</strong></a></p>
+<p>The terminal returns the TERMINAL_DIRECTION enum value indicating the direction of the terminal. If the terminal is bidirectional (for example, a bridge), then it must return TD_BIDIRECTIONAL.</p>
+<p>The terminal must implement <a href="/windows/desktop/api/Termmgr/nn-termmgr-itterminalcontrol"><strong>ITTerminalControl</strong></a> (vtable only).</p>
+<p><a href="/windows/desktop/api/Termmgr/nf-termmgr-itterminalcontrol-get_addresshandle"><strong>ITTerminalControl::get_AddressHandle</strong></a></p>
+<p>An application-provided terminal should always return <strong>NULL</strong> as the address handle. This indicates to the MSP that this terminal was not created on a specific MSP address object.</p>
+<p><a href="/windows/desktop/api/Termmgr/nf-termmgr-itterminalcontrol-connectterminal"><strong>ITTerminalControl::ConnectTerminal</strong></a></p>
+<p>On this call, the terminal will add its filter(s) to the given graph and connect them to each other, if applicable. Then the terminal should return the pin(s) exposed by the terminal for the stream direction specified.</p>
+<p>A terminal that does not support concurrent connection to multiple streams would set an internal variable to TS_INUSE on successful completion of this method.</p>
+<p>The terminal can use the <em>dwTerminalDirection</em> parameter from this call to determine the direction of the stream that it is being connected to. This is required for bidirectional terminals.</p>
+<blockquote>
+<p>[!Note]<br />
+Typically (in the MSP base classes and in all known MSPs), the MSP stream code will fail the connection if the terminal returns more than one pin from a single <a href="/windows/desktop/api/Termmgr/nf-termmgr-itterminalcontrol-connectterminal"><strong>ConnectTerminal</strong></a> call. This is fine, because a terminal that returns more than one pin during connection requires the MSP to have special knowledge of the terminal to make use of the extra pins effectively.</p>
+</blockquote>
+<p>Â </p>
+<p><a href="/windows/desktop/api/Termmgr/nf-termmgr-itterminalcontrol-completeconnectterminal"><strong>ITTerminalControl::CompleteConnectTerminal</strong></a></p>
+<p>The terminal should just return S_OK. The terminal may also do post-connection initialization if it needs to.</p>
+<p><a href="/windows/desktop/api/Termmgr/nf-termmgr-itterminalcontrol-disconnectterminal"><strong>ITTerminalControl::DisconnectTerminal</strong></a></p>
+<p>The terminal should do whatever is needed to disconnect the terminal from the rest of the graph. Typically this involves removing all the terminals' filters from the graph and setting the terminal state to TS_NOTINUSE.</p>
+<p><a href="/windows/desktop/api/Termmgr/nf-termmgr-itterminalcontrol-runrenderfilter"><strong>ITTerminalControl::RunRenderFilter</strong></a></p>
+<p>The terminal should just return E_NOTIMPL.</p>
+<p><a href="/windows/desktop/api/Termmgr/nf-termmgr-itterminalcontrol-stoprenderfilter"><strong>ITTerminalControl::StopRenderFilter</strong></a></p>
+<p>The terminal should just return E_NOTIMPL.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

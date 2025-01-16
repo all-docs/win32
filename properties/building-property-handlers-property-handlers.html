@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Initializing Property Handlers</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This article explains how to initialize property handlers to work with the Windows property system.
+ms.assetid: 3b54dd65-b7db-4e6a-bc3d-1008fdabcfa9
+title: Initializing Property Handlers
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Initializing Property Handlers</h1>
+<p>This topic explains how to create and register property handlers to work with the Windows property system.</p>
+<p>This topic is organized as follows:</p>
+<ul>
+<li><a href="#property-handlers">Property Handlers</a></li>
+<li><a href="#before-you-begin">Before You Begin</a></li>
+<li><a href="#initializing-property-handlers">Initializing Property Handlers</a></li>
+<li><a href="#in-memory-property-store">In-Memory Property Store</a></li>
+<li><a href="#dealing-with-propvariant-based-values">Dealing with PROPVARIANT-Based Values</a></li>
+<li><a href="#supporting-open-metadata">Supporting Open Metadata</a></li>
+<li><a href="#full-text-contents">Full-Text Contents</a></li>
+<li><a href="#providing-values-for-properties">Providing Values for Properties</a></li>
+<li><a href="#writing-back-values">Writing Back Values</a></li>
+<li><a href="#implementing-ipropertystorecapabilities">Implementing IPropertyStoreCapabilities</a></li>
+<li><a href="#registering-and-distributing-property-handlers">Registering and Distributing Property Handlers</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Property Handlers</h2>
+<p>Property handlers are a crucial part of the property system. They are invoked in-process by the indexer to read and index property values, and are also invoked by Windows Explorer in-process to read and write property values directly in the files. These handlers need to be carefully written and tested to prevent degraded performance or the loss of data in the affected files. For more information on indexer-specific considerations that affect property handler implementation, see <a href="../search/-search-3x-wds-extidx-propertyhandlers.html">Developing Property Handlers for Windows Search</a>.</p>
+<p>This topic discusses a sample XML-based file format that describes a recipe with a .recipe file name extension. The .recipe file name extension is registered as its own distinct file format rather than relying on the more generic .xml file format, whose handler uses a secondary stream to store properties. We recommend that you register unique file name extensions for your file types.</p>
+<h2>Before You Begin</h2>
+<p>Property handlers are COM objects that create the <a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a> abstraction for a specific file format. They read (parse) and write this file format in a manner that conforms to its specification. Some property handlers do their work based on APIs that abstract access to a specific file format. Before you develop a property handler for your file format, you need to understand how your file format stores properties, and how those properties (names and values) are mapped into the property store abstraction.</p>
+<p>When planning your implementation, remember that property handlers are low-level components that are loaded in the context of processes like Windows Explorer, the Windows Search indexer, and third-party applications that use the Shell item programming model. As a result, property handlers cannot be implemented in managed code, and should be implemented in C++. If your handler uses any APIs or services to do its work, you must ensure that those services can function properly in the environment(s) in which your property handler is loaded.</p>
+<blockquote>
+<p>[!Note]<br />
+Property handlers are always associated with specific file types; thus, if your file format contains properties that require a custom property handler, you should always register a unique file name extension for each file format.</p>
+</blockquote>
+<p>Â </p>
+<h2>Initializing Property Handlers</h2>
+<p>Before a property is used by the system, it is initialized by calling an implementation of <a href="/windows/win32/api/propsys/nn-propsys-iinitializewithstream"><strong>IInitializeWithStream</strong></a>. The property handler should be initialized by having the system assign it a stream rather than leaving that assignment to the handler implementation. This method of initialization ensures the following things:</p>
+<ul>
+<li>The property handler can run in a restricted process (an important security feature) without having access rights to directly read or write files, rather accessing their content through the stream.</li>
+<li>The system can be trusted to handle the file oplocks correctly, which is an important reliability measure.</li>
+<li>The property system provides an automatic safe saving service without any extra functionality required from the property handler implementation. See the <a href="#writing-back-values">Writing Back Values</a> section for more information about streams.</li>
+<li>Use of the <a href="/windows/win32/api/propsys/nn-propsys-iinitializewithstream"><strong>IInitializeWithStream</strong></a> abstracts your implementation from file system details. This enables the handler to support initialization through alternative storages such as a File Transfer Protocol (FTP) folder or a compressed file with a .zip file name extension.</li>
+</ul>
+<p>There are cases where initialization with streams is not possible. In those situations, there are two further interfaces that property handlers can implement: <a href="/windows/win32/api/propsys/nn-propsys-iinitializewithfile"><strong>IInitializeWithFile</strong></a> and <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-iinitializewithitem"><strong>IInitializeWithItem</strong></a>. If a property handler does not implement the <a href="/windows/win32/api/propsys/nn-propsys-iinitializewithstream"><strong>IInitializeWithStream</strong></a>, it must opt out of running in the isolated process into which the system indexer would place it by default if there were a change to the stream. To opt out of this feature, set the following registry value.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â CLSID
+Â Â Â Â Â Â {66742402-F9B9-11D1-A202-0000F81FEDEE}
+Â Â Â Â Â Â Â Â Â DisableProcessIsolation = 1
+</code></pre>
+<p>However, it is far better to implement <a href="/windows/win32/api/propsys/nn-propsys-iinitializewithstream"><strong>IInitializeWithStream</strong></a> and do a stream-based initialization. Your property handler will be safer and more reliable as a result. Disabling process isolation is generally intended only for legacy property handlers and should be strenuously avoided by any new code.</p>
+<p>To examine the implementation of a property handler in detail, look at the following code example, which is an implementation of <a href="/windows/win32/api/propsys/nf-propsys-iinitializewithstream-initialize"><strong>IInitializeWithStream::Initialize</strong></a>. The handler is initialized by loading an XML-based recipe document through a pointer to that document's associated <a href="/windows/win32/api/objidl/nn-objidl-istream"><strong>IStream</strong></a> instance. The <strong>_spDocEle</strong> variable used near the end of the code example is defined earlier in the sample as an MSXML2::IXMLDOMElementPtr.</p>
+<blockquote>
+<p>[!Note]<br />
+The following and all subsequent code examples are taken from the recipe handler sample included in the Windows Software Development Kit (SDK). .</p>
+</blockquote>
+<p>Â </p>
+<pre><code>HRESULT CRecipePropertyStore::Initialize(IStream *pStream, DWORD grfMode)
+{
+    HRESULT hr = E_FAIL;
+    
+    try
+    {
+        if (!_spStream)
+        {
+            hr = _spDomDoc.CreateInstance(__uuidof(MSXML2::DOMDocument60));
+            
+            if (SUCCEEDED(hr))
+            {
+                if (VARIANT_TRUE == _spDomDoc-&gt;load(static_cast&lt;IUnknown *&gt;(pStream)))
+                {
+                    _spDocEle = _spDomDoc-&gt;documentElement;
+                }
+</code></pre>
+<p>Ã‚Â </p>
+<p>After the document itself is loaded, the properties to be displayed in Windows Explorer are loaded by calling the protected <strong>_LoadProperties</strong> method, as illustrated in the following code example. This process is examined in detail in the next section.</p>
+<pre><code>                if (_spDocEle)
+                {
+                    hr = _LoadProperties();
+    
+                    if (SUCCEEDED(hr))
+                    {
+                        _spStream = pStream;
+                    }
+                }
+                else
+                {
+                    hr = E_FAIL;  // parse error
+                }
+            }
+        }
+        else
+        {
+            hr = E_UNEXPECTED;
+        }
+    }
+    
+    catch (_com_error &amp;e)
+    {
+        hr = e.Error();
+    }
+    
+    return hr;
+}
+</code></pre>
+<p>If the stream is read-only but the <em>grfMode</em> parameter contains the STGM_READWRITE flag, the initialization should fail and return STG_E_ACCESSDENIED. Without this check, Windows Explorer shows the property values as writable even though they are not, leading to a confusing end-user experience.</p>
+<p>The property handler is initialized only once in its lifetime. If a second initialization is requested, the handler should return <code>HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED)</code>.</p>
+<h2>In-Memory Property Store</h2>
+<p>Before looking at the implementation of <strong>_LoadProperties</strong>, you should understand the <strong>PropertyMap</strong> array used in the sample to map properties in the XML document to existing properties in the property system through their PKEY values.</p>
+<p>You should not expose every element and attribute in the XML file as a property. Instead, select only those that you believe will be useful to end users in the organization of their documents (in this case, recipes). This is an important concept to keep in mind as you develop your property handlers: the difference between information that is truly useful for organizational scenarios, and information that belongs to the details of your file and can be seen by opening the file itself. Properties are not intended to be a full duplication of an XML file.</p>
+<pre><code>PropertyMap c_rgPropertyMap[] =
+{
+{ L&quot;Recipe/Title&quot;, PKEY_Title, 
+                   VT_LPWSTR, 
+                   NULL, 
+                   PKEY_Null },
+{ L&quot;Recipe/Comments&quot;, PKEY_Comment, 
+                      VT_LPWSTR, 
+                      NULL, 
+                      PKEY_Null },
+{ L&quot;Recipe/Background&quot;, PKEY_Author, 
+                        VT_VECTOR | VT_LPWSTR, 
+                        L&quot;Author&quot;, 
+                        PKEY_Null },
+{ L&quot;Recipe/RecipeKeywords&quot;, PKEY_Keywords, 
+                            VT_VECTOR | VT_LPWSTR, 
+                            L&quot;Keyword&quot;, 
+                            PKEY_KeywordCount },
+};
+</code></pre>
+<p>Here is the full implementation of the <strong>_LoadProperties</strong> method called by <a href="/windows/win32/api/propsys/nf-propsys-iinitializewithstream-initialize"><strong>IInitializeWithStream::Initialize</strong></a>.</p>
+<pre><code>HRESULT CRecipePropertyStore::_LoadProperties()
+{
+    HRESULT hr = E_FAIL;    
+    
+    if (_spCache)
+    {
+        hr = &lt;mark type=&quot;const&quot;&gt;S_OK&lt;/mark&gt;;
+    }
+    else
+    {
+        // Create the in-memory property store.
+        hr = PSCreateMemoryPropertyStore(IID_PPV_ARGS(&amp;_spCache));
+    
+        if (SUCCEEDED(hr))
+        {
+            // Cycle through each mapped property.
+            for (UINT i = 0; i &lt; ARRAYSIZE(c_rgPropertyMap); ++i)
+            {
+                _LoadProperty(c_rgPropertyMap[i]);
+            }
+    
+            _LoadExtendedProperties();
+            _LoadSearchContent();
+        }
+    }
+    return hr;
+}
+</code></pre>
+<p>The <strong>_LoadProperties</strong> method calls the Shell helper function <a href="/windows/win32/api/propsys/nf-propsys-pscreatememorypropertystore"><strong>PSCreateMemoryPropertyStore</strong></a> to create an in-memory property store (cache) for the handled properties. By using a cache, changes are tracked for you. This frees you from tracking whether a property value has been changed in the cache but not yet saved to persisted storage. It also frees you from needlessly persisting property values that have not changed.</p>
+<p>The <strong>_LoadProperties</strong> method also calls <strong>_LoadProperty</strong> whose implementation is illustrated in the following code) once for each mapped property. <strong>_LoadProperty</strong> gets the value of the property as specified in the <strong>PropertyMap</strong> element in the XML stream and assigns it to the in-memory cache through a call to <a href="/windows/win32/api/propsys/nf-propsys-ipropertystorecache-setvalueandstate"><strong>IPropertyStoreCache::SetValueAndState</strong></a>. The PSC_NORMAL flag in the call to <strong>IPropertyStoreCache::SetValueAndState</strong> indicates that the property value has not been altered since the time it entered the cache.</p>
+<pre><code>HRESULT CRecipePropertyStore::_LoadProperty(PropertyMap &amp;map)
+{
+    HRESULT hr = S_FALSE;
+    
+    MSXML2::IXMLDOMNodePtr spXmlNode(_spDomDoc-&gt;selectSingleNode(map.pszXPath));
+    if (spXmlNode)
+    {
+        PROPVARIANT propvar = { 0 };
+        propvar.vt = map.vt;
+        
+        if (map.vt == (VT_VECTOR | VT_LPWSTR))
+        {
+            hr = _LoadVectorProperty(spXmlNode, &amp;propvar, map);
+        }
+        else
+        {
+            // If there is no value, set to VT_EMPTY to indicate
+            // that it is not there. Do not return failure.
+            if (spXmlNode-&gt;text.length() == 0)
+            {
+                propvar.vt = VT_EMPTY;
+                hr = &lt;mark type=&quot;const&quot;&gt;S_OK&lt;/mark&gt;;
+            }
+            else
+            {
+                // SimplePropVariantFromString is a helper function.
+                // particular to the sample. It is found in Util.cpp.
+                hr = SimplePropVariantFromString(spXmlNode-&gt;text, &amp;propvar);
+            }
+        }
+    
+        if (S_OK == hr)
+        {
+            hr = _spCache-&gt;SetValueAndState(map.key, &amp;propvar, PSC_NORMAL);
+            PropVariantClear(&amp;propvar);
+        }
+    }
+    return hr;
+}
+</code></pre>
+<h2>Dealing with PROPVARIANT-Based Values</h2>
+<p>In the implementation of <strong>_LoadProperty</strong>, a property value is provided in the form of a <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant"><strong>PROPVARIANT</strong></a>. A set of APIs in the software development kit (SDK) is provided to convert from primitive types such as <strong>PWSTR</strong> or <strong>int</strong> to or from <strong>PROPVARIANT</strong> types. These APIs are found in Propvarutil.h.</p>
+<p>For example, to convert a <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant"><strong>PROPVARIANT</strong></a> to a string, you can use <a href="/windows/win32/api/propvarutil/nf-propvarutil-propvarianttostring"><strong>PropVariantToString</strong></a> as illustrated here.</p>
+<pre><code>PropVariantToString(REFPROPVARIANT propvar, PWSTR psz, UINT cch);
+</code></pre>
+<p>To initialize a PROPVARIANT from a string, you can use <a href="/windows/win32/api/propvarutil/nf-propvarutil-initpropvariantfromstring"><strong>InitPropVariantFromString</strong></a>.</p>
+<pre><code>InitPropVariantFromString(PCWSTR psz, PROPVARIANT *ppropvar);
+</code></pre>
+<p>As you can see in any of the recipe files included in the sample, there can be more than one keyword in each file. To account for this, the property system supports multi-valued strings represented as a vector of strings (for instance &quot;VT_VECTOR | VT_LPWSTR&quot;). The <strong>_LoadVectorProperty</strong> method in the example uses vector-based values.</p>
+<pre><code>HRESULT CRecipePropertyStore::_LoadVectorProperty
+                                (MSXML2::IXMLDOMNode *pNodeParent,
+                                 PROPVARIANT *ppropvar,
+                                 struct PropertyMap &amp;map)
+{
+    HRESULT hr = S_FALSE;
+    MSXML2::IXMLDOMNodeListPtr spList = pNodeParent-&gt;selectNodes(map.pszSubNodeName);
+    
+    if (spList)
+    {
+        UINT cElems = spList-&gt;length;
+        ppropvar-&gt;calpwstr.cElems = cElems;
+        ppropvar-&gt;calpwstr.pElems = (PWSTR*)CoTaskMemAlloc(sizeof(PWSTR)*cElems);
+    
+        if (ppropvar-&gt;calpwstr.pElems)
+        {
+            for (UINT i = 0; (SUCCEEDED(hr) &amp;&amp; i &lt; cElems); ++i)
+            {
+                hr = SHStrDup(spList-&gt;item[i]-&gt;text, 
+                              &amp;(ppropvar-&gt;calpwstr.pElems[i]));
+            }
+    
+            if (SUCCEEDED(hr))
+            {
+                if (!IsEqualPropertyKey(map.keyCount, PKEY_Null))
+                {
+                    PROPVARIANT propvarCount = { VT_UI4 };
+                    propvarCount.uintVal = cElems;
+                    
+                    _spCache-&gt;SetValueAndState(map.keyCount,
+                                               &amp;propvarCount, 
+                                               PSC_NORMAL);
+                }
+            }
+            else
+            {
+                PropVariantClear(ppropvar);
+            }
+        }
+        else
+        {
+            hr = E_OUTOFMEMORY;
+        }
+    }
+    
+    return hr;
+}
+</code></pre>
+<p>If a value does not exist in the file, do not return an error. Instead, set the value to VT_EMPTY and return <strong>S_OK</strong>. VT_EMPTY indicates that the property value does not exist.</p>
+<h2>Supporting Open Metadata</h2>
+<p>This example uses an XML-based file format. Its schema can be extended to support properties that were not thought of during developmet, for example. This system is known as open metadata. This example extends the property system by creating a node under the <strong>Recipe</strong> element called <strong>ExtendedProperties</strong>, as illustrated in the following code example.</p>
+<pre><code>&lt;ExtendedProperties&gt;
+    &lt;Property 
+        Name=&quot;{65A98875-3C80-40AB-ABBC-EFDAF77DBEE2}, 100&quot;
+        EncodedValue=&quot;HJKHJDHKJHK&quot;/&gt;
+&lt;/ExtendedProperties&gt;
+</code></pre>
+<p>To load persisted extended properties during initialization, implement the <strong>_LoadExtendedProperties</strong> method, as illustrated in the following code example.</p>
+<pre><code>HRESULT CRecipePropertyStore::_LoadExtendedProperties()
+{
+    HRESULT hr = S_FALSE;
+    MSXML2::IXMLDOMNodeListPtr spList = 
+                  _spDomDoc-&gt;selectNodes(L&quot;Recipe/ExtendedProperties/Property&quot;);
+    
+    if (spList)
+    {
+        UINT cElems = spList-&gt;length;
+        
+        for (UINT i = 0; i &lt; cElems; ++i)
+        {
+            MSXML2::IXMLDOMElementPtr spElement;
+            
+            if (SUCCEEDED(spList-&gt;item[i]-&gt;QueryInterface(IID_PPV_ARGS(&amp;spElement))))
+            {
+                PROPERTYKEY key;
+                _bstr_t bstrPropName = spElement-&gt;getAttribute(L&quot;Name&quot;).bstrVal;
+    
+                if (!!bstrPropName &amp;&amp;
+                    (SUCCEEDED(PropertyKeyFromString(bstrPropName, &amp;key))))
+                {
+                    PROPVARIANT propvar = { 0 };
+                    _bstr_t bstrEncodedValue = 
+                               spElement-&gt;getAttribute(L&quot;EncodedValue&quot;).bstrVal;
+                   
+                    if (!!bstrEncodedValue)
+                    {
+                        // DeserializePropVariantFromString is a helper function
+                        // particular to the sample. It is found in Util.cpp.
+                        hr = DeserializePropVariantFromString(bstrEncodedValue, 
+                                                              &amp;propvar);
+                    }
+</code></pre>
+<p>Serialization APIs declared in Propsys.h are used to serialize and deserialize <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant"><strong>PROPVARIANT</strong></a> types into blobs of data, and then Base64 encoding is used to serialize those blobs into strings that can be saved in the XML. These strings are stored in the <strong>EncodedValue</strong> attribute of the <strong>ExtendedProperties</strong> element. The following utility method, implemented in the sample's Util.cpp file, performs the serialization. It begins with a call to the <a href="/windows/win32/api/propvarutil/nf-propvarutil-stgserializepropvariant"><strong>StgSerializePropVariant</strong></a> function to perform the binary serialization, as illustrated in the following code example.</p>
+<pre><code>HRESULT SerializePropVariantAsString(const PROPVARIANT *ppropvar, PWSTR *pszOut)
+{
+    SERIALIZEDPROPERTYVALUE *pBlob;
+    ULONG cbBlob;
+    HRESULT hr = StgSerializePropVariant(ppropvar, &amp;pBlob, &amp;cbBlob);
+</code></pre>
+<p>Next, the <a href="/windows/win32/api/wincrypt/nf-wincrypt-cryptbinarytostringa"><strong>CryptBinaryToString</strong></a>Ã‚Â function, declared in Wincrypt.h, performs the Base64 conversion.</p>
+<pre><code>    if (SUCCEEDED(hr))
+    {
+        hr = E_FAIL;
+        DWORD cchString;
+        
+        if (CryptBinaryToString((BYTE *)pBlob, 
+                                cbBlob,
+                                CRYPT_STRING_BASE64, 
+                                NULL, 
+                                &amp;cchString))
+        {
+            *pszOut = (PWSTR)CoTaskMemAlloc(sizeof(WCHAR) *cchString);
+    
+            if (*pszOut)
+            {
+                if (CryptBinaryToString((BYTE *)pBlob, 
+                                         cbBlob,
+                                         CRYPT_STRING_BASE64,
+                                         *pszOut, 
+                                         &amp;cchString))
+                {
+                    hr = &lt;mark type=&quot;const&quot;&gt;S_OK&lt;/mark&gt;;
+                }
+                else
+                {
+                    CoTaskMemFree(*pszOut);
+                }
+            }
+            else
+            {
+                hr = E_OUTOFMEMORY;
+            }
+        }
+    }
+    
+    return &lt;mark type=&quot;const&quot;&gt;S_OK&lt;/mark&gt;;}
+</code></pre>
+<p>The <strong>DeserializePropVariantFromString</strong> function, also found in Util.cpp, reverses the operation, deserializing values from the XML file.</p>
+<p>For information about support for open metadata, see &quot;File Types that Support Open Metadata&quot; in <a href="../shell/fa-file-types.html">File Types</a>.</p>
+<h2>Full-Text Contents</h2>
+<p>Property handlers can also facilitate a full-text search of the file contents, and they are an easy way to provide that functionality if the file format is not overly complicated. There is an alternative, more powerful way to provide the full text of the file through the <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a> interface implementation.</p>
+<p>The following table summarizes the benefits of each approach using either <a href="/windows/win32/api/filter/nn-filter-ifilter"><strong>IFilter</strong></a> or <a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a>.</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>IFilter</th>
+<th>IPropertyStore</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Allows write back to files?</td>
+<td>No</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Provides mix of content and properties?</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Multilingual?</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>MIME/Embedded?</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Text boundaries?</td>
+<td>Sentence, paragraph, chapter</td>
+<td>None</td>
+</tr>
+<tr>
+<td>Implementation supported for SPS/SQL Server?</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Implementation</td>
+<td>Complex</td>
+<td>Simple</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>In the recipe handler sample, the recipe file format does not have any complex requirements, so only <a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a> has been implemented for full-text support. Full-text search is implemented for the XML nodes named in the following array.</p>
+<pre><code>const PWSTR c_rgszContentXPath[] = {
+    L&quot;Recipe/Ingredients/Item&quot;,
+    L&quot;Recipe/Directions/Step&quot;,
+    L&quot;Recipe/RecipeInfo/Yield&quot;,
+    L&quot;Recipe/RecipeKeywords/Keyword&quot;,
+};
+</code></pre>
+<p>The property system contains the <code>System.Search.Contents</code> (PKEY_Search_Contents) property, which was created to provide full-text content to the indexer. This property's value is never displayed directly in the UI; the text from all of the XML nodes named in the array above are concatenated into a single string. That string is then provided to the indexer as the full-text content of the recipe file through a call to <a href="/windows/win32/api/propsys/nf-propsys-ipropertystorecache-setvalueandstate"><strong>IPropertyStoreCache::SetValueAndState</strong></a> as illustrated in the following code example.</p>
+<pre><code>HRESULT CRecipePropertyStore::_LoadSearchContent()
+{
+    HRESULT hr = S_FALSE;
+    _bstr_t bstrContent;
+    
+    for (UINT i = 0; i &lt; ARRAYSIZE(c_rgszContentXPath); ++i)
+    {
+        MSXML2::IXMLDOMNodeListPtr spList = 
+                                  _spDomDoc-&gt;selectNodes(c_rgszContentXPath[i]);
+    
+        if (spList)
+        {
+            UINT cElems = spList-&gt;length;
+            
+            for (UINT elt = 0; elt &lt; cElems; ++elt)
+            {
+                bstrContent += L&quot; &quot;;
+                bstrContent += spList-&gt;item[elt]-&gt;text;
+            }
+        }
+    }
+    
+    if (bstrContent.length() &gt; 0)
+    {
+        PROPVARIANT propvar = { VT_LPWSTR };
+        hr = SHStrDup(bstrContent, &amp;(propvar.pwszVal));
+    
+        if (SUCCEEDED(hr))
+        {
+            hr = _spCache-&gt;SetValueAndState(PKEY_Search_Contents, 
+                                            &amp;propvar, 
+                                            PSC_NORMAL);
+            PropVariantClear(&amp;propvar);
+        }
+    }
+    
+    return hr;}
+</code></pre>
+<h2>Providing Values for Properties</h2>
+<p>When used to read values, property handlers are usually invoked for one of the following reasons:</p>
+<ul>
+<li>To enumerate all property values.</li>
+<li>To get the value of a specific property.</li>
+</ul>
+<p>For enumeration, a property handler is asked to enumerate its properties either during indexing or when the properties dialog box asks for properties to display in the <strong>Other</strong> group. Indexing goes on constantly as a background operation. Whenever a file changes, the indexer is notified, and it re-indexes the file by asking the property handler to enumerate its properties. Therefore, it is critical that property handlers are implemented efficiently and return property values as quickly as possible. Enumerate all the properties for which you have values, just as you would for any collection, but do not enumerate properties that involve memory-intensive calculations or network requests that could make them slow to retrieve.</p>
+<p>When writing a property handler, you usually need to consider the following two sets of properties.</p>
+<ul>
+<li>Primary properties: Properties that your file type supports natively. For example, a photo property handler for Exchangeable Image File (EXIF) metadata natively supports <code>System.Photo.FNumber</code>.</li>
+<li>Extended properties: Properties that your file type supports as part of open metadata.</li>
+</ul>
+<p>Because the sample uses in-memory cache, implementing <a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a> methods is just a matter of delegating to that cache, as illustrated in the following code example.</p>
+<pre><code>IFACEMETHODIMP GetCount(__out DWORD *pcProps)
+{ return _spCache-&gt;GetCount(pcProps); }
+
+IFACEMETHODIMP GetAt(DWORD iProp, __out PROPERTYKEY *pkey)
+{ return _spCache-&gt;GetAt(iProp, pkey); }
+
+IFACEMETHODIMP GetValue(REFPROPERTYKEY key, __out PROPVARIANT *pPropVar)
+{ return _spCache-&gt;GetValue(key, pPropVar); }
+</code></pre>
+<p>If you choose not to delegate to the in-memory cache, you must implement your methods to provide&gt; the following expected behavior:</p>
+<ul>
+<li><a href="/previous-versions/windows/desktop/legacy/bb761472(v=vs.85)"><strong>IPropertyStore::GetCount</strong></a>: If there are no properties, this method returns <strong>S_OK</strong>.</li>
+<li><a href="/previous-versions/windows/desktop/legacy/bb761471(v=vs.85)"><strong>IPropertyStore::GetAt</strong></a>: If <em>iProp</em> is greater than or equal to <em>cProps</em>, this method returns E_INVALIDARG and the structure pointed to by the <em>pkey</em> parameter is filled with zeroes.</li>
+<li><a href="/previous-versions/windows/desktop/legacy/bb761472(v=vs.85)"><strong>IPropertyStore::GetCount</strong></a> and <a href="/previous-versions/windows/desktop/legacy/bb761471(v=vs.85)"><strong>IPropertyStore::GetAt</strong></a> reflect the current state of the property handler. If a <a href="/windows/win32/api/wtypes/ns-wtypes-propertykey"><strong>PROPERTYKEY</strong></a> is added to or removed from the file through <a href="/previous-versions/windows/desktop/legacy/bb761475(v=vs.85)"><strong>IPropertyStore::SetValue</strong></a>, these two methods must reflect that change the next time they are called.</li>
+<li><a href="/previous-versions/windows/desktop/legacy/bb761473(v=vs.85)"><strong>IPropertyStore::GetValue</strong></a>: If this method is asked for a value that does not exist, it returns <strong>S_OK</strong> with the value reported as VT_EMPTY.</li>
+</ul>
+<h2>Writing Back Values</h2>
+<p>When the property handler writes the value of a property using <a href="/previous-versions/windows/desktop/legacy/bb761475(v=vs.85)"><strong>IPropertyStore::SetValue</strong></a>, it does not write the value to the file until <a href="/previous-versions/windows/desktop/legacy/bb761470(v=vs.85)"><strong>IPropertyStore::Commit</strong></a> is called. The in-memory cache can be useful in implementing this scheme. In the sample code the <strong>IPropertyStore::SetValue</strong> implementation simply sets the new value in the in-memory cache and sets the state of that property to PSC_DIRTY.</p>
+<pre><code>HRESULT CRecipePropertyStore::SetValue(REFPROPERTYKEY key, const PROPVARIANT *pPropVar)
+    {
+    
+    HRESULT hr = E_FAIL;
+    
+    if (IsEqualPropertyKey(key, PKEY_Search_Contents))
+    {
+        // This property is read-only
+        hr = HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);  
+    }
+    else
+    {
+        hr = _spCache-&gt;SetValueAndState(key, pPropVar, PSC_DIRTY);
+    }
+    
+    return hr;
+}
+</code></pre>
+<p>In any <a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a> implementation, the following behavior is expected from <a href="/previous-versions/windows/desktop/legacy/bb761475(v=vs.85)"><strong>IPropertyStore::SetValue</strong></a>:</p>
+<ul>
+<li>If the property already exists, the value of the property is set.</li>
+<li>If the property does not exist, the new property is added and its value set.</li>
+<li>If the property value cannot be persisted at the same accuracy as given (for instance, truncation due to size limitations in the file format), the value is set as far as possible and INPLACE_S_TRUNCATED is returned.</li>
+<li>If the property is not supported by the property handler, <code>HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED)</code> is returned.</li>
+<li>If there is another reason that the property value cannot be set, such as the file being locked or lack of rights to edit through access control lists (ACLs), then STG_E_ACCESSDENIED is returned.</li>
+</ul>
+<p>One major advantage of using streams, as the sample, is reliability. Property handlers must always consider that they cannot leave a file in an inconsistent state in the case of a catastrophic failure. Corrupting a user's files obviously should be avoided, and the best way to do this is with a &quot;copy-on-write&quot; mechanism. If your property handler uses a stream to access a file, you get this behavior automatically; the system writes any changes to the stream, replacing the file with the new copy only during the commit operation.</p>
+<p>To override this behavior and control the file saving process manually, you can opt out of the safe save behavior by setting the ManualSafeSave value in your handler's registry entry as illustrated here.</p>
+<pre><code>HKEY_CLASSES_ROOT
+Â Â Â CLSID
+Â Â Â Â Â Â {66742402-F9B9-11D1-A202-0000F81FEDEE}
+Â Â Â Â Â Â Â Â Â ManualSafeSave = 1
+</code></pre>
+<p>When a handler specifies the ManualSafeSave value, the stream with which it is initialized is not a transacted stream (STGM_TRANSACTED). The handler itself must implement the safe save function to ensure that the file is not corrupted if the save operation is interrupted. If the handler implements in-place writing, it will write to the stream that it is given. If the handler does not support this feature, then it must retrieve a stream with which to write the updated copy of the file using <a href="/windows/win32/api/shobjidl_core/nf-shobjidl_core-idestinationstreamfactory-getdestinationstream"><strong>IDestinationStreamFactory::GetDestinationStream</strong></a>. After the handler is done writing, it should call <a href="/previous-versions/windows/desktop/legacy/bb761470(v=vs.85)"><strong>IPropertyStore::Commit</strong></a> on the original stream to complete the operation, and replace the contents of the original stream with the new copy of the file.</p>
+<p>ManualSafeSave is also the default situation if you do not initialize your handler with a stream. Without an original stream to receive the contents of the temporary stream, you must use <a href="/windows/win32/api/winbase/nf-winbase-replacefilea"><strong>ReplaceFile</strong></a> to perform an atomic replacement of the source file.</p>
+<p>Large file formats that will be used in a way that produces files greater than 1 MB should implement support for in-place property writing; otherwise, the performance behavior does not meet the expectations of clients of the property system. In this scenario, the time required to write properties should not be affected by the file size.</p>
+<p>For very large files, for example a video file of 1 GB or more, a different solution is required. If there is not enough space in the file to perform in-place writing, the handler may fail the property update if the amount of space reserved for in-place property writing has been exhausted. This failure occurs to avoid poor performance arising from 2 GB of IO (1 to read, 1 to write). Because of this potential failure, these file formats should reserve enough space for in-place property writing.</p>
+<p>If the file has enough space in its header to write metadata, and if the writing of that metadata does not cause the file to grow or shrink, it might be safe to write in-place. We recommend 64 KB as a starting point. Writing in-place is equivalent to the handler asking for ManualSafeSave and calling <a href="/windows/win32/api/objidl/nf-objidl-istream-commit"><strong>IStream::Commit</strong></a> in the implementation of <a href="/previous-versions/windows/desktop/legacy/bb761470(v=vs.85)"><strong>IPropertyStore::Commit</strong></a>, and has much better performance than copy-on-write. If the file size changes due to property value changes, writing in-place should not be attempted because of the potential for a corrupted file in the event of an abnormal termination.</p>
+<blockquote>
+<p>[!Note]<br />
+For performance reasons we recommend that the ManualSafeSave option be used with property handlers working with files that are 100 KB or larger.</p>
+</blockquote>
+<p>Â </p>
+<p>As illustrated in the following sample implementation of <a href="/previous-versions/windows/desktop/legacy/bb761470(v=vs.85)"><strong>IPropertyStore::Commit</strong></a>, the handler for ManualSafeSave is registered to illustrate the manual safe save option. The <strong>_SaveCacheToDom</strong> method writes the property values stored in the in-memory cache to the XMLdocument object.</p>
+<pre><code>HRESULT CRecipePropertyStore::Commit()
+{
+    HRESULT hr = E_UNEXPECTED;
+    if (_pCache)
+    {
+        // Check grfMode to ensure writes are allowed.
+        hr = STG_E_ACCESSDENIED;
+        if (_grfMode &amp; STGM_READWRITE)
+        {
+            // Save the internal value cache to XML DOM object.
+            hr = _SaveCacheToDom();
+            if (SUCCEEDED(hr))
+            {
+                // Reset the output stream.
+                LARGE_INTEGER liZero = {};
+                hr = _pStream-&gt;Seek(liZero, STREAM_SEEK_SET, NULL);
+</code></pre>
+<p>Next, ask whether the pecified supports <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-idestinationstreamfactory"><strong>IDestinationStreamFactory</strong></a>.</p>
+<pre><code>                        if (SUCCEEDED(hr))
+                        {
+                            // Write the XML out to the temprorary stream and commit it.
+                            VARIANT varStream = {};
+                            varStream.vt = VT_UNKNOWN;
+                            varStream.punkVal = pStreamCommit;
+                            hr = _pDomDoc-&gt;save(varStream);
+                            if (SUCCEEDED(hr))
+                            {
+                                hr = pStreamCommit-&gt;Commit(STGC_DEFAULT);_
+</code></pre>
+<p>Next, commit the original stream, which writes the data back to the original file in a safe manner.</p>
+<pre><code>                        if (SUCCEEDED(hr))
+                                {
+                                    // Commit the real output stream.
+                                    _pStream-&gt;Commit(STGC_DEFAULT);
+                                }
+                            }
+
+                            pStreamCommit-&gt;Release();
+                        }
+
+                        pSafeCommit-&gt;Release();
+                    }
+                }
+            }
+        }
+    }
+</code></pre>
+<p>Then examine the <strong>_SaveCacheToDom</strong> implementation.</p>
+<pre><code>// Saves the values in the internal cache back to the internal DOM object.
+HRESULT CRecipePropertyStore::_SaveCacheToDom()
+{
+    // Iterate over each property in the internal value cache.
+    DWORD cProps;  
+</code></pre>
+<p>Next, get the number of properties stored in the in-memory cache.</p>
+<pre><code>HRESULT hr = _pCache-&gt;GetCount(&amp;cProps);          
+            
+</code></pre>
+<p>Now iterate through the properties to determine whether the value of a property has been changed since it was loaded into memory.</p>
+<pre><code>    for (UINT i = 0; SUCCEEDED(hr) &amp;&amp; (i &lt; cProps); ++i)
+    {
+        PROPERTYKEY key;
+        hr = _pCache-&gt;GetAt(i, &amp;key); 
+</code></pre>
+<p>The <a href="/windows/win32/api/propsys/nf-propsys-ipropertystorecache-getstate"><strong>IPropertyStoreCache::GetState</strong></a> method gets the state of the property in the cache. The PSC_DIRTY flag, which was set in the <a href="/previous-versions/windows/desktop/legacy/bb761475(v=vs.85)"><strong>IPropertyStore::SetValue</strong></a> implementation, marks a property as changed.</p>
+<pre><code>        if (SUCCEEDED(hr))
+        {
+            // check the cache state; only save dirty properties
+            PSC_STATE psc;
+            hr = _pCache-&gt;GetState(key, &amp;psc);
+            if (SUCCEEDED(hr) &amp;&amp; psc == PSC_DIRTY)
+            {
+                // get the cached value
+                PROPVARIANT propvar = {};
+                hr = _pCache-&gt;GetValue(key, &amp;propvar); 
+</code></pre>
+<p>Map the property to the XML node as specified in the <strong>eg_rgPropertyMap</strong> array.</p>
+<pre><code>if (SUCCEEDED(hr))
+                {
+                    // save as a native property if the key is in the property map
+                    BOOL fIsNativeProperty = FALSE;
+                    for (UINT i = 0; i &lt; ARRAYSIZE(g_rgPROPERTYMAP); ++i)
+                    {
+                        if (IsEqualPropertyKey(key, *g_rgPROPERTYMAP[i].pkey))
+                        {
+                            fIsNativeProperty = TRUE;
+                            hr = _SaveProperty(propvar, g_rgPROPERTYMAP[i]);
+                            break;
+                        }     
+</code></pre>
+<p>If a property is not in the map, it is a new property that was set by Windows Explorer. Because open metadata is supported, save the new property in the <strong>ExtendedProperties</strong> section of the XML.</p>
+<pre><code>                    
+                    // Otherwise, save as an extended property.
+                    if (!fIsNativeProperty)
+                    {
+                        hr = _SaveExtendedProperty(key, propvar);
+                    }
+
+                    PropVariantClear(&amp;propvar);
+                }
+            }
+        }
+    }
+
+    return hr;    
+</code></pre>
+<h2>Implementing IPropertyStoreCapabilities</h2>
+<p><a href="/windows/win32/api/propsys/nn-propsys-ipropertystorecapabilities"><strong>IPropertyStoreCapabilities</strong></a> informs the Shell UI whether a particular property can be edited in the Shell UI. It is important to note that this relates only to the ability to edit the property in the UI, not whether you can successfully call <a href="/previous-versions/windows/desktop/legacy/bb761475(v=vs.85)"><strong>IPropertyStore::SetValue</strong></a> on the property. A property that provokes a return value of S_FALSE from <a href="/windows/win32/api/propsys/nf-propsys-ipropertystorecapabilities-ispropertywritable"><strong>IPropertyStoreCapabilities::IsPropertyWritable</strong></a> might still be capable of being set through an application.</p>
+<pre><code>interface IPropertyStoreCapabilities : IUnknown
+{
+    HRESULT IsPropertyWritable([in] REFPROPERTYKEY key);
+}
+</code></pre>
+<p><a href="/windows/win32/api/propsys/nf-propsys-ipropertystorecapabilities-ispropertywritable"><strong>IsPropertyWritable</strong></a> returns <strong>S_OK</strong> to indicate that end users should be allowed to edit the property directly; S_FALSE indicates that they should not. S_FALSE can mean that applications are responsible for writing the property, not users. The Shell disables editing controls as appropriate based on the results of calls to this method. A handler that does not implement <a href="/windows/win32/api/propsys/nn-propsys-ipropertystorecapabilities"><strong>IPropertyStoreCapabilities</strong></a> is assumed to support open metadata through support for the writing of any property.</p>
+<p>If you are building a handler that handles only read-only properties, then you should implement your <strong>Initialize</strong> method (<a href="/windows/win32/api/propsys/nn-propsys-iinitializewithstream"><strong>IInitializeWithStream</strong></a>, <a href="/windows/win32/api/shobjidl_core/nn-shobjidl_core-iinitializewithitem"><strong>IInitializeWithItem</strong></a>, or <a href="/windows/win32/api/propsys/nn-propsys-iinitializewithfile"><strong>IInitializeWithFile</strong></a>) so that it returns STG_E_ACCESSDENIED when called with the STGM_READWRITE flag.</p>
+<p>Some properties have their <a href="./propdesc-schema-typeinfo.html">isInnate</a> attribute set to <strong>true</strong>. Innate properties have the following characteristics:</p>
+<ul>
+<li>The property is usually calculated in some way. For instance, <code>System.Image.BitDepth</code> is calculated from the image itself.</li>
+<li>Changing the property would not make sense without changing the file. For instance, changing <code>System.Image.Dimensions</code> would not resize the image, so it does not make sense to allow the user to change it.</li>
+<li>In some cases, these properties are provided automatically by the system. Examples include <code>System.DateModified</code>, which is provided by the file system, and <code>System.SharedWith</code>, which is based on who the user is sharing the file with.</li>
+</ul>
+<p>Due to these characteristics, properties marked as <em>IsInnate</em> are provided to the user in the Shell UI only as read-only properties. If a property is marked as <em>IsInnate</em>, the property system does not store that property in the property handler. Therefore, property handlers do not need special code to account for these properties in their implementations. If the value of the <em>IsInnate</em> attribute is not explicitly stated for a particular property, the default value is <strong>false</strong>.</p>
+<h2>Registering and Distributing Property Handlers</h2>
+<p>With the property handler implemented, it must be registered and its file name extension associated with the handler. For more information, see <a href="./prophand-reg-dist.html">Registering and Distributing Property Handlers</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="./building-property-handlers-properties.html">Understanding Property Handlers</a></p>
+<!-- raw HTML omitted -->
+<p><a href="./building-property-handlers-user-friendly-kind-names.html">Using Kind Names</a></p>
+<!-- raw HTML omitted -->
+<p><a href="./building-property-handlers-property-lists.html">Using Property Lists</a></p>
+<!-- raw HTML omitted -->
+<p><a href="./prophand-reg-dist.html">Registering and Distributing Property Handlers</a></p>
+<!-- raw HTML omitted -->
+<p><a href="./prophand-bestprac-faq.yml">Property Handler Best Practices and FAQ</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Collecting Fine-Tuning Information</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Collecting Fine-Tuning Information
+ms.assetid: 0d9ea896-e0a9-411b-9a10-e366e3686a34
+title: Collecting Fine-Tuning Information
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Collecting Fine-Tuning Information</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>Although cable frequencies are generally expected to be exact, broadcast frequencies may be adjusted up or down several kHz by the broadcast station to reduce potential interference with neighboring channels.</p>
+<p>When the TV Tuner filter tunes to a channel, it scans for the most precise signal. To save this information in the registry for subsequent tuning operations, do the following:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-iamtuner-channelminmax"><strong>IAMTuner::ChannelMinMax</strong></a> to determine the range of frequency entries in the current frequency table.</li>
+<li>Call the <a href="/windows/desktop/api/Strmif/nf-strmif-iamtuner-put_channel"><strong>IAMTuner::put_Channel</strong></a> method once for each frequency index in the range.</li>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-iamtvtuner-storeautotune"><strong>IAMTVTuner::StoreAutoTune</strong></a> to save the fine-tuning information in the registry. The information is stored under the registry key for the current tuning space.</li>
+</ol>
+<p>The following code shows these steps:</p>
+<pre lang="C++"><code>long lMin = 0, lMax = 0;
+hr = pTuner-&gt;ChannelMinMax(&amp;lMin, &amp;lMax);
+if (SUCCEEDED(hr))
+{
+    for (long i = lMin; i &lt;= lMax; i++)
+    {
+        pTuner-&gt;put_Channel(i, AMTUNER_SUBCHAN_DEFAULT,
+            AMTUNER_SUBCHAN_DEFAULT)
+    }
+    pTuner-&gt;StoreAutoTune();
+}
+</code></pre>
+<p>With earlier versions of the TV Tuner filter, the <a href="/windows/desktop/api/Strmif/nf-strmif-iamtvtuner-autotune"><strong>IAMTVTuner::AutoTune</strong></a> method was recommended for fine-tuning. However, this method ignores any frequency overrides, so its use is no longer recommended. The following code is equivalent to the <strong>AutoTune</strong> method, but works correctly with frequency overrides:</p>
+<pre lang="C++"><code>HRESULT MyAutoTune(IAMTVTuner *pTuner, long lIndex, long *plFoundSignal)
+{
+    long SignalStrength = AMTUNER_NOSIGNAL;
+    HRESULT hr;
+    hr = pTuner-&gt;put_Channel(lIndex, AMTUNER_SUBCHAN_DEFAULT, AMTUNER_SUBCHAN_DEFAULT);
+    if (NOERROR == hr)
+        pTuner-&gt;SignalPresent(&amp;SignalStrength);
+    *plFoundSignal = (SignalStrength != AMTUNER_NOSIGNAL);
+        return hr;
+}
+</code></pre>
+<p>With broadcast reception, it is not always possible to get a horizontal lock, although the picture is viewable. In these cases, the tuner hardware will have a frequency lock, but the decoder will not have horizontal lock. This condition can be detected when using <a href="/windows/desktop/api/Strmif/nf-strmif-iamtuner-put_channel"><strong>put_Channel</strong></a> or <a href="/windows/desktop/api/Strmif/nf-strmif-iamtvtuner-autotune"><strong>AutoTune</strong></a> by examining the return code.</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>S_OK</td>
+<td>The tune operation succeeded and the tuner got a frequency lock.</td>
+</tr>
+<tr>
+<td>S_FALSE</td>
+<td>There were no errors during the tune operation, but the tuner was not able to get a frequency lock. It is highly unlikely that there is a viewable channel resulting from this operation.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>Any other return code indicates that some error occurred.</p>
+<p>A return value of S_OK does not guarantee that the decoder has a horizontal lock. The <a href="/windows/desktop/api/Strmif/nf-strmif-iamtvtuner-autotune"><strong>AutoTune</strong></a> method updates the <em>FoundSignal</em> parameter to indicate whether or not horizontal lock was achieved. The <a href="/windows/desktop/api/Strmif/nf-strmif-iamtuner-signalpresent"><strong>IAMTuner::SignalPresent</strong></a> method returns the same information.</p>
+<p>When the return value is S_OK, however, the application has the option of ignoring the <em>FoundSignal</em> parameter, because the tuner is reporting a frequency lock. There is the possibility of a frequency lock on noise, but this possibility should be weighed against the possibility of skipping viewable channels.</p>
+<h2>Registry Conversion</h2>
+<p>To support frequency overrides, the internal format of the registry key that holds fine-tuning information has changed. The original format is still supported for backward compatibility, but it does not support frequency overrides.</p>
+<p>The old registry format is converted to the new format whenever the <a href="/windows/desktop/api/Strmif/nf-strmif-iamtvtuner-storeautotune"><strong>IAMTVTuner::StoreAutoTune</strong></a> method is called. If your application adds frequency overrides, it should call the <strong>StoreAutoTune</strong> method to convert to the new registry format. It is not necessary to collect any fine-tuning information before calling <strong>StoreAutoTune</strong>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="international-analog-tv-tuning.html">International Analog TV Tuning</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

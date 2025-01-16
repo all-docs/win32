@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flushing Data</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Flushing Data
+ms.assetid: 528763a2-c0f2-4981-91dc-dd17987f5bd5
+title: Flushing Data
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Flushing Data</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>The following pseudocode shows how to implement the <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-beginflush"><strong>IPin::BeginFlush</strong></a> method:</p>
+<pre lang="C++"><code>HRESULT CMyInputPin::BeginFlush()
+{
+    CAutoLock lock_it(m_pLock);
+   
+    // First, make sure the Receive method will fail from now on.
+    HRESULT hr = CBaseInputPin::BeginFlush();
+    
+    // Force downstream filters to release samples. If our Receive method
+    // is blocked in GetBuffer or Deliver, this will unblock it.
+    for (each output pin)
+    {
+        hr = pOutputPin-&gt;DeliverBeginFlush();
+    }
+
+    // Unblock our Receive method if it is waiting on an event.
+    SetEvent(m_hSomeEventThatReceiveNeedsToWaitOn);
+
+    // At this point, the Receive method can't be blocked. Make sure 
+    // it finishes, by taking the streaming lock. (Not necessary if this 
+    // is the last step.)
+    { 
+        CAutoLock lock_2(&amp;m_csReceive);
+
+        /* Now it's safe to do anything that would crash or hang 
+           if Receive were executing. */
+    }
+    return hr;
+}
+</code></pre>
+<p>When flushing starts, the <strong>BeginFlush</strong> method takes the filter lock, which serializes the state change. It is not yet safe to take the streaming lock, because flushing happens on the application thread, and the streaming thread might be in the middle of a <strong>Receive</strong> call. The pin needs to guarantee that <strong>Receive</strong> is not blocked, and that any subsequent calls to <strong>Receive</strong> will fail. The <a href="cbaseinputpin-beginflush.html"><strong>CBaseInputPin::BeginFlush</strong></a> method sets an internal flag, <a href="cbaseinputpin-m-bflushing.html"><strong>CBaseInputPin::m_bFlushing</strong></a>. When the flag is <strong>TRUE</strong>, the <strong>Receive</strong> method fails.</p>
+<p>By delivering the <strong>BeginFlush</strong> call downstream, the pin guarantees that all downstream filters release their samples and return from <strong>Receive</strong> calls. This in turn guarantees that the input pin is not blocked waiting for <strong>GetBuffer</strong> or <strong>Receive</strong>. If your pin's <strong>Receive</strong> method ever waits on an event (for example, to get resources), the <strong>BeginFlush</strong> method should force the wait to terminate by setting the event. At this point, the <strong>Receive</strong> method is guaranteed to return, and the <strong>m_bFlushing</strong> flag prevents new <strong>Receive</strong> calls from doing any work.</p>
+<p>For some filters, that is all <strong>BeginFlush</strong> needs to do. The <strong>EndFlush</strong> method will signal to the filter that it can start receiving samples again. Other filters may need to use variables or resources in <strong>BeginFlush</strong> that are also used in <strong>Receive</strong>. In that case, the filter should hold the streaming lock first. Be sure not to do this before any of the previous steps, because you might cause a deadlock.</p>
+<p>The <strong>EndFlush</strong> method holds the filter lock and propagates the call downstream:</p>
+<pre lang="C++"><code>HRESULT CMyInputPin::EndFlush()
+{
+    CAutoLock lock_it(m_pLock);
+    for (each output pin)
+        hr = pOutputPin-&gt;DeliverEndFlush();
+    return CBaseInputPin::EndFlush();
+}
+</code></pre>
+<p>The <a href="cbaseinputpin-endflush.html"><strong>CBaseInputPin::EndFlush</strong></a> method resets the <strong>m_bFlushing</strong> flag to <strong>FALSE</strong>, which allows the <strong>Receive</strong> method to start receiving samples again. This should be the last step in <strong>EndFlush</strong>, because the pin must not receive any samples until flushing is complete and all downstream filters are notified.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="threads-and-critical-sections.html">Threads and Critical Sections</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

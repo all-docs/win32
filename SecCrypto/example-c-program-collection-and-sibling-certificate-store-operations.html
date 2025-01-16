@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example C Program: Collection and Sibling Certificate Store Operations</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following example demonstrates the concept of the collection store, a temporary certificate store that actually includes the contents of several certificate stores.
+ms.assetid: 5349222f-ad68-477c-8712-fde16e68f600
+title: 'Example C Program: Collection and Sibling Certificate Store Operations'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example C Program: Collection and Sibling Certificate Store Operations</h1>
+<p>The following example demonstrates the concept of the collection store, a temporary <a href="../secgloss/c-gly.html"><em>certificate store</em></a> that actually includes the contents of several certificate stores. One or more stores may be added to a collection that can access the contents of any of the stores in the collection with a single function call.</p>
+<p>This example illustrates the following tasks and <a href="../secgloss/c-gly.html"><em>CryptoAPI</em></a> functions:</p>
+<ul>
+<li>Opening and closing a collection store, a memory store and a system store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certopenstore"><strong>CertOpenStore</strong></a> and <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certclosestore"><strong>CertCloseStore</strong></a>.</li>
+<li>Adding a sibling store to a collection store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certaddstoretocollection"><strong>CertAddStoreToCollection</strong></a>.</li>
+<li>Finding certificates and links to certificates in stores that meets some criteria using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certfindcertificateinstore"><strong>CertFindCertificateInStore</strong></a>.</li>
+<li>Adding a retrieved certificate to a store in memory using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certaddcertificatecontexttostore"><strong>CertAddCertificateContextToStore</strong></a>.</li>
+<li>Adding a link to a certificate to a store using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certaddcertificatelinktostore"><strong>CertAddCertificateLinkToStore</strong></a>.</li>
+<li>Saving the store in memory to a file on disk.</li>
+<li>Opening and closing a file-based certificate store.</li>
+<li>Removing a sibling store from a collection using <a href="/windows/desktop/api/Wincrypt/nf-wincrypt-certremovestorefromcollection"><strong>CertRemoveStoreFromCollection</strong></a>.</li>
+</ul>
+<p>This example uses the function <a href="myhandleerror.html"><strong>MyHandleError</strong></a>. The code for this function is included with the sample. Code for this and other auxiliary functions is also listed under <a href="general-purpose-functions.html">General Purpose Functions</a>.</p>
+<p>This example uses the <strong>CreateMyDACL</strong> function, defined in the <a href="../secbp/creating-a-dacl.html">Creating a DACL</a> topic, to ensure the open file is created with a proper DACL.</p>
+<p>The following example opens a collection store, creates a new certificate store in memory, and adds the new store as a sibling store to the collection store. The program then opens a system store and retrieves a certificate. That certificate is added to the memory store. A second certificate is retrieved from the system store and a link to that certificate is added to the memory store. The certificate and the link are then retrieved from the collection store showing that certificates and links in a sibling store can be retrieved from the collection store. The memory is saved to disk. The memory store is then removed from the collection. The link added to the memory store can still be found in the memory store but can no longer be found in the collection store. All of the stores and files are closed, then the file store is reopened and a search is done for the certificate link. The success of this program depends upon a My store being available. That store must include a certificate with the subject &quot;Insert_cert_subject_name1&quot; and a second certificate with the subject &quot;Insert_cert_subject_name2&quot;. The names of the subjects should be changed to the names of certificate subjects known to be in the My store.</p>
+<pre lang="C++"><code>#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;Wincrypt.h&gt;
+#define  MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+void MyHandleError(char *s);
+
+void main(void)
+{
+//-------------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+// Declare and initialize variables.
+
+HCERTSTORE  hCollectionStore;           // Collection store 
+                                        // handle
+HCERTSTORE  hSystemStore;               // System store handle
+HCERTSTORE  hMemoryStore;               // Memory store handle
+PCCERT_CONTEXT  pDesiredCert = NULL;    // Set to NULL for the first 
+                                        // call to
+                                        // CertFindCertificateInStore
+HANDLE hStoreFileHandle ;               // Output file handle
+LPWSTR pszFileName = L&quot;TestStor.sto&quot;;    // Output file name
+SECURITY_ATTRIBUTES sa;                 // for DACL
+LPWSTR pswzFirstCert = L&quot;Insert_cert_subject_name1&quot;;
+                                        // Subject of the first 
+                                        // certificate
+LPWSTR pswzSecondCert = L&quot;Insert_cert_subject_name2&quot;;    
+                                        // Subject of the second
+                                        // certificate
+
+//-------------------------------------------------------------------
+// Open a collection certificate store.
+
+if(hCollectionStore = CertOpenStore(
+      CERT_STORE_PROV_COLLECTION, // Collection store
+      0,                          // Encoding type 
+                                  // Not used with a collection store
+      NULL,                       // Use the default provider
+      0,                          // No flags
+      NULL))                      // Not needed
+{
+   printf(&quot;Opened a collection store. \n&quot;);
+}
+else
+{
+   MyHandleError( &quot;Error opening the collection store.&quot;);
+}
+//-------------------------------------------------------------------
+// Open a new certificate store in memory.
+
+if(hMemoryStore = CertOpenStore(
+      CERT_STORE_PROV_MEMORY,    // Memory store
+      0,                         // Encoding type
+                                 // not used with a memory store
+      NULL,                      // Use the default provider
+      0,                         // No flags
+      NULL))                     // Not needed
+{
+   printf(&quot;Opened a memory store. \n&quot;);
+}
+else
+{
+   MyHandleError( &quot;Error opening a memory store.&quot;);
+}
+//-------------------------------------------------------------------
+// Open the My system store using CertOpenStore.
+
+if(hSystemStore = CertOpenStore(
+     CERT_STORE_PROV_SYSTEM, // System store will be a 
+                             // virtual store
+     0,                      // Encoding type not needed 
+                             // with this PROV
+     NULL,                   // Accept the default HCRYPTPROV
+     CERT_SYSTEM_STORE_CURRENT_USER,
+     L&quot;MY&quot;))                 // System store name
+{
+   printf(&quot;Opened the My system store. \n&quot;);
+}
+else
+{
+   MyHandleError( &quot;Could not open the My system store.&quot;);
+}
+//-------------------------------------------------------------------
+// Get a certificate that has the string
+// &quot;Insert_cert_subject_name1&quot; in its subject. 
+if(pDesiredCert)
+    CertFreeCertificateContext(pDesiredCert);
+if(pDesiredCert=CertFindCertificateInStore(
+      hSystemStore,
+      MY_ENCODING_TYPE,            // Use X509_ASN_ENCODING
+      0,                           // No dwFlags needed
+      CERT_FIND_SUBJECT_STR,       // Find a certificate with a
+                                   // subject that matches the string
+                                   // in the next parameter
+      pswzFirstCert,               // The Unicode string to be found
+                                   // in a certificate's subject
+      NULL))                       // NULL is used so that the 
+                                   // search will begin at the 
+                                   // beginning of the certificate
+                                   // store
+{
+  printf(&quot;The %S certificate was found. \n&quot;,pswzFirstCert);
+}
+else
+{
+   MyHandleError(&quot;Could not find the desired certificate.&quot;);
+}
+//-------------------------------------------------------------------
+// pDesiredCert is a pointer to a certificate with a subject that 
+// includes the string passed as parameter five to the function.
+
+//-------------------------------------------------------------------
+// Add the certificate from the My store to the memory store.
+
+if(CertAddCertificateContextToStore(
+      hMemoryStore,                // Store handle
+      pDesiredCert,                // Pointer to a certificate
+      CERT_STORE_ADD_USE_EXISTING,
+      NULL))
+{
+   printf(&quot;Certificate added to the memory store. \n&quot;);
+}
+else
+{
+   MyHandleError(&quot;Could not add the certificate to the &quot;
+       &quot;memory store.&quot;);
+}
+
+//-------------------------------------------------------------------
+//  Add the memory store as a sibling to the collection store. 
+//  All certificates in the memory store will now be available in
+//  the collection store. Any new certificates added to the memory 
+//  store will also be available in the collection store.
+
+if(CertAddStoreToCollection(
+   hCollectionStore,
+   hMemoryStore,
+   CERT_PHYSICAL_STORE_ADD_ENABLE_FLAG,// New certificates can be
+                                       // added to the sibling store
+   1))                                 // The sibling store's 
+                                       // priority
+                                       // because this store has 
+                                       // the highest priority, 
+                                       // certificates added to
+                                       // the collection store will
+                                       // actually be stored in this
+                                       // store
+{
+     printf(&quot;The memory store is added to the collection store.\n&quot;);
+}
+else
+{
+     MyHandleError(&quot;The memory store was not added &quot;
+         &quot;to the collection.&quot;);
+}
+//-------------------------------------------------------------------
+//  Find a different certificate in the My store, and add, to the 
+//  memory store, a link to that certificate.
+if(pDesiredCert)
+    CertFreeCertificateContext(pDesiredCert);
+if(pDesiredCert=CertFindCertificateInStore(
+      hSystemStore,
+      MY_ENCODING_TYPE,            // Use X509_ASN_ENCODING
+      0,                           // No dwFlags needed
+      CERT_FIND_SUBJECT_STR,       // Find a certificate with a
+                                   // subject that matches the string
+                                   // in the next parameter
+      pswzSecondCert,              // The Unicode string to be found
+                                   // in a certificate's subject
+      NULL))                       // NULL is used so that the 
+                                   // search will begin at the 
+                                   // beginning of the certificate
+                                   // store
+{
+  printf(&quot;The %S certificate was found. \n&quot;,pswzSecondCert);
+}
+else
+{
+   MyHandleError(&quot;Could not find the second certificate.&quot;);
+}
+//-------------------------------------------------------------------
+// Add a link to a second certificate from the My store to the new 
+// memory store.
+
+if(CertAddCertificateLinkToStore(
+      hMemoryStore,                // store handle
+      pDesiredCert,                // pointer to a certificate
+      CERT_STORE_ADD_USE_EXISTING,
+      NULL))
+{
+   printf(&quot;%S link added to the memory store. \n&quot;,pswzSecondCert);
+}
+else
+{
+   MyHandleError(&quot;Could not add the certificate link to the &quot;
+       &quot;memory store.&quot;);
+}
+
+//-------------------------------------------------------------------
+// Find the first certificate in the memory store.
+if(pDesiredCert)
+    CertFreeCertificateContext(pDesiredCert);
+if(pDesiredCert=CertFindCertificateInStore(
+      hMemoryStore,                // Store handle
+      MY_ENCODING_TYPE,            // Use X509_ASN_ENCODING
+      0,                           // No dwFlags needed
+      CERT_FIND_SUBJECT_STR,       // Find a certificate with a
+                                   // subject that matches the string
+                                   // in the next parameter
+      pswzFirstCert,               // The Unicode string to be found
+                                   // in a certificate's subject
+      NULL))                       // NULL is used so that the 
+                                   // search will begin at the 
+                                   // beginning of the certificate
+                                   // store
+{
+  printf(&quot;The %S certificate was found in the &quot;
+      &quot;memory store. \n&quot;,pswzFirstCert);
+}
+else
+{
+   printf(&quot;The %S certificate was not in the &quot;
+       &quot;memory store.\n&quot;, pswzFirstCert);
+}
+
+//-------------------------------------------------------------------
+//  Find that same certificate in the collection store.
+if(pDesiredCert)
+    CertFreeCertificateContext(pDesiredCert);
+if(pDesiredCert=CertFindCertificateInStore(
+      hCollectionStore,
+      MY_ENCODING_TYPE,            // Use X509_ASN_ENCODING
+      0,                           // No dwFlags needed
+      CERT_FIND_SUBJECT_STR,       // Find a certificate with a
+                                   // subject that matches the string
+                                   // in the next parameter
+      pswzFirstCert,               // The Unicode string to be found
+                                   // in a certificate's subject
+      NULL))                       // NULL is used so that the 
+                                   // search will begin at the 
+                                   // beginning of the certificate
+                                   // store
+{
+  printf(&quot;The %S certificate was found in the &quot;
+      &quot;collection store. \n&quot;, pswzFirstCert);
+}
+else
+{
+  printf(&quot;The %S certificate was not in the &quot;
+      &quot;memory collection.\n&quot;, pswzFirstCert);
+}
+
+//-------------------------------------------------------------------
+//  Find the certificate link in the memory store.
+
+if(pDesiredCert)
+    CertFreeCertificateContext(pDesiredCert);
+if(pDesiredCert=CertFindCertificateInStore(
+      hCollectionStore,
+      MY_ENCODING_TYPE,            // Use X509_ASN_ENCODING
+      0,                           // Mo dwFlags needed
+      CERT_FIND_SUBJECT_STR,       // Find a certificate with a
+                                   // subject that matches the string
+                                   // in the next parameter
+      pswzSecondCert,              // The Unicode string to be found
+                                   // in a certificate's subject
+      NULL))                       // NULL is used so that the 
+                                   // search will begin at the 
+                                   // beginning of the certificate
+                                   // store
+{
+  printf(&quot;The %S link was found in the &quot;
+      &quot;collection store. \n&quot;, pswzSecondCert);
+}
+else
+{
+   printf(&quot;The %S certificate link was not in the &quot;
+       &quot;memory store.\n&quot;, pswzSecondCert);
+}
+
+//-------------------------------------------------------------------
+// Create a file to save the new store and certificate into.
+
+// Create a DACL for the file.
+sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+sa.bInheritHandle = FALSE;  
+
+// Call function to set the DACL. The DACL
+// is set in the SECURITY_ATTRIBUTES 
+// lpSecurityDescriptor member.
+// if CreateMyDACL(&amp;sa) fails, call MyHandleError(&quot;CreateMyDACL failed.&quot;)
+
+if(hStoreFileHandle = CreateFile(
+      pszFileName,             // File path
+      GENERIC_WRITE,           // Access mode
+      0,                       // Share mode
+      &amp;sa,                     // Security 
+      CREATE_ALWAYS,           // How to create the file
+      FILE_ATTRIBUTE_NORMAL,   // File attributes
+      NULL))                   // File template
+{
+   printf(&quot;Created a new file on disk. \n&quot;);
+}
+else
+{
+   MyHandleError(&quot;Could not create a file on disk.&quot;);
+}
+//-------------------------------------------------------------------
+// hStoreFileHandle is the output file handle.
+// Save the memory store and its certificate to the output file.
+
+if( CertSaveStore(
+      hMemoryStore,            // Store handle
+      0,                       // Encoding type not needed here
+      CERT_STORE_SAVE_AS_STORE,
+      CERT_STORE_SAVE_TO_FILE,
+      hStoreFileHandle,        // The handle of an open disk file
+      0))                      // dwFlags--no flags are needed here
+{
+   printf(&quot;Saved the memory store to disk. \n&quot;);
+}
+else
+{
+   MyHandleError(&quot;Could not save the memory store to disk.&quot;);
+}
+//-------------------------------------------------------------------
+//  Remove the sibling store from the collection.
+//  CertRemoveStoreFromCollection returns void.
+
+printf(&quot;\nRemoving the memory store from the collection.\n&quot;);
+CertRemoveStoreFromCollection(
+    hCollectionStore,
+    hMemoryStore);
+
+//-------------------------------------------------------------------
+//   Find the link in the memory store.
+if(pDesiredCert)
+    CertFreeCertificateContext(pDesiredCert);
+if(pDesiredCert=CertFindCertificateInStore(
+      hMemoryStore,
+      MY_ENCODING_TYPE,            // Use X509_ASN_ENCODING
+      0,                           // No dwFlags needed
+      CERT_FIND_SUBJECT_STR,       // Find a certificate with a
+                                   // subject that matches the string
+                                   // in the next parameter
+      pswzSecondCert,              // Unicode string to be found
+                                   // in a certificate's subject
+      NULL))                       // NULL is used so that the 
+                                   // search will begin at the 
+                                   // beginning of the certificate
+                                   // store
+{
+  printf(&quot;The %S link is still in the &quot;
+      &quot;memory store. \n&quot;, pswzSecondCert);
+}
+else
+{
+   printf(&quot;The certificate link was not in the &quot;
+       &quot;memory store.\n&quot;);
+}
+//-------------------------------------------------------------------
+//  Try to find certificate link in the collection store.
+if(pDesiredCert)
+    CertFreeCertificateContext(pDesiredCert);
+if(pDesiredCert=CertFindCertificateInStore(
+      hCollectionStore,
+      MY_ENCODING_TYPE,            
+      0, 
+      CERT_FIND_SUBJECT_STR,    
+      pswzSecondCert,
+      NULL))       
+{
+  printf(&quot;The %S link was found in the &quot;
+      &quot;collection store. \n&quot;, pswzSecondCert);
+}
+else
+{
+   printf(&quot;Removing the store from the collection worked.\n&quot;);
+   printf(&quot;The %S link is not in the &quot;
+       &quot;collection store.\n&quot;,pswzSecondCert);
+}
+//-------------------------------------------------------------------
+// Close the stores and the file. Reopen the file store, 
+// and check its contents.
+
+if(hMemoryStore)
+    CertCloseStore(
+        hMemoryStore, 
+        CERT_CLOSE_STORE_CHECK_FLAG);
+
+if(hSystemStore)
+    CertCloseStore(
+        hSystemStore, 
+        CERT_CLOSE_STORE_CHECK_FLAG);
+
+if(hStoreFileHandle)
+     CloseHandle(hStoreFileHandle);
+
+printf(&quot;All of the stores and files are closed. \n&quot;);
+
+//-------------------------------------------------------------------
+//  Reopen the file store.
+
+if(hMemoryStore = CertOpenStore(
+       CERT_STORE_PROV_FILENAME,    // Store provider type
+       MY_ENCODING_TYPE,            // If needed, use the usual
+                                    // encoding types
+       NULL,                        // Use the default HCRYPTPROV
+       0,                           // Accept the default for all
+                                    // dwFlags
+       L&quot;TestStor.sto&quot; ))           // The name of an existing file
+                                    // as a Unicode string
+{
+     printf(&quot;The file store has been reopened. \n&quot;);
+}
+else
+{
+    printf(&quot;The file store could not be reopened. \n&quot;);
+}
+//-------------------------------------------------------------------
+//  Find the certificate link in the reopened file store.
+if(pDesiredCert)
+    CertFreeCertificateContext(pDesiredCert);
+if(pDesiredCert=CertFindCertificateInStore(
+      hMemoryStore,
+      MY_ENCODING_TYPE,            
+      0,                          
+      CERT_FIND_SUBJECT_STR,      
+      pswzSecondCert,              
+      NULL))                       
+{
+  printf(&quot;The %S certificate link was found in the &quot;
+      &quot;file store. \n&quot;,pswzSecondCert);
+}
+else
+{
+   printf(&quot;The certificate link was not in the file store.\n&quot;);
+}
+
+//-------------------------------------------------------------------
+// Clean up memory and end.
+
+if(pDesiredCert)
+    CertFreeCertificateContext(pDesiredCert);
+
+if(hMemoryStore)
+    CertCloseStore(
+        hMemoryStore, 
+        CERT_CLOSE_STORE_CHECK_FLAG);
+
+printf(&quot;All of the stores and files are closed. \n&quot;);
+
+} // End of main
+
+//-------------------------------------------------------------------
+// This example uses the function MyHandleError, a simple error
+// handling function, to print an error message to the standard error 
+// (stderr) file and exit the program. 
+// For most applications, replace this function with one 
+// that does more extensive error reporting.
+
+void MyHandleError(char *s)
+{
+    fprintf(stderr,&quot;An error occurred in running the program. \n&quot;);
+    fprintf(stderr,&quot;%s\n&quot;,s);
+    fprintf(stderr, &quot;Error number %x.\n&quot;, GetLastError());
+    fprintf(stderr, &quot;Program terminating. \n&quot;);
+    exit(1);
+} // End of MyHandleError
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

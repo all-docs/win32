@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IPaper::Load</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: IPaper Load
+description: The following C++ sample code shows how to open the existing stream in the storage, read new paper properties in and then set them as the current values for COPaper.
+ms.assetid: a1559d97-387f-4d1a-8a9d-fa5c27abd545
+keywords:</p>
+<ul>
+<li>IPaper Load
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>IPaper::Load</h1>
+<p>The following C++ sample code shows how to open the existing stream in the storage, read new paper properties in and then set them as the current values for COPaper.</p>
+<p>The following is the <strong>IPaper::Load</strong> method from Paper.cpp.</p>
+<pre><code>STDMETHODIMP COPaper::CImpIPaper::Load(
+                 SHORT nLockKey,
+                 IStorage* pIStorage)
+  {
+    HRESULT hr = E_FAIL;
+    IStream* pIStream;
+    INKDATA* paInkData;
+    ULONG ulToRead, ulReadIn;
+    LONG lNewArraySize;
+    PAPER_PROPERTIES NewProps;
+
+    if (OwnThis())
+    {
+      if (m_bLocked &amp;&amp; m_cLockKey == nLockKey &amp;&amp; NULL != pIStorage)
+      {
+       // Open the &quot;PAPERDATA&quot; stream where the paper data is stored.
+        hr = pIStorage-&gt;OpenStream(
+               STREAM_PAPERDATA_USTR,
+               0,
+               STGM_READ | STGM_DIRECT | STGM_SHARE_EXCLUSIVE,
+               0,
+               &amp;pIStream);
+        if (SUCCEEDED(hr))
+        {
+          // Obtained paper data stream. Read the Paper Properties.
+          ulToRead = sizeof(PAPER_PROPERTIES);
+          hr = pIStream-&gt;Read(
+                           &amp;NewProps,
+                           ulToRead,
+                           &amp;ulReadIn);
+          if (SUCCEEDED(hr) &amp;&amp; ulToRead != ulReadIn)
+            hr = E_FAIL;
+          if (SUCCEEDED(hr))
+          {
+            // Handle the different versions of ink data format.
+            switch (NewProps.lInkDataVersion)
+            {
+              case INKDATA_VERSION10:
+                // Allocate an ample-sized ink data array.
+                lNewArraySize = NewProps.lInkArraySize + 
+                                               INKDATA_ALLOC;
+                paInkData = new INKDATA[(LONG) lNewArraySize];
+                if (NULL != paInkData)
+                {
+                  // Delete the old ink data array.
+                  delete [] m_paInkData;
+
+                  // Assign the new array.
+                  m_paInkData = paInkData;
+                  m_lInkDataMax = lNewArraySize;
+
+                  // Read the complete array of Ink Data.
+                  ulToRead = NewProps.lInkArraySize * sizeof(INKDATA);
+                  hr = pIStream-&gt;Read(m_paInkData, 
+                                      ulToRead, &amp;ulReadIn);
+                  if (SUCCEEDED(hr) &amp;&amp; ulToRead != ulReadIn)
+                    hr = E_FAIL;
+                  if (SUCCEEDED(hr))
+                  {
+                    // Set COPaper to use the new PAPER_PROPERTIES
+                    // data.
+                    m_lInkDataEnd = NewProps.lInkArraySize-1;
+                    m_crWinColor = NewProps.crWinColor;
+                    m_WinRect.right = NewProps.WinRect.right;
+                    m_WinRect.bottom = NewProps.WinRect.bottom;
+
+                    // Copy the new properties into current 
+                    // properties.
+                    memcpy(
+                      &amp;m_PaperProperties,
+                      &amp;NewProps,
+                      sizeof(PAPER_PROPERTIES));
+                  }
+                }
+                else
+                  hr = E_OUTOFMEMORY;
+                break;
+              default:
+                hr = E_FAIL;  // Bad version.
+                break;
+            }
+          }
+
+          // Release the stream.
+          pIStream-&gt;Release();
+        }
+      }
+
+      UnOwnThis();
+    }
+
+    // Notify other connected clients that Paper is now loaded.
+    // If Paper not loaded, then erase to a safe, empty ink data 
+    // array.
+    if (SUCCEEDED(hr))
+      m_pBackObj-&gt;NotifySinks(PAPER_EVENT_LOADED, 0, 0, 0, 0);
+    else
+      Erase(nLockKey);
+
+    return hr;
+  }
+</code></pre>
+<p>Now, the <a href="/windows/desktop/api/Objidl/nf-objidl-istorage-openstream"><strong>IStorage::OpenStream</strong></a> method is called to open the existing stream in the storage called &quot;PAPERDATA&quot;. Access mode flags are for read-only, direct, and non-shared exclusive access. When the stream is open, the <a href="/windows/desktop/api/Objidl/nn-objidl-istream"><strong>IStream::Read</strong></a> method is called to read the PAPER_PROPERTIES structure. If the amount actually read does not equal the amount requested, the load operation is aborted, and E_FAIL is returned. If the format version in the newly read PAPER_PROPERTIES is not recognized, then the load operation is aborted and <strong>Load</strong> returns E_FAIL.</p>
+<p>With a valid ink data format version, the size of the new ink data array from the PAPER_PROPERTIES that was read in is used to allocate a new ink data array of the required size. The existing ink data is deleted, and its data is lost. If this data was valuable, it should have been saved before <strong>Load</strong> was called. After the new array is allocated, <a href="/windows/desktop/api/Objidl/nn-objidl-istream"><strong>IStream::Read</strong></a> is called again to read the data into the array from the stream. If this call succeeds, the values in the newly read paper properties are adopted as the current values for COPaper.</p>
+<p>During this load operation, a temporary PAPER_PROPERTIES structure, NewProps, was used to hold the new properties read in. If all succeeds with the load, NewProps is copied into the PAPER_PROPERTIES structure, m_PaperProperties. As before, after Load is done and the <a href="/windows/desktop/api/Objidl/nn-objidl-istream"><strong>IStream</strong></a> is no longer required, the <strong>IStream</strong> pointer is released.</p>
+<p>If there is an error at the end of <strong>Load</strong>, the ink data array is erased, because it may contain damaged data.</p>
+<p>If there is no error at the end of <strong>Load</strong>, the client <a href="ipapersink-methods.html"><strong>IPaperSink::Loaded</strong></a> method is called, in the COPaper internal NotifySinks method, to notify the client that the load operation is completed. This is an important notification for the client, because it must display this new loaded ink data. This notification makes significant use of connectable object features in COPaper.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

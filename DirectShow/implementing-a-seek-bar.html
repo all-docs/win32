@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementing a Seek Bar</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Implementing a Seek Bar
+ms.assetid: 384f0732-e0c5-4b1f-b590-195e0acf90e1
+title: Implementing a Seek Bar
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Implementing a Seek Bar</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This section describes how to implement a seek bar for a media-player application. The seek bar is implemented as a trackbar control. For an overview of seeking in DirectShow, see <a href="seeking-the-filter-graph.html">Seeking the Filter Graph</a>.</p>
+<p>When the application starts, initialize the trackbar:</p>
+<pre lang="C++"><code>void InitSlider(HWND hwnd) 
+{
+    // Initialize the trackbar range, but disable the 
+    // control until the user opens a file.
+    hScroll = GetDlgItem(hwnd, IDC_SLIDER1);
+    EnableWindow(hScroll, FALSE);
+    SendMessage(hScroll, TBM_SETRANGE, TRUE, MAKELONG(0, 100));
+}
+</code></pre>
+<p>The trackbar is disabled until the user opens a media file. The trackbar range is set from 0 to 100. During file playback, the application will calculate the playback position as a percentage of the file duration, and update the trackbar accordingly. For example, trackbar position &quot;50&quot; always corresponds to the middle of the file.</p>
+<p>When the user opens a file, build a file-playback graph using <strong>RenderFile</strong>. The code for this is shown in <a href="how-to-play-a-file.html">How To Play a File</a>. Then query the Filter Graph Manager for the <strong>IMediaSeeking</strong> interface and store the interface pointer:</p>
+<pre lang="C++"><code>IMediaSeeking *g_pSeek = 0;
+hr = pGraph-&gt;QueryInterface(IID_IMediaSeeking, (void**)&amp;g_pSeek);
+</code></pre>
+<p>To determine whether the file is seekable, call either the <a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-checkcapabilities"><strong>IMediaSeeking::CheckCapabilities</strong></a> method or the <a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-getcapabilities"><strong>IMediaSeeking::GetCapabilities</strong></a> method. These methods do almost the same thing, but their semantics are slightly different. The following example uses <strong>CheckCapabilites</strong>:</p>
+<pre lang="C++"><code>// Determine if the source is seekable.
+BOOL  bCanSeek = FALSE;
+DWORD caps = AM_SEEKING_CanSeekAbsolute | AM_SEEKING_CanGetDuration; 
+bCanSeek = (S_OK == pSeek-&gt;CheckCapabilities(&amp;caps));
+if (bCanSeek)
+{
+    // Enable the trackbar.
+    EnableWindow(hScroll, TRUE);
+
+    // Find the file duration.
+    pSeek-&gt;GetDuration(&amp;g_rtTotalTime);
+}
+</code></pre>
+<p>The AM_SEEKING_CanSeekAbsolute flag checks whether the source file is seekable, and the AM_SEEKING_CanGetDuration flag checks whether the duration of the file can be determined in advance. If both of the capabilities are supported, the application enables the trackbar and retrieves the file duration.</p>
+<p>If the graph is seekable, the application will use a timer to update the trackbar position during playback. When you run the filter graph to play the file, start the timer event by calling one of the Windows timer functions, such as <strong>SetTimer</strong>. For more information about timers, see the topic &quot;Timers&quot; in the Platform SDK.</p>
+<pre lang="C++"><code>void StartPlayback(HWND hwnd) 
+{
+    pControl-&gt;Run();
+    if (bCanSeek)
+    {
+        StopTimer(); // Make sure an old timer is not still active.
+        nTimerID = SetTimer(hwnd, IDT_TIMER1, TICK_FREQ, (TIMERPROC)NULL);
+        if (nTimerID == 0)
+        {
+            /* Handle Error */
+        }
+    }
+}
+
+void StopTimer() 
+{
+    if (wTimerID != 0)
+    {
+        KillTimer(g_hwnd, wTimerID);
+        wTimerID = 0;
+    }
+}
+</code></pre>
+<p>Use the timer event to update the position of the trackbar. Call <a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-getcurrentposition"><strong>IMediaSeeking::GetCurrentPosition</strong></a> to retrieve the currant playback position, and then calculate the position as a percentage of the file duration:</p>
+<pre lang="C++"><code>case WM_TIMER:
+    if (wParam == IDT_TIMER1)
+    {
+        // Timer should not be running unless we really can seek.
+        ASSERT(bCanSeek == TRUE);
+
+        REFERENCE_TIME timeNow;
+        if (SUCCEEDED(pSeek-&gt;GetCurrentPosition(&amp;timeNow)))
+        {
+            long sliderTick = (long)((timeNow * 100) / g_rtTotalTime);
+            SendMessage( hScroll, TBM_SETPOS, TRUE, sliderTick );
+        }
+    }
+    break;
+</code></pre>
+<p>The user can also move the trackbar to seek the file. When the user drags or clicks the trackbar control, the application receives a WM_HSCROLL event. The low word of the <em>wParam</em> parameter is the trackbar notification message. For example, TB_ENDTRACK is sent at the end of the trackbar action, and TB_THUMBTRACK is sent continuously while the user drags the trackbar. The following code shows one way to handle the WM_HSCROLL message:</p>
+<pre lang="C++"><code>static OAFilterState state;
+static BOOL bStartOfScroll = TRUE;
+
+case WM_HSCROLL:
+    short int userReq = LOWORD(wParam);
+    if (userReq == TB_ENDTRACK || userReq == TB_THUMBTRACK)
+    {
+        DWORD dwPosition  = SendMessage(hTrackbar, TBM_GETPOS, 0, 0);
+        // Pause when the scroll action begins.
+        if (bStartOfScroll) 
+        {
+            pControl-&gt;GetState(10, &amp;state);
+            bStartOfScroll = FALSE;
+            pControl-&gt;Pause();
+        }
+        // Update the position continuously.
+        REFERENCE_TIME newTime = (g_rtTotalTime/100) * dwPosition;
+        pSeek-&gt;SetPositions(&amp;newTime, AM_SEEKING_AbsolutePositioning,
+            NULL, AM_SEEKING_NoPositioning);
+
+        // Restore the state at the end.
+        if (userReq == TB_ENDTRACK)
+        {
+            if (state == State_Stopped)
+                pControl-&gt;Stop();
+            else if (state == State_Running) 
+                pControl-&gt;Run();
+            bStartOfScroll = TRUE;
+        }
+    }
+}
+</code></pre>
+<p>If the user drags the trackbar, the application issues a series of seek commands, one for each TB_THUMBTRACK message that it receives. To make the seek operations as smooth as possible, the application pauses the graph. Pausing the graph halts playback but ensures that the video window is updated. When the application receives the TB_ENDTRACK message, it restores the graph to its original state.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementing a Word Breaker and Stemmer</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Microsoft provides word breakers and stemmers for a number of languages. This topic describes how to implement, and use custom word breakers and stemmers for languages, and locales beyond those provided by Microsoft.
+ms.assetid: 47768691-7071-440e-bfbf-975713880c00
+title: Implementing a Word Breaker and Stemmer
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Implementing a Word Breaker and Stemmer</h1>
+<p>Microsoft provides word breakers and stemmers for a number of languages. This topic describes how to implement, and use custom word breakers and stemmers for languages, and locales beyond those provided by Microsoft.</p>
+<blockquote>
+<p>[!Note]
+Custom word breakers were temporarily unsupported. In July 2018, a change was made to Windows Server 2019 that prevented DLLs without a Microsoft signature from being loaded by SearchIndexer.exe. This limitation was lifted in January 2021.</p>
+</blockquote>
+<p>This topic is organized as follows:</p>
+<ul>
+<li><a href="#registering-a-language-resource-dll">Registering a Language Resource DLL</a></li>
+<li><a href="#registering-a-language-resource-dll">Registering a Language</a></li>
+<li><a href="#implementing-a-word-beaker">Implementing a Word Beaker</a>
+<ul>
+<li><a href="#wordsink-and-phrasesink">WordSink and PhraseSink</a></li>
+<li><a href="#breaks">Breaks</a></li>
+<li><a href="#scalability-performancy-and-security">Scalability, Performancy, and Security</a></li>
+</ul>
+</li>
+<li><a href="#implementing-a-stemmer">Implementing a Stemmer</a>
+<ul>
+<li><a href="#scalability-performancy-and-security">Scalability, Performancy, and Security</a></li>
+</ul>
+</li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Registering a Language Resource DLL</h2>
+<p>Each language resource DLL must implement and export the following entry points. The DLL can be registered to be in any folder.</p>
+<ul>
+<li>DllMain is the standard entry point to DLL.</li>
+<li>DllRegisterServer registers the DLL in the registry, such as <code>regsvr32.exe %SystemRoot%\MyFolder\wordbreaker.dll</code></li>
+<li>DllCanUnloadNow enables clients to call this entry point through Component Object Model (COM) to determine whether it is possible to unload the language resource DLL.</li>
+<li>DllUnRegisterServer removes the DLL from the registry.</li>
+</ul>
+<h2>Registering a Language</h2>
+<p>The registry contains language-specific entries for the language being indexed, and these entries control the parts of the indexing and query processes that are language specific. These registry entries can be found under the following registry key.</p>
+<pre><code>HKEY_LOCAL_MACHINE
+Â Â Â SYSTEM
+Â Â Â Â Â Â CurrentControlSet
+Â Â Â Â Â Â Â Â Â ContentIndex
+Â Â Â Â Â Â Â Â Â Â Â Â Control
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Language
+Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â Â 
+</code></pre>
+<h2>Implementing a Word Beaker</h2>
+<p>Word breakers implement <a href="/windows/desktop/api/Indexsrv/nn-indexsrv-iwordbreaker"><strong>IWordBreaker</strong></a>. The <a href="/windows/desktop/api/Indexsrv/nf-indexsrv-iwordbreaker-breaktext"><strong>IWordBreaker::BreakText</strong></a> method performs all text processing and parsing. To implement a word breaker component, you must have language heuristics for your language. This includes information about syntax and morphology. You may also need a list of words to exclude or include. You build the file of noise words for your language locale from the list of excluded words. For more information about linguistic considerations and how these considerations affect word breaker implementations, see <a href="linguistic-and-unicode-considerations.html">Linguistic and Unicode Considerations</a>.</p>
+<p>The main purpose of <a href="/windows/desktop/api/Indexsrv/nf-indexsrv-iwordbreaker-breaktext"><strong>IWordBreaker::BreakText</strong></a> is to process text continuously from the <a href="/windows/win32/api/indexsrv/ns-indexsrv-text_source"><strong>TEXT_SOURCE</strong></a> until all the text is processed, or until the word breaker encounters an error. While in this data processing loop, <strong>IWordBreaker::BreakText</strong> calls parsing and utility methods that perform specific tasks for that process. For example, the German word breaker may handle compound words, whereas the French word breaker may process <a href="surface-form-normalization.html">diacritics</a> or <a href="surface-form-normalization.html">clitics</a>. The specific functions that the word breaker performs and the strategy that it uses in performing these tasks depend entirely on the requirements for that language.</p>
+<p>When breaking text, word breakers identify &quot;alternative&quot; forms for words that may have multiple representations. No semantic relationship is implied between the generated words. In fact, the original word may not be included among the list of alternatives. The alternative forms are saved in the same position in the index as the original word to indicate that they are identical.</p>
+<p>When a document is included in the index, each word is assigned an integer value that represents the offset, or the distance of the word from the beginning of a document. The relative distance between words in a query is compared against the offsets stored in the full-text index. The query &quot;Where is Kyle's document&quot; matches any document with &quot;Where&quot; at offset n, &quot;is&quot; at n+1, &quot;Kyle's&quot; at n+2, and &quot;document&quot; at n+3. &quot;Where is Kyle's document filed in the data-base?&quot; is represented as:</p>
+<table>
+<thead>
+<tr>
+<th> </th>
+<th> </th>
+<th> </th>
+<th> </th>
+<th> </th>
+<th> </th>
+<th> </th>
+<th> </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Where</td>
+<td>is</td>
+<td>Kyle Kyle's<!-- raw HTML omitted --></td>
+<td>document</td>
+<td>filed</td>
+<td>in</td>
+<td>the</td>
+<td>database data base<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>In this example, the word breaker stores alternative forms for &quot;Kyle&quot; (&quot;Kyle's&quot;) and &quot;database&quot; (&quot;data base&quot;) in the index. The word breaker generates and stores alternative words during the index creation process under the following conditions:</p>
+<ul>
+<li>If an alternative word is likely to appear as a single word in a query</li>
+<li>If a stemmer is not likely to derive the original word from the alternative</li>
+</ul>
+<p>Generating alternative word forms increases the number of ways that queries represent and match a sentence, as shown in the following variations:</p>
+<ol>
+<li>Where is Kyle document filed in the database</li>
+<li>Where is Kyle's document filed in the database</li>
+<li>Where is Kyle document filed in the data base</li>
+<li>Where is Kyle's document filed in the data base</li>
+</ol>
+<h3>WordSink and PhraseSink</h3>
+<p>Word breakers use the <a href="iwordsink.html"><strong>IWordSink</strong></a> and <a href="/windows/win32/api/indexsrv/nn-indexsrv-iphrasesink"><strong>IPhraseSink</strong></a> objects to collect and store all words and phrases that they extract from text. A word breaker stores words in a form that is as close as possible to the original word form in the document. <strong>IPhraseSink</strong> stores phrases at query time. Phrases improve the relevance of query results because longer sequences of words are rarer and provide greater distinction than smaller phrases. When the indexer places a phrase in the <strong>IPhraseSink</strong> at query time, it creates an instance of the word breaker to break the phrase into words. The indexer then evaluates the phrase by checking whether the words in the phrase occur adjacent to one another in the index. For example, if &quot;ABCD&quot; occurs in the index at positions <em>x</em>, <em>x</em>+1, <em>x</em>+2, and <em>x</em>+3, the phrase match will occur if any adjacent substring of &quot;ABCD&quot; is submitted in a query. This strategy is effective for character-based word breakers that split phrases and long words during index creation and that generate phrases during query time.</p>
+<h3>Breaks</h3>
+<p>Breaks are the spaces between words. White space, punctuation, formatting, or just the nature of the language itself can cause breaks. There are four different types of breaks that the indexer uses: end of word (EOW), end of sentence (EOS), end of paragraph (EOP) and end of chapter (EOC). The EOW break is the default break. After each token, each break indicates a different semantic distance between the words on either side. Words separated by EOW have the tightest semantic link, followed by EOS, EOP, and EOC. Multiple calls to <a href="iwordsink-putbreak.html"><strong>IWordSink::PutBreak</strong></a> are cumulative, and are analogous to inserting null words or sentences.</p>
+<h3>Scalability, Performancy, and Security</h3>
+<p>The way the word breaker responds to simultaneous calls is largely determined by your choice of threading model. The indexer is a single-threaded application. For word breakers to work in a single-threaded environment, word breakers must be written using a &quot;free&quot; or &quot;both&quot; threading model. Word breakers must not register with COM by using the &quot;apartment&quot; threading model.</p>
+<p>We recommend that word breakers avoid global states and store data in the instance for the word breaker. The only content that should be stored in the word breaker implementation are for the parameters <em>fQuery</em> and <em>ulMaxTokenSize</em>. Word breakers should be no more than two times slower than the benchmark established by the English word breaker. Word breaker performance should also improve with increased hardware capability.</p>
+<p>Word breakers for the indexer run in the Local System security context. They should be written to manage buffers and to stack correctly. All string copies must have explicit checks to guard against buffer overruns. You should always verify the allocated size of the buffer and test the size of the data against the size of the buffer. Word breakers cannot assume that the text passed to the <a href="/windows/desktop/api/Indexsrv/nf-indexsrv-iwordbreaker-breaktext"><strong>IWordBreaker::BreakText</strong></a> method is well formed. For more information about troubleshooting word breakers, see <a href="troubleshooting-language-resources.html">Troubleshooting Language Resources and Best Practices</a>.</p>
+<h2>Implementing a Stemmer</h2>
+<p>Stemmers implement the <a href="/windows/desktop/api/Indexsrv/nn-indexsrv-istemmer"><strong>IStemmer</strong></a> interface. The <a href="/windows/desktop/api/Indexsrv/nf-indexsrv-istemmer-generatewordforms"><strong>IStemmer::GenerateWordForms</strong></a> method generates a list of inflected word forms for a particular input word. To implement a stemmer component, you must have language heuristics for your language. This includes information about morphology. You may also need a list of words to exclude or include. For more information about linguistic considerations and how these considerations affect stemmer implementations, see <a href="linguistic-and-unicode-considerations.html">Linguistic and Unicode Considerations</a>.</p>
+<p>We recommend that stemmers should not generate the genitive, or possessive, case for words. For example, &quot;David&quot; is not generated as an alternative form for &quot;David's.&quot; The word breaker generates both &quot;David&quot; and &quot;David's&quot; when it parses &quot;David's.&quot;</p>
+<p>The stemmer uses the <a href="/windows/desktop/api/Indexsrv/nn-indexsrv-iwordformsink">IWordFormSink</a> object to gather the list of alternative words. <a href="iwordformsink-putword.html"><strong>IWordFormSink::PutWord</strong></a> generates the final word from the stemmer. In all cases, this final word is the same as the input word from <a href="/windows/desktop/api/Indexsrv/nf-indexsrv-istemmer-generatewordforms"><strong>IStemmer::GenerateWordForms</strong></a>. For example, given the word &quot;swim,&quot; the stemmer generates the following word forms: &quot;swimming,&quot; &quot;swimmer,&quot; &quot;swims,&quot; &quot;swam,&quot; and &quot;swum,&quot; through calls to <a href="iwordformsink-putphrase.html"><strong>IWordFormSink::PutAltWord</strong></a>. The stemmer generates &quot;swim&quot; through <strong>IWordFormSink::PutWord</strong>.</p>
+<h3>Scalability, Performancy, and Security</h3>
+<p>Stemmers, like word breakers, must use a &quot;free&quot; threading model and register with COM with their threading model set to &quot;free&quot; or &quot;both.&quot; Windows Search calls separate instances of the stemmer from different threads at the same time. Stemmers should therefore have minimal instance data.</p>
+<p>Stemmer accuracy has a significant impact on query relevance. If the stemmer stems the text incorrectly, queries may return unpredictable and inaccurate results. Stemmers must handle hundreds of queries per second without negatively affecting query performance. Stemmer performance should improve with increased hardware capability. For information about troubleshooting stemmers, see <a href="troubleshooting-language-resources.html">Troubleshooting Language Resources and Best Practices</a>.</p>
+<p>Stemmers for Windows Search run in the Local Security context. They should be written to manage buffers and to stack correctly. All string copies must have explicit checks to guard against buffer overruns. You should always verify the allocated size of the buffer and test the size of the data against the size of the buffer.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="extending-language-resources-in-windows-search.html">Extending Language Resources</a></p>
+<!-- raw HTML omitted -->
+<p><a href="understanding-language-resource-components.html">Understanding Language Resource Components</a></p>
+<!-- raw HTML omitted -->
+<p><a href="linguistic-and-unicode-considerations.html">Linguistic and Unicode Considerations</a></p>
+<!-- raw HTML omitted -->
+<p><a href="troubleshooting-language-resources.html">Troubleshooting Language Resources and Best Practices</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example Code for Searching for Users</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Example Code for Searching for Users
+description: The following code examples search for users in the domain of the user account under which the calling process is running.C++ ExampleVisual Basic Example
+ms.assetid: 53bbd57b-0bd2-4acb-a69f-89764b85e257
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Active Directory examples Active Directory , searching for users
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Example Code for Searching for Users</h1>
+<p>The following code examples search for users in the domain of the user account under which the calling process is running.</p>
+<ul>
+<li><a href="#c-example">C++ Example</a></li>
+<li><a href="#visual-basic-example">Visual Basic Example</a></li>
+</ul>
+<h2>C++ Example</h2>
+<p>The following C++ code example searches the current domain for all users, or a specific user based on a specified filter.</p>
+<pre lang="C++"><code>//  Add msvcrt.dll to the project.
+//  Add activeds.lib to the project.
+
+#include &quot;stdafx.h&quot;
+#include &lt;objbase.h&gt;
+#include &lt;wchar.h&gt;
+#include &lt;activeds.h&gt;
+//  Define UNICODE.
+//  Define version 5 for Windows 2000.
+#define _WIN32_WINNT 0x0500
+#include &lt;sddl.h&gt;
+
+HRESULT FindUsers(IDirectorySearch *pContainerToSearch,  //  IDirectorySearch pointer to the container to search.
+    LPOLESTR szFilter, //  Filter to find specific users.
+    //  NULL returns all user objects.
+    LPOLESTR *pszPropertiesToReturn, //  Properties to return for user objects found.
+    //  NULL returns all set properties.
+    BOOL bIsVerbose //  TRUE indicates that display all properties for the found objects.
+    //  FALSE indicates that only the RDN.
+    );
+
+//  Entry point for the application.
+void wmain(int argc, wchar_t *argv[ ])
+{
+#ifdef _MBCS
+    //  Handle the command line arguments.
+    DWORD dwLength = MAX_PATH*2;
+    LPOLESTR pszBuffer = new OLECHAR[dwLength];
+    wcsncpy_s(pszBuffer, L&quot;&quot;,dwLength);
+    BOOL bReturnVerbose = FALSE;
+
+
+    for (int i = 1;i&lt;argc;i++)
+    {
+        if (_wcsicmp(argv[i],L&quot;/V&quot;) == 0)
+        {
+            bReturnVerbose = TRUE;
+        }
+        else if ((_wcsicmp(argv[i],L&quot;/?&quot;) == 0)||
+            (_wcsicmp(argv[i],L&quot;-?&quot;) == 0))
+        {
+            wprintf(L&quot;This application queries for users in the current user domain.\n&quot;);
+            wprintf(L&quot;Syntax: queryusers [/V][querystring]\n&quot;);
+            wprintf(L&quot;where /V specifies that all properties for the found users should be returned.\n&quot;);
+            wprintf(L&quot;querystring is the query criteria in ldap query format.\n&quot;);
+            wprintf(L&quot;Defaults: If no /V is specified, the query returns only the RDN and DN of the items found.\n&quot;);
+            wprintf(L&quot;If no querystring is specified, the query returns all users.\n&quot;);
+            wprintf(L&quot;Example: queryusers (sn=Smith)\n&quot;);
+            wprintf(L&quot;Returns all users with surname Smith.\n&quot;);
+            return;
+        }
+        else
+        {
+            wcsncpy_s(pszBuffer,argv[i],dwLength-wcslen(pszBuffer));
+        }
+    }
+    if (_wcsicmp(pszBuffer,L&quot;&quot;) == 0)
+        wprintf(L&quot;\nFinding all user objects...\n\n&quot;);
+    else
+        wprintf(L&quot;\nFinding user objects based on query: %s...\n\n&quot;, pszBuffer);
+
+    //  Initialize COM.
+    CoInitialize(NULL);
+    HRESULT hr = S_OK;
+    //  Get rootDSE and the current user domain container distinguished name.
+    IADs *pObject = NULL;
+    IDirectorySearch *pContainerToSearch = NULL;
+    LPOLESTR szPath = new OLECHAR[MAX_PATH];
+    VARIANT var;
+    hr = ADsOpenObject(L&quot;LDAP://rootDSE&quot;,
+                       NULL,
+                       NULL,
+                       ADS_SECURE_AUTHENTICATION, // Use Secure Authentication.
+                       IID_IADs,
+                       (void**)&amp;pObject);
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Cannot execute query. Cannot bind to LDAP://rootDSE.\n&quot;);
+        if (pObject)
+            pObject-&gt;Release();
+        return;
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = pObject-&gt;Get(_bstr_t(&quot;defaultNamingContext&quot;),&amp;var);
+        if (SUCCEEDED(hr))
+        {
+            //  Build path to the domain container.
+            wcsncpy_s(szPath,L&quot;LDAP://&quot;,MAX_PATH);
+            wcsncat_s(szPath,var.bstrVal,MAX_PATH-wcslen(szPath));
+            hr = ADsOpenObject(szPath,
+                               NULL,
+                               NULL,
+                               ADS_SECURE_AUTHENTICATION, //  Use Secure Authentication.
+                               IID_IDirectorySearch,
+                               (void**)&amp;pContainerToSearch);
+
+            if (SUCCEEDED(hr))
+            {
+                hr = FindUsers(pContainerToSearch, //  IDirectorySearch pointer to domainDNS container.
+                               pszBuffer,  
+                               NULL, //  Return all properties.
+                               bReturnVerbose 
+                             );
+                if (SUCCEEDED(hr))
+                {
+                    if (S_FALSE==hr)
+                        wprintf(L&quot;User object cannot be found.\n&quot;);
+                }
+                else if (E_ADS_INVALID_FILTER==hr)
+                    wprintf(L&quot;Cannot execute query. Invalid filter was specified.\n&quot;);
+                else
+                    wprintf(L&quot;Query failed to run. HRESULT: %x\n&quot;,hr);
+            }
+            else
+            {
+                wprintf(L&quot;Cannot execute query. Cannot bind to the container.\n&quot;);
+            }
+            if (pContainerToSearch)
+                pContainerToSearch-&gt;Release();
+        }
+        VariantClear(&amp;var);
+    }
+    if (pObject)
+        pObject-&gt;Release();
+
+    //  Uninitialize COM.
+    CoUninitialize();
+    delete [] szPath;
+    delete [] pszBuffer;
+    return;
+#endif _MBCS
+}
+
+HRESULT FindUsers(IDirectorySearch *pContainerToSearch,  //  IDirectorySearch pointer to the container to search.
+    LPOLESTR szFilter, //  Filter for finding specific users.
+    //  NULL returns all user objects.
+    LPOLESTR *pszPropertiesToReturn, //  Properties to return for user objects found.
+    //  NULL returns all set properties.
+    BOOL bIsVerbose    //  TRUE indicates that all properties for the found objects are displayed.
+    //  FALSE indicates only the RDN.
+    )
+{
+    if (!pContainerToSearch)
+        return E_POINTER;
+    DWORD dwLength = MAX_PATH*2;
+    // Create search filter.
+    LPOLESTR pszSearchFilter = new OLECHAR[dwLength];
+
+    //  Add the filter.
+    swprintf_s(pszSearchFilter, dwLength, L&quot;(&amp;(objectClass=user)(objectCategory=person)%s)&quot;,szFilter);
+
+    //  Specify subtree search.
+    ADS_SEARCHPREF_INFO SearchPrefs;
+    SearchPrefs.dwSearchPref = ADS_SEARCHPREF_SEARCH_SCOPE;
+    SearchPrefs.vValue.dwType = ADSTYPE_INTEGER;
+    SearchPrefs.vValue.Integer = ADS_SCOPE_SUBTREE;
+    DWORD dwNumPrefs = 1;
+
+    //  COL for iterations.
+    LPOLESTR pszColumn = NULL;  
+    ADS_SEARCH_COLUMN col;
+    HRESULT hr = S_OK;
+
+    //  Interface Pointers
+    IADs  *pObj = NULL;
+    IADs  * pIADs = NULL;
+
+    //  Search handle.
+    ADS_SEARCH_HANDLE hSearch = NULL;
+
+    //  Set search preference.
+    hr = pContainerToSearch-&gt;SetSearchPreference(&amp;SearchPrefs, dwNumPrefs);
+    if (FAILED(hr))
+        return hr;
+
+    LPOLESTR pszBool = NULL;
+    DWORD dwBool = 0;
+    PSID pObjectSID = NULL;
+    LPOLESTR szSID = NULL;
+    LPOLESTR szDSGUID = new WCHAR [39];
+    LPGUID pObjectGUID = NULL;
+    FILETIME filetime;
+    SYSTEMTIME systemtime;
+    DATE date;
+    VARIANT varDate;
+    LARGE_INTEGER liValue;
+    LPOLESTR *pszPropertyList = NULL;
+    LPOLESTR pszNonVerboseList[] = {L&quot;name&quot;,L&quot;distinguishedName&quot;};
+
+    LPOLESTR szName = new OLECHAR[MAX_PATH];
+    LPOLESTR szDN = new OLECHAR[MAX_PATH];
+
+    VariantInit(&amp;varDate);
+
+    int iCount = 0;
+    DWORD x = 0L;
+
+
+
+    if (!bIsVerbose)
+    {
+        //  Return non-verbose list properties only.
+        hr = pContainerToSearch-&gt;ExecuteSearch(pszSearchFilter,
+                                               pszNonVerboseList,
+                                               sizeof(pszNonVerboseList)/sizeof(LPOLESTR),
+                                               &amp;hSearch
+                                             );
+    }
+    else
+    {
+        if (!pszPropertiesToReturn)
+        {
+            //  Return all properties.
+            hr = pContainerToSearch-&gt;ExecuteSearch(pszSearchFilter,
+                                                   NULL,
+                                                   (DWORD)-1,
+                                                   &amp;hSearch
+                                                 );
+        }
+        else
+        {
+            //  Specified subset.
+            pszPropertyList = pszPropertiesToReturn;
+            //  Return specified properties.
+            hr = pContainerToSearch-&gt;ExecuteSearch(pszSearchFilter,
+                                                   pszPropertyList,
+                                                   sizeof(pszPropertyList)/sizeof(LPOLESTR),
+                                                   &amp;hSearch
+                                                 );
+        }
+    }
+    if (SUCCEEDED(hr))
+    {  
+        //  Call IDirectorySearch::GetNextRow() to retrieve the next data row.
+        hr = pContainerToSearch-&gt;GetFirstRow(hSearch);
+        if (SUCCEEDED(hr))
+        {
+            while(hr != S_ADS_NOMORE_ROWS)
+            {
+                //  Keep track of count.
+                iCount++;
+                if (bIsVerbose)
+                    wprintf(L&quot;----------------------------------\n&quot;);
+                //  Loop through the array of passed column names,
+                //  print the data for each column.
+
+                while(pContainerToSearch-&gt;GetNextColumnName(hSearch, &amp;pszColumn) != S_ADS_NOMORE_COLUMNS)
+                {
+                    hr = pContainerToSearch-&gt;GetColumn(hSearch, pszColumn, &amp;col);
+                    if (SUCCEEDED(hr))
+                    {
+                        //  Print the data for the column and free the column.
+                        if(bIsVerbose)
+                        {
+                            //  Get the data for this column.
+                            wprintf(L&quot;%s\n&quot;,col.pszAttrName);
+                            switch (col.dwADsType)
+                            {
+                            case ADSTYPE_DN_STRING:
+                                for (x = 0; x&lt; col.dwNumValues; x++)
+                                {
+                                    wprintf(L&quot;  %s\r\n&quot;,col.pADsValues[x].DNString);
+                                }
+                                break;
+                            case ADSTYPE_CASE_EXACT_STRING:    
+                            case ADSTYPE_CASE_IGNORE_STRING:    
+                            case ADSTYPE_PRINTABLE_STRING:    
+                            case ADSTYPE_NUMERIC_STRING:      
+                            case ADSTYPE_TYPEDNAME:        
+                            case ADSTYPE_FAXNUMBER:        
+                            case ADSTYPE_PATH:          
+                                for (x = 0; x&lt; col.dwNumValues; x++)
+                                {
+                                    wprintf(L&quot;  %s\r\n&quot;,col.pADsValues[x].CaseIgnoreString);
+                                }
+                                break;
+                            case ADSTYPE_BOOLEAN:
+                                for (x = 0; x&lt; col.dwNumValues; x++)
+                                {
+                                    dwBool = col.pADsValues[x].Boolean;
+                                    pszBool = dwBool ? L&quot;TRUE&quot; : L&quot;FALSE&quot;;
+                                    wprintf(L&quot;  %s\r\n&quot;,pszBool);
+                                }
+                                break;
+                            case ADSTYPE_INTEGER:
+                                for (x = 0; x&lt; col.dwNumValues; x++)
+                                {
+                                    wprintf(L&quot;  %d\r\n&quot;,col.pADsValues[x].Integer);
+                                }
+                                break;
+                            case ADSTYPE_OCTET_STRING:
+                                if (_wcsicmp(col.pszAttrName,L&quot;objectSID&quot;) == 0)
+                                {
+                                    for (x = 0; x&lt; col.dwNumValues; x++)
+                                    {
+                                        pObjectSID = (PSID)(col.pADsValues[x].OctetString.lpValue);
+                                        //  Convert SID to string.
+                                        ConvertSidToStringSid(pObjectSID, &amp;szSID);
+                                        wprintf(L&quot;  %s\r\n&quot;,szSID);
+                                        LocalFree(szSID);
+                                    }
+                                }
+                                else if ((_wcsicmp(col.pszAttrName,L&quot;objectGUID&quot;) == 0))
+                                {
+                                    for (x = 0; x&lt; col.dwNumValues; x++)
+                                    {
+                                        //  Cast to LPGUID.
+                                        pObjectGUID = (LPGUID)(col.pADsValues[x].OctetString.lpValue);
+                                        //  Convert GUID to string.
+                                        ::StringFromGUID2(*pObjectGUID, szDSGUID, 39); 
+                                        //  Print the GUID.
+                                        wprintf(L&quot;  %s\r\n&quot;,szDSGUID);
+                                    }
+                                }
+                                else
+                                    wprintf(L&quot;  Value of type Octet String. No Conversion.&quot;);
+                                break;
+                            case ADSTYPE_UTC_TIME:
+                                for (x = 0; x&lt; col.dwNumValues; x++)
+                                {
+                                    systemtime = col.pADsValues[x].UTCTime;
+                                    if (SystemTimeToVariantTime(&amp;systemtime,
+                                        &amp;date) != 0) 
+                                    {
+                                        //  Pack in variant.vt.
+                                        varDate.vt = VT_DATE;
+                                        varDate.date = date;
+                                        VariantChangeType(&amp;varDate,&amp;varDate,VARIANT_NOVALUEPROP,VT_BSTR);
+                                        wprintf(L&quot;  %s\r\n&quot;,varDate.bstrVal);
+                                        VariantClear(&amp;varDate);
+                                    }
+                                    else
+                                        wprintf(L&quot;  Could not convert UTC-Time.\n&quot;,pszColumn);
+                                }
+                                break;
+                            case ADSTYPE_LARGE_INTEGER:
+                                for (x = 0; x&lt; col.dwNumValues; x++)
+                                {
+                                    liValue = col.pADsValues[x].LargeInteger;
+                                    filetime.dwLowDateTime = liValue.LowPart;
+                                    filetime.dwHighDateTime = liValue.HighPart;
+                                    if((filetime.dwHighDateTime==0) &amp;&amp; (filetime.dwLowDateTime==0))
+                                    {
+                                        wprintf(L&quot;  No value set.\n&quot;);
+                                    }
+                                    else
+                                    {
+                                        //  Verify properties of type LargeInteger that represent time.
+                                        //  If TRUE, then convert to variant time.
+                                        if ((0==wcscmp(L&quot;accountExpires&quot;, col.pszAttrName))|
+                                            (0==wcscmp(L&quot;badPasswordTime&quot;, col.pszAttrName))||
+                                            (0==wcscmp(L&quot;lastLogon&quot;, col.pszAttrName))||
+                                            (0==wcscmp(L&quot;lastLogoff&quot;, col.pszAttrName))||
+                                            (0==wcscmp(L&quot;lockoutTime&quot;, col.pszAttrName))||
+                                            (0==wcscmp(L&quot;pwdLastSet&quot;, col.pszAttrName))
+                                            )
+                                        {
+                                            //  Handle special case for Never Expires where low part is -1.
+                                            if (filetime.dwLowDateTime==-1)
+                                            {
+                                                wprintf(L&quot;  Never Expires.\n&quot;);
+                                            }
+                                            else
+                                            {
+                                                if (FileTimeToLocalFileTime(&amp;filetime, &amp;filetime) != 0) 
+                                                {
+                                                    if (FileTimeToSystemTime(&amp;filetime,
+                                                        &amp;systemtime) != 0)
+                                                    {
+                                                        if (SystemTimeToVariantTime(&amp;systemtime,
+                                                            &amp;date) != 0) 
+                                                        {
+                                                            //  Pack in variant.vt.
+                                                            varDate.vt = VT_DATE;
+                                                            varDate.date = date;
+                                                            VariantChangeType(&amp;varDate,&amp;varDate,VARIANT_NOVALUEPROP,VT_BSTR);
+                                                            wprintf(L&quot;  %s\r\n&quot;,varDate.bstrVal);
+                                                            VariantClear(&amp;varDate);
+                                                        }
+                                                        else
+                                                        {
+                                                            wprintf(L&quot;  FileTimeToVariantTime failed\n&quot;);
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        wprintf(L&quot;  FileTimeToSystemTime failed\n&quot;);
+                                                    }
+
+                                                }
+                                                else
+                                                {
+                                                    wprintf(L&quot;  FileTimeToLocalFileTime failed\n&quot;);
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            //  Print the LargeInteger.
+                                            wprintf(L&quot;  high: %d low: %d\r\n&quot;,filetime.dwHighDateTime, filetime.dwLowDateTime);
+                                        }
+                                    }
+                                }
+                                break;
+                            case ADSTYPE_NT_SECURITY_DESCRIPTOR:
+                                for (x = 0; x&lt; col.dwNumValues; x++)
+                                {
+                                    wprintf(L&quot;  Security descriptor.\n&quot;);
+                                }
+                                break;
+                            default:
+                                wprintf(L&quot;Unknown type %d.\n&quot;,col.dwADsType);
+                            }
+                        }
+                        else
+                        {
+#ifdef _MBCS
+                            //  Verbose handles only the two single-valued attributes: cn and ldapdisplayname,
+                            //  so this is a special case.
+                            if (0==wcscmp(L&quot;name&quot;, pszColumn))
+                            {
+                                wcscpy_s(szName,col.pADsValues-&gt;CaseIgnoreString);
+                            }
+                            if (0==wcscmp(L&quot;distinguishedName&quot;, pszColumn))
+                            {
+                                wcscpy_s(szDN,col.pADsValues-&gt;CaseIgnoreString);
+                            }
+#endif _MBCS
+                        }
+                        pContainerToSearch-&gt;FreeColumn(&amp;col);
+                    }
+                    FreeADsMem(pszColumn);
+                }
+                if (!bIsVerbose)
+                    wprintf(L&quot;%s\n  DN: %s\n\n&quot;,szName,szDN);
+                //  Get the next row.
+                hr = pContainerToSearch-&gt;GetNextRow(hSearch);
+            }
+
+        }
+        //  Close the search handle to cleanup.
+        pContainerToSearch-&gt;CloseSearchHandle(hSearch);
+    } 
+    if (SUCCEEDED(hr) &amp;&amp; 0==iCount)
+        hr = S_FALSE;
+
+    delete [] szName;
+    delete [] szDN;
+    delete [] szDSGUID;
+    delete [] pszSearchFilter;
+    return hr;
+}
+</code></pre>
+<h2>Visual Basic Example</h2>
+<p>The following Visual Basic code example searches the current domain for users with the specified surname and returns the name and <a href="/windows/desktop/ADSchema/a-distinguishedname"><strong>distinguishedName</strong></a> attributes for the objects that are found. The following code example uses ADO to perform the search.</p>
+<pre lang="VB"><code>Dim Con As ADODB.Connection
+Dim ocommand As ADODB.Command
+Dim gc As IADs
+ 
+On Error Resume Next
+' Maximum number of items to list on a msgbox.
+MAX_DISPLAY = 5
+ 
+' Prompt for surname to search for.
+strName = InputBox(&quot;This routine searches in the current domain for users with the specified surname.&quot; &amp; vbCrLf &amp; vbCrLf &amp;&quot;Specify the surname:&quot;)
+ 
+If strName = &quot;&quot; Then
+  msgbox &quot;No surname was specified. The routine will search for all users.&quot;
+End If
+ 
+ 
+' Create ADO connection object for Active Directory
+Set Con = CreateObject(&quot;ADODB.Connection&quot;)
+  If (Err.Number &lt;&gt; 0) Then
+     BailOnFailure Err.Number, &quot;on CreateObject&quot;
+  End If
+Con.Provider = &quot;ADsDSOObject&quot;
+  If (Err.Number &lt;&gt; 0) Then
+     BailOnFailure Err.Number, &quot;on Provider&quot;
+  End If
+Con.Open &quot;Active Directory Provider&quot;
+  If (Err.Number &lt;&gt; 0) Then
+     BailOnFailure Err.Number, &quot;on Open&quot;
+  End If
+ 
+' Create ADO command object for the connection.
+Set ocommand = CreateObject(&quot;ADODB.Command&quot;)
+  If (Err.Number &lt;&gt; 0) Then
+     BailOnFailure Err.Number, &quot;on CreateObject&quot;
+  End If
+ocommand.ActiveConnection = Con
+  If (Err.Number &lt;&gt; 0) Then
+     BailOnFailure Err.Number, &quot;on Active Connection&quot;
+  End If
+ 
+' Get the ADsPath for the domain to search. 
+Set root = GetObject(&quot;LDAP://rootDSE&quot;)
+  If (Err.Number &lt;&gt; 0) Then
+     BailOnFailure Err.Number, &quot;on GetObject for rootDSE&quot;
+  End If
+sDomain = root.Get(&quot;defaultNamingContext&quot;)
+  If (Err.Number &lt;&gt; 0) Then
+     BailOnFailure Err.Number, &quot;on Get on defaultNamingContext&quot;
+  End If
+Set domain = GetObject(&quot;LDAP://&quot; &amp; sDomain)
+  If (Err.Number &lt;&gt; 0) Then
+     BailOnFailure Err.Number, &quot;on GetObject for domain&quot;
+  End If
+ 
+' Build the ADsPath element of the commandtext
+sADsPath = &quot;&lt;&quot; &amp; domain.ADsPath &amp; &quot;&gt;&quot;
+ 
+' Build the filter element of the commandtext
+If (strName = &quot;&quot;) Then
+  sFilter = &quot;(&amp;(objectCategory=person)(objectClass=user))&quot;
+Else
+  sFilter = &quot;(&amp;(objectCategory=person)(objectClass=user)(sn=&quot; &amp; strName &amp; &quot;))&quot;
+End If
+ 
+' Build the returned attributes element of the commandtext.
+sAttribsToReturn = &quot;name,distinguishedName&quot;
+ 
+' Build the depth element of the commandtext.
+sDepth = &quot;subTree&quot;
+ 
+' Assemble the commandtext.
+ocommand.CommandText = sADsPath &amp; &quot;;&quot; &amp; sFilter &amp; &quot;;&quot; &amp; sAttribsToReturn &amp; &quot;;&quot; &amp; sDepth
+  If (Err.Number &lt;&gt; 0) Then
+     BailOnFailure Err.Number, &quot;on CommandText&quot;
+  End If
+' Display.
+show_items &quot;CommandText: &quot; &amp; ocommand.CommandText, &quot;&quot;
+ 
+' Execute the query.
+Set rs = ocommand.Execute
+  If (Err.Number &lt;&gt; 0) Then
+     BailOnFailure Err.Number, &quot;on Execute&quot;
+  End If
+ 
+strText = &quot;Found &quot; &amp; rs.RecordCount &amp; &quot; Users in the domain:&quot;
+intNumDisplay = 0
+intCount = 0
+ 
+' Navigate the record set.
+rs.MoveFirst
+While Not rs.EOF
+    intCount = intCount + 1
+    strText = strText &amp; vbCrLf &amp; intCount &amp; &quot;) &quot;
+    For i = 0 To rs.Fields.Count - 1
+        If rs.Fields(i).Type = adVariant And Not (IsNull(rs.Fields(i).Value)) Then
+          strText = strText &amp; rs.Fields(i).Name &amp; &quot; = &quot;
+          For j = LBound(rs.Fields(i).Value) To UBound(rs.Fields(i).Value)
+             strText = strText &amp; rs.Fields(i).Value(j) &amp; &quot; &quot;
+          Next
+        Else
+          strText = strText &amp; rs.Fields(i).Name &amp; &quot; = &quot; &amp; rs.Fields(i).Value &amp; vbCrLf
+        End If
+    Next
+    intNumDisplay = intNumDisplay + 1
+    ' Display in msgbox if there are MAX_DISPLAY items to display.
+    If intNumDisplay = MAX_DISPLAY Then
+        Call show_items(strText, &quot;Users in domain&quot;)
+        strText = &quot;&quot;
+        intNumDisplay = 0
+    End If
+    rs.MoveNext
+Wend
+ 
+show_items strText, &quot;Users in domain&quot;
+''''''''''''''''''''
+' Display subroutines
+''''''''''''''''''''
+Sub show_items(strText, strName)
+    MsgBox strText, vbInformation, &quot;Search domain for users with Surname &quot; &amp; strName
+End Sub
+ 
+Sub BailOnFailure(ErrNum, ErrText)    strText = &quot;Error 0x&quot; &amp; Hex(ErrNum) &amp; &quot; &quot; &amp; ErrText
+    MsgBox strText, vbInformation, &quot;ADSI Error&quot;
+    WScript.Quit
+End Sub
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

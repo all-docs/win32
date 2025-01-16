@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Monitoring an Installation Using MsiSetExternalUIRecord</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Package authors can monitor internal Windows Installer messages through the creation of an executable application that contains both a record-based callback handler to receive the messages and functionality to initiate an installation.
+ms.assetid: 5d9e51dd-7918-491f-aea9-01a6e0317c57
+title: Monitoring an Installation Using MsiSetExternalUIRecord
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Monitoring an Installation Using MsiSetExternalUIRecord</h1>
+<p>Package authors can monitor internal Windows Installer messages through the creation of an executable application that contains both a record-based callback handler to receive the messages and functionality to initiate an installation.</p>
+<p>The record-based handler in the following example conforms to the <a href="/windows/win32/api/msi/nc-msi-installui_handler_record"><strong>INSTALLUI_HANDLER_RECORD</strong></a> prototype, and a pointer to this callback handler is passed to <a href="/windows/desktop/api/Msi/nf-msi-msisetexternaluirecord"><strong>MsiSetExternalUIRecord</strong></a> function.</p>
+<pre lang="C++"><code>//
+// ExternalUIRecord.cpp : Defines the entry point for the console application.
+//
+#include &lt;tchar.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;msi.h&gt;
+#include &lt;msiquery.h&gt;
+#pragma comment(lib, &quot;msi.lib&quot;)
+#pragma comment(lib, &quot;user32.lib&quot;)
+#ifndef _WIN32_MSI
+#define _WIN32_MSI    310
+#endif 
+
+void Usage(LPCTSTR szProgram)
+{
+_tprintf(TEXT(&quot;Usage: %s &lt;path to .MSI package&gt;\n&quot;), szProgram);
+return;
+}
+
+// In the following snippet, the hRecord parameter is used only
+// to format the displayed message. However, because hRecord is 
+// a handle to a MSI record, the MSI API could be called to
+// obtain information. The external UI handler should not close
+// hRecord because the handle belongs to the Windows Installer.
+
+INT CALLBACK UIHandler(LPVOID pvContext, UINT uiMessageType, MSIHANDLE hRecord)
+{
+INSTALLMESSAGE iMessage = (INSTALLMESSAGE)(0xFF000000 &amp; uiMessageType);
+BOOL bMessage = (INSTALLMESSAGE_ERROR == iMessage);
+BOOL bFatalExit = (INSTALLMESSAGE_FATALEXIT == iMessage);
+BOOL bWarning = (INSTALLMESSAGE_WARNING == iMessage);
+
+if ((bMessage || bFatalExit || bWarning) &amp;&amp; hRecord &amp;&amp; pvContext)
+{
+TCHAR rgchMessage[1024];
+DWORD dwMessage = sizeof(rgchMessage)/sizeof(TCHAR);
+LPTSTR pszMessage = rgchMessage;
+
+UINT uiRet = MsiFormatRecord(*(MSIHANDLE*)pvContext, 
+                                 hRecord, pszMessage, &amp;dwMessage);
+if (ERROR_MORE_DATA == uiRet)
+{
+// Allocate a buffer to hold the string and terminating null.
+pszMessage = new TCHAR[++dwMessage];
+if (!pszMessage)
+{
+// no memory, return an error
+return -1;
+}
+uiRet = MsiFormatRecord(*(MSIHANDLE*)pvContext, 
+                                 hRecord, pszMessage, &amp;dwMessage);
+if (ERROR_SUCCESS != uiRet)
+{
+// Return an error if an unexpected error occurs.
+if (rgchMessage != pszMessage)
+    delete [] pszMessage;
+return -1;
+}
+}
+TCHAR rgchFatalError[] = TEXT(&quot;Fatal Error&quot;);
+TCHAR rgchError[] = TEXT(&quot;Error&quot;);
+TCHAR rgchWarning[] = TEXT(&quot;Warning&quot;);
+TCHAR* pszCaption = NULL;
+
+if (INSTALLMESSAGE_ERROR == iMessage)
+    pszCaption = rgchError;
+else if (INSTALLMESSAGE_FATALEXIT == iMessage)
+    pszCaption = rgchFatalError;
+else if (INSTALLMESSAGE_WARNING == iMessage)
+    pszCaption = rgchWarning;
+
+int iResponse = MessageBox(NULL, pszMessage, 
+                         pszCaption, uiMessageType &amp; 0x00FFFFFF);
+
+if (rgchMessage != pszMessage)
+    delete [] pszMessage;
+return iResponse;
+}
+
+// Signal that the handler handled this message.
+return IDOK;
+}
+
+// A console application that takes the path to a package,
+// installs the package silently, and uses a record based 
+// external UI handler to display any error.
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+UINT uiRet = ERROR_SUCCESS;
+MSIHANDLE hProduct = NULL;
+
+if (2 != argc)
+{
+    // Incorrect command line used.
+    Usage(argv[0]);
+    uiRet = 1;
+    goto End;
+}
+
+// Because thid example won't restore the UI level,
+// ignore return value.
+MsiSetInternalUI(INSTALLUILEVEL_NONE, /* pWnd */ NULL);
+
+uiRet = MsiOpenPackage(argv[1], &amp;hProduct);
+if (ERROR_SUCCESS != uiRet)
+{
+    _tprintf(TEXT(&quot;ERROR: Failed to open %s database.\n&quot;), argv[1]);
+    uiRet = 1;
+    goto End;
+}
+
+// set the external UI handler
+DWORD dwMessageFilter = INSTALLLOGMODE_FATALEXIT
+       | INSTALLLOGMODE_ERROR | INSTALLLOGMODE_WARNING;
+
+//Pass the pointer to hProduct as the pvContext argument, 
+// so that the record based external UI handler
+// can use it to format the records we send to it.
+
+uiRet = MsiSetExternalUIRecord(UIHandler, 
+              dwMessageFilter, (LPVOID)&amp;hProduct, /* ppuiPrevHandle */ NULL);
+
+if (ERROR_SUCCESS != uiRet)
+{
+    _tprintf(TEXT(&quot;ERROR: Failed to set the external UI handler.\n&quot;));
+    uiRet = 1;
+    goto End;
+}
+
+// Do the default action and install the product.
+uiRet = MsiDoAction(hProduct, TEXT(&quot;&quot;));
+
+End:
+// Close opened resources.
+if (hProduct)
+    MsiCloseHandle(hProduct);
+
+return ERROR_SUCCESS == uiRet ? 0 : 1;
+}
+//
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

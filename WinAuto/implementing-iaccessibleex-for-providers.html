@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementing IAccessibleEx for Providers</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Implementing IAccessibleEx for Providers
+description: This section explains how to add Microsoft UI Automation provider capabilities to a Microsoft Active Accessibility server by implementing the IAccessibleEx interface.
+ms.assetid: c03dc552-7919-4a35-8ff2-4cdd822bc0b7
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Implementing IAccessibleEx for Providers</h1>
+<p>This section explains how to add Microsoft UI Automation provider capabilities to a Microsoft Active Accessibility server by implementing the <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> interface.</p>
+<p>Before implementing <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a>, consider the following requirements:</p>
+<ul>
+<li>The baseline Microsoft Active Accessibility accessible object hierarchy must be clean. <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> cannot correct problems with existing accessible object hierarchies. Any problems with the object model structure must be corrected in the Microsoft Active Accessibility implementation before implementing <strong>IAccessibleEx</strong>.</li>
+<li>The <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> implementation must comply with both the Microsoft Active Accessibility specification and the UI Automation specification. Tools are available to validate compliance under both specifications. For more information, see <a href="accessibility-testingtools.html">Testing for accessibility</a> and <a href="https://www.codeplex.com/UIAutomationVerify/">UI Automation Verify (UIA Verify) Test Automation Framework</a>.</li>
+</ul>
+<p>Implementing <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> requires these main steps:</p>
+<ul>
+<li>Implement <strong>IServiceProvider</strong> on the accessible object so that the <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> interface can be found on this or a separate object.</li>
+<li>Implement <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> on the accessible object.</li>
+<li>Create accessible objects for any Microsoft Active Accessibility child items, which in Microsoft Active Accessibility are represented by the <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface on the parent object (for example, list items). Implement <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> on these objects.</li>
+<li>Implement <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-irawelementprovidersimple"><strong>IRawElementProviderSimple</strong></a> on all the accessible objects.</li>
+<li>Implement the appropriate control pattern interfaces on the accessible objects.</li>
+</ul>
+<h3>Implementing the IServiceProvider Interface</h3>
+<p>Because the implementation of <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> for a control may reside in a separate object, client applications cannot rely on <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> to obtain this interface. Instead, clients are expected to call <strong>IServiceProvider::QueryService</strong>. In the following example implementation of this method, it is assumed that <strong>IAccessibleEx</strong> is not implemented on a separate object; therefore the method simply calls through to <strong>QueryInterface</strong>.</p>
+<pre lang="C++"><code>           
+HRESULT CListboxAccessibleObject::QueryService(REFGUID guidService, REFIID riid, LPVOID *ppvObject)
+{
+    if (ppvObject == NULL)
+    {
+        return E_INVALIDARG;
+    }
+    *ppvObject = NULL;
+    if (guidService == __uuidof(IAccessibleEx))
+    {
+        return QueryInterface(riid, ppvObject);
+    }
+    else 
+    {
+        return E_NOINTERFACE;
+    }
+};      
+</code></pre>
+<h3>Implementing the IAccessibleEx Interface</h3>
+<p>In Microsoft Active Accessibility, a UI element is always identified by an <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface and a child ID. A single instance of <strong>IAccessible</strong> can represent multiple UI elements.</p>
+<p>Because each <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> instance represents only a single UI element, each <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> and child ID pair must be mapped to a single <strong>IAccessibleEx</strong> instance. <strong>IAccessibleEx</strong> includes two methods to handle this mapping:</p>
+<ul>
+<li><a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-iaccessibleex-getobjectforchild"><strong>GetObjectForChild</strong></a>â€”Retrieves the <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> interface for the specified child. This method returns <strong>NULL</strong> if the <strong>IAccessibleEx</strong> implementation does not recognize the specified child ID, does not have an <strong>IAccessibleEx</strong> for the specified child, or represents a child element.</li>
+<li><a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-iaccessibleex-getiaccessiblepair"><strong>GetIAccessiblePair</strong></a>â€”Retrieves the <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> interface and child ID for the <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> element. For <strong>IAccessible</strong> implementations that do not use a child ID, this method retrieves the corresponding <strong>IAccessible</strong> object and CHILDID_SELF.</li>
+</ul>
+<p>The following example shows the implementation of the <a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-iaccessibleex-getobjectforchild"><strong>GetObjectForChild</strong></a> and <a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-iaccessibleex-getiaccessiblepair"><strong>GetIAccessiblePair</strong></a> methods for an item in a custom list view. The methods enable UI Automation to map the <a href="/windows/desktop/api/oleacc/nn-oleacc-iaccessible"><strong>IAccessible</strong></a> and child ID pair to a corresponding <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> instance.</p>
+<pre lang="C++"><code>           
+HRESULT CListboxAccessibleObject::GetObjectForChild(
+    long idChild, IAccessibleEx **ppRetVal)
+{ 
+    VARIANT vChild;
+    vChild.vt = VT_I4;
+    vChild.lVal = idChild;
+    HRESULT hr = ValidateChildId(vChild);
+    if (FAILED(hr))
+    {
+        return E_INVALIDARG;
+    }
+    // List item accessible objects are stored as an array of
+    // pointers; for the purpose of this example it is assumed that 
+    // the list contents will not change. Accessible objects are
+    // created only when needed.
+    if (itemProviders[idChild - 1] == NULL)
+    {
+        // Create an object that supports UI Automation and
+        // IAccessibleEx for the item.
+        itemProviders[idChild - 1] = 
+          new CListItemAccessibleObject(idChild, 
+          g_pListboxControl);
+        if (itemProviders[idChild - 1] == NULL)
+        {
+            return E_OUTOFMEMORY;
+        }
+    }
+    IAccessibleEx* pAccEx = static_cast&lt;IAccessibleEx*&gt;
+      (itemProviders[idChild - 1]);
+    if (pAccEx != NULL)
+    {
+      pAccEx-&gt;AddRef();
+    }
+    *ppRetVal = pAccEx;
+    return S_OK; 
+}
+
+HRESULT CListItemAccessibleObject::GetIAccessiblePair(
+    IAccessible **ppAcc, long *pidChild)
+{ 
+    if (ppAcc == NULL || pidChild == NULL)
+    {
+        return E_INVALIDARG;   
+    }
+
+                CListboxAccessibleObject* pParent = 
+        m_control-&gt;GetAccessibleObject();
+
+    HRESULT hr = pParent-&gt;QueryInterface( 
+        __uuidof(IAccessible), (void**)ppAcc);
+    if (FAILED(hr))
+    {
+        *pidChild = 0;
+        return E_NOINTERFACE;
+    }
+    *pidChild = m_childID; 
+    return S_OK; 
+}
+}
+</code></pre>
+<p>If an accessible object implementation does not use a child ID, the methods can still be implemented as shown in the following code snippet.</p>
+<pre lang="C++"><code>           
+
+    // This sample implements IAccessibleEx on the same object; it could use a tear-off
+    // or inner object instead.
+    class MyAccessibleImpl: public IAccessible,
+                        public IAccessibleEx,
+                        public IRawElementProviderSimple
+    {
+    public:
+    ...
+   HRESULT STDMETHODCALLTYPE GetObjectForChild( long idChild, IAccessibleEx **ppRetVal )
+    {
+        // This implementation does not support child IDs.
+        *ppRetVal = NULL;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetIAccessiblePair( IAccessible ** ppAcc, long * pidChild )
+    {
+        // This implementation assumes that IAccessibleEx is implemented on same object as
+        // IAccessible.
+        *ppAcc = static_cast&lt;IAccessible *&gt;(this);
+        (*ppAcc)-&gt;AddRef();
+        *pidChild = CHILDID_SELF;
+        return S_OK;
+    }
+</code></pre>
+<h3>Implement the IRawElementProviderSimple Interface</h3>
+<p>Servers use <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-irawelementprovidersimple"><strong>IRawElementProviderSimple</strong></a> to expose information about UI Automation properties and control patterns. <strong>IRawElementProviderSimple</strong> includes the following methods:</p>
+<ul>
+<li><a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-irawelementprovidersimple-getpatternprovider"><strong>GetPatternProvider</strong></a>â€”This method is used to expose control pattern interfaces. It returns an object that supports the specified control pattern, or <strong>NULL</strong> if the control pattern is not supported.</li>
+<li><a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-irawelementprovidersimple-getpropertyvalue"><strong>GetPropertyValue</strong></a>â€”This method is used to expose UI Automation property values.</li>
+<li><a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-irawelementprovidersimple-get_hostrawelementprovider"><strong>HostRawElementProvider</strong></a>â€”This method is not used with <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> implementations.</li>
+<li><a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-irawelementprovidersimple-get_provideroptions"><strong>ProviderOptions</strong></a>â€”This method is not used with <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> implementations.</li>
+</ul>
+<p>An <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> server exposes control patterns by implementing <a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-irawelementprovidersimple-getpatternprovider"><strong>IRawElementProviderSimple::GetPatternProvider</strong></a>. This method takes an integer parameter that specifies the control pattern. The server returns <strong>NULL</strong> if the pattern is not supported. If the control pattern interface is supported, servers return an <a href="/windows/desktop/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> and the client then calls <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> to get the appropriate control pattern.</p>
+<p>An <a href="/windows/desktop/api/UIAutomationCore/nn-uiautomationcore-iaccessibleex"><strong>IAccessibleEx</strong></a> server can support UI Automation properties (such as LabeledBy, and IsRequiredForForm) by implementing <a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-irawelementprovidersimple-getpropertyvalue"><strong>IRawElementProviderSimple::GetPropertyValue</strong></a> and supplying an integer PROPERTYID identifying the property as a parameter. This technique applies only to UI Automation properties that are not included in a control pattern interface. Properties associated with a control pattern interface are exposed through the control pattern interface method. For example, the IsSelected property from the <a href="uiauto-implementingselectionitem.html">SelectionItem</a> control pattern would be exposed with <a href="/windows/desktop/api/UIAutomationCore/nf-uiautomationcore-iselectionitemprovider-get_isselected"><strong>ISelectionItemProvider::get_IsSelected</strong></a>.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 1: Declare the CPlayer Class</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic is step 1 of the tutorial How to Play Media Files with Media Foundation.
+ms.assetid: 10767bbf-3b47-4df1-be73-18678397c0ab
+title: 'Step 1: Declare the CPlayer Class'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Step 1: Declare the CPlayer Class</h1>
+<p>This topic is step 1 of the tutorial <a href="how-to-play-unprotected-media-files.html">How to Play Media Files with Media Foundation</a>. The complete code is shown in the topic <a href="media-session-playback-example.html">Media Session Playback Example</a>.</p>
+<p>In this tutorial, playback functionality is encapsulated in the <code>CPlayer</code> class. The <code>CPlayer</code> class is declared as follows:</p>
+<pre lang="C++"><code>const UINT WM_APP_PLAYER_EVENT = WM_APP + 1;   
+
+    // WPARAM = IMFMediaEvent*, WPARAM = MediaEventType
+
+enum PlayerState
+{
+    Closed = 0,     // No session.
+    Ready,          // Session was created, ready to open a file. 
+    OpenPending,    // Session is opening a file.
+    Started,        // Session is playing a file.
+    Paused,         // Session is paused.
+    Stopped,        // Session is stopped (ready to play). 
+    Closing         // Application has closed the session, but is waiting for MESessionClosed.
+};
+
+class CPlayer : public IMFAsyncCallback
+{
+public:
+    static HRESULT CreateInstance(HWND hVideo, HWND hEvent, CPlayer **ppPlayer);
+
+    // IUnknown methods
+    STDMETHODIMP QueryInterface(REFIID iid, void** ppv);
+    STDMETHODIMP_(ULONG) AddRef();
+    STDMETHODIMP_(ULONG) Release();
+
+    // IMFAsyncCallback methods
+    STDMETHODIMP  GetParameters(DWORD*, DWORD*)
+    {
+        // Implementation of this method is optional.
+        return E_NOTIMPL;
+    }
+    STDMETHODIMP  Invoke(IMFAsyncResult* pAsyncResult);
+
+    // Playback
+    HRESULT       OpenURL(const WCHAR *sURL);
+    HRESULT       Play();
+    HRESULT       Pause();
+    HRESULT       Stop();
+    HRESULT       Shutdown();
+    HRESULT       HandleEvent(UINT_PTR pUnkPtr);
+    PlayerState   GetState() const { return m_state; }
+
+    // Video functionality
+    HRESULT       Repaint();
+    HRESULT       ResizeVideo(WORD width, WORD height);
+    
+    BOOL          HasVideo() const { return (m_pVideoDisplay != NULL);  }
+
+protected:
+    
+    // Constructor is private. Use static CreateInstance method to instantiate.
+    CPlayer(HWND hVideo, HWND hEvent);
+
+    // Destructor is private. Caller should call Release.
+    virtual ~CPlayer(); 
+
+    HRESULT Initialize();
+    HRESULT CreateSession();
+    HRESULT CloseSession();
+    HRESULT StartPlayback();
+
+    // Media event handlers
+    virtual HRESULT OnTopologyStatus(IMFMediaEvent *pEvent);
+    virtual HRESULT OnPresentationEnded(IMFMediaEvent *pEvent);
+    virtual HRESULT OnNewPresentation(IMFMediaEvent *pEvent);
+
+    // Override to handle additional session events.
+    virtual HRESULT OnSessionEvent(IMFMediaEvent*, MediaEventType) 
+    { 
+        return S_OK; 
+    }
+
+protected:
+    long                    m_nRefCount;        // Reference count.
+
+    IMFMediaSession         *m_pSession;
+    IMFMediaSource          *m_pSource;
+    IMFVideoDisplayControl  *m_pVideoDisplay;
+
+    HWND                    m_hwndVideo;        // Video window.
+    HWND                    m_hwndEvent;        // App window to receive events.
+    PlayerState             m_state;            // Current state of the media session.
+    HANDLE                  m_hCloseEvent;      // Event to wait on while closing.
+};
+</code></pre>
+<p>Here are some things to note about <code>CPlayer</code>:</p>
+<ul>
+<li>The constant <strong>WM_APP_PLAYER_EVENT</strong> defines a private window message. This message is used to notify the application about Media Session events. See <a href="step-5--handle-media-session-events.html">Step 5: Handle Media Session Events</a>.</li>
+<li>The <code>PlayerState</code> enumeration defines the possible states of the <code>CPlayer</code> object.</li>
+<li>The <code>CPlayer</code> class implements the <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasynccallback"><strong>IMFAsyncCallback</strong></a> interface, which is used to get event notifications from the Media Session.</li>
+<li>The <code>CPlayer</code> constructor is private. The application calls the static <code>CreateInstance</code> method to create an instance of the <code>CPlayer</code> class.</li>
+<li>The <code>CPlayer</code> destructor is also private. The <code>CPlayer</code> class implements <strong>IUnknown</strong>, so the object's lifetime is controlled through its reference count (<em>m_nRefCount</em>). To destroy the object, the application calls <strong>IUnknown::Release</strong>, not <strong>delete</strong>.</li>
+<li>The <code>CPlayer</code> object manages both the Media Session and the media source.</li>
+</ul>
+<h2>Implement IUnknown</h2>
+<p>The <code>CPlayer</code> class implements <a href="/windows/desktop/api/mfobjects/nn-mfobjects-imfasynccallback"><strong>IMFAsyncCallback</strong></a>, which inherits <strong>IUnknown</strong>.</p>
+<p>The code shown here is a fairly standard implementation of <strong>IUnknown</strong>. If you prefer, you can use the Active Template Library (ATL) to implement these methods. However, <code>CPlayer</code> does not support <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> or any advanced COM features, so there is no overwhelming reason to use ATL here.</p>
+<pre lang="C++"><code>HRESULT CPlayer::QueryInterface(REFIID riid, void** ppv)
+{
+    static const QITAB qit[] = 
+    {
+        QITABENT(CPlayer, IMFAsyncCallback),
+        { 0 }
+    };
+    return QISearch(this, qit, riid, ppv);
+}
+
+ULONG CPlayer::AddRef()
+{
+    return InterlockedIncrement(&amp;m_nRefCount);
+}
+
+ULONG CPlayer::Release()
+{
+    ULONG uCount = InterlockedDecrement(&amp;m_nRefCount);
+    if (uCount == 0)
+    {
+        delete this;
+    }
+    return uCount;
+}
+</code></pre>
+<p>Next: <a href="step-2--create-the-cplayer-object.html">Step 2: Create the CPlayer Object</a></p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="audio-video-playback.html">Audio/Video Playback</a></p>
+<!-- raw HTML omitted -->
+<p><a href="how-to-play-unprotected-media-files.html">How to Play Media Files with Media Foundation</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

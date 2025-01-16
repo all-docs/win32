@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Managing the Lifetime of an Object</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Managing the Lifetime of an Object
+description: Learn how to manage the AddRef and Release methods to control the lifetime of an object.
+ms.assetid: 0e522ded-8976-4cdd-9a61-eae7834c896b
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Managing the Lifetime of an Object</h1>
+<p>There is a rule for COM interfaces that we have not yet mentioned. Every COM interface must inherit, directly or indirectly, from an interface named <a href="/windows/desktop/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a>. This interface provides some baseline capabilities that all COM objects must support.</p>
+<p>The <a href="/windows/desktop/api/unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> interface defines three methods:</p>
+<ul>
+<li><a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a></li>
+<li><a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-addref"><strong>AddRef</strong></a></li>
+<li><a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a></li>
+</ul>
+<p>The <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> method enables a program to query the capabilities of the object at run time. We'll say more about that in the next topic, <a href="asking-an-object-for-an-interface.html">Asking an Object for an Interface</a>. The <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-addref"><strong>AddRef</strong></a> and <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> methods are used to control the lifetime of an object. This is the subject of this topic.</p>
+<h2>Reference Counting</h2>
+<p>Whatever else a program might do, at some point it will allocate and free resources. Allocating a resource is easy. Knowing when to free the resource is hard, especially if the lifetime of the resource extends beyond the current scope. This problem is not unique to COM. Any program that allocates heap memory must solve the same problem. For example, C++ uses automatic destructors, while C# and Java use garbage collection. COM uses an approach called <em>reference counting</em>.</p>
+<p>Every COM object maintains an internal count. This is known as the reference count. The reference count tracks how many references to the object are currently active. When the number of references drops to zero, the object deletes itself. The last part is worth repeating: The object deletes itself. The program never explicitly deletes the object.</p>
+<p>Here are the rules for reference counting:</p>
+<ul>
+<li>When the object is first created, its reference count is 1. At this point, the program has a single pointer to the object.</li>
+<li>The program can create a new reference by duplicating (copying) the pointer. When you copy the pointer, you must call the <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-addref"><strong>AddRef</strong></a> method of the object. This method increments the reference count by one.</li>
+<li>When you are finished using a pointer to the object, you must call <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a>. The <strong>Release</strong> method decrements the reference count by one. It also invalidates the pointer. Do not use the pointer again after you call <strong>Release</strong>. (If you have other pointers to the same object, you can continue to use those pointers.)</li>
+<li>When you have called <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> with every pointer, the object reference count of the object reaches zero, and the object deletes itself.</li>
+</ul>
+<p>The following diagram shows a simple but typical case.</p>
+<p><img src="images/com04.png" alt="Diagram that shows  a simple case of reference counting." /></p>
+<p>The program creates an object and stores a pointer (<em>p</em>) to the object. At this point, the reference count is 1. When the program is finished using the pointer, it calls <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a>. The reference count is decremented to zero, and the object deletes itself. Now <em>p</em> is invalid. It is an error to use <em>p</em> for any further method calls.</p>
+<p>The next diagram shows a more complex example.</p>
+<p><img src="images/com05.png" alt="illustration that shows reference counting" /></p>
+<p>Here, the program creates an object and stores the pointer <em>p</em>, as before. Next, the program copies <em>p</em> to a new variable, <em>q</em>. At this point, the program must call <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-addref"><strong>AddRef</strong></a> to increment the reference count. The reference count is now 2, and there are two valid pointers to the object. Now suppose that the program is finished using <em>p</em>. The program calls <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a>, the reference count goes to 1, and <em>p</em> is no longer valid. However, <em>q</em> is still valid. Later, the program finishes using <em>q</em>. Therefore, it calls <strong>Release</strong> again. The reference count goes to zero, and the object deletes itself.</p>
+<p>You might wonder why the program would copy <em>p</em>. There are two main reasons: First, you might want to store the pointer in a data structure, such as a list. Second, you might want to keep the pointer beyond the current scope of the original variable. Therefore, you would copy it to a new variable with wider scope.</p>
+<p>One advantage of reference counting is that you can share pointers across different sections of code, without the various code paths coordinating to delete the object. Instead, each code path merely calls <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> when that code path is done using the object. The object handles deleting itself at the correct time.</p>
+<h2>Example</h2>
+<p>Here is the code from the <a href="example--the-open-dialog-box.html">Open dialog box example</a> again.</p>
+<pre lang="C++"><code>HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED |
+    COINIT_DISABLE_OLE1DDE);
+
+if (SUCCEEDED(hr))
+{
+    IFileOpenDialog *pFileOpen;
+
+    hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL,
+            IID_IFileOpenDialog, reinterpret_cast&lt;void**&gt;(&amp;pFileOpen));
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pFileOpen-&gt;Show(NULL);
+        if (SUCCEEDED(hr))
+        {
+            IShellItem *pItem;
+            hr = pFileOpen-&gt;GetResult(&amp;pItem);
+            if (SUCCEEDED(hr))
+            {
+                PWSTR pszFilePath;
+                hr = pItem-&gt;GetDisplayName(SIGDN_FILESYSPATH, &amp;pszFilePath);
+                if (SUCCEEDED(hr))
+                {
+                    MessageBox(NULL, pszFilePath, L&amp;quot;File Path&amp;quot;, MB_OK);
+                    CoTaskMemFree(pszFilePath);
+                }
+                pItem-&gt;Release();
+            }
+        }
+        pFileOpen-&gt;Release();
+    }
+    CoUninitialize();
+}
+</code></pre>
+<p>Reference counting occurs in two places in this code. First, if program successfully creates the Common Item Dialog object, it must call <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> on the <em>pFileOpen</em> pointer.</p>
+<pre lang="C++"><code>hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, 
+        IID_IFileOpenDialog, reinterpret_cast&lt;void**&gt;(&amp;pFileOpen));
+
+if (SUCCEEDED(hr))
+{
+    // ...
+    pFileOpen-&gt;Release();
+}
+</code></pre>
+<p>Second, when the <a href="/windows/desktop/api/shobjidl_core/nf-shobjidl_core-ifiledialog-getresult"><strong>GetResult</strong></a> method returns a pointer to the <a href="/windows/desktop/api/shobjidl_core/nn-shobjidl_core-ishellitem"><strong>IShellItem</strong></a> interface, the program must call <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> on the <em>pItem</em> pointer.</p>
+<pre lang="C++"><code>hr = pFileOpen-&gt;GetResult(&amp;pItem);
+
+if (SUCCEEDED(hr))
+{
+    // ...
+    pItem-&gt;Release();
+}
+</code></pre>
+<p>Notice that in both cases, the <a href="/windows/desktop/api/unknwn/nf-unknwn-iunknown-release"><strong>Release</strong></a> call is the last thing that happens before the pointer goes out of scope. Also notice that <strong>Release</strong> is called only after you test the <strong>HRESULT</strong> for success. For example, if the call to <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> fails, the <em>pFileOpen</em> pointer is not valid. Therefore, it would be an error to call <strong>Release</strong> on the pointer.</p>
+<h2>Next</h2>
+<p><a href="asking-an-object-for-an-interface.html">Asking an Object for an Interface</a></p>
+</body>

@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Use OLE in Rich Edit Controls</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: How to Use OLE in Rich Edit Controls
+description: This section contains information about using object linking and embedding (OLE) in rich edit controls.
+ms.assetid: bfcecbf5-cc35-47b8-a713-7e5fd03f60cc
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to Use OLE in Rich Edit Controls</h1>
+<p>This section contains information about using object linking and embedding (OLE) in rich edit controls.</p>
+<h2>What you need to know</h2>
+<h3>Technologies</h3>
+<ul>
+<li><a href="window-controls.html">Windows Controls</a></li>
+</ul>
+<h3>Prerequisites</h3>
+<ul>
+<li>C/C++</li>
+<li>Windows User Interface Programming</li>
+</ul>
+<h2>Instructions</h2>
+<h3>Use a Rich Edit Interface</h3>
+<p>Rich edit controls expose some of their functionality through Component Object Model (COM) interfaces. By obtaining an interface from a control, you gain the ability to work with other objects within the control. You can obtain this interface by sending the <a href="em-getoleinterface.html"><strong>EM_GETOLEINTERFACE</strong></a> message. From the <a href="/windows/desktop/api/Richole/nn-richole-iricheditole"><strong>IRichEditOle</strong></a> interface, you can then obtain interfaces used in the <a href="text-object-model.html">Text Object Model</a>.</p>
+<p>Another interface, <a href="/windows/desktop/api/Richole/nn-richole-iricheditolecallback"><strong>IRichEditOleCallback</strong></a>, is implemented by applications to define the behavior of the control when it interacts with objects.</p>
+<h3>Insert an Object into a Rich Edit Control</h3>
+<p>The following code example inserts a file object into a rich edit control. If a program is associated with the file type on the user's machine (for example, Microsoft Excel for an .xls file), the contents of the file display in the control; otherwise, an icon appears.</p>
+<ol>
+<li>
+<p>Get the <a href="/windows/desktop/api/Richole/nn-richole-iricheditole"><strong>IRichEditOle</strong></a> interface.</p>
+<pre><code>BOOL InsertObject(HWND hRichEdit, LPCTSTR pszFileName)
+{
+    HRESULT hr;
+
+    LPRICHEDITOLE pRichEditOle;
+    SendMessage(hRichEdit, EM_GETOLEINTERFACE, 0, (LPARAM)&amp;pRichEditOle);
+    
+    ...
+</code></pre>
+</li>
+<li>
+<p>Create structured storage.</p>
+<pre><code>    LPLOCKBYTES pLockBytes = NULL;
+    hr = CreateILockBytesOnHGlobal(NULL, TRUE, &amp;pLockBytes);
+    
+    LPSTORAGE pStorage;
+    hr = StgCreateDocfileOnILockBytes(pLockBytes, 
+                                      STGM_SHARE_EXCLUSIVE | STGM_CREATE | STGM_READWRITE, 
+                                      0, &amp;pStorage);
+    ...
+</code></pre>
+</li>
+<li>
+<p>Set up the data format.</p>
+<pre><code>    FORMATETC formatEtc;
+    
+    formatEtc.cfFormat = 0;
+    formatEtc.ptd      = NULL;
+    formatEtc.dwAspect = DVASPECT_CONTENT;
+    formatEtc.lindex   = -1;
+    formatEtc.tymed    = TYMED_NULL;
+    
+    ...
+</code></pre>
+</li>
+<li>
+<p>Get a pointer to the display site.</p>
+<pre><code>    LPOLECLIENTSITE pClientSite;
+    hr = pRichEditOle-&gt;GetClientSite(&amp;pClientSite);
+    
+    ...
+</code></pre>
+</li>
+<li>
+<p>Create the object and retrieve its <strong>IUnknown</strong> interface.</p>
+<pre><code>    LPUNKNOWN pUnk;
+    CLSID clsid = CLSID_NULL;
+    
+    hr = OleCreateFromFile(clsid, 
+                           pszFileName, 
+                           IID_IUnknown, 
+                           OLERENDER_DRAW, 
+                           &amp;formatEtc, 
+                           pClientSite, 
+                           pStorage, 
+                           (void**)&amp;pUnk);
+    
+    pClientSite-&gt;Release();
+              
+    ...
+</code></pre>
+</li>
+<li>
+<p>Get the IOleObject interface to the object.</p>
+<pre><code>    LPOLEOBJECT pObject;
+    
+    hr = pUnk-&gt;QueryInterface(IID_IOleObject, (void**)&amp;pObject);
+    
+    pUnk-&gt;Release();
+
+    ...
+</code></pre>
+</li>
+<li>
+<p>To ensure that references are counted correctly, notify the object that it is contained.</p>
+<pre><code>    OleSetContainedObject(pObject, TRUE);
+
+    ...
+</code></pre>
+</li>
+<li>
+<p>Set up object info.</p>
+<pre><code>    REOBJECT reobject = { sizeof(REOBJECT)};
+    
+    hr = pObject-&gt;GetUserClassID(&amp;clsid);
+    
+    reobject.clsid    = clsid;
+    reobject.cp       = REO_CP_SELECTION;
+    reobject.dvaspect = DVASPECT_CONTENT;
+    reobject.dwFlags  = REO_RESIZABLE | REO_BELOWBASELINE;
+    reobject.dwUser   = 0;
+    reobject.poleobj  = pObject;
+    reobject.polesite = pClientSite;
+    reobject.pstg     = pStorage;
+    
+    SIZEL sizel       = { 0 };
+    reobject.sizel    = sizel;
+
+    ...
+</code></pre>
+</li>
+<li>
+<p>Move the caret to the end of the text and add a carriage return.</p>
+<pre><code>    SendMessage(hRichEdit, EM_SETSEL, 0, -1);
+    
+    DWORD dwStart, dwEnd;
+    
+    SendMessage(hRichEdit, EM_GETSEL, (WPARAM)&amp;dwStart, (LPARAM)&amp;dwEnd);
+    SendMessage(hRichEdit, EM_SETSEL, dwEnd+1, dwEnd+1);
+    SendMessage(hRichEdit, EM_REPLACESEL, TRUE, (WPARAM)L&quot;\n&quot;); 
+
+    ...
+</code></pre>
+</li>
+<li>
+<p>Insert the object.</p>
+<pre><code>    hr = pRichEditOle-&gt;InsertObject(&amp;reobject);
+
+    ...
+</code></pre>
+</li>
+<li>
+<p>Clean up.</p>
+<pre><code>    pObject-&gt;Release();
+    
+    pRichEditOle-&gt;Release();
+
+    return TRUE;
+    
+}
+</code></pre>
+</li>
+</ol>
+<h3>Using IRichEditOleCallback</h3>
+<p>Applications implement the <a href="/windows/desktop/api/Richole/nn-richole-iricheditolecallback"><strong>IRichEditOleCallback</strong></a> interface to respond to OLE-related queries or actions that are performed by a rich edit control. You associate your implementation of the interface with the control by sending an <a href="em-setolecallback.html"><strong>EM_SETOLECALLBACK</strong></a> message. The control then calls methods on your implementation of the interface as appropriate.</p>
+<p>For example, <a href="/windows/desktop/api/Richole/nf-richole-iricheditolecallback-queryacceptdata"><strong>QueryAcceptData</strong></a> is called when the user attempts to drag or paste an object into the control. If your application can accept the data, your implementation of the method returns S_OK; otherwise, it returns an error code. The method might also take some other action, such as warning the user that files of that type cannot be placed in the control.</p>
+<h2>Complete InsertObject Example Function</h2>
+<p>The following code example demonstrates the previous code snippets combined into one complete function that includes error handling.</p>
+<pre lang="C++"><code>BOOL InsertObject(HWND hRichEdit, LPCTSTR pszFileName)
+{
+    HRESULT hr;
+
+    LPRICHEDITOLE pRichEditOle;
+    SendMessage(hRichEdit, EM_GETOLEINTERFACE, 0, (LPARAM)&amp;pRichEditOle);
+
+    if (pRichEditOle == NULL)
+    {
+        return FALSE;
+    }
+
+    LPLOCKBYTES pLockBytes = NULL;
+    hr = CreateILockBytesOnHGlobal(NULL, TRUE, &amp;pLockBytes);
+
+    if (FAILED(hr))
+    {
+        return FALSE;
+    }
+
+    LPSTORAGE pStorage;
+    hr = StgCreateDocfileOnILockBytes(pLockBytes, 
+           STGM_SHARE_EXCLUSIVE | STGM_CREATE | STGM_READWRITE, 
+           0, &amp;pStorage);
+
+    if (FAILED(hr))
+    {
+        return FALSE;
+    }
+
+    FORMATETC formatEtc;
+    formatEtc.cfFormat = 0;
+    formatEtc.ptd = NULL;
+    formatEtc.dwAspect = DVASPECT_CONTENT;
+    formatEtc.lindex = -1;
+    formatEtc.tymed = TYMED_NULL;
+
+    LPOLECLIENTSITE pClientSite;
+    hr = pRichEditOle-&gt;GetClientSite(&amp;pClientSite);
+
+    if (FAILED(hr))
+    {
+        return FALSE;
+    }
+
+    LPUNKNOWN pUnk;
+    CLSID clsid = CLSID_NULL;
+
+    hr = OleCreateFromFile(clsid, pszFileName, IID_IUnknown, OLERENDER_DRAW, 
+           &amp;formatEtc, pClientSite, pStorage, (void**)&amp;pUnk);
+
+    pClientSite-&gt;Release();
+
+    if (FAILED(hr))
+    {
+        return FALSE;
+    }
+
+    LPOLEOBJECT pObject;
+    hr = pUnk-&gt;QueryInterface(IID_IOleObject, (void**)&amp;pObject);
+    pUnk-&gt;Release();
+
+    if (FAILED(hr))
+    {
+        return FALSE;
+    }
+
+    OleSetContainedObject(pObject, TRUE);
+    REOBJECT reobject = { sizeof(REOBJECT)};
+    hr = pObject-&gt;GetUserClassID(&amp;clsid);
+
+    if (FAILED(hr))
+    {
+        pObject-&gt;Release();
+        return FALSE;
+    }
+
+    reobject.clsid = clsid;
+    reobject.cp = REO_CP_SELECTION;
+    reobject.dvaspect = DVASPECT_CONTENT;
+    reobject.dwFlags = REO_RESIZABLE | REO_BELOWBASELINE;
+    reobject.dwUser = 0;
+    reobject.poleobj = pObject;
+    reobject.polesite = pClientSite;
+    reobject.pstg = pStorage;
+    SIZEL sizel = { 0 };
+    reobject.sizel = sizel;
+
+    SendMessage(hRichEdit, EM_SETSEL, 0, -1);
+    DWORD dwStart, dwEnd;
+    SendMessage(hRichEdit, EM_GETSEL, (WPARAM)&amp;dwStart, (LPARAM)&amp;dwEnd);
+    SendMessage(hRichEdit, EM_SETSEL, dwEnd+1, dwEnd+1);
+    SendMessage(hRichEdit, EM_REPLACESEL, TRUE, (WPARAM)L&quot;\n&quot;); 
+
+    hr = pRichEditOle-&gt;InsertObject(&amp;reobject);
+    pObject-&gt;Release();
+    pRichEditOle-&gt;Release();
+
+    if (FAILED(hr))
+    {
+        return FALSE;
+    }
+    
+    return TRUE;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-rich-edit-controls.html">Using Rich Edit Controls</a></p>
+<!-- raw HTML omitted -->
+<p><a href="https://github.com/microsoftarchive/msdn-code-gallery-microsoft/tree/master/OneCodeTeam/Windows%20common%20controls%20demo%20(CppWindowsCommonControls)/%5BC++%5D-Windows%20common%20controls%20demo%20(CppWindowsCommonControls)/C++/CppWindowsCommonControls">Windows common controls demo (CppWindowsCommonControls)</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

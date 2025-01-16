@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Executing and Synchronizing Command Lists</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Executing and Synchronizing Command Lists
+description: In Microsoft Direct3D 12, the immediate mode of previous versions is no longer present.
+ms.assetid: D5013102-2302-4D66-8F59-079C03BA65FD
+keywords:</p>
+<ul>
+<li>command list</li>
+<li>synchronization</li>
+<li>execution
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Executing and Synchronizing Command Lists</h1>
+<p>In Microsoft Direct3D 12, the immediate mode of previous versions is no longer present. Instead, apps create command lists and bundles and then record sets of GPU commands. Command queues are used to submit command lists to be executed. This model allows developers to have more control over the efficient usage of both graphics processing unit (GPU) and CPU.</p>
+<ul>
+<li><a href="#command-queue-overview">Command queue overview</a></li>
+<li><a href="#initializing-a-command-queue">Initializing a command queue</a></li>
+<li><a href="#executing-command-lists">Executing command Lists</a></li>
+<li><a href="#accessing-resources-from-multiple-command-queues">Accessing resources from multiple command queues</a></li>
+<li><a href="#synchronizing-command-list-execution-using-command-queue-fences">Synchronizing command list execution using command queue fences</a></li>
+<li><a href="#synchronizing-resources-accessed-by-command-queues">Synchronizing resources accessed by command queues</a></li>
+<li><a href="#command-queue-support-for-tiled-resources">Command queue support for tiled resources</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Command queue overview</h2>
+<p>Direct3D 12 command queues replace runtime and driver synchronization of immediate mode work submission, previously not-exposed to the developer, with APIs for explicitly managing concurrency, parallelism and synchronization. Command queues provide the following improvements for developers:</p>
+<ul>
+<li>Allows developers to avoid accidental inefficiencies caused by unexpected synchronization.</li>
+<li>Allows developers to introduce synchronization at a higher level where the required synchronization can be determined more efficiently and accurately. This means the runtime and the graphics driver will spend less time reactively engineering parallelism.</li>
+<li>Makes expensive operations more explicit.</li>
+</ul>
+<p>These improvements enable or enhance the following scenarios:</p>
+<ul>
+<li>Increased parallelism - Applications can use deeper queues for background workloads, such as video decoding, when they have separate queues for foreground work.</li>
+<li>Asynchronous and low-priority GPU work - The command queue model enables concurrent execution of low-priority GPU work and atomic operations that enable one GPU thread to consume the results of another unsynchronized thread without blocking.</li>
+<li>High-priority compute work - This design enables scenarios that require interrupting 3D rendering to do a small amount of high-priority compute work so that the result can be obtained early for additional processing on the CPU.</li>
+</ul>
+<h2>Initializing a command queue</h2>
+<p>Command queues can be created by calling <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12device-createcommandqueue"><strong>ID3D12Device::CreateCommandQueue</strong></a>. This method takes a <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_command_list_type"><strong>D3D12_COMMAND_LIST_TYPE</strong></a> indicating what type of queue should be created, and therefore, what type of commands can be submitted to that queue. Remember that bundles can only be called from direct command lists and can't be submitted directly to a queue. The supported queue types are:</p>
+<ul>
+<li><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_command_list_type"><strong>D3D12_COMMAND_LIST_TYPE_DIRECT</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_command_list_type"><strong>D3D12_COMMAND_LIST_TYPE_COMPUTE</strong></a></li>
+<li><a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_command_list_type"><strong>D3D12_COMMAND_LIST_TYPE_COPY</strong></a></li>
+</ul>
+<p>In general, DIRECT queues and command lists accept any command, COMPUTE queues and command lists accept compute and copy related commands, and COPY queues and command lists accept only copy commands.</p>
+<h2>Executing command Lists</h2>
+<p>After you have recorded a command list and either retrieved the default command queue or created a new one, you execute command lists by calling <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-executecommandlists"><strong>ID3D12CommandQueue::ExecuteCommandLists</strong></a>.</p>
+<p>Applications can submit command lists to any command queue from multiple threads. The runtime will perform the work of serializing these requests in the order of submission.</p>
+<p>The runtime will validate the submitted command list and will drop the call to <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-executecommandlists"><strong>ExecuteCommandLists</strong></a> if any of the restrictions are violated. Calls will be dropped for the following reasons:</p>
+<ul>
+<li>The supplied command list is a bundle, not a direct command list.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-close"><strong>ID3D12GraphicsCommandList::Close</strong></a> has not been called on the supplied command list to complete recording.</li>
+<li><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandallocator-reset"><strong>ID3D12CommandAllocator::Reset</strong></a> has been called on the command allocator associated with the command list since it was recorded. For more information about command allocators, see <a href="recording-command-lists-and-bundles.html">Creating and recording command lists and bundles</a>.</li>
+<li>The command queue fence indicates that a previous execution of the command list has not yet completed. Command queue fences are discussed in detail below.</li>
+<li>The before and after states of queries, set with calls to <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-beginquery"><strong>ID3D12GraphicsCommandList::BeginQuery</strong></a> and <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12graphicscommandlist-endquery"><strong>ID3D12GraphicsCommandList::EndQuery</strong></a>, are not matched properly.</li>
+<li>The before and after states of resource transition barriers are not matched properly. For more information, see <a href="using-resource-barriers-to-synchronize-resource-states-in-direct3d-12.html">Using resource barriers to synchronize resource states</a>.</li>
+</ul>
+<h2>Accessing resources from multiple command queues</h2>
+<p>There are a couple of rules imposed by the runtime that restrict the access of resources from multiple command queues. These rules are as follows:</p>
+<ol>
+<li>
+<p>A resource cannot be written to from multiple command queues simultaneously. When a resource has transitioned to a writeable state on a queue, it is considered exclusively owned by that queue, and must transition to a read or COMMON state (refer to <a href="/windows/desktop/api/d3d12/ne-d3d12-d3d12_resource_states"><strong>D3D12_RESOURCE_STATES</strong></a>) before it can be accessed by another queue.</p>
+</li>
+<li>
+<p>When in a read state, a resource can be read from multiple command queues simultaneously, including across processes, based on its read state.</p>
+</li>
+</ol>
+<p>For more information about resource access restrictions and using resource barriers to synchronize access to resources, see <a href="using-resource-barriers-to-synchronize-resource-states-in-direct3d-12.html">Using resource barriers to synchronize resource states</a>.</p>
+<h2>Synchronizing command list execution using command queue fences</h2>
+<p>The support for multiple parallel command queues in Direct3D 12 gives you more flexibility and control over the prioritization of asynchronous work on the GPU. This design also means that apps need to explicitly manage the synchronization of work, especially when the command lists in one queue depend on resources that are being operated on by another command queue. Some examples of this include waiting for an operation on a compute queue to complete so that the result can be used for a rendering operation on the 3D queue, and waiting for a 3D operation to complete so that an operation on the compute queue can access a resource for writing. To enable the synchronization of work between queues, Direct3D 12 uses the concept of fences, which are represented in the API by the <a href="/windows/desktop/api/d3d12/nn-d3d12-id3d12fence"><strong>ID3D12Fence</strong></a> interface.</p>
+<p>A fence is an integer that represents the current unit of work being processed. When the app advances the fence, by calling <a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-signal"><strong>ID3D12CommandQueue::Signal</strong></a>, the integer is updated. Apps can check the value of a fence and determine if a unit of work has been completed in order to decide whether a subsequent operation can be started.</p>
+<h2>Synchronizing resources accessed by command queues</h2>
+<p>In Direct3D 12, synchronizing the state of some resources is implemented with resource barriers. At each resource barrier, an app declares the before and after states of a resource. A common example is for a resource to transition between a shader resource view to a render target view. For the most part, these resource barriers are managed within command lists. When the debug layers are enabled, the system enforces that the before and after states of all resources match up, guaranteeing that the resource is in the correct state for a particular operation at a barrier transition.</p>
+<p>For more information about synchronizing resource state, see <a href="using-resource-barriers-to-synchronize-resource-states-in-direct3d-12.html">Using resource barriers to synchronize resource states</a>.</p>
+<h2>Command queue support for tiled resources</h2>
+<p>Methods for managing tiled resources, which were exposed through the <a href="/windows/desktop/api/d3d11_2/nn-d3d11_2-id3d11devicecontext2"><strong>ID3D11DeviceContext2</strong></a> interface in Direct3D 11, are provided by the <a href="/windows/desktop/api/d3d12/nn-d3d12-id3d12commandqueue"><strong>ID3D12CommandQueue</strong></a> interface in Direct3D 12. These methods include:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-copytilemappings"><strong>CopyTileMappings</strong></a></td>
+<td>Copies mappings from a source tiled resource to a destination tiled resource.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-updatetilemappings"><strong>UpdateTileMappings</strong></a></td>
+<td>Updates mappings of tile locations in tiled resources to memory locations in a resource heap.<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>For more information about using tiled resources in Direct3D 12 apps, refer to <a href="/windows/desktop/direct3d11/tiled-resources">Direct3D11 Tiled Resources</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="command-queues-and-command-lists.html">Work Submission in Direct3D 12</a></p>
+<!-- raw HTML omitted -->
+</body>

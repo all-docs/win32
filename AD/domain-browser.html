@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Domain Browser</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Domain Browser
+description: Using the IDsBrowseDomainTree interface, an application can display a domain browser dialog box and obtain the DNS name of the domain selected by the user.
+ms.assetid: 26793c61-469e-4e99-9056-b9fc04336b69
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>domain browser AD
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Domain Browser</h1>
+<p>Using the <a href="/windows/win32/api/dsclient/nn-dsclient-idsbrowsedomaintree"><strong>IDsBrowseDomainTree</strong></a> interface, an application can display a domain browser dialog box and obtain the DNS name of the domain selected by the user. An application can also use the <strong>IDsBrowseDomainTree</strong> interface to obtain data about all domain trees and domains within a forest.</p>
+<p>An instance of the <a href="/windows/win32/api/dsclient/nn-dsclient-idsbrowsedomaintree"><strong>IDsBrowseDomainTree</strong></a> interface is created by calling <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a> with the <strong>CLSID_DsDomainTreeBrowser</strong> class identifier as shown below.</p>
+<p>The <a href="/windows/win32/api/dsclient/nf-dsclient-idsbrowsedomaintree-setcomputer"><strong>IDsBrowseDomainTree::SetComputer</strong></a> method can be used to specify which computer and credentials are used as the basis for retrieving the domain data. When <strong>SetComputer</strong> is called on a particular <a href="/windows/win32/api/dsclient/nn-dsclient-idsbrowsedomaintree"><strong>IDsBrowseDomainTree</strong></a> instance, <a href="/windows/win32/api/dsclient/nf-dsclient-idsbrowsedomaintree-flushcacheddomains"><strong>IDsBrowseDomainTree::FlushCachedDomains</strong></a> must be called before <strong>SetComputer</strong> is called again.</p>
+<p>The <a href="/windows/win32/api/dsclient/nf-dsclient-idsbrowsedomaintree-browseto"><strong>IDsBrowseDomainTree::BrowseTo</strong></a> method is used to display the domain browser dialog box. When the user selects a domain and clicks the <strong>OK</strong> button, the <strong>IDsBrowseDomainTree::BrowseTo</strong> returns <strong>S_OK</strong> and the <em>ppszTargetPath</em> parameter contains the name of the selected domain. When the name string is no longer required, the caller must free the string by calling <a href="/windows/win32/api/combaseapi/nf-combaseapi-cotaskmemfree"><strong>CoTaskMemFree</strong></a>.</p>
+<p>The following code example shows how to use the <a href="/windows/win32/api/dsclient/nn-dsclient-idsbrowsedomaintree"><strong>IDsBrowseDomainTree</strong></a> interface to display the domain browser dialog box.</p>
+<pre lang="C++"><code>#include &lt;shlobj.h&gt;
+#include &lt;dsclient.h&gt;
+
+void main(void)
+{
+    HRESULT     hr;
+
+    hr = CoInitialize(NULL);
+    if(FAILED(hr)) 
+    {
+        return;
+    }
+
+    IDsBrowseDomainTree *pDsDomains = NULL;
+
+    hr = ::CoCreateInstance(    CLSID_DsDomainTreeBrowser,
+                                NULL,
+                                CLSCTX_INPROC_SERVER,
+                                IID_IDsBrowseDomainTree,
+                                (void **)(&amp;pDsDomains));
+    
+    if(SUCCEEDED(hr))
+    {
+        LPOLESTR    pstr;        
+
+        hr = pDsDomains-&gt;BrowseTo(  GetDesktopWindow(),
+                                    &amp;pstr,
+                                    0);
+        
+        if(S_OK == hr)
+        {
+            wprintf(pstr);
+            wprintf(L&quot;\n&quot;);
+            CoTaskMemFree(pstr);
+        }
+
+        pDsDomains-&gt;Release();
+    }
+
+    CoUninitialize();
+}
+</code></pre>
+<p>The <a href="/windows/win32/api/dsclient/nf-dsclient-idsbrowsedomaintree-getdomains"><strong>IDsBrowseDomainTree::GetDomains</strong></a> method is used to obtain domain tree data. The domain data is supplied in a <a href="/windows/desktop/api/Dsclient/ns-dsclient-domain_tree"><strong>DOMAINTREE</strong></a> structure. The <strong>DOMAINTREE</strong> structure contains the size of the structure and the number of domain elements in the tree. The <strong>DOMAINTREE</strong> structure also contains one or more <a href="/windows/desktop/api/Dsclient/ns-dsclient-domaindesc"><strong>DOMAINDESC</strong></a> structures. The <strong>DOMAINDESC</strong> contains data about a single element in the domain tree, including child and sibling data. The siblings of a domain can be enumerated by accessing the <strong>pdNextSibling</strong> member of each subsequent <strong>DOMAINDESC</strong> structure. The children of the domain can be retrieved in a similar manner by accessing the <strong>pdChildList</strong> member of each subsequent <strong>DOMAINDESC</strong> structure.</p>
+<p>The following code example shows how to obtain and access the domain tree data using the <a href="/windows/win32/api/dsclient/nf-dsclient-idsbrowsedomaintree-getdomains"><strong>IDsBrowseDomainTree::GetDomains</strong></a> method.</p>
+<pre lang="C++"><code>//  Add dsuiext.lib to the project.
+
+#include &quot;stdafx.h&quot;
+#include &lt;shlobj.h&gt;
+#include &lt;dsclient.h&gt;
+
+//The PrintDomain() function displays the domain name
+void PrintDomain(DOMAINDESC *pDomainDesc, DWORD dwIndentLevel)
+{
+    DWORD i;
+
+    // Display the domain name.
+    for(i = 0; i &lt; dwIndentLevel; i++)
+    {
+        wprintf(L&quot;  &quot;);
+    }
+    wprintf(pDomainDesc-&gt;pszName);
+    wprintf(L&quot;\n&quot;);
+}
+
+//The WalkDomainTree() function traverses the domain tree and prints the current domain name
+void WalkDomainTree(DOMAINDESC *pDomainDesc, DWORD dwIndentLevel = 0)
+{
+    DOMAINDESC  *pCurrent;
+
+    // Walk through the current item and any siblings it may have.
+    for(pCurrent = pDomainDesc; 
+        NULL != pCurrent; 
+        pCurrent = pCurrent-&gt;pdNextSibling)
+    {
+        // Print the current domain name.
+        PrintDomain(pCurrent, dwIndentLevel);
+
+        // Walk the child tree, if one exists.
+        if(NULL != pCurrent-&gt;pdChildList)
+        {
+            WalkDomainTree(pCurrent-&gt;pdChildList, 
+                           dwIndentLevel + 1);
+        }
+    }
+}
+
+//  Entry point for application
+int main(void)
+{
+    HRESULT hr;
+    IDsBrowseDomainTree *pBrowseTree;
+    CoInitialize(NULL);
+
+    hr = CoCreateInstance(CLSID_DsDomainTreeBrowser,
+                          NULL,
+                          CLSCTX_INPROC_SERVER,
+                          IID_IDsBrowseDomainTree,
+                          (void**)&amp;pBrowseTree);
+
+    if(SUCCEEDED(hr))
+    {
+        DOMAINTREE  *pDomTreeStruct;
+        hr = pBrowseTree-&gt;GetDomains(&amp;pDomTreeStruct, 
+                                     DBDTF_RETURNFQDN);
+        if(SUCCEEDED(hr))
+        {
+            WalkDomainTree(&amp;pDomTreeStruct-&gt;aDomains[0]);
+            hr = pBrowseTree-&gt;FreeDomains(&amp;pDomTreeStruct);
+        }
+        pBrowseTree-&gt;Release();
+    }
+    CoUninitialize();
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How To: Print with the XPS Print API</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to use the XPS Print API to print from a Windows application.
+ms.assetid: 3d7ab169-412c-434f-a865-4da4af370eaf
+title: 'How To: Print with the XPS Print API'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How To: Print with the XPS Print API</h1>
+<p>This topic describes how to use the <a href="xpsprint-api.html">XPS Print API</a> to print from a Windows application.</p>
+<p>The <a href="xpsprint-api.html">XPS Print API</a> enables native Windows applications to print XPS documents. An application can create an XPS document by using the <a href="/previous-versions/windows/desktop/dd316976(v=vs.85)">XPS Document API</a>. The <a href="/previous-versions/windows/desktop/dd316968(v=vs.85)">Common XPS Document Programming Tasks</a> help topic describes how to do this. Once an XPS document has been created, the application can use the XPS Print API to print it.</p>
+<p>Using the <a href="xpsprint-api.html">XPS Print API</a> to print a document from an application involves the following steps.</p>
+<ul>
+<li><a href="#initialize-com-interface">Initialize COM Interface</a></li>
+<li><a href="#create-a-completion-event">Create a Completion Event</a></li>
+<li><a href="#start-an-xps-print-job">Start an XPS Print Job</a></li>
+<li><a href="#create-an-ixpsompackagewriter-interface">Create an IXpsOMPackageWriter Interface</a></li>
+<li><a href="#close-the-ixpsompackagewriter-interface">Close the IXpsOMPackageWriter Interface</a></li>
+<li><a href="#close-the-print-job-stream">Close the Print Job Stream</a></li>
+<li><a href="#wait-for-the-completion-event">Wait for the Completion Event</a></li>
+<li><a href="#release-resources">Release Resources</a></li>
+</ul>
+<p>The <a href="xpsprint-api.html">XPS Print API</a> requires an XPS document to print. In the following example, the XPS document is created as it is sent to the printer by the XPS Print API. It is also possible to create an XPS document without sending it to a printer by using the <a href="/previous-versions/windows/desktop/dd316976(v=vs.85)">XPS Document API</a> and maintaining it as an XPS OM or by saving the XPS OM as an XPS document. For more information about using an XPS OM, see the XPS Document API.</p>
+<h3>Initialize COM Interface</h3>
+<p>Initialize the COM interface, if the application has not already done so.</p>
+<pre lang="C++"><code>    // Initialize the COM interface, if the application has not 
+    //  already done so.
+    if (FAILED(hr = CoInitializeEx(0, COINIT_MULTITHREADED)))
+    {
+        fwprintf(stderr, 
+            L&quot;ERROR: CoInitializeEx failed with HRESULT 0x%X\n&quot;, hr);
+        return 1;
+    }
+</code></pre>
+<h3>Create a Completion Event</h3>
+<p>Create a completion event, which the <a href="xpsprint-api.html">XPS Print API</a> uses to notify the application when the print spooler has received the entire document from the application. The XPS Print API also supports a progress event so an application can know about other spooling activity.</p>
+<pre lang="C++"><code>        // Create the completion event
+        completionEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+        if (!completionEvent)
+        {
+            hr = HRESULT_FROM_WIN32(GetLastError());
+            fwprintf(stderr, 
+                L&quot;ERROR: Could not create completion event: %08X\n&quot;, hr);
+        }
+</code></pre>
+<h3>Start an XPS Print Job</h3>
+<p>Start an XPS print job by calling <a href="/windows/desktop/api/XpsPrint/nf-xpsprint-startxpsprintjob"><strong>StartXpsPrintJob</strong></a>. <strong>StartXpsPrintJob</strong> returns a stream into which the application will send the document to be printed.</p>
+<pre lang="C++"><code>        // Start an XPS Print Job
+        if (FAILED(hr = StartXpsPrintJob(
+                    printerName,
+                    NULL,
+                    NULL,
+                    NULL,
+                    completionEvent,
+                    NULL,
+                    0,
+                    &amp;job,
+                    &amp;jobStream,
+                    NULL
+                    )))
+        {
+            fwprintf(stderr, 
+                L&quot;ERROR: Could not start XPS print job: %08X\n&quot;, hr);
+        }
+</code></pre>
+<h3>Create an IXpsOMPackageWriter Interface</h3>
+<p>Create an <a href="/windows/win32/api/xpsobjectmodel/nn-xpsobjectmodel-ixpsompackagewriter"><strong>IXpsOMPackageWriter</strong></a> interface by calling <a href="/windows/win32/api/xpsobjectmodel/nf-xpsobjectmodel-ixpsomobjectfactory-createpackagewriteronstream"><strong>IXpsOMObjectFactory::CreatePackageWriterOnStream</strong></a> on the stream returned by <a href="/windows/desktop/api/XpsPrint/nf-xpsprint-startxpsprintjob"><strong>StartXpsPrintJob</strong></a>.</p>
+<pre lang="C++"><code>    // Create an XPS OM Object Factory. If one has already been 
+    //  created by the application, a new one is not necessary.
+    if (SUCCEEDED(hr))
+    {
+        if (FAILED(hr = CoCreateInstance(
+                __uuidof(XpsOMObjectFactory), 
+                NULL,
+                CLSCTX_INPROC_SERVER, 
+                IID_PPV_ARGS(&amp;xpsFactory))))
+        {
+            fwprintf(
+                stderr, 
+                L&quot;ERROR: Could not create XPS OM Object Factory: %08X\n&quot;, 
+                hr);
+        }
+    }
+    // Create the Part URI for the Fixed Document Sequence. The
+    //  Fixed Document Sequence is the top-level element in the
+    //  package hierarchy of objects. There is one Fixed Document
+    //  Sequence in an XPS document.
+    //
+    // The part name is not specified by the XML Paper Specification,
+    //  however, the name used in this example is the part name
+    //  used by convention.
+    //
+    if (SUCCEEDED(hr))
+    {
+        if (FAILED(hr = xpsFactory-&gt;CreatePartUri(
+                    L&quot;/FixedDocumentSequence.fdseq&quot;, 
+                    &amp;partUri)))
+        {
+            fwprintf(stderr, 
+                L&quot;ERROR: Could not create part URI: %08X\n&quot;, hr);
+        }
+    }
+
+    // Create the package writer on the print job stream.
+    if (SUCCEEDED(hr))
+    {
+        if (FAILED(hr = xpsFactory-&gt;CreatePackageWriterOnStream(
+                    jobStream,
+                    TRUE,
+                    XPS_INTERLEAVING_ON,
+                    partUri,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    &amp;packageWriter
+                    )
+                )
+           )
+        {
+            fwprintf(
+                stderr, 
+                L&quot;ERROR: Could not create package writer: 0x%X\n&quot;, 
+                hr);
+        }
+    }
+
+    // Release the part URI interface.
+    if (partUri)
+    {
+        partUri-&gt;Release();
+        partUri = NULL;
+    }
+</code></pre>
+<p>For each document in this print job, start a new document and then add pages to that document.</p>
+<h3>Start a New Document</h3>
+<p>Start a new document in the package writer by calling <a href="/windows/win32/api/xpsobjectmodel/nf-xpsobjectmodel-ixpsompackagewriter-startnewdocument"><strong>IXpsOMPackageWriter::StartNewDocument</strong></a>. If a document is open when this method is called, it is closed and a new document is opened.</p>
+<pre lang="C++"><code>    // Create the Part URI for the Fixed Document. The
+    //  Fixed Document part contains the pages of the document. 
+    //  There can be one or more Fixed Documents in an XPS document.
+    //
+    // The part name is not specified by the XML Paper Specification,
+    //  however, the name format used in this example is the format 
+    //  used by convention. The number &quot;1&quot; in this example must be 
+    //  changed for each document in the package. For example, 1 
+    //  for the first document, 2 for the second, and so on.
+    //
+
+    if (SUCCEEDED(hr))
+    {
+        if (FAILED(hr = xpsFactory-&gt;CreatePartUri(
+                    L&quot;/Documents/1/FixedDocument.fdoc&quot;, 
+                    &amp;partUri)))
+        {
+            fwprintf(
+                stderr, 
+                L&quot;ERROR: Could not create part URI: %08X\n&quot;, 
+                hr);
+        }
+    }
+
+    // Start the new document.
+    //
+    //  If there was already a document started in this page,
+    //  this call will close it and start a new one.
+    if (SUCCEEDED(hr))
+    {
+        if (FAILED(hr = packageWriter-&gt;StartNewDocument(
+                    partUri, 
+                    NULL, 
+                    NULL, 
+                    NULL,
+                    NULL)))
+        {
+            fwprintf(
+                stderr, 
+                L&quot;ERROR: Could not start new document: 0x%X\n&quot;, 
+                hr);
+        }
+    }
+    
+    // Release the part URI interface
+    if (partUri)
+    {
+        partUri-&gt;Release();
+        partUri = NULL;
+    }
+</code></pre>
+<h3>Add a Page</h3>
+<p>Call <a href="/windows/win32/api/xpsobjectmodel/nf-xpsobjectmodel-ixpsompackagewriter-addpage"><strong>IXpsOMPackageWriter::AddPage</strong></a> to write each of the document's pages from the application to the new document in the package writer.</p>
+<blockquote>
+<p>[!Note]<br />
+The application is assumed to have created the page prior to this step. For more information about creating document pages and adding content to them, see the <a href="/previous-versions/windows/desktop/dd316968(v=vs.85)">Common XPS Document Programming Tasks</a>.</p>
+</blockquote>
+<p>Â </p>
+<pre lang="C++"><code>    if (SUCCEEDED(hr))
+    {
+        // Add the current page to the document.
+        if (FAILED(hr = packageWriter-&gt;AddPage(
+                    xpsPage,
+                    &amp;pageSize,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL
+                    )))
+        {
+            fwprintf(
+                stderr, 
+                L&quot;ERROR: Could not add page to document: %08X\n&quot;, 
+                hr);
+        }
+    }
+</code></pre>
+<h3>Close the IXpsOMPackageWriter Interface</h3>
+<p>After all the documents have been written for this print job, call <a href="/windows/win32/api/xpsobjectmodel/nf-xpsobjectmodel-ixpsompackagewriter-close"><strong>IXpsOMPackageWriter::Close</strong></a> to close the package.</p>
+<pre lang="C++"><code>    if (SUCCEEDED(hr))
+    {
+        if (FAILED(hr = packageWriter-&gt;Close()))
+        {
+            fwprintf(
+                stderr, 
+                L&quot;ERROR: Could not close package writer: %08X\n&quot;, 
+                hr);
+        }
+    }
+</code></pre>
+<h3>Close the Print Job Stream</h3>
+<p>Close the print job stream by calling <a href="/windows/desktop/api/XpsPrint/nf-xpsprint-ixpsprintjobstream-close"><strong>Close</strong></a>, which tells the print spooler that the entire print job has been sent by the application.</p>
+<pre lang="C++"><code>    if (SUCCEEDED(hr))
+    {
+        if (FAILED(hr = jobStream-&gt;Close()))
+        {
+            fwprintf(
+                stderr,
+                L&quot;ERROR: Could not close job stream: %08X\n&quot;,
+                hr);
+        }
+    }
+    else
+    {
+        // Only cancel the job if we succeeded in creating a job.
+        if (job)
+        {
+            // Tell the XPS Print API that we're giving up.  
+            //  Don't overwrite hr with the return from this function.
+            job-&gt;Cancel();
+        }
+    }
+</code></pre>
+<h3>Wait for the Completion Event</h3>
+<p>Wait for the print job's completion event.</p>
+<pre lang="C++"><code>    if (SUCCEEDED(hr))
+    {
+        wprintf(L&quot;Waiting for job completion...\n&quot;);
+
+        if (WaitForSingleObject(completionEvent, INFINITE) != 
+                                                    WAIT_OBJECT_0)
+        {
+            hr = HRESULT_FROM_WIN32(GetLastError());
+            fwprintf(
+                stderr, 
+                L&quot;ERROR: Wait for completion event failed: %08X\n&quot;, 
+                hr);
+        }
+    }
+</code></pre>
+<p>After the completion event is signaled, call <a href="/windows/desktop/api/XpsPrint/nf-xpsprint-ixpsprintjob-getjobstatus"><strong>GetJobStatus</strong></a> to get the job status.</p>
+<pre lang="C++"><code>    if (SUCCEEDED(hr))
+    {
+        if (FAILED(hr = job-&gt;GetJobStatus(&amp;jobStatus)))
+        {
+            fwprintf(
+                stderr, 
+                L&quot;ERROR: Could not get job status: %08X\n&quot;, 
+                hr);
+        }
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        switch (jobStatus.completion)
+        {
+            case XPS_JOB_COMPLETED:
+                break;
+            case XPS_JOB_CANCELLED:
+                fwprintf(stderr, L&quot;ERROR: job was cancelled\n&quot;);
+                hr = E_FAIL;
+                break;
+            case XPS_JOB_FAILED:
+                fwprintf(
+                    stderr, 
+                    L&quot;ERROR: Print job failed: %08X\n&quot;, 
+                    jobStatus.jobStatus);
+                hr = E_FAIL;
+                break;
+            default:
+                fwprintf(stderr, L&quot;ERROR: unexpected failure\n&quot;);
+                hr = E_UNEXPECTED;
+                break;
+        }
+    }
+</code></pre>
+<h3>Release Resources</h3>
+<p>After a job status indicates completion, release the interfaces and resources used for this print job.</p>
+<pre lang="C++"><code>    if (packageWriter)
+    {
+        packageWriter-&gt;Release();
+        packageWriter = NULL;
+    }
+
+    if (partUri)
+    {
+        partUri-&gt;Release();
+        partUri = NULL;
+    }
+
+    if (xpsFactory)
+    {
+        xpsFactory-&gt;Release();
+        xpsFactory = NULL;
+    }
+
+    if (jobStream)
+    {
+        jobStream-&gt;Release();
+        jobStream = NULL;
+    }
+
+    if (job)
+    {
+        job-&gt;Release();
+        job = NULL;
+    }
+
+    if (completionEvent)
+    {
+        CloseHandle(completionEvent);
+        completionEvent = NULL;
+    }
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GPU-Based Content Protection</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Describes video content&amp;#8211;protection capabilities that a graphics driver can provide.
+ms.assetid: FD0625BB-484A-43E6-8931-DB635D4F017F
+title: GPU-Based Content Protection
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>GPU-Based Content Protection</h1>
+<p>This topic describes video contentâ€“protection capabilities that a graphics driver can provide.</p>
+<ul>
+<li><a href="#introduction">Introduction</a></li>
+<li><a href="#overview-of-the-decoding-process">Overview of the Decoding Process</a></li>
+<li><a href="#encrypting-compressed-video-buffers-for-the-decoder">Encrypting Compressed Video Buffers for the Decoder</a>
+<ul>
+<li><a href="#1-query-the-content-protection-capabilities-of-the-driver">1. Query the Content Protection Capabilities of the Driver</a></li>
+<li><a href="#2-configure-the-authenticated-channel">2. Configure the Authenticated Channel</a></li>
+<li><a href="#3-configure-the-cryptographic-session">3. Configure the Cryptographic Session</a></li>
+<li><a href="#4-get-a-handle-to-the-dxva-decoder-device">4. Get a Handle to the DXVA Decoder Device</a></li>
+<li><a href="#5-associate-the-dxva-decoder-with-the-cryptographic-session">5. Associate the DXVA Decoder with the Cryptographic Session</a></li>
+</ul>
+</li>
+<li><a href="#sending-authenticated-channel-commands">Sending Authenticated Channel Commands</a></li>
+<li><a href="#sending-authenticated-channel-queries">Sending Authenticated Channel Queries</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Introduction</h2>
+<p>The following diagram shows a simplified view of how protected video content travels through the pipeline to be rendered.</p>
+<p><img src="images/d3d9video01.png" alt="a diagram that shows protected video content." /></p>
+<blockquote>
+<p>[!Note]<br />
+The <a href="protected-media-path.html">Protected Media Path</a> (PMP) is not depicted in this diagram. The data flow that is shown here might occur within a PMP process, or within an application process.</p>
+</blockquote>
+<p>The decoder receives encrypted, compressed video data from an external source. It is assumed also the decoder also receives a cryptographic key to decrypt this data. This topic does not describe the key exchange between the video source and decoder, but the PMP defines one possible mechanism. The GPU is not involved at this stage.</p>
+<p>For hardware-accelerated decoding, the software decoder passes compressed video content to the GPU. To protect this content, the decoder re-encrypts the data, typically using AES-CTR, before passing it to the hardware accelerator. A key-exchange mechanism is defined between the decoder and the graphics driver.</p>
+<p>Decoded video frames are stored in video memory, generally in the clear. At this point, the frames are processed and then presented. There are two main options for presentation.</p>
+<ul>
+<li>Frames can be presented using a hardware overlay. For more information, see <a href="hardware-overlay-support.html">Hardware Overlay Support</a>.</li>
+<li>Frames can be presented by the Desktop Window Manage (DWM) using a shared surface.</li>
+</ul>
+<p>The last step is to display the frame on the monitor, which may require link protection between the graphics card and the display device. An example of link protection is High-Bandwidth Digital Content Protection (HDCP). Link protection is configured using <a href="output-protection-manager.html">Output Protection Manager</a> (OPM). This topic does not describe OPM; for more information, see <a href="using-output-protection-manager.html">Using Output Protection Manager</a>.</p>
+<h2>Overview of the Decoding Process</h2>
+<p>During hardware-accelerated decoding, the software decoder must pass compressed video data to the graphics card. For premium content, this data typically must be encrypted, using symmetric-key encryption, before it is sent to the GPU.</p>
+<p>To encrypt the video for decoding, the software decoder uses the following interfaces:</p>
+<ul>
+<li><a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoder"><strong>IDirectXVideoDecoder</strong></a>. Represents the DXVA decoder device, also called the accelerator.</li>
+<li><a href="/windows/desktop/api/d3d9/nn-d3d9-idirect3dcryptosession9"><strong>IDirect3DCryptoSession9</strong></a>. Represents a cryptographic session, which provides the encryption key.</li>
+<li><a href="/windows/desktop/api/d3d9/nn-d3d9-idirect3dauthenticatedchannel9"><strong>IDirect3DAuthenticatedChannel9</strong></a>. Represents an authenticated channel, which enables the software decoder to associate the cryptographic session with the DXVA decoder.</li>
+</ul>
+<p><img src="images/d3d9video02.png" alt="a diagram that shows the direct3d9 decoding interfaces." /></p>
+<p>All of these interfaces are obtained from the Direct3D device, as follows:</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Creation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/dxva2api/nn-dxva2api-idirectxvideodecoder"><strong>IDirectXVideoDecoder</strong></a></td>
+<td>Call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoderservice-createvideodecoder"><strong>IDirectXVideoDecoderService::CreateVideoDecoder</strong></a>. The DXVA decoder device is identified by a DXVA profile GUID.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d9/nn-d3d9-idirect3dcryptosession9"><strong>IDirect3DCryptoSession9</strong></a></td>
+<td>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3ddevice9video-createcryptosession"><strong>IDirect3DDevice9Video::CreateCryptoSession</strong></a>.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/d3d9/nn-d3d9-idirect3dauthenticatedchannel9"><strong>IDirect3DAuthenticatedChannel9</strong></a></td>
+<td>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3ddevice9video-createauthenticatedchannel"><strong>IDirect3DDevice9Video::CreateAuthenticatedChannel</strong></a>.</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>[!Note]<br />
+To get a pointer to the <a href="/windows/desktop/api/d3d9/nn-d3d9-idirect3ddevice9video"><strong>IDirect3DDevice9Video</strong></a> interface, call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> on a D3D9Ex device.</p>
+</blockquote>
+<p>The authenticated channel provides a trusted communication channel between the software decoder and the driver. The communication channel works as follows:</p>
+<ul>
+<li>The driver provides an X.509 certificate chain whose root certificate is signed by Microsoft.</li>
+<li>The certificate contains an RSA public key for the driver.</li>
+<li>The software decoder uses the public key to send the driver a 128-bit AES session key.</li>
+<li>The software decoder sends queries and commands to the authenticated channel.</li>
+<li>The session key is used to compute message authentication codes (MACs) for the queries and commands. The driver uses the MACs to verify the integrity of the query/command data, and the software decoder uses them to verify the integrity of the response data from the driver.</li>
+</ul>
+<h2>Encrypting Compressed Video Buffers for the Decoder</h2>
+<p>Here is a high-level overview of the encryption and decoding process:</p>
+<ol>
+<li>
+<p>The software decoder receives a stream of encrypted data from the video source. The decoder decrypts this stream.</p>
+</li>
+<li>
+<p>The software decoder negotiates a session key with the cryptographic session.</p>
+</li>
+<li>
+<p>The software decoder uses the authenticated channel to associate the cryptographic session with the DXVA decoder device.</p>
+</li>
+<li>
+<p>The software decoder puts compressed data in DXVA buffers that it gets from the DXVA decoder device (accelerator). For protected content, the software encoder encrypts the data that is puts into the DXVA buffers, using the session key for the encryption.</p>
+<blockquote>
+<p>[!Note]<br />
+Some drivers use a content key, instead of the session key, for encryption. The content key could change from one frame to the next.</p>
+</blockquote>
+</li>
+<li>
+<p>The decoder submits the encrypted compressed buffers to the accelerator. For AES-CTR, the decoder also passes the initialization vector. If a content key is used, the decoder passes content key, encrypted using the session key.</p>
+</li>
+</ol>
+<p>Direct3D has standard support for 128-bit AES-CTR, but is designed to extend to additional encryption types.</p>
+<p>The next five sections give more detailed steps.</p>
+<ul>
+<li><a href="#1-query-the-content-protection-capabilities-of-the-driver">1. Query the Content Protection Capabilities of the Driver</a></li>
+<li><a href="#2-configure-the-authenticated-channel">2. Configure the Authenticated Channel</a></li>
+<li><a href="#3-configure-the-cryptographic-session">3. Configure the Cryptographic Session</a></li>
+<li><a href="#4-get-a-handle-to-the-dxva-decoder-device">4. Get a Handle to the DXVA Decoder Device</a></li>
+<li><a href="#5-associate-the-dxva-decoder-with-the-cryptographic-session">5. Associate the DXVA Decoder with the Cryptographic Session</a></li>
+</ul>
+<h3>1. Query the Content Protection Capabilities of the Driver</h3>
+<p>Before attempting to apply encryption, get the content protection capabilities of the driver.</p>
+<ol>
+<li>Get a pointer to the Direct3D 9 device.</li>
+<li>Call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(q)"><strong>QueryInterface</strong></a> for the <a href="/windows/desktop/api/d3d9/nn-d3d9-idirect3ddevice9video"><strong>IDirect3DDevice9Video</strong></a> interface.</li>
+<li>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3ddevice9video-getcontentprotectioncaps"><strong>IDirect3DDevice9Video::GetContentProtectionCaps</strong></a>. This method fills in a <a href="/windows/desktop/api/d3d9caps/ns-d3d9caps-d3dcontentprotectioncaps"><strong>D3DCONTENTPROTECTIONCAPS</strong></a> structure with the driverâ€™s content protection capabilities.</li>
+</ol>
+<p>In particular, look for the following capabilities:</p>
+<ul>
+<li>If the <strong>Caps</strong> member contains the <strong>D3DCPCAPS_SOFTWARE</strong> or <strong>D3DCPCAPS_HARDWARE</strong> flag, the driver can perform encryption.</li>
+<li>The <strong>KeyExchangeType</strong> member specifies how to perform key exchange for the session key.</li>
+<li>If the <strong>Caps</strong> member contains the <strong>D3DCPCAPS_CONTENTKEY</strong> flag, the driver uses a separate content key for encryption. This is important when you generate the session key.</li>
+</ul>
+<p>Additional capabilities are indicated in the <strong>Caps</strong> member.</p>
+<h3>2. Configure the Authenticated Channel</h3>
+<p>The next step is to configure the authenticated channel.</p>
+<ol>
+<li>
+<p>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3ddevice9video-createauthenticatedchannel"><strong>IDirect3DDevice9Video::CreateAuthenticatedChannel</strong></a> to create the authenticated channel. For the <em>ChannelType</em> parameter, specify a channel type that matches the capabilities of the driver.</p>
+<ul>
+<li>The <strong>D3DAUTHENTICATEDCHANNEL_DRIVER_SOFTWARE</strong> channel type corresponds to <strong>D3DCPCAPS_SOFTWARE</strong>.</li>
+<li>The <strong>D3DAUTHENTICATEDCHANNEL_DRIVER_HARDWARE</strong> channel type corresponds to <strong>D3DCPCAPS_HARDWARE</strong>.</li>
+</ul>
+<p>The <strong>CreateAuthenticatedChannel</strong> method returns a pointer to the <a href="/windows/desktop/api/d3d9/nn-d3d9-idirect3dauthenticatedchannel9"><strong>IDirect3DAuthenticatedChannel9</strong></a> interface along with a handle to the channel. The handle is used later to associate the cryptographic session with the authenticated channel.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3dauthenticatedchannel9-getcertificatesize"><strong>IDirect3DAuthenticatedChannel9::GetCertificateSize</strong></a> to get the size of the driver's X.509 certificate. Allocate a buffer of the required size.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3dauthenticatedchannel9-getcertificate"><strong>IDirect3DAuthenticatedChannel9::GetCertificate</strong></a> to get the certificate. The method copies the certificate into the buffer that was allocated in the previous step.</p>
+</li>
+<li>
+<p>Verify that the driverâ€™s certificate was signed by Microsoft and has not been revoked.</p>
+</li>
+<li>
+<p>Get the public key from the certificate.</p>
+</li>
+<li>
+<p>Generate a random RSA session key. This session key is used to sign data that is sent to the authenticated channel. Encrypt the session key using the driver's public key.</p>
+</li>
+<li>
+<p>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3dauthenticatedchannel9-negotiatekeyexchange"><strong>IDirect3DAuthenticatedChannel9::NegotiateKeyExchange</strong></a> to send the encrypted session key to the driver.</p>
+</li>
+<li>
+<p>Initialize the secure channel as follows:</p>
+<ol>
+<li>Fill in a <a href="d3dauthenticatedchannel-configureinitialize.html"><strong>D3DAUTHENTICATEDCHANNEL_CONFIGUREINITIALIZE</strong></a> structure as described in the documentation.</li>
+<li>Send the <a href="d3dauthenticatedconfigure-initialize.html"><strong>D3DAUTHENTICATEDCONFIGURE_INITIALIZE</strong></a> command by calling <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3dauthenticatedchannel9-configure"><strong>IDirect3DAuthenticatedChannel9::Configure</strong></a> as described in the section <a href="#sending-authenticated-channel-commands">Sending Authenticated Channel Commands</a>. This command contains the starting sequence numbers for the commands and queries that are sent to the authenticated channel.</li>
+</ol>
+</li>
+<li>
+<p>Verify the channel type by sending a <a href="d3dauthenticatedquery-channeltype.html"><strong>D3DAUTHENTICATEDQUERY_CHANNELTYPE</strong></a> query to the authenticated channel, as described in the section <a href="#sending-authenticated-channel-queries">Sending Authenticated Channel Queries</a>. Check that the channel type matches what you specified in the <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3ddevice9video-createauthenticatedchannel"><strong>CreateAuthenticatedChannel</strong></a> method.</p>
+</li>
+</ol>
+<h3>3. Configure the Cryptographic Session</h3>
+<p>Next, configure the cryptographic session and establish the session key.</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3ddevice9video-createcryptosession"><strong>IDirect3DDevice9Video::CreateCryptoSession</strong></a> to create the cryptographic session. This method returns a pointer to the <a href="/windows/desktop/api/d3d9/nn-d3d9-idirect3dcryptosession9"><strong>IDirect3DCryptoSession9</strong></a> interface and along with a handle to the cryptographic session.</li>
+<li>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3dcryptosession9-getcertificatesize"><strong>IDirect3DCryptoSession9::GetCertificateSize</strong></a> to get the size of the driver's X.509 certificate. Allocate a buffer of the required size.</li>
+<li>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3dcryptosession9-getcertificate"><strong>IDirect3DCryptoSession9::GetCertificate</strong></a> to get the certificate. The method copies the certificate into the buffer that was allocated in the previous step.</li>
+<li>Verify that the driverâ€™s certificate was signed by Microsoft and has not been revoked.</li>
+<li>Get the public key from the certificate.</li>
+<li>Generate a random RSA session key. This is a separate session key from the authenticated channel session key. Encrypt the session key using the driver's public key.</li>
+<li>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3dauthenticatedchannel9-negotiatekeyexchange"><strong>IDirect3DCryptoSession9::NegotiateKeyExchange</strong></a> to send the encrypted session key to the driver.</li>
+<li>If the content protection capabilities include <strong>D3DCPCAPS_CONTENTKEY</strong>, create a random RSA content key. This will be used later in the decoding process.</li>
+</ol>
+<h3>4. Get a Handle to the DXVA Decoder Device</h3>
+<p>For the next step, you will need a handle to the DXVA decoder device. To get this handle, fill in a DXVA2_DecodeExecuteParams structure as follows:</p>
+<pre lang="C++"><code>HANDLE hDecodeDeviceHandle;
+
+DXVA2_DecodeExecuteParams execParams = {0};
+DXVA2_DecodeExtensionData ExtensionExecute = {0};
+    
+execParams.NumCompBuffers = 0;
+execParams.pCompressedBuffers = NULL;
+execParams.pExtensionData = &amp;ExtensionExecute;
+
+ExtensionExecute.Function = DXVA2_DECODE_GET_DRIVER_HANDLE;
+ExtensionExecute.pPrivateInputData = NULL;
+ExtensionExecute.PrivateInputDataSize = 0;
+ExtensionExecute.pPrivateOutputData = &amp;hDecodeDeviceHandle;
+ExtensionExecute.PrivateOutputDataSize = sizeof(HANDLE);
+</code></pre>
+<p>Set the <strong>pExtensionData</strong> member of the <a href="/windows/desktop/api/dxva2api/ns-dxva2api-dxva2_decodeexecuteparams"><strong>DXVA2_DecodeExecuteParams</strong></a> structure to the address of a <a href="/windows/desktop/api/dxva2api/ns-dxva2api-dxva2_decodeextensiondata"><strong>DXVA2_DecodeExtensionData</strong></a> structure.</p>
+<p>In the <a href="/windows/desktop/api/dxva2api/ns-dxva2api-dxva2_decodeextensiondata"><strong>DXVA2_DecodeExtensionData</strong></a> structure, set the <strong>Function</strong> member to <strong>DXVA2_DECODE_GET_DRIVER_HANDLE</strong>. Set <strong>pPrivateOutputData</strong> to the address of a buffer that is large enough to store a <strong>HANDLE</strong> value. (In the previous example, this buffer is the <em>hDecodeDeviceHandle</em> variable.)</p>
+<p>Then call <a href="/windows/desktop/api/dxva2api/nf-dxva2api-idirectxvideodecoder-execute"><strong>IDirectXVideoDecoder::Execute</strong></a> and pass in the address of the <a href="/windows/desktop/api/dxva2api/ns-dxva2api-dxva2_decodeexecuteparams"><strong>DXVA2_DecodeExecuteParams</strong></a> structure. The handle to the DXVA decoder is returned in <strong>pPrivateOutputData</strong>.</p>
+<h3>5. Associate the DXVA Decoder with the Cryptographic Session</h3>
+<p>Next, associate the DXVA decoder device with the Direct3D device and the cryptographic session, as follows:</p>
+<ol>
+<li>Get a handle to the DXVA decoder device, as described in the previous section.</li>
+<li>Get a handle to the Direct3D device, by sending a <a href="d3dauthenticatedquery-devicehandle.html"><strong>D3DAUTHENTICATEDQUERY_DEVICEHANDLE</strong></a> query to the authenticated channel.</li>
+<li>Fill in a <a href="d3dauthenticatedchannel-configurecryptosession.html"><strong>D3DAUTHENTICATEDCHANNEL_CONFIGURECRYPTOSESSION</strong></a> structure with the following information:
+<ul>
+<li>Set the <strong>DXVA2DecodeHandle</strong> member to the handle to the DXVA decoder device.</li>
+<li>Set the <strong>CryptoSessionHandle</strong> member to the handle to the cryptographic session. This handle is returned by the <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3ddevice9video-createcryptosession"><strong>IDirect3DDevice9Video::CreateCryptoSession</strong></a> method.</li>
+<li>Set the <strong>DeviceHandle</strong> member to the Direct3D device handle.</li>
+</ul>
+</li>
+<li>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3dauthenticatedchannel9-configure"><strong>IDirect3DAuthenticatedChannel9::Configure</strong></a> to send a <a href="d3dauthenticatedconfigure-cryptosession.html"><strong>D3DAUTHENTICATEDCONFIGURE_CRYPTOSESSION</strong></a> command to the authenticated channel.</li>
+</ol>
+<p>The following diagram illustrates the exchange of handles:</p>
+<p><img src="images/d3d9video03.png" alt="a diagram that shows how the dxva decoder is associated with the cryptographic session." /></p>
+<p>The software decoder can now use the cryptographic session key to encrypt the compressed video buffers. Each compressed buffer will have its own initialization vector (IV) specified in the <strong>pvPVPState</strong> member of the <a href="/windows/desktop/api/dxva2api/ns-dxva2api-dxva2_decodebufferdesc"><strong>DXVA2_DecodeBufferDesc</strong></a> structure.</p>
+<h2>Sending Authenticated Channel Commands</h2>
+<p>A set of commands are defined for configuring the authenticated channel and setting various content protections. For a list of commands, see <a href="content-protection-commands.html">Content Protection Commands</a>.</p>
+<p>To send a command to the authenticated channel, perform the following steps.</p>
+<ol>
+<li>Fill in the input data structure. This data structure is always a <a href="d3dauthenticatedchannel-configure-input.html"><strong>D3DAUTHENTICATEDCHANNEL_CONFIGURE_INPUT</strong></a> structure followed by additional fields. Fill in the <strong>D3DAUTHENTICATEDCHANNEL_CONFIGURE_INPUT</strong> structure as shown in the following table.</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><!-- raw HTML omitted -->omac<!-- raw HTML omitted --></td>
+<td>Skip this field for now.</td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted -->ConfigureType<!-- raw HTML omitted --></td>
+<td>GUID that identifies the command. For a list of commands, see <!-- raw HTML omitted -->Content Protection Commands<!-- raw HTML omitted -->.</td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted -->hChannel<!-- raw HTML omitted --></td>
+<td>The handle to the authenticated channel.</td>
+</tr>
+<tr>
+<td><strong>SequenceNumber</strong></td>
+<td>The sequence number. The first sequence number is specified by sending a <a href="d3dauthenticatedconfigure-initialize.html"><strong>D3DAUTHENTICATEDCONFIGURE_INITIALIZE</strong></a> command. Each time you send another command, increment this number by 1. The sequence number guards against replay attacks.         <strong>Note:</strong>     Two separate sequence numbers are used, one for commands and one for queries.    <!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<ol start="2">
+<li>Calculate the OMAC tag for the block of data that appears after the <strong>omac</strong> member of the input structure. Then copy this tag value into the <strong>omac</strong> member.</li>
+<li>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3dauthenticatedchannel9-configure"><strong>IDirect3DAuthenticatedChannel9::Configure</strong></a>.</li>
+<li>The driver places the output from the command in the <a href="d3dauthenticatedchannel-configure-output.html"><strong>D3DAUTHENTICATEDCHANNEL_CONFIGURE_OUTPUT</strong></a> structure.</li>
+<li>Calculate the OMAC tag for the block of data that appears after the <strong>omac</strong> member of the output structure. Compare this with the value of the <strong>omac</strong> member. Fail if they do not match.</li>
+<li>Compare the values of the <strong>ConfigureType</strong>, <strong>hChannel</strong>, and <strong>SequenceNumber</strong> members in the output structure against your values for those members. Fail if they do not match.</li>
+<li>Increment the sequence number for the next command.</li>
+</ol>
+<h2>Sending Authenticated Channel Queries</h2>
+<p>A set of queries are defined for retrieving information about the authenticated channel. For a list of queries, see <a href="content-protection-queries.html">Content Protection Queries</a>.</p>
+<p>To send a command to the authenticated channel, perform the following steps.</p>
+<ol>
+<li>Fill in the input data structure. This data structure is always a <a href="d3dauthenticatedchannel-query-input.html"><strong>D3DAUTHENTICATEDCHANNEL_QUERY_INPUT</strong></a> structure, possibly followed by additional fields. Fill in the <strong>D3DAUTHENTICATEDCHANNEL_QUERY_INPUT</strong> structure as shown in the following table.</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><!-- raw HTML omitted -->QueryType<!-- raw HTML omitted --></td>
+<td>GUID that identifies the query. For a list of queries, see <!-- raw HTML omitted -->Content Protection Queries<!-- raw HTML omitted -->.</td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted -->hChannel<!-- raw HTML omitted --></td>
+<td>The handle to the authenticated channel.</td>
+</tr>
+<tr>
+<td><strong>SequenceNumber</strong></td>
+<td>The sequence number. The first sequence number is specified by sending a <a href="d3dauthenticatedconfigure-initialize.html"><strong>D3DAUTHENTICATEDCONFIGURE_INITIALIZE</strong></a> command. Each time you send another query, increment this number by 1. The sequence number guards against replay attacks.         <strong>Note:</strong>     Two separate sequence numbers are used, one for commands and one for queries.    <!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<ol start="2">
+<li>Call <a href="/windows/desktop/api/d3d9/nf-d3d9-idirect3dauthenticatedchannel9-query"><strong>IDirect3DAuthenticatedChannel9::Query</strong></a>.</li>
+<li>The driver places the output from the query in a <a href="d3dauthenticatedchannel-query-output.html"><strong>D3DAUTHENTICATEDCHANNEL_QUERY_OUTPUT</strong></a> structure. This structure is followed by additional fields, depending on the query type.</li>
+<li>Calculate the OMAC tag for the block of data that appears after the <strong>omac</strong> member of the output structure. Compare this with the value of the <strong>omac</strong> member. Fail if they do not match.</li>
+<li>Compare the values of the <strong>ConfigureType</strong>, <strong>hChannel</strong>, and <strong>SequenceNumber</strong> members in the output structure against your values for those members. Fail if they do not match.</li>
+<li>Increment the sequence number for the next query.</li>
+</ol>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="direct3d-video-apis.html">Direct3D 9 Video APIs</a></p>
+<!-- raw HTML omitted -->
+</body>

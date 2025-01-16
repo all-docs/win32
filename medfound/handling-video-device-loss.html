@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Handling Video Device Loss</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to detect device loss when using a video capture device.
+ms.assetid: 2bffe156-c507-437e-8f32-62aaebedd6f0
+title: Handling Video Device Loss
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Handling Video Device Loss</h1>
+<p>This topic describes how to detect device loss when using a video capture device. It contains the following sections:</p>
+<ul>
+<li><a href="#register-for-device-notification">Register For Device Notification</a></li>
+<li><a href="#get-the-symbolic-link-of-the-device">Get the Symbolic Link of the Device</a></li>
+<li><a href="/windows">Handle WM_DEVICECHANGE</a></li>
+<li><a href="#unregister-for-notification">Unregister For Notification</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Register For Device Notification</h2>
+<p>Before you start capturing from the device, call the <a href="/windows/win32/api/winuser/nf-winuser-registerdevicenotificationa"><strong>RegisterDeviceNotification</strong></a> function to register for device notifications. Register for the <strong>KSCATEGORY_CAPTURE</strong> device class, as shown in the following code.</p>
+<pre lang="C++"><code>#include &lt;Dbt.h&gt;
+#include &lt;ks.h&gt;
+#include &lt;ksmedia.h&gt;
+
+HDEVNOTIFY  g_hdevnotify = NULL;
+
+BOOL RegisterForDeviceNotification(HWND hwnd)
+{
+    DEV_BROADCAST_DEVICEINTERFACE di = { 0 };
+    di.dbcc_size = sizeof(di);
+    di.dbcc_devicetype  = DBT_DEVTYP_DEVICEINTERFACE;
+    di.dbcc_classguid  = KSCATEGORY_CAPTURE; 
+
+    g_hdevnotify = RegisterDeviceNotification(
+        hwnd,
+        &amp;di,
+        DEVICE_NOTIFY_WINDOW_HANDLE
+        );
+
+    if (g_hdevnotify == NULL)
+    {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+</code></pre>
+<h2>Get the Symbolic Link of the Device</h2>
+<p>Enumerate the video devices on the system, as described in <a href="enumerating-video-capture-devices.html">Enumerating Video Capture Devices</a>. Choose a device from the list, and then query the activation object for the <a href="mf-devsource-attribute-source-type-vidcap-symbolic-link.html">MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK</a> attribute, as shown in the following code.</p>
+<pre lang="C++"><code>WCHAR      *g_pwszSymbolicLink = NULL;
+UINT32     g_cchSymbolicLink = 0;
+
+HRESULT GetSymbolicLink(IMFActivate *pActivate)
+{
+    return pActivate-&gt;GetAllocatedString(
+        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+        &amp;g_pwszSymbolicLink,
+        &amp;g_cchSymbolicLink
+        );
+}
+</code></pre>
+<h2>Handle WM_DEVICECHANGE</h2>
+<p>In your message loop, listen for <a href="../devio/wm-devicechange.html"><strong>WM_DEVICECHANGE</strong></a> messages. The <em>lParam</em> message parameter is a pointer to a <a href="/windows/win32/api/dbt/ns-dbt-dev_broadcast_hdr"><strong>DEV_BROADCAST_HDR</strong></a> structure.</p>
+<pre lang="C++"><code>    case WM_DEVICECHANGE:
+        if (lParam != 0)
+        {
+            HRESULT hr = S_OK;
+            BOOL bDeviceLost = FALSE;
+
+            hr = CheckDeviceLost((PDEV_BROADCAST_HDR)lParam, &amp;bDeviceLost);
+
+            if (FAILED(hr) || bDeviceLost)
+            {
+                CloseDevice();
+
+                MessageBox(hwnd, L&quot;Lost the capture device.&quot;, NULL, MB_OK);
+            }
+        }
+        return TRUE;
+</code></pre>
+<p>Next, compare the device notification message against the symbolic link of your device, as follows:</p>
+<ol>
+<li>Check the <strong>dbch_devicetype</strong> member of the <a href="/windows/win32/api/dbt/ns-dbt-dev_broadcast_hdr"><strong>DEV_BROADCAST_HDR</strong></a> structure. If the value is <strong>DBT_DEVTYP_DEVICEINTERFACE</strong>, cast the structure pointer to a <a href="/windows/win32/api/dbt/ns-dbt-dev_broadcast_deviceinterface_a"><strong>DEV_BROADCAST_DEVICEINTERFACE</strong></a> structure.</li>
+<li>Compare the <strong>dbcc_name</strong> member of this structure to the symbolic link of the device.</li>
+</ol>
+<pre lang="C++"><code>HRESULT CheckDeviceLost(DEV_BROADCAST_HDR *pHdr, BOOL *pbDeviceLost)
+{
+    DEV_BROADCAST_DEVICEINTERFACE *pDi = NULL;
+
+    if (pbDeviceLost == NULL)
+    {
+        return E_POINTER;
+    }
+
+    *pbDeviceLost = FALSE;
+    
+    if (g_pSource == NULL)
+    {
+        return S_OK;
+    }
+    if (pHdr == NULL)
+    {
+        return S_OK;
+    }
+    if (pHdr-&gt;dbch_devicetype != DBT_DEVTYP_DEVICEINTERFACE)
+    {
+        return S_OK;
+    }
+
+    // Compare the device name with the symbolic link.
+
+    pDi = (DEV_BROADCAST_DEVICEINTERFACE*)pHdr;
+
+    if (g_pwszSymbolicLink)
+    {
+        if (_wcsicmp(g_pwszSymbolicLink, pDi-&gt;dbcc_name) == 0)
+        {
+            *pbDeviceLost = TRUE;
+        }
+    }
+
+    return S_OK;
+}
+</code></pre>
+<h2>Unregister For Notification</h2>
+<p>Before the application exits, call <a href="/windows/win32/api/winuser/nf-winuser-unregisterdevicenotification"><strong>UnregisterDeviceNotification</strong></a> to unregister for device notifications/</p>
+<pre lang="C++"><code>void OnClose(HWND /*hwnd*/)
+{
+    if (g_hdevnotify)
+    {
+        UnregisterDeviceNotification(g_hdevnotify);
+    }
+
+    PostQuitMessage(0);
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="enumerating-video-capture-devices.html">Enumerating Video Capture Devices</a></p>
+<!-- raw HTML omitted -->
+<p><a href="video-capture.html">Video Capture</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

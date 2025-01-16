@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mobile Broadband API Best Practices</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: When working with the Mobile Broadband API the following set of best practices should be used in order to achieve the best possible performance.
+ms.assetid: 523e3ea4-1d4e-45d1-bc24-93aa2fb14390
+title: Mobile Broadband API Best Practices
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Mobile Broadband API Best Practices</h1>
+<p>When working with the Mobile Broadband API the following set of best practices should be used in order to achieve the best possible performance.</p>
+<h2>Do Not Cache Functional Objects</h2>
+<p>Functional objects, such as <a href="/windows/desktop/api/mbnapi/nn-mbnapi-imbninterface"><strong>IMbnInterface</strong></a> and others, are obtained from manager objects, like <a href="/windows/desktop/api/mbnapi/nn-mbnapi-imbninterfacemanager"><strong>IMbnInterfaceManager</strong></a>, using the enumeration method on the corresponding manager object. Do not cache these functional objects, since cached functional objects contain stale data. The synchronous operations performed on these functional objects will return the same data until the functional objects are obtained again.</p>
+<p>Instead, cache the manager objects and obtain the functional objects from manager object using the enumeration method on the corresponding manager object again to get the latest data.</p>
+<p>The following code example demonstrates the proper way to cache manager objects.</p>
+<pre lang="C++"><code>#include &lt;atlbase.h&gt;
+#include &quot;mbnapi.h&quot;
+#include &lt;tchar.h&gt;
+
+int main()
+{
+    HRESULT hr = E_FAIL;
+    int returnVal = 0;
+
+    do
+    {
+        hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);    
+        if (FAILED(hr))
+        {
+            returnVal = hr; 
+            break;
+        }
+
+        CComPtr&lt;IMbnInterfaceManager&gt;  g_InterfaceMgr = NULL;
+
+        //Do the below once(cache the manager objects)
+        hr = CoCreateInstance(CLSID_MbnInterfaceManager,
+            NULL, 
+            CLSCTX_ALL, 
+            IID_IMbnInterfaceManager, 
+            (void**)&amp;g_InterfaceMgr);
+        if (FAILED(hr))
+        {
+            returnVal = hr; 
+            break;
+        }
+
+        SAFEARRAY *psa = NULL;
+
+        //Do the below each time(do not cache functional objects)
+        hr = g_InterfaceMgr-&gt;GetInterfaces(&amp;psa);
+        if (FAILED(hr))
+        {
+            returnVal = hr; 
+            break;
+        }
+
+        LONG lLower;
+        LONG lUpper;
+
+        hr = SafeArrayGetLBound(psa, 1, &amp;lLower);
+        if (FAILED(hr))
+        {
+            returnVal = hr; 
+            break;
+        }
+
+        hr = SafeArrayGetUBound(psa, 1, &amp;lUpper);
+        if (FAILED(hr))
+        {
+            returnVal = hr; 
+            break;
+        }
+
+        CComPtr&lt;IMbnInterface&gt;  pInf = NULL;
+        MBN_READY_STATE readyState;
+
+        for (LONG l = lLower; l &lt;= lUpper; l++)
+        {
+            hr = SafeArrayGetElement(psa, &amp;l, (void*)(&amp;pInf));
+            if (FAILED(hr))
+            {
+                returnVal = hr; 
+                break;
+            }
+
+            hr = pInf-&gt;GetReadyState(&amp;readyState);
+            if (FAILED(hr))
+            {
+                returnVal = hr; 
+                break;
+            }
+
+            _tprintf(_T(&quot;Ready State = %d&quot;), readyState); 
+        }
+
+        if (FAILED(hr))
+        {
+            break;
+        }
+    } while (FALSE);
+
+
+    CoUninitialize();
+    return returnVal;
+}
+</code></pre>
+<h2>Handle All Notifications</h2>
+<p>Follow and handle all notifications, even if they are not triggered by your application. This is required to keep the UI in sync with the actual state of the device.</p>
+<p>There can be more than one connection manager running on a computer. The native View Available Network Interface UI provided by Windows 7 is a connection manager. Any other connection managers need to respond to all notifications to remain in sync the Windows native UI. A user may opt to perform some operation on one of the connection managers which may result in a state change of the Mobile Broadband device. However, other connection managers need to remain updated in order to properly indicate the modified state of the device.</p>
+<p>For example, performing a connect using one of the connection managers will change the state of the device from available to connected. This change should be visible to the connection managers that didnâ€™t initiate this action. All connection managers that have UI that indicates the connection state of the device, need to listen to and handle the connection state notifications in order to properly update their user interface.</p>
+<h2>Sending And Receiving Bytes</h2>
+<p>Use the IP Helper functions <a href="/windows/win32/api/iphlpapi/nf-iphlpapi-getifentry">GetlfEntry</a> and <a href="/windows/win32/api/netioapi/nf-netioapi-getifentry2">GetlfEntry2</a> to send and receive bytes.</p>
+<h2>Using The Pin Unblock API</h2>
+<p>A calling client application must be elevated in order to successfully to invoke <a href="/windows/desktop/api/mbnapi/nf-mbnapi-imbnpin-unblock"><strong>IMbnPin::Unblock</strong></a>. This method is the only portion of the Mobile Broadband API that requires administrator or NCO privileges.</p>
+<h2>Working With SafeArrays</h2>
+<ul>
+<li>
+<p>Use ZeroMemory() before accessing any elements in a SafeArray.</p>
+</li>
+<li>
+<p>Donâ€™t check on the indexes of a SafeArray. They may be negative.</p>
+</li>
+</ul>
+<p>The following code example shows how to properly handle a SafeArray.</p>
+<pre lang="C++"><code>#include &lt;atlbase.h&gt;
+#include &quot;mbnapi.h&quot;
+
+void CreateVisibleProviderList(LPCWSTR interfaceID)
+{
+    CComPtr&lt;IMbnInterfaceManager&gt;  g_InterfaceMgr = NULL;
+    SAFEARRAY *visibleProviders = NULL;
+    long visibleLower = 0;
+    long visibleUpper = 0;
+    MBN_PROVIDER *pProvider = NULL;
+    CComPtr&lt;IMbnInterface&gt; pInterface = NULL;
+
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+    if (FAILED(hr))
+    {
+        goto ERROR_0;
+    }
+
+    hr = CoCreateInstance(CLSID_MbnInterfaceManager,
+            NULL, 
+            CLSCTX_ALL, 
+            IID_IMbnInterfaceManager, 
+            (void**)&amp;g_InterfaceMgr);
+    
+    if (FAILED(hr))
+    {
+        goto ERROR_0;
+    }
+
+    hr = g_InterfaceMgr-&gt;GetInterface(interfaceID, &amp; pInterface);
+    if (FAILED(hr)) 
+    {
+        goto ERROR_0;
+    }
+
+    ULONG age;
+
+    hr = pInterface-&gt;GetVisibleProviders(&amp;age, &amp;visibleProviders);
+    if (FAILED(hr)) 
+    {
+        goto ERROR_0;
+    }
+
+    hr = SafeArrayGetLBound(visibleProviders, 1, &amp;visibleLower);
+    if (FAILED(hr)) 
+    {
+        goto ERROR_0;
+    }
+
+    hr = SafeArrayGetUBound(visibleProviders, 1, &amp;visibleUpper);
+    if (FAILED(hr)) 
+    {
+        goto ERROR_0;
+    }
+
+    //don't check on the indexes of safearray to be positive
+    if (visibleLower &gt; visibleUpper) 
+    {
+        // There are no visible providers in this case.
+        hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+        goto ERROR_0;
+    }
+
+    DWORD size = (visibleUpper - visibleLower + 1) * sizeof(BOOL);
+    DBG_UNREFERENCED_LOCAL_VARIABLE(size); 
+    
+    pProvider = (MBN_PROVIDER *)CoTaskMemAlloc(sizeof(MBN_PROVIDER));
+    if (!pProvider) 
+    {
+        hr = E_OUTOFMEMORY;
+        goto ERROR_0;
+    }
+
+    for (LONG vIndex = visibleLower; vIndex &lt;= visibleUpper; vIndex++) 
+    {
+        //use zeromemory before accessing any elements in a safearray
+        ZeroMemory(pProvider, sizeof(MBN_PROVIDER));
+        hr = SafeArrayGetElement(visibleProviders, &amp;vIndex, (void *)pProvider);
+        if (FAILED(hr)) 
+        {
+            continue;
+        }
+    }
+
+ERROR_0:
+    if (visibleProviders) 
+    {
+        SafeArrayDestroy(visibleProviders);
+        visibleProviders = NULL;
+    }
+
+    CoUninitialize();
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example: Receiving Event Notifications Through WMI</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: You can use the procedure and code example in this topic to complete WMI client application that performs COM initialization, connects to WMI on the local computer, receives an event notification, and then cleans up.
+ms.assetid: 4d581965-e22a-4205-908c-661eeeec88cf
+ms.tgt_platform: multiple
+title: 'Example: Receiving Event Notifications Through WMI'
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Example: Receiving Event Notifications Through WMI</h1>
+<p>You can use the procedure and code example in this topic to complete WMI client application that performs COM initialization, connects to WMI on the local computer, receives an event notification, and then cleans up. The example notifies the user of an event when a new process is created. The events are received asynchronously.</p>
+<p>The following procedure is used to execute the WMI application. Steps 1 through 5 contain all of the steps required to set up and connect to WMI, and step 6 is where the event notifications are received.</p>
+<p><strong>To receive a event notification through WMI</strong></p>
+<ol>
+<li>
+<p>Initialize COM parameters with a call to <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializeex"><strong>CoInitializeEx</strong></a>.</p>
+<p>Fore more information, see <a href="initializing-com-for-a-wmi-application.html">Initializing COM for a WMI Application</a>.</p>
+</li>
+<li>
+<p>Initialize COM process security by calling <a href="/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a>.</p>
+<p>For more information, see <a href="setting-the-default-process-security-level-using-c-.html">Setting the Default Process Security Level Using C++</a>.</p>
+</li>
+<li>
+<p>Obtain the initial locator to WMI by calling <a href="/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance"><strong>CoCreateInstance</strong></a>.</p>
+<p>For more information, see <a href="creating-a-connection-to-a-wmi-namespace.html">Creating a Connection to a WMI Namespace</a>.</p>
+</li>
+<li>
+<p>Obtain a pointer to <a href="/windows/desktop/api/WbemCli/nn-wbemcli-iwbemservices"><strong>IWbemServices</strong></a> for the root\cimv2 namespace on the local computer by calling <a href="/windows/desktop/api/Wbemcli/nf-wbemcli-iwbemlocator-connectserver"><strong>IWbemLocator::ConnectServer</strong></a>. To connect to a remote computer, see <a href="example--getting-wmi-data-from-a-remote-computer.html">Example: Getting WMI Data from a Remote Computer</a>.</p>
+<p>For more information, see <a href="creating-a-connection-to-a-wmi-namespace.html">Creating a Connection to a WMI Namespace</a>.</p>
+</li>
+<li>
+<p>Set <a href="/windows/desktop/api/WbemCli/nn-wbemcli-iwbemservices"><strong>IWbemServices</strong></a> proxy security so the WMI service can impersonate the client by calling <a href="/windows/win32/api/combaseapi/nf-combaseapi-cosetproxyblanket"><strong>CoSetProxyBlanket</strong></a>.</p>
+<p>For more information, see <a href="setting-the-security-levels-on-a-wmi-connection.html">Setting the Security Levels on a WMI Connection</a>.</p>
+</li>
+<li>
+<p>Use the <a href="/windows/desktop/api/WbemCli/nn-wbemcli-iwbemservices"><strong>IWbemServices</strong></a> pointer to make requests to WMI. This example uses the <a href="/windows/desktop/api/WbemCli/nf-wbemcli-iwbemservices-execnotificationqueryasync"><strong>IWbemServices::ExecNotificationQueryAsync</strong></a> method to receive asynchronous events. When you receive asynchronous events, you must provide an implementation of <a href="iwbemobjectsink.html"><strong>IWbemObjectSink</strong></a>. This example provides the implementation in the EventSink class. The implementation code and header file code for this class are provided below the main example. The <strong>IWbemServices::ExecNotificationQueryAsync</strong> method calls the <strong>EventSink::Indicate</strong> method whenever an event is received. For this example the <strong>EventSink::Indicate</strong> method is called whenever a process is created. To test this example, run the code and start a process such as Notepad.exe. This triggers an event notification.</p>
+<p>For more information about making requests of WMI, see <a href="manipulating-class-and-instance-information.html">Manipulating Class and Instance Information</a> and <a href="calling-a-method.html">Calling a Method</a>.</p>
+</li>
+</ol>
+<p>The following example code receives event notifications through WMI.</p>
+<pre lang="C++"><code>#include &quot;eventsink.h&quot;
+
+int main(int iArgCnt, char ** argv)
+{
+    HRESULT hres;
+
+    // Step 1: --------------------------------------------------
+    // Initialize COM. ------------------------------------------
+
+    hres =  CoInitializeEx(0, COINIT_MULTITHREADED); 
+    if (FAILED(hres))
+    {
+        cout &lt;&lt; &quot;Failed to initialize COM library. Error code = 0x&quot; 
+             &lt;&lt; hex &lt;&lt; hres &lt;&lt; endl;
+        return 1;                  // Program has failed.
+    }
+
+    // Step 2: --------------------------------------------------
+    // Set general COM security levels --------------------------
+
+    hres =  CoInitializeSecurity(
+        NULL, 
+        -1,                          // COM negotiates service
+        NULL,                        // Authentication services
+        NULL,                        // Reserved
+        RPC_C_AUTHN_LEVEL_DEFAULT,   // Default authentication 
+        RPC_C_IMP_LEVEL_IMPERSONATE, // Default Impersonation  
+        NULL,                        // Authentication info
+        EOAC_NONE,                   // Additional capabilities 
+        NULL                         // Reserved
+        );
+
+                      
+    if (FAILED(hres))
+    {
+        cout &lt;&lt; &quot;Failed to initialize security. Error code = 0x&quot; 
+             &lt;&lt; hex &lt;&lt; hres &lt;&lt; endl;
+        CoUninitialize();
+        return 1;                      // Program has failed.
+    }
+    
+    // Step 3: ---------------------------------------------------
+    // Obtain the initial locator to WMI -------------------------
+
+    IWbemLocator *pLoc = NULL;
+
+    hres = CoCreateInstance(
+        CLSID_WbemLocator,             
+        0, 
+        CLSCTX_INPROC_SERVER, 
+        IID_IWbemLocator, (LPVOID *) &amp;pLoc);
+ 
+    if (FAILED(hres))
+    {
+        cout &lt;&lt; &quot;Failed to create IWbemLocator object. &quot;
+             &lt;&lt; &quot;Err code = 0x&quot;
+             &lt;&lt; hex &lt;&lt; hres &lt;&lt; endl;
+        CoUninitialize();
+        return 1;                 // Program has failed.
+    }
+
+    // Step 4: ---------------------------------------------------
+    // Connect to WMI through the IWbemLocator::ConnectServer method
+
+    IWbemServices *pSvc = NULL;
+ 
+    // Connect to the local root\cimv2 namespace
+    // and obtain pointer pSvc to make IWbemServices calls.
+    hres = pLoc-&gt;ConnectServer(
+        _bstr_t(L&quot;ROOT\\CIMV2&quot;), 
+        NULL,
+        NULL, 
+        0, 
+        NULL, 
+        0, 
+        0, 
+        &amp;pSvc
+    );
+     
+    if (FAILED(hres))
+    {
+        cout &lt;&lt; &quot;Could not connect. Error code = 0x&quot; 
+             &lt;&lt; hex &lt;&lt; hres &lt;&lt; endl;
+        pLoc-&gt;Release();     
+        CoUninitialize();
+        return 1;                // Program has failed.
+    }
+
+    cout &lt;&lt; &quot;Connected to ROOT\\CIMV2 WMI namespace&quot; &lt;&lt; endl;
+
+
+    // Step 5: --------------------------------------------------
+    // Set security levels on the proxy -------------------------
+
+    hres = CoSetProxyBlanket(
+        pSvc,                        // Indicates the proxy to set
+        RPC_C_AUTHN_WINNT,           // RPC_C_AUTHN_xxx 
+        RPC_C_AUTHZ_NONE,            // RPC_C_AUTHZ_xxx 
+        NULL,                        // Server principal name 
+        RPC_C_AUTHN_LEVEL_CALL,      // RPC_C_AUTHN_LEVEL_xxx 
+        RPC_C_IMP_LEVEL_IMPERSONATE, // RPC_C_IMP_LEVEL_xxx
+        NULL,                        // client identity
+        EOAC_NONE                    // proxy capabilities 
+    );
+
+    if (FAILED(hres))
+    {
+        cout &lt;&lt; &quot;Could not set proxy blanket. Error code = 0x&quot; 
+             &lt;&lt; hex &lt;&lt; hres &lt;&lt; endl;
+        pSvc-&gt;Release();
+        pLoc-&gt;Release();     
+        CoUninitialize();
+        return 1;               // Program has failed.
+    }
+
+    // Step 6: -------------------------------------------------
+    // Receive event notifications -----------------------------
+
+    // Use an unsecured apartment for security
+    IUnsecuredApartment* pUnsecApp = NULL;
+
+    hres = CoCreateInstance(CLSID_UnsecuredApartment, NULL, 
+        CLSCTX_LOCAL_SERVER, IID_IUnsecuredApartment, 
+        (void**)&amp;pUnsecApp);
+ 
+    EventSink* pSink = new EventSink;
+    pSink-&gt;AddRef();
+
+    IUnknown* pStubUnk = NULL; 
+    pUnsecApp-&gt;CreateObjectStub(pSink, &amp;pStubUnk);
+
+    IWbemObjectSink* pStubSink = NULL;
+    pStubUnk-&gt;QueryInterface(IID_IWbemObjectSink,
+        (void **) &amp;pStubSink);
+
+    // The ExecNotificationQueryAsync method will call
+    // The EventQuery::Indicate method when an event occurs
+    hres = pSvc-&gt;ExecNotificationQueryAsync(
+        _bstr_t(&quot;WQL&quot;), 
+        _bstr_t(&quot;SELECT * &quot; 
+            &quot;FROM __InstanceCreationEvent WITHIN 1 &quot;
+            &quot;WHERE TargetInstance ISA 'Win32_Process'&quot;), 
+        WBEM_FLAG_SEND_STATUS, 
+        NULL, 
+        pStubSink);
+
+    // Check for errors.
+    if (FAILED(hres))
+    {
+        printf(&quot;ExecNotificationQueryAsync failed &quot;
+            &quot;with = 0x%X\n&quot;, hres);
+        pSvc-&gt;Release();
+        pLoc-&gt;Release();
+        pUnsecApp-&gt;Release();
+        pStubUnk-&gt;Release();
+        pSink-&gt;Release();
+        pStubSink-&gt;Release();
+        CoUninitialize();    
+        return 1;
+    }
+
+    // Wait for the event
+    Sleep(10000);
+         
+    hres = pSvc-&gt;CancelAsyncCall(pStubSink);
+
+    // Cleanup
+    // ========
+
+    pSvc-&gt;Release();
+    pLoc-&gt;Release();
+    pUnsecApp-&gt;Release();
+    pStubUnk-&gt;Release();
+    pSink-&gt;Release();
+    pStubSink-&gt;Release();
+    CoUninitialize();
+
+    return 0;   // Program successfully completed.
+ 
+}
+</code></pre>
+<p>The following header file is used for the class EventSink. The EventSink class is used in the previous code example.</p>
+<pre lang="C++"><code>// EventSink.h
+#ifndef EVENTSINK_H
+#define EVENTSINK_H
+
+#define _WIN32_DCOM
+#include &lt;iostream&gt;
+using namespace std;
+#include &lt;comdef.h&gt;
+#include &lt;Wbemidl.h&gt;
+
+#pragma comment(lib, &quot;wbemuuid.lib&quot;)
+
+class EventSink : public IWbemObjectSink
+{
+    LONG m_lRef;
+    bool bDone;
+
+public:
+    EventSink() { m_lRef = 0; }
+   ~EventSink() { bDone = true; }
+
+    virtual ULONG STDMETHODCALLTYPE AddRef();
+    virtual ULONG STDMETHODCALLTYPE Release();        
+    virtual HRESULT 
+        STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv);
+
+    virtual HRESULT STDMETHODCALLTYPE Indicate( 
+            LONG lObjectCount,
+            IWbemClassObject __RPC_FAR *__RPC_FAR *apObjArray
+            );
+        
+    virtual HRESULT STDMETHODCALLTYPE SetStatus( 
+            /* [in] */ LONG lFlags,
+            /* [in] */ HRESULT hResult,
+            /* [in] */ BSTR strParam,
+            /* [in] */ IWbemClassObject __RPC_FAR *pObjParam
+            );
+};
+
+#endif    // end of EventSink.h
+</code></pre>
+<p>The following example code is an implementation of the EventSink class.</p>
+<pre lang="C++"><code>// EventSink.cpp
+#include &quot;eventsink.h&quot;
+
+ULONG EventSink::AddRef()
+{
+    return InterlockedIncrement(&amp;m_lRef);
+}
+
+ULONG EventSink::Release()
+{
+    LONG lRef = InterlockedDecrement(&amp;m_lRef);
+    if(lRef == 0)
+        delete this;
+    return lRef;
+}
+
+HRESULT EventSink::QueryInterface(REFIID riid, void** ppv)
+{
+    if (riid == IID_IUnknown || riid == IID_IWbemObjectSink)
+    {
+        *ppv = (IWbemObjectSink *) this;
+        AddRef();
+        return WBEM_S_NO_ERROR;
+    }
+    else return E_NOINTERFACE;
+}
+
+
+HRESULT EventSink::Indicate(long lObjectCount,
+    IWbemClassObject **apObjArray)
+{
+ HRESULT hres = S_OK;
+
+    for (int i = 0; i &lt; lObjectCount; i++)
+    {
+        printf(&quot;Event occurred\n&quot;);
+    }
+
+    return WBEM_S_NO_ERROR;
+}
+
+HRESULT EventSink::SetStatus(
+            /* [in] */ LONG lFlags,
+            /* [in] */ HRESULT hResult,
+            /* [in] */ BSTR strParam,
+            /* [in] */ IWbemClassObject __RPC_FAR *pObjParam
+        )
+{
+    if(lFlags == WBEM_STATUS_COMPLETE)
+    {
+        printf(&quot;Call complete. hResult = 0x%X\n&quot;, hResult);
+    }
+    else if(lFlags == WBEM_STATUS_PROGRESS)
+    {
+        printf(&quot;Call in progress.\n&quot;);
+    }
+
+    return WBEM_S_NO_ERROR;
+}    // end of EventSink.cpp
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

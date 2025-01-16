@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Private Pool Enrollment</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Private Pool Enrollment
+description: Contains the enrollment console project.
+ms.assetid: 666CD6FF-A6A2-4992-81EB-F520C8FE5D95
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Private Pool Enrollment</h1>
+<p>The following sections contain the code necessary for private sensor pool enrollment.</p>
+<ul>
+<li><a href="#targetverh">Targetver.h</a></li>
+<li><a href="#stdafxh">Stdafx.h</a></li>
+<li><a href="#privatepoolenrollcpp">PrivatePoolEnroll.cpp</a></li>
+</ul>
+<h2>Targetver.h</h2>
+<p>This sample was created for WindowsÂ 7 and later operating systems.</p>
+<pre lang="C++"><code>#pragma once
+#ifndef _WIN32_WINNT            
+#define _WIN32_WINNT NTDDI_WIN7 
+#endif
+</code></pre>
+<h2>Stdafx.h</h2>
+<pre lang="C++"><code>// stdafx.h : include file for standard system include files,
+// or project specific include files that are used frequently but
+// are changed infrequently
+//
+
+#pragma once
+
+#include &quot;targetver.h&quot;
+
+// Use secure (template) versions of nonsecure 
+// CRT text routines
+#define _CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES     1
+
+#include &lt;stdio.h&gt;
+#include &lt;tchar.h&gt;
+
+#include &lt;windows.h&gt;
+#include &lt;winbio.h&gt;
+
+#include &quot;BioHelper.h&quot;
+
+#ifndef ARGUMENT_PRESENT
+#define ARGUMENT_PRESENT(x) (((x) != NULL))
+#endif
+</code></pre>
+<h2>PrivatePoolEnroll.cpp</h2>
+<pre lang="C++"><code>/******************************************************************************
+THIS CODE AND INFORMATION IS PROVIDED &quot;AS IS&quot; WITHOUT WARRANTY OF
+ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A
+PARTICULAR PURPOSE.
+
+Copyright (C) Microsoft.  All rights reserved.
+
+This source code is only intended as a supplement to Microsoft Development
+Tools and/or WinHelp documentation.  See these sources for detailed information
+regarding the Microsoft samples programs.
+******************************************************************************/
+
+// PrivatePoolEnroll.cpp : Defines the entry point for the console application.
+//
+
+#include &quot;stdafx.h&quot;
+#include &quot;PrivatePoolCommonDefs.h&quot;   // From Private Pool Setup
+#include &quot;Strsafe.h&quot;                 // For StringCbGets()
+
+
+//
+// Forward declarations of local functions...
+//
+static void onEnrollOrPractice(
+    __in bool CommitEnrollment
+    );
+
+static bool selectSensorMenu(
+    __in LPCTSTR Prompt,
+    __in WINBIO_UNIT_SCHEMA *UnitArray,
+    __in SIZE_T UnitCount,
+    __out SIZE_T *SelectedUnit
+    );
+
+static bool selectSubFactorMenu(
+    __out PWINBIO_BIOMETRIC_SUBTYPE SubFactor
+    );
+
+static bool getUlongValue(
+    __out PULONG Value
+    );
+
+static void displayIdentity(
+    __in PWINBIO_IDENTITY Identity,
+    __in WINBIO_BIOMETRIC_SUBTYPE SubFactor
+    );
+//-----------------------------------------------------------------------------
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    _tprintf( _T(&quot;\nWinBio Private Pool Enrollment\n\n&quot;));
+
+    if (argc &lt; 2)
+    {
+        _tprintf(_T(&quot;Usage: %s -enroll | -practice\n&quot;), argv[0]);
+        _tprintf(
+            _T(&quot;\n&quot;)
+            _T(&quot;  -enroll       create enrollment for a new finger\n&quot;)
+            _T(&quot;  -practice     perform enrollment, but discard results\n&quot;)
+            _T(&quot;\n&quot;)
+            );
+    }
+    else
+    {
+        if (_tcsicmp( argv[1], _T(&quot;-enroll&quot;)) == 0)
+        {
+            onEnrollOrPractice(true);
+        }
+        else if (_tcsicmp( argv[1], _T(&quot;-practice&quot;)) == 0)
+        {
+            onEnrollOrPractice(false);
+        }
+        else
+        {
+            _tprintf(_T(&quot;*** Error - Unknown command option: %s\n&quot;), argv[1]);
+        }
+    }
+
+    return 0;
+}
+//-----------------------------------------------------------------------------
+
+static void onEnrollOrPractice(
+    __in bool CommitEnrollment
+    )
+{
+    WINBIO_UNIT_ID unitIdArray[1] = {};
+    SIZE_T unitIdCount = ARRAYSIZE(unitIdArray);
+
+    WINBIO_UNIT_SCHEMA *unitSchemaArray = NULL;
+    SIZE_T unitSchemaCount = 0;
+    HRESULT hr = WinBioEnumBiometricUnits( 
+                    WINBIO_TYPE_FINGERPRINT, 
+                    &amp;unitSchemaArray, 
+                    &amp;unitSchemaCount 
+                    );
+    if (SUCCEEDED(hr))
+    {
+        SIZE_T selectedUnit = 0;
+        if (selectSensorMenu( 
+                _T(&quot;Choose a sensor for the private pool&quot;), 
+                unitSchemaArray, 
+                unitSchemaCount, 
+                &amp;selectedUnit
+                ))
+        {
+            // Build the array of Unit IDs that will make
+            // up the private pool
+            unitIdArray[0] = unitSchemaArray[selectedUnit].UnitId;
+            unitIdCount = 1;
+        }
+        else
+        {
+            hr = E_INVALIDARG;
+        }
+        WinBioFree( unitSchemaArray );
+        unitSchemaArray = NULL;
+        unitSchemaCount = 0;
+    }
+    if (SUCCEEDED(hr))
+    {
+        WINBIO_UUID privateDatabaseId = PRIVATE_POOL_DATABASE_ID;
+        WINBIO_SESSION_HANDLE sessionHandle = NULL;
+        hr = WinBioOpenSession( 
+                WINBIO_TYPE_FINGERPRINT, 
+                WINBIO_POOL_PRIVATE, 
+                WINBIO_FLAG_BASIC, 
+                unitIdArray, 
+                unitIdCount, 
+                &amp;privateDatabaseId, 
+                &amp;sessionHandle 
+                );
+        if (SUCCEEDED(hr))
+        {
+            WINBIO_BIOMETRIC_SUBTYPE subFactor = WINBIO_SUBTYPE_NO_INFORMATION;
+            if (selectSubFactorMenu( &amp;subFactor ) &amp;&amp;
+                subFactor != WINBIO_SUBTYPE_NO_INFORMATION &amp;&amp;
+                subFactor != WINBIO_SUBTYPE_ANY)
+            {
+                //
+                // Locate sensor
+                //
+                _tprintf(_T(&quot;\nTap the sensor once when you're ready to begin enrolling...\n\n&quot;));
+                WINBIO_UNIT_ID unitId = 0;
+                hr = WinBioLocateSensor( sessionHandle, &amp;unitId);
+                if (SUCCEEDED(hr))
+                {
+                    //
+                    // Enroll begin
+                    //
+                    _tprintf(_T(&quot;\n(Begining enrollment sequence)\n\n&quot;));
+                    hr = WinBioEnrollBegin(
+                            sessionHandle,
+                            subFactor,
+                            unitId
+                            );
+                    if (SUCCEEDED(hr))
+                    {
+                        SIZE_T swipeCount = 0;
+                        for (swipeCount = 1;; ++swipeCount)
+                        {
+                            _tprintf(
+                                _T(&quot;Swipe your finger on the sensor to capture %s sample.\n&quot;),
+                                (swipeCount == 1)?_T(&quot;the first&quot;):_T(&quot;another&quot;)
+                                );
+
+                            WINBIO_REJECT_DETAIL rejectDetail = 0;
+                            hr = WinBioEnrollCapture(
+                                    sessionHandle,
+                                    &amp;rejectDetail
+                                    );
+                            _tprintf(_T(&quot;   Sample %d captured from unit number %d.\n&quot;), swipeCount, unitId);
+                            if (hr == WINBIO_I_MORE_DATA)
+                            {
+                                _tprintf(_T(&quot;   More data required.\n\n&quot;));
+                                continue;
+                            }
+                            if (FAILED(hr))
+                            {
+                                if (hr == WINBIO_E_BAD_CAPTURE)
+                                {
+                                    _tprintf(_T(&quot;*** Error - Bad capture.\n&quot;));
+                                    _tprintf(
+                                        _T(&quot;- %s\n&quot;), 
+                                        BioHelper::ConvertRejectDetailToString( rejectDetail )
+                                        );
+                                    hr = S_OK;
+                                    continue;
+                                }
+                                else
+                                {
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                _tprintf(_T(&quot;   Template completed.\n\n&quot;));
+                                break;
+                            }
+                        }
+                        _tprintf(_T(&quot;\n&quot;));
+                        if (SUCCEEDED(hr))
+                        {
+                            if (CommitEnrollment)
+                            {
+                                // ENROLL
+                                WINBIO_IDENTITY identity = {};
+                                BOOLEAN isNewTemplate = FALSE;
+
+                                _tprintf(_T(&quot;Committing enrollment...\n&quot;));
+                                hr = WinBioEnrollCommit( sessionHandle, &amp;identity, &amp;isNewTemplate);
+                                if (SUCCEEDED(hr))
+                                {
+                                    _tprintf(_T(&quot;Enrollment committed to database\n&quot;));
+                                    displayIdentity( &amp;identity, subFactor );
+                                }
+                            }
+                            else
+                            {
+                                // PRACTICE
+                                _tprintf(_T(&quot;Discarding enrollment...\n&quot;));
+                                hr = WinBioEnrollDiscard( sessionHandle );
+                                if (SUCCEEDED(hr))
+                                {
+                                    _tprintf(_T(&quot;Template discarded.\n&quot;));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                hr = E_INVALIDARG;
+            }
+
+            WinBioCloseSession( sessionHandle );
+            sessionHandle = NULL;
+        }
+    }
+
+    if (FAILED(hr))
+    {
+        LPTSTR errorMessage = BioHelper::ConvertErrorCodeToString( hr );
+        _tprintf(_T(&quot;*** Error - %s\n&quot;), errorMessage );
+        LocalFree(errorMessage);
+        errorMessage = NULL;
+    }
+}
+//-----------------------------------------------------------------------------
+
+static bool selectSensorMenu(
+    __in LPCTSTR Prompt,
+    __in WINBIO_UNIT_SCHEMA *UnitArray,
+    __in SIZE_T UnitCount,
+    __out SIZE_T *SelectedUnit
+    )
+{
+    if (!ARGUMENT_PRESENT(UnitArray) ||
+        !ARGUMENT_PRESENT(SelectedUnit) ||
+        UnitCount == 0)
+    {
+        return false;
+    }
+
+    _tprintf(_T(&quot;\n%s:\n\n&quot;), Prompt);
+    for (SIZE_T i = 0; i &lt; UnitCount; ++i)
+    {
+        _tprintf(
+            _T(&quot; %3d - %ls (%ls)\n&quot;), 
+            (i + 1), 
+            UnitArray[i].Manufacturer, 
+            UnitArray[i].Description 
+            );
+    }
+
+    _tprintf(_T(&quot;\nSelect sensor and press &lt;ENTER&gt;: &quot;));
+    TCHAR buffer[20] = {};
+    HRESULT hr = StringCbGets( buffer, 20*sizeof(TCHAR) );
+    _tprintf(_T(&quot;\n&quot;));
+
+    int selected = _tstoi( buffer );
+    if (selected &lt;= 0 ||
+        selected &gt; (int)UnitCount)
+    {
+        return false;
+    }
+    *SelectedUnit = (SIZE_T)(selected - 1);
+    return true;
+}
+//-----------------------------------------------------------------------------
+
+static bool selectSubFactorMenu(
+    __out PWINBIO_BIOMETRIC_SUBTYPE SubFactor
+    )
+{
+    static const WINBIO_BIOMETRIC_SUBTYPE subFactors[] = {
+        WINBIO_ANSI_381_POS_RH_THUMB,
+        WINBIO_ANSI_381_POS_RH_INDEX_FINGER,
+        WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER,
+        WINBIO_ANSI_381_POS_RH_RING_FINGER,
+        WINBIO_ANSI_381_POS_RH_LITTLE_FINGER,
+        WINBIO_ANSI_381_POS_LH_THUMB,
+        WINBIO_ANSI_381_POS_LH_INDEX_FINGER,
+        WINBIO_ANSI_381_POS_LH_MIDDLE_FINGER,
+        WINBIO_ANSI_381_POS_LH_RING_FINGER,
+        WINBIO_ANSI_381_POS_LH_LITTLE_FINGER,
+    };
+    _tprintf(_T(&quot;\n- Select a sub-factor:\n\n&quot;));
+
+    for (SIZE_T index = 0; index &lt; ARRAYSIZE(subFactors); ++index)
+    {
+        _tprintf(
+            _T(&quot;    %2d - %s\n&quot;),
+            (index + 1),
+            BioHelper::ConvertSubFactorToString( subFactors[index] )
+            );
+    }
+
+    ULONG chosen = 0;
+    if (getUlongValue( &amp;chosen ) &amp;&amp;
+        (chosen - 1) &lt; ARRAYSIZE(subFactors))
+    {
+        *SubFactor = subFactors[chosen - 1];
+        return true;
+    }
+    return false;
+}
+//-----------------------------------------------------------------------------
+
+static bool getUlongValue(
+    __out PULONG Value
+    )
+{
+    ULONG value = 0;
+
+    _tprintf( _T(&quot;\n- Enter a number: &quot;));
+    if (_tscanf_s(_T(&quot;%u&quot;), &amp;value) != 0)
+    {
+        *Value = value;
+        return true;
+    }
+    return false;
+}
+//-----------------------------------------------------------------------------
+
+static void displayIdentity(
+    __in PWINBIO_IDENTITY Identity,
+    __in WINBIO_BIOMETRIC_SUBTYPE SubFactor
+    )
+{
+    _tprintf(_T(&quot;\n- Identity: &quot;));
+    switch (Identity-&gt;Type)
+    {
+    case WINBIO_ID_TYPE_NULL:
+        _tprintf(_T(&quot;NULL value\n&quot;));
+        break;
+
+    case WINBIO_ID_TYPE_WILDCARD:
+        _tprintf(_T(&quot;WILDCARD value\n&quot;));
+        if (Identity-&gt;Value.Wildcard != WINBIO_IDENTITY_WILDCARD)
+        {
+            _tprintf(
+                _T(&quot;\n*** Error: Invalid wildcard marker (0x%08x)\n&quot;), 
+                Identity-&gt;Value.Wildcard
+                );
+        }
+        break;
+
+    case WINBIO_ID_TYPE_GUID:
+        _tprintf(_T(&quot;GUID\n&quot;));
+        _tprintf(
+            _T(&quot;    Value:      {%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}\n&quot;),
+            Identity-&gt;Value.TemplateGuid.Data1,
+            Identity-&gt;Value.TemplateGuid.Data2,
+            Identity-&gt;Value.TemplateGuid.Data3,
+            Identity-&gt;Value.TemplateGuid.Data4[0],
+            Identity-&gt;Value.TemplateGuid.Data4[1],
+            Identity-&gt;Value.TemplateGuid.Data4[2],
+            Identity-&gt;Value.TemplateGuid.Data4[3],
+            Identity-&gt;Value.TemplateGuid.Data4[4],
+            Identity-&gt;Value.TemplateGuid.Data4[5],
+            Identity-&gt;Value.TemplateGuid.Data4[6],
+            Identity-&gt;Value.TemplateGuid.Data4[7]
+            );
+        break;
+
+    default:
+        _tprintf(_T(&quot;(Invalid type)\n&quot;));
+        // invalid type
+        break;
+    }
+    _tprintf(
+        _T(&quot;    Subfactor:  %s\n&quot;), 
+        BioHelper::ConvertSubFactorToString(SubFactor)
+        );
+}
+//-----------------------------------------------------------------------------
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

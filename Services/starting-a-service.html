@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Starting a Service</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: To start a service, a service control program opens a handle to an installed database and then specifies the handle in a call to the StartService function.
+ms.assetid: 7ee5254d-b035-4888-88e9-93e3e55d737e
+title: Starting a Service
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Starting a Service</h1>
+<p>To start a service, a <a href="service-control-programs.html">service control program</a> opens a handle to an installed database and then specifies the handle in a call to the <a href="/windows/desktop/api/Winsvc/nf-winsvc-startservicea"><strong>StartService</strong></a> function. After starting the service, the program uses the members of the <a href="/windows/desktop/api/Winsvc/ns-winsvc-service_status_process"><strong>SERVICE_STATUS_PROCESS</strong></a> structure returned by the <a href="/windows/desktop/api/Winsvc/nf-winsvc-queryservicestatusex"><strong>QueryServiceStatusEx</strong></a> function to track the progress of the service.</p>
+<p>The DoStartSvc function in the following example shows how to start a service. The szSvcName variable is a global variable that contains the name of the service to be started. For the complete example that sets this variable, see <a href="svccontrol-cpp.html">SvcControl.cpp</a>.</p>
+<pre lang="C++"><code>//
+// Purpose: 
+//   Starts the service if possible.
+//
+// Parameters:
+//   None
+// 
+// Return value:
+//   None
+//
+VOID __stdcall DoStartSvc()
+{
+    SERVICE_STATUS_PROCESS ssStatus; 
+    DWORD dwOldCheckPoint; 
+    DWORD dwStartTickCount;
+    DWORD dwWaitTime;
+    DWORD dwBytesNeeded;
+
+    // Get a handle to the SCM database. 
+ 
+    schSCManager = OpenSCManager( 
+        NULL,                    // local computer
+        NULL,                    // servicesActive database 
+        SC_MANAGER_ALL_ACCESS);  // full access rights 
+ 
+    if (NULL == schSCManager) 
+    {
+        printf(&quot;OpenSCManager failed (%d)\n&quot;, GetLastError());
+        return;
+    }
+
+    // Get a handle to the service.
+
+    schService = OpenService( 
+        schSCManager,         // SCM database 
+        szSvcName,            // name of service 
+        SERVICE_ALL_ACCESS);  // full access 
+ 
+    if (schService == NULL)
+    { 
+        printf(&quot;OpenService failed (%d)\n&quot;, GetLastError()); 
+        CloseServiceHandle(schSCManager);
+        return;
+    }    
+
+    // Check the status in case the service is not stopped. 
+
+    if (!QueryServiceStatusEx( 
+            schService,                     // handle to service 
+            SC_STATUS_PROCESS_INFO,         // information level
+            (LPBYTE) &amp;ssStatus,             // address of structure
+            sizeof(SERVICE_STATUS_PROCESS), // size of structure
+            &amp;dwBytesNeeded ) )              // size needed if buffer is too small
+    {
+        printf(&quot;QueryServiceStatusEx failed (%d)\n&quot;, GetLastError());
+        CloseServiceHandle(schService); 
+        CloseServiceHandle(schSCManager);
+        return; 
+    }
+
+    // Check if the service is already running. It would be possible 
+    // to stop the service here, but for simplicity this example just returns. 
+
+    if(ssStatus.dwCurrentState != SERVICE_STOPPED &amp;&amp; ssStatus.dwCurrentState != SERVICE_STOP_PENDING)
+    {
+        printf(&quot;Cannot start the service because it is already running\n&quot;);
+        CloseServiceHandle(schService); 
+        CloseServiceHandle(schSCManager);
+        return; 
+    }
+
+    // Save the tick count and initial checkpoint.
+
+    dwStartTickCount = GetTickCount();
+    dwOldCheckPoint = ssStatus.dwCheckPoint;
+
+    // Wait for the service to stop before attempting to start it.
+
+    while (ssStatus.dwCurrentState == SERVICE_STOP_PENDING)
+    {
+        // Do not wait longer than the wait hint. A good interval is 
+        // one-tenth of the wait hint but not less than 1 second  
+        // and not more than 10 seconds. 
+ 
+        dwWaitTime = ssStatus.dwWaitHint / 10;
+
+        if( dwWaitTime &lt; 1000 )
+            dwWaitTime = 1000;
+        else if ( dwWaitTime &gt; 10000 )
+            dwWaitTime = 10000;
+
+        Sleep( dwWaitTime );
+
+        // Check the status until the service is no longer stop pending. 
+ 
+        if (!QueryServiceStatusEx( 
+                schService,                     // handle to service 
+                SC_STATUS_PROCESS_INFO,         // information level
+                (LPBYTE) &amp;ssStatus,             // address of structure
+                sizeof(SERVICE_STATUS_PROCESS), // size of structure
+                &amp;dwBytesNeeded ) )              // size needed if buffer is too small
+        {
+            printf(&quot;QueryServiceStatusEx failed (%d)\n&quot;, GetLastError());
+            CloseServiceHandle(schService); 
+            CloseServiceHandle(schSCManager);
+            return; 
+        }
+
+        if ( ssStatus.dwCheckPoint &gt; dwOldCheckPoint )
+        {
+            // Continue to wait and check.
+
+            dwStartTickCount = GetTickCount();
+            dwOldCheckPoint = ssStatus.dwCheckPoint;
+        }
+        else
+        {
+            if(GetTickCount()-dwStartTickCount &gt; ssStatus.dwWaitHint)
+            {
+                printf(&quot;Timeout waiting for service to stop\n&quot;);
+                CloseServiceHandle(schService); 
+                CloseServiceHandle(schSCManager);
+                return; 
+            }
+        }
+    }
+
+    // Attempt to start the service.
+
+    if (!StartService(
+            schService,  // handle to service 
+            0,           // number of arguments 
+            NULL) )      // no arguments 
+    {
+        printf(&quot;StartService failed (%d)\n&quot;, GetLastError());
+        CloseServiceHandle(schService); 
+        CloseServiceHandle(schSCManager);
+        return; 
+    }
+    else printf(&quot;Service start pending...\n&quot;); 
+
+    // Check the status until the service is no longer start pending. 
+ 
+    if (!QueryServiceStatusEx( 
+            schService,                     // handle to service 
+            SC_STATUS_PROCESS_INFO,         // info level
+            (LPBYTE) &amp;ssStatus,             // address of structure
+            sizeof(SERVICE_STATUS_PROCESS), // size of structure
+            &amp;dwBytesNeeded ) )              // if buffer too small
+    {
+        printf(&quot;QueryServiceStatusEx failed (%d)\n&quot;, GetLastError());
+        CloseServiceHandle(schService); 
+        CloseServiceHandle(schSCManager);
+        return; 
+    }
+ 
+    // Save the tick count and initial checkpoint.
+
+    dwStartTickCount = GetTickCount();
+    dwOldCheckPoint = ssStatus.dwCheckPoint;
+
+    while (ssStatus.dwCurrentState == SERVICE_START_PENDING) 
+    { 
+        // Do not wait longer than the wait hint. A good interval is 
+        // one-tenth the wait hint, but no less than 1 second and no 
+        // more than 10 seconds. 
+ 
+        dwWaitTime = ssStatus.dwWaitHint / 10;
+
+        if( dwWaitTime &lt; 1000 )
+            dwWaitTime = 1000;
+        else if ( dwWaitTime &gt; 10000 )
+            dwWaitTime = 10000;
+
+        Sleep( dwWaitTime );
+
+        // Check the status again. 
+ 
+        if (!QueryServiceStatusEx( 
+            schService,             // handle to service 
+            SC_STATUS_PROCESS_INFO, // info level
+            (LPBYTE) &amp;ssStatus,             // address of structure
+            sizeof(SERVICE_STATUS_PROCESS), // size of structure
+            &amp;dwBytesNeeded ) )              // if buffer too small
+        {
+            printf(&quot;QueryServiceStatusEx failed (%d)\n&quot;, GetLastError());
+            break; 
+        }
+ 
+        if ( ssStatus.dwCheckPoint &gt; dwOldCheckPoint )
+        {
+            // Continue to wait and check.
+
+            dwStartTickCount = GetTickCount();
+            dwOldCheckPoint = ssStatus.dwCheckPoint;
+        }
+        else
+        {
+            if(GetTickCount()-dwStartTickCount &gt; ssStatus.dwWaitHint)
+            {
+                // No progress made within the wait hint.
+                break;
+            }
+        }
+    } 
+
+    // Determine whether the service is running.
+
+    if (ssStatus.dwCurrentState == SERVICE_RUNNING) 
+    {
+        printf(&quot;Service started successfully.\n&quot;); 
+    }
+    else 
+    { 
+        printf(&quot;Service not started. \n&quot;);
+        printf(&quot;  Current State: %d\n&quot;, ssStatus.dwCurrentState); 
+        printf(&quot;  Exit Code: %d\n&quot;, ssStatus.dwWin32ExitCode); 
+        printf(&quot;  Check Point: %d\n&quot;, ssStatus.dwCheckPoint); 
+        printf(&quot;  Wait Hint: %d\n&quot;, ssStatus.dwWaitHint); 
+    } 
+
+    CloseServiceHandle(schService); 
+    CloseServiceHandle(schSCManager);
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="service-startup.html">Service Startup</a></p>
+<!-- raw HTML omitted -->
+<p><a href="the-complete-service-sample.html">The Complete Service Sample</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

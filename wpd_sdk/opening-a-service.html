@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Opening a Service</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Opening a Service
+ms.assetid: 722d657d-332a-40df-ac30-bc2050deda74
+title: Opening a Service
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Opening a Service</h1>
+<p>Before your application can perform operations on a service, for example, enumerating content or retrieving descriptions of supported events or methods, it must open the service. In the WpdServicesApiSample application, this task is demonstrated in the ServiceEnumeration.cpp module using the interfaces described in the following table.</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/windows/desktop/api/PortableDeviceAPI/nn-portabledeviceapi-iportabledeviceservicemanager"><strong>IPortableDeviceServiceManager</strong></a></td>
+<td>Used to enumerate the services on a device.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/PortableDeviceAPI/nn-portabledeviceapi-iportabledeviceservice"><strong>IPortableDeviceService</strong></a></td>
+<td>Used to open a connection to a device service.</td>
+</tr>
+<tr>
+<td><a href="iportabledevicevalues.html"><strong>IPortableDeviceValues</strong></a></td>
+<td>Used to hold the application's client information.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The method that opens a service is <a href="/windows/desktop/api/PortableDeviceAPI/nf-portabledeviceapi-iportabledeviceservice-open"><strong>IPortableDeviceService::Open</strong></a>. This method takes two arguments: a Plug-and-Play (PnP) identifier for the service and an <a href="iportabledevicevalues.html"><strong>IPortableDeviceValues</strong></a> object that contains the application's client information.</p>
+<p>To obtain a PnP identifier for a given service, your application calls the <a href="/windows/desktop/api/PortableDeviceAPI/nf-portabledeviceapi-iportabledeviceservicemanager-getdeviceservices"><strong>IPortableDeviceServiceManager::GetDeviceServices</strong></a> method. This method retrieves an array of PnP identifiers for services of a service category GUID (for example SERVICE Contacts).</p>
+<p>The sample Service application retrieves a PnP identifier for Contacts services within the <strong>EnumerateContactsServices</strong> method in the ServiceEnumeration.cpp module. The following code sample is taken from this method.</p>
+<pre lang="C++"><code>// For each device found, find the contacts service
+for (dwIndex = 0; dwIndex &lt; cPnpDeviceIDs; dwIndex++)
+{
+    DWORD   cPnpServiceIDs = 0;
+    PWSTR   pPnpServiceID  = NULL;
+
+    // First, pass NULL as the PWSTR array pointer to get the total number
+    // of contacts services (SERVICE_Contacts) found on the device.
+    // To find the total number of all services on the device, use GUID_DEVINTERFACE_WPD_SERVICE.
+    hr = pServiceManager-&gt;GetDeviceServices(pPnpDeviceIDs[dwIndex], SERVICE_Contacts, NULL, &amp;cPnpServiceIDs);
+    
+    if (SUCCEEDED(hr) &amp;&amp; (cPnpServiceIDs &gt; 0))
+    {                               
+        // For simplicity, we are only using the first contacts service on each device
+        cPnpServiceIDs = 1;
+        hr = pServiceManager-&gt;GetDeviceServices(pPnpDeviceIDs[dwIndex], SERVICE_Contacts, &amp;pPnpServiceID, &amp;cPnpServiceIDs);
+
+        if (SUCCEEDED(hr))
+        {
+            // We've found the service, display it and save its PnP Identifier
+            ContactsServicePnpIDs.Add(pPnpServiceID);
+
+            printf(&quot;[%d] &quot;, static_cast&lt;DWORD&gt;(ContactsServicePnpIDs.GetCount()-1));
+
+            // Display information about the device that contains this service.
+            DisplayDeviceInformation(pServiceManager, pPnpServiceID);
+
+            // ContactsServicePnpIDs now owns the memory for this string
+            pPnpServiceID = NULL;
+        }
+        else
+        {
+            printf(&quot;! Failed to get the first contacts service from '%ws, hr = 0x%lx\n&quot;,pPnpDeviceIDs[dwIndex],hr);
+        }
+    }
+}
+</code></pre>
+<p>After your application retrieves the PnP identifier for the service, it can set up the client information and call <a href="/windows/desktop/api/PortableDeviceAPI/nf-portabledeviceapi-iportabledeviceservice-open"><strong>IPortableDeviceService::Open</strong></a>.</p>
+<p>In the sample application, this method is called within <strong>ChooseDeviceService</strong> in the ServiceEnumeration.cpp module.</p>
+<p><a href="/windows/desktop/api/PortableDeviceAPI/nn-portabledeviceapi-iportabledeviceservice"><strong>IPortableDeviceService</strong></a> supports two CLSIDs for <strong>CoCreateInstance</strong>. <strong>CLSID_PortableDeviceService</strong> returns an <strong>IPortableDeviceService</strong> pointer that does not aggregate the free-threaded marshaler; <strong>CLSID_PortableDeviceServiceFTM</strong> is a new CLSID that returns an <strong>IPortableDeviceService</strong> pointer that aggregates the free-threaded marshaler. Both pointers support the same functionality otherwise.</p>
+<p>Applications that live in Single Threaded Apartments should use <strong>CLSID_PortableDeviceServiceFTM</strong> as this eliminates the overhead of interface pointer marshaling. <strong>CLSID_PortableDeviceService</strong> is still supported for legacy applications.</p>
+<pre lang="C++"><code>hr = CoCreateInstance(CLSID_PortableDeviceServiceFTM,
+                      NULL,
+                      CLSCTX_INPROC_SERVER,
+                      IID_PPV_ARGS(&amp;pService));
+if (SUCCEEDED(hr))
+{
+    hr = pService-&gt;Open(ContactsServicesArray[uiCurrentService], pClientInformation);
+    if (FAILED(hr))
+    {
+        if (hr == E_ACCESSDENIED)
+        {
+            printf(&quot;Failed to Open the service for Read Write access, will open it for Read-only access instead\n&quot;);
+
+            pClientInformation-&gt;SetUnsignedIntegerValue(WPD_CLIENT_DESIRED_ACCESS, GENERIC_READ);
+
+            hr = pService-&gt;Open(ContactsServicesArray[uiCurrentService], pClientInformation);
+
+            if (FAILED(hr))
+            {
+                printf(&quot;! Failed to Open the service for Read access, hr = 0x%lx\n&quot;,hr);
+            }
+        }
+        else
+        {
+            printf(&quot;! Failed to Open the service, hr = 0x%lx\n&quot;,hr);
+        }
+    }
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/PortableDeviceAPI/nn-portabledeviceapi-iportabledeviceservice"><strong>IPortableDeviceService Interface</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="iportabledevicevalues.html"><strong>IPortableDeviceValues Interface</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/PortableDeviceAPI/nn-portabledeviceapi-iportabledeviceservicemanager"><strong>IPortableDeviceServiceManager Interface</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="wpdapisample-sample-service-application.html">WpdServicesApiSample</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Setting up a Source Initiated Subscription</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Setting up a Source Initiated Subscription
+description: Source-initiated subscriptions allow you to define a subscription on an event collector computer without defining the event source computers, and then multiple remote event source computers can be set up (using a group policy setting) to forward events to the event collector computer.
+ms.assetid: c02b5075-d685-44cf-937f-a1edfd2550ca
+ms.tgt_platform: multiple
+ms.topic: article
+ms.date: 12/17/2018</h2>
+<h1>Setting up a Source Initiated Subscription</h1>
+<p>Source-initiated subscriptions allow you to define a subscription on an event collector computer without defining the event source computers, and then multiple remote event source computers can be set up (using a group policy setting) to forward events to the event collector computer. This differs from a collector initiated subscription because in the collector initiated subscription model, the event collector must define all the event sources in the event subscription.</p>
+<p>When setting up a source-initiated subscription, consider whether the event source computers are in the same domain as the event collector computer. The following sections describe the steps to follow when the event sources are in the same domain or not in the same domain as the event collector computer.</p>
+<blockquote>
+<p>[!Note]<br />
+Any computer in a domain, local or remote, can be an event collector. However, when choosing an event collector, it is important to select a machine that is topologically close to where the majority of the events will be generated. Sending events to a machine at a distant network location on a WAN can reduce overall performance and efficiency in event collection.</p>
+</blockquote>
+<h2>Setting up a source-initiated subscription where the event sources are in the same domain as the event collector computer</h2>
+<p>Both the event source computers and the event collector computer must be configured to set up a source initiated subscription.</p>
+<blockquote>
+<p>[!Note]<br />
+These instructions assume that you have administrator access to the Windows Server domain controller serving the domain in which the remote computer or computers will be configured to collect events.</p>
+</blockquote>
+<h3>Configuring the event source computer</h3>
+<ol>
+<li>
+<p>Run the following command from an elevated privilege command prompt on the Windows Server domain controller to configure Windows Remote Management:</p>
+<p><strong>winrm qc -q</strong></p>
+</li>
+<li>
+<p>Start group policy by running the following command:</p>
+<p><strong>%SYSTEMROOT%\System32\gpedit.msc</strong></p>
+</li>
+<li>
+<p>Under the <strong>Computer Configuration</strong> node, expand the <strong>Administrative Templates</strong> node, then expand the <strong>Windows Components</strong> node, then select the <strong>Event Forwarding</strong> node.</p>
+</li>
+<li>
+<p>Right-click the <strong>SubscriptionManager</strong> setting, and select <strong>Properties</strong>. Enable the <strong>SubscriptionManager</strong> setting, and click the <strong>Show</strong> button to add a server address to the setting. Add at least one setting that specifies the event collector computer. The <strong>SubscriptionManager Properties</strong> window contains an <strong>Explain</strong> tab that describes the syntax for the setting.</p>
+</li>
+<li>
+<p>After the <strong>SubscriptionManager</strong> setting has been added, run the following command to ensure the policy is applied:</p>
+<p><strong>gpupdate /force</strong></p>
+</li>
+</ol>
+<h3>Configuring the event collector computer</h3>
+<ol>
+<li>
+<p>Run the following command from an elevated privilege command prompt on the Windows Server domain controller to configure Windows Remote Management:</p>
+<p><strong>winrm qc -q</strong></p>
+</li>
+<li>
+<p>Run the following command to configure the Event Collector service:</p>
+<p><strong>wecutil qc /q</strong></p>
+</li>
+<li>
+<p>Create a source initiated subscription. This can either be done programmatically, by using the Event Viewer, or by using <a href="wecutil.html"><strong>Wecutil.exe</strong></a>. For more information about how to create the subscription programmatically, see the code example in <a href="creating-a-source-initiated-subscription.html">Creating a Source Initiated Subscription</a>. If you use Wecutil.exe, you must create an event subscription XML file and use the following command:</p>
+<p><strong>wecutil cs</strong> <em>configurationFile.xml</em></p>
+<p>The following XML is an example of the contents of a subscription configuration file that creates a source-initiated subscription to forward events from the Application event log of a remote computer to the ForwardedEvents log on the event collector computer.</p>
+<pre lang="XML"><code>&lt;Subscription xmlns=&quot;http://schemas.microsoft.com/2006/03/windows/events/subscription&quot;&gt;
+    &lt;SubscriptionId&gt;SampleSISubscription&lt;/SubscriptionId&gt;
+    &lt;SubscriptionType&gt;SourceInitiated&lt;/SubscriptionType&gt;
+    &lt;Description&gt;Source Initiated Subscription Sample&lt;/Description&gt;
+    &lt;Enabled&gt;true&lt;/Enabled&gt;
+    &lt;Uri&gt;http://schemas.microsoft.com/wbem/wsman/1/windows/EventLog&lt;/Uri&gt;
+
+    &lt;!-- Use Normal (default), Custom, MinLatency, MinBandwidth --&gt;
+    &lt;ConfigurationMode&gt;Custom&lt;/ConfigurationMode&gt;
+
+    &lt;Delivery Mode=&quot;Push&quot;&gt;
+        &lt;Batching&gt;
+            &lt;MaxItems&gt;1&lt;/MaxItems&gt;
+            &lt;MaxLatencyTime&gt;1000&lt;/MaxLatencyTime&gt;
+        &lt;/Batching&gt;
+        &lt;PushSettings&gt;
+            &lt;Heartbeat Interval=&quot;60000&quot;/&gt;
+        &lt;/PushSettings&gt;
+    &lt;/Delivery&gt;
+
+    &lt;Expires&gt;2018-01-01T00:00:00.000Z&lt;/Expires&gt;
+
+    &lt;Query&gt;
+        &lt;![CDATA[
+            &lt;QueryList&gt;
+                &lt;Query Path=&quot;Application&quot;&gt;
+                    &lt;Select&gt;Event[System/EventID='999']&lt;/Select&gt;
+                &lt;/Query&gt;
+            &lt;/QueryList&gt;
+        ]]&gt;
+    &lt;/Query&gt;
+
+    &lt;ReadExistingEvents&gt;true&lt;/ReadExistingEvents&gt;
+    &lt;TransportName&gt;http&lt;/TransportName&gt;
+    &lt;ContentFormat&gt;RenderedText&lt;/ContentFormat&gt;
+    &lt;Locale Language=&quot;en-US&quot;/&gt;
+    &lt;LogFile&gt;ForwardedEvents&lt;/LogFile&gt;
+    &lt;AllowedSourceNonDomainComputers&gt;&lt;/AllowedSourceNonDomainComputers&gt;
+    &lt;AllowedSourceDomainComputers&gt;O:NSG:NSD:(A;;GA;;;DC)(A;;GA;;;NS)&lt;/AllowedSourceDomainComputers&gt;
+&lt;/Subscription&gt;
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+When creating a source initiated subscription, if AllowedSourceDomainComputers, AllowedSourceNonDomainComputers/IssuerCAList, AllowedSubjectList, and DeniedSubjectList are all empty, then &quot;O:NSG:NSD:(A;;GA;;;DC)(A;;GA;;;NS)&quot; will be used as the default security descriptor for AllowedSourceDomainComputers. The default descriptor grants members of the Domain Computers domain group, as well as the local Network Service group (for the local forwarder), the ability to raise events for this subscription.</p>
+</blockquote>
+</li>
+</ol>
+<h3>To validate that the subscription works correctly</h3>
+<ol>
+<li>
+<p>On the event collector computer complete the following steps:</p>
+<ol>
+<li>
+<p>Run the following command from an elevated privilege command prompt on the Windows Server domain controller to get the runtime status of the subscription:</p>
+<p><strong>wecutil gr</strong> <em>&lt;subscriptionID&gt;</em></p>
+</li>
+<li>
+<p>Verify that the event source has connected. You might need to wait until the refresh interval specified in the policy is over after you create the subscription for the event source to be connected.</p>
+</li>
+<li>
+<p>Run the following command to get the subscription information:</p>
+<p><strong>wecutil gs</strong> <em>&lt;subscriptionID&gt;</em></p>
+</li>
+<li>
+<p>Get the DeliveryMaxItems value from the subscription information.</p>
+</li>
+</ol>
+</li>
+<li>
+<p>On the event source computer, raise the events that match the query from the event subscription. The DeliveryMaxItems number of events must be raised for the events to be forwarded.</p>
+</li>
+<li>
+<p>On the event collector computer, validate that the events have been forwarded to the ForwardedEvents log or to the log specified in the subscription.</p>
+</li>
+</ol>
+<h2>Forwarding the security log</h2>
+<p>To be able to forward the Security log you need to add the NETWORK SERVICE account to the EventLog Readers group.</p>
+<h2>Setting up a source initiated subscription where the event sources are not in the same domain as the event collector computer</h2>
+<blockquote>
+<p>[!Note]<br />
+These instructions assume that you have administrator access to a Windows Server domain controller. In this case, since the remote event collector computer or computer(s) are not in the domain served by the domain controller, it is essential to start an individual client by setting Windows Remote Management to &quot;automatic&quot; using Services (services.msc). Alternatively, you can run &quot;winrm quickconfig&quot; on each remote client.</p>
+</blockquote>
+<p>The following prerequisites must be met before the subscription is created.</p>
+<ol>
+<li>
+<p>On the event collector computer, run the following commands from an elevated privilege command prompt to configure Windows Remote Management and the Event Collector service:</p>
+<p><strong>winrm qc -q</strong></p>
+<p><strong>wecutil qc /q</strong></p>
+</li>
+<li>
+<p>The collector computer should have a server authentication certificate (certificate with a server authentication purpose) in a local computer certificate store.</p>
+</li>
+<li>
+<p>On the event source computer, run the following command to configure Windows Remote Management:</p>
+<p><strong>winrm qc -q</strong></p>
+</li>
+<li>
+<p>The source machine should have a client authentication certificate (certificate with a client authentication purpose) in a local computer certificate store .</p>
+</li>
+<li>
+<p>Port 5986 is opened on the event collector computer. To open this port, run the command:</p>
+<p><strong>netsh firewall add portopening TCP 5986 &quot;Winrm HTTPS Remote Management&quot;</strong></p>
+</li>
+</ol>
+<h3>Certificates requirements</h3>
+<ul>
+<li>
+<p>A server authentication certificate has to be installed on the Event Collector computer in the Personal store of the Local machine. The subject of this certificate has to match the FQDN of the collector.</p>
+</li>
+<li>
+<p>A client authentication certificate has to be installed on the Event Source computers in the Personal store of the Local machine. The subject of this certificate has to match the FQDN of the computer.</p>
+</li>
+<li>
+<p>If the client certificate has been issued by a different Certification Authority than the one of the Event Collector then those Root and Intermediate certificates needs to be installed on the Event Collector as well.</p>
+</li>
+<li>
+<p>If the client certificate was issued by an Intermediate certification authority and the collector is running Windows 2012 or later you will have to configure the following registry key:</p>
+<p><strong>HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\Schannel\ClientAuthTrustMode (DWORD) = 2</strong></p>
+</li>
+<li>
+<p>Verify that both the server and client are able to successfully check revocation status on all certificates. Use of the <strong>certutil</strong> command can assist in troubleshooting any errors.</p>
+</li>
+</ul>
+<p>Find more information in this article: <a href="https://technet.microsoft.com/library/dn786429(v=ws.11).aspx">https://technet.microsoft.com/library/dn786429(v=ws.11).aspx</a></p>
+<h3>Setup the listener on the Event collector</h3>
+<ol>
+<li>
+<p>Set the certificate authentication with the following command:</p>
+<p><strong>winrm set winrm/config/service/auth '@{Certificate=&quot;true&quot;}'</strong></p>
+</li>
+<li>
+<p>A WinRM HTTPS listener with the server authentication certificate thumb print should exist on the event collector computer. This can be verified with the following command:</p>
+<p><strong>winrm e winrm/config/listener</strong></p>
+</li>
+<li>
+<p>If you do not see the HTTPS listener, or if the HTTPS listener's thumb print is not same as the thumb print of the server authentication certificate on collector computer, then you can delete that listener and create a new one with the correct thumb print. To delete the https listener, use the following command:</p>
+<p><strong>winrm delete winrm/config/Listener?Address=*+Transport=HTTPS</strong></p>
+<p>To create a new listener, use the following command:</p>
+<p><strong>winrm create winrm/config/Listener?Address=*+Transport=HTTPS '@{Hostname=&quot;</strong>&lt;<em>FQDN of the collector</em>&gt;<strong>&quot;;CertificateThumbprint=&quot;</strong>&lt;<em>Thumb print of the server authentication certificate</em>&gt;<strong>&quot;}'</strong></p>
+</li>
+</ol>
+<h3>Configure certificate mapping on the Event Collector</h3>
+<ol>
+<li>
+<p>Create new local user.</p>
+</li>
+<li>
+<p>Make this new user a local Administrator on the collector.</p>
+</li>
+<li>
+<p>Create the certificate mapping using a certificate that is present in the â€œTrusted Root Certification Authoritiesâ€ or â€œIntermediate Certification Authoritiesâ€ of the machine.</p>
+<blockquote>
+<p>[!NOTE]
+This is the certificate of the Root or Intermediate Certification Authorities (CA) that issued the certificates installed on the Event Source computers (the CA immediately above the certificate in the certificate chain):</p>
+</blockquote>
+<p><strong>winrm create winrm/config/service/certmapping?Issuer</strong>=&lt;<em>Thumbprint of the issuing CA certificate</em>&gt;<strong>+Subject=*+URI=* '@{UserName=&quot;</strong>&lt;<em>username</em>&gt;<strong>&quot;;Password=&quot;</strong>&lt;<em>password</em>&gt;<strong>&quot;}' -remote:localhost</strong></p>
+</li>
+<li>
+<p>From a client, use the following command to test the listener and the certificate mapping:</p>
+<p><strong>winrm g winrm/config -r:https://</strong>&lt;<em>Event Collector FQDN</em>&gt;<strong>:5986 -a:certificate -certificate:&quot;</strong>&lt;<em>Thumbprint of the client authentication certificate</em>&gt;<strong>&quot;</strong></p>
+<p>This should return the WinRM configuration of the Event collector. <strong>Do not</strong> move past this step if the configuration is not displayed.</p>
+<p><strong>What happens at this step?</strong></p>
+<ul>
+<li>The client connects to the Event Collector and sends the specified certificate.</li>
+<li>The Event Collector looks for the issuing CA and checks if the is a matching certificate mapping.</li>
+<li>The Event Collector validates the client certificate chain and revocations status.</li>
+<li>If these steps succeed the authentication is completed.</li>
+</ul>
+</li>
+</ol>
+<blockquote>
+<p>[!NOTE]
+You might get an Access denied error complaining about the authentication method, which could be misleading. To troubleshoot, check the CAPI log on the Event Collector.</p>
+</blockquote>
+<ol start="5">
+<li>List the configured certmapping entries with the command:
+<strong>winrm enum winrm/config/service/certmapping</strong></li>
+</ol>
+<blockquote>
+<p>[!NOTE]
+The Local user created in step 1 is never used to impersonate the user connecting through certificate authentication in an EventLog Forwarding scenario and can be deleted afterwards. If you plan to use certificate authentication in a different scenario, such as Remote Powershell, do not delete the Local user.</p>
+</blockquote>
+<h3>Event Source computer Configuration</h3>
+<ol>
+<li>
+<p>Logon with an administrator account and open the Local Group Policy Editor (gpedit.msc)</p>
+</li>
+<li>
+<p>Navigate to the Local Computer Policy\Computer Configuration\Administrative Templates\Windows Components\Event Forwarding.</p>
+</li>
+<li>
+<p>Open â€œConfigure the server address, refresh interval, and issuer certificate authority of a target Subscription Managerâ€ policy.</p>
+</li>
+<li>
+<p>Enable the policy and click the SubscriptionManagers â€œShow...â€ button.</p>
+</li>
+<li>
+<p>In the SubscriptionManagers window enter the following string:</p>
+<p><strong>Server=HTTPS://</strong>&lt;<em>FQDN of the Event Collector server</em>&gt;<strong>:5986/wsman/SubscriptionManager/WEC,Refresh=</strong> &lt;<em>Refresh interval in seconds</em>&gt;<strong>,IssuerCA=</strong>&lt;<em>Thumbprint of the issuing CA certificate</em>&gt;</p>
+</li>
+<li>
+<p>Run the following command line to refresh Local Group Policy settings:Gpupdate /force</p>
+</li>
+<li>
+<p>These steps should produce event 104 in your source computer Event Viewer Applications and Services Logs\Microsoft\Windows\Eventlog-ForwardingPlugin\Operational log with the following message:</p>
+<p>&quot;The forwarder has successfully connected to the subscription manager at address &lt;FQDN&gt;followed by event 100 with the message: &quot;The subscription &lt;sub_name&gt; is created successfully.&quot;</p>
+</li>
+<li>
+<p>On the Event Collector, the Subscription Runtime Status will show now 1 Active computer.</p>
+</li>
+<li>
+<p>Open the ForwardedEvents log on the Event Collector and check if you have the events forwarded from the Source computers.</p>
+</li>
+</ol>
+<h3>Grant permission on the private key of the client certificate on the Event Source</h3>
+<ol>
+<li>Open the Certificates management console for Local machine on the Event Source computer.</li>
+<li>Right click on the client certificate then Manage Private keys.</li>
+<li>Grant Read permission to the NETWORK SERVICE user.</li>
+</ol>
+<h3>Event subscription configuration</h3>
+<ol>
+<li>Open Event Viewer in the Event Collector and navigate to the Subscriptions node.</li>
+<li>Right-click Subscriptions and choose â€œCreate Subscriptionâ€¦â€</li>
+<li>Give a name and an optional description for the new Subscription.</li>
+<li>Select â€œSource computer initiatedâ€ option and click â€œSelect Computer Groupsâ€¦â€.</li>
+<li>In Computer Groups click on â€œAdd Non-Domain Computersâ€¦â€ and type the event source hostname.</li>
+<li>Click â€œAdd Certificatesâ€¦â€ and add the certificate of the Certification authority that issue the client certificates. You can click in View Certificate to validate the certificate.</li>
+<li>In Certificate Authorities click OK to add the certificate.</li>
+<li>When finished adding Computers click OK.</li>
+<li>Back to the Subscription Properties, click in Select Events...</li>
+<li>Configure the Events Query Filter by specifying the event level(s), event log(s) or event source(s), the event ID(s) and any other filtering options.</li>
+<li>Back to the Subscription Properties, click on Advanced...</li>
+<li>Choose one of the optimization options for event delivery from the Source Event to the Event Collector, or leave the default Normal:
+<ol>
+<li><strong>Minimize Bandwidth</strong>: Events will be delivered will less frequency to save bandwidth.</li>
+<li><strong>Minimize Latency</strong>: Events will be delivered as soon as they occur to reduce events latency.</li>
+</ol>
+</li>
+<li>Change the Protocol to HTTPS and click OK.</li>
+<li>Click OK to create the new subscription.</li>
+<li>Check the runtime status of the Subscription by right-clicking and choosing â€œRuntime Statusâ€</li>
+</ol>
+</body>

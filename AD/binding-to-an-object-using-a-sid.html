@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Binding to an Object Using a SID</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Binding to an Object Using a SID
+description: In Windows ServerÂ 2003, it is possible to bind to an object using the object Security Identifier (SID) as well as a GUID. The object SID is stored in the objectSID attribute. Binding to an SID does not work on WindowsÂ 2000.
+ms.assetid: 18b4613c-eb93-4204-96f2-0f91d7900587
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Binding to an Object Using a SID AD</li>
+<li>Active Directory, using, binding, binding to an object using a SID
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Binding to an Object Using a SID</h1>
+<p>In Windows ServerÂ 2003, it is possible to bind to an object using the object Security Identifier (SID) as well as a GUID. The object SID is stored in the <strong>objectSID</strong> attribute. Binding to an SID does not work on WindowsÂ 2000.</p>
+<p>The LDAP provider for Active Directory Domain Services provides a method to bind to an object using the object SID. The binding string format is:</p>
+<pre lang="C++"><code>LDAP://servername/&lt;SID=XXXXX&gt;
+</code></pre>
+<p>In this example, &quot;servername&quot; is the name of the directory server and &quot;XXXXX&quot; is the string representation of the hexadecimal value of the SID. The &quot;servername&quot; is optional. The SID string is specified in a form where each character in the string is the hexadecimal representation of each byte of the SID. For example, if the array is:</p>
+<pre lang="C++"><code>0xAB 0x14 0xE2
+</code></pre>
+<p>the SID binding string would be &quot;&lt;SID=AB14E2&gt;&quot;. The <a href="/windows/desktop/api/adshlp/nf-adshlp-adsencodebinarydata"><strong>ADsEncodeBinaryData</strong></a> function should not be used to convert the SID array into a string because it precedes each byte character with a backslash, which is not a valid bind string format.</p>
+<p>The SID string can also take the form &quot;&lt;SID=S-X-X-XX-XXXXXXXXXX-XXXXXXXXXX-XXXXXXXXX-XXX&gt;&quot;, where the &quot;S-X-X-XX-XXXXXXXXXX-XXXXXXXXXX-XXXXXXXXX-XXX&quot; portion is the same as the string returned by the <a href="/windows/desktop/api/sddl/nf-sddl-convertsidtostringsida"><strong>ConvertSidToStringSid</strong></a> function.</p>
+<p>When binding using the object SID, some <a href="/windows/desktop/api/iads/nn-iads-iads"><strong>IADs</strong></a> and <a href="/windows/desktop/api/iads/nn-iads-iadscontainer"><strong>IADsContainer</strong></a> methods and properties are not supported. The following <strong>IADs</strong> properties are not supported by objects obtained by binding using the object SID:</p>
+<ul>
+<li><a href="/windows/desktop/ADSI/iads-property-methods"><strong>ADsPath</strong></a></li>
+<li><a href="/windows/desktop/ADSI/iads-property-methods"><strong>Name</strong></a></li>
+<li><a href="/windows/desktop/ADSI/iads-property-methods"><strong>Parent</strong></a></li>
+</ul>
+<p>The following <strong>IADsContainer</strong> methods are not supported by objects obtained by binding using the object SID:</p>
+<ul>
+<li><a href="/windows/desktop/api/iads/nf-iads-iadscontainer-getobject"><strong>GetObject</strong></a></li>
+<li><a href="/windows/desktop/api/iads/nf-iads-iadscontainer-create"><strong>Create</strong></a></li>
+<li><a href="/windows/desktop/api/iads/nf-iads-iadscontainer-delete"><strong>Delete</strong></a></li>
+<li><a href="/windows/desktop/api/iads/nf-iads-iadscontainer-copyhere"><strong>CopyHere</strong></a></li>
+<li><a href="/windows/desktop/api/iads/nf-iads-iadscontainer-movehere"><strong>MoveHere</strong></a></li>
+</ul>
+<p>To use these methods and properties after binding to an object using the object SID, use the <a href="/windows/desktop/api/iads/nf-iads-iads-get"><strong>IADs.Get</strong></a> method to retrieve the object distinguished name and then use the distinguished name to bind to the object again.</p>
+<p>The following code example shows how to convert an <strong>objectSid</strong> into a bindable string.</p>
+<pre lang="C++"><code>HRESULT VariantArrayToBytes(VARIANT Variant, 
+    LPBYTE *ppBytes, 
+    DWORD *pdwBytes);
+
+/********
+
+    GetSIDBindStringFromVariant()
+
+    Converts a SID in VARIANT form, such as an objectSid value, and 
+    converts it into a bindable string in the form:
+
+    LDAP://&lt;SID=xxxxxxx...&gt;
+
+    The returned string is allocated with AllocADsMem and must be 
+    freed by the caller with FreeADsMem.
+
+*********/
+
+LPWSTR GetSIDBindStringFromVariant(VARIANT vSID)
+{
+    LPWSTR pwszReturn = NULL;
+
+    if(VT_ARRAY &amp; vSID.vt) 
+    {
+        HRESULT hr;
+        LPBYTE pByte;
+        DWORD dwBytes = 0;
+
+        hr = VariantArrayToBytes(vSID, &amp;pByte, &amp;dwBytes);
+        if(S_OK == hr)
+        {
+            // Convert the BYTE array into a string of hex 
+            // characters.
+            CComBSTR sbstrTemp = &quot;LDAP://&lt;SID=&quot;;
+
+            for(DWORD i = 0; i &lt; dwBytes; i++)
+            {
+                WCHAR wszByte[3];
+
+                swprintf_s(wszByte, L&quot;%02x&quot;, pByte[i]);
+                sbstrTemp += wszByte;
+            }
+
+            sbstrTemp += &quot;&gt;&quot;;
+            pwszReturn = 
+               (LPWSTR)AllocADsMem((sbstrTemp.Length() + 1) * 
+                sizeof(WCHAR));
+            if(pwszReturn)
+            {
+                wcscpy_s(pwszReturn, sbstrTemp.m_str);
+            }
+
+            FreeADsMem(pByte);
+        }
+    }
+
+    return pwszReturn;
+}
+
+/*********
+
+    VariantArrayToBytes()
+
+    This function converts a VARIANT array into an array of BYTES. 
+    This function allocates the buffer using AllocADsMem. The 
+    caller must free this memory with FreeADsMem when it is no 
+    longer required.
+
+**********/
+
+HRESULT VariantArrayToBytes(VARIANT Variant, 
+    LPBYTE *ppBytes, 
+    DWORD *pdwBytes)
+{
+    if(!(Variant.vt &amp; VT_ARRAY) ||
+        !Variant.parray ||
+        !ppBytes ||
+        !pdwBytes)
+    {
+        return E_INVALIDARG;
+    }
+
+    *ppBytes = NULL;
+    *pdwBytes = 0;
+
+    HRESULT hr = E_FAIL;
+    SAFEARRAY *pArrayVal = NULL;
+    CHAR HUGEP *pArray = NULL;
+    
+    // Retrieve the safe array.
+    pArrayVal = Variant.parray;
+    DWORD dwBytes = pArrayVal-&gt;rgsabound[0].cElements;
+    *ppBytes = (LPBYTE)AllocADsMem(dwBytes);
+    if(NULL == *ppBytes) 
+    {
+        return E_OUTOFMEMORY;
+    }
+
+    hr = SafeArrayAccessData(pArrayVal, (void HUGEP * FAR *) &amp;pArray);
+    if(SUCCEEDED(hr))
+    {
+        // Copy the bytes to the safe array.
+        CopyMemory(*ppBytes, pArray, dwBytes);
+        SafeArrayUnaccessData( pArrayVal );
+        *pdwBytes = dwBytes;
+    }
+    
+    return hr;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

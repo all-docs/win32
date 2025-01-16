@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Windows Filtering Platform Extensible Helper Class</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Windows Filtering Platform Extensible Helper Class
+description: The Windows Filtering Platform (WFP) includes a Network Diagnostics Framework (NDF) helper class, called the Filtering Platform helper class (FPHC).
+ms.assetid: 006ea30c-8682-4a3d-803a-73dba5162696
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Windows Filtering Platform Extensible Helper Class</h1>
+<p>The <a href="/windows/desktop/FWP/windows-filtering-platform-start-page">Windows Filtering Platform (WFP)</a> includes a Network Diagnostics Framework (NDF) helper class, called the Filtering Platform helper class (FPHC). FPHC can help identify the root causes of connectivity issues caused by WFP. Third-party firewall developers can implement their own NDF helper classes. FPHC extensibility allows these third-party helper classes to be invoked during diagnostics.</p>
+<p>This topic assumes familiarity with the <a href="/windows/desktop/FWP/windows-filtering-platform-start-page">WFP API</a>.</p>
+<h2>Why Extend the FPHC?</h2>
+<p>All developers that write applications that call the WFP API should write an NDF helper class that extends FPHC.</p>
+<p>FPHC can identify WFP as the cause of a connectivity issue. If available, FPHC can also identify the provider that created the filter that is blocking network traffic. FPHC passes this information to NDF, which in turn can then notify the user that WFP is causing the connectivity problem and give the name of the provider blocking traffic.</p>
+<p>However, the FPHC cannot suggest a corrective action to the user, nor can it provide the reason that the filter is blocking traffic to the user. Only a FPHC extension can perform those tasks.</p>
+<p>Consider a third-party firewall application that calls the WFP API. If the third-party firewall implements a FPHC extension, then custom actions can be implemented to handle connectivity issues identified by NDF. When NDF diagnoses that an application has been blocked by the third-party firewall, the FPHC extension can handle the blocking event. One way that the FPHC extension could handle an event is to present the user with a prompt to unblock a program using the firewall and then unblock the program upon user confirmation. Alternatively, the FPHC extension could handle an event by notifying the user of the reason why the application was blocked, such as an application was blocked because it was considered malware by the firewall.</p>
+<h2>About WFP Diagnostics</h2>
+<p>When NDF is invoked to diagnose a network issue, helper classes are contacted to determine the cause of the issue. If a higher-level helper class determines that a network failure may be caused by WFP, it generates a hypothesis for FPHC based on available information. NDF passes this hypothesis, in the form of several event attributes, to FPHC. These attributes are described in detail in the <a href="#windows-filtering-platform-extensible-helper-class">FPHC Event Attributes</a> section below.</p>
+<p>A network issue can be described as a connectivity problem affecting a particular connection attempt. For example, the user may have accidentally blocked an application by inadvertently clicking <strong>Don't allow</strong>. The firewall will then block the application from binding to any port. The user, not knowing why the application is blocked, may try to diagnose the issue through an entry point offered by the application. FPHC will look at the logs, and if it finds a match it will retrieve the filter ID and the provider ID of that particular filter. At this point, FPHC knows who the owner of that filter is, and it will hand over the diagnostic process to the appropriate helper class for further diagnosis.</p>
+<p>The most recent event in the WFP event logs to match the attributes is selected as being relevant to the network issue. If no matching events are found and the time the event happened is covered in the WFP log, FPHC indicates to NDF that it is healthy. If no matching events are found and the WFP logs do not include the time the event occurred, FPHC returns an indeterminate status to NDF.</p>
+<p>If a matching event is found, FPHC uses the provider ID of the filter which caused the event to identify the provider of the security rule that blocked connectivity. FPHC then checks whether a helper class extension exists for that provider. If one is found, FPHC generates a hypothesis for that provider and then NDF invokes the extension. The extension should return helpful diagnostic and repair information to the user.</p>
+<h2>Helper Class Registration</h2>
+<p>A FPHC extension must be registered as described in <a href="registering-ndf-helper-class-extensions.html">Registering NDF Helper Class Extensions</a>. Developers implementing a helper class must register their extensions to ensure that the extension is called by NDF when appropriate. The <em>matching attribute</em> described below must be stored in the registry under <strong>HKLM\System\CurrentControlSet\Control\NetDiagFx</strong>\<em>VendorName</em>\<strong>HostDLLs</strong>\<em>Helper Class DLL</em>\<strong>HelperClasses</strong>\<em>Helper Class Name</em>\<strong>MatchAttributes</strong>.</p>
+<p>The following table shows the matching attribute used to identify the hypothesis to use in diagnostics in the WFP event log.</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ProviderID</td>
+<td>REG_SZ</td>
+<td>The GUID of the FPHC extension. This value must be the same as the WFP Provider GUID. <!-- raw HTML omitted --> This string is case-sensitive. It should be stored in the registry in upper case with enclosing braces and hyphens. For example, {C200E360-38C5-11CE-AE62-08002B2B79EF} is a valid ProviderID.<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>When the ProviderID of a blocking filter matches that of a registered helper class, FPHC informs NDF to invoke that helper class, thus extending the diagnostic capability of FPHC.</p>
+<h2>FPHC Event Attributes</h2>
+<p>The following table lists the event attributes associated with each matching event. Each event attribute is stored in a <a href="/windows/win32/api/ndattrib/ns-ndattrib-helper_attribute"><strong>HELPER_ATTRIBUTE</strong></a> structure. These attributes are passed by NDF to FPHC when a matching event is found. These can in turn be passed to FPHC extensions.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th><a href="/windows/win32/api/ndattrib/ne-ndattrib-attribute_type"><strong>ATTRIBUTE_TYPE</strong></a> value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Provider GUID</td>
+<td>AT_GUID</td>
+<td>The GUID of the provider associated with the filter.</td>
+</tr>
+<tr>
+<td>Timestamp</td>
+<td>AT_OCTET_STRING</td>
+<td>A buffer of type FILETIME that specifies the time at which the event occurred. This time stamp can be used to uniquely identify an event.</td>
+</tr>
+<tr>
+<td>ipProtocol</td>
+<td>AT_UINT32</td>
+<td>The transport layer protocol, in UINT8 format.</td>
+</tr>
+<tr>
+<td>LocalAddr</td>
+<td>AT_SOCKADDR</td>
+<td>The local IP address and port, stored in a <a href="/windows/win32/api/ndattrib/ns-ndattrib-diag_sockaddr"><strong>DIAG_SOCKADDR</strong></a> structure.</td>
+</tr>
+<tr>
+<td>RemoteAddr</td>
+<td>AT_SOCKADDR</td>
+<td>The remote IP address and port, stored in a <a href="/windows/win32/api/ndattrib/ns-ndattrib-diag_sockaddr"><strong>DIAG_SOCKADDR</strong></a> structure.</td>
+</tr>
+<tr>
+<td>userId</td>
+<td>AT_OCTET_STRING</td>
+<td>A buffer of type SID that represents the userid. If userId is of length 0, the SID is unavailable.</td>
+</tr>
+<tr>
+<td>appId</td>
+<td>AT_STRING</td>
+<td>A buffer that stores the retrieved application identifier. If appId has a value of L&quot;&quot;, the application identifier is unavailable.</td>
+</tr>
+</tbody>
+</table>
+<h2>Handling FPHC Events</h2>
+<p>Before suggesting diagnostic and repair information to the user, a FPHC extension should gather more data than is provided by the FPHC notifications. This data can be acquired from the <a href="/windows/desktop/FWP/fwp-mgmt-functions">WFP Event Management Functions</a>. These functions are demonstrated in the <a href="/windows/desktop/FWP/displaying-net-events">Displaying Net Events</a> sample.</p>
+<p>A more detailed event management sample is included in the SDK. The source code for the sample can be found in the SDK installation location under C:\Program Files\Microsoft SDKs\Windows\&lt;version number&gt;\Samples\NetDs\WFP\DiagEvents. The Windows Vista SDK is available from the <a href="https://www.microsoft.com/download/details.aspx?id=14477">Download Center</a>.</p>
+<h2>Built-in FPHC Diagnostics</h2>
+<p>In the absence of an FPHC extension, FPHC can diagnose the scenarios listed below. Most connectivity failures diagnosed by FPHC occur because firewalls block traffic. The IPsec scenarios are less common.</p>
+<p>The following table shows some scenarios causing connectivity failures that can be diagnosed by FPHC, along with the description and repair information passed to NDF.</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Low health description</th>
+<th>Repair information</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Firewall drop</td>
+<td>The firewall settings on this computer are blocking the connection.</td>
+<td>Verify your firewall settings.</td>
+</tr>
+<tr>
+<td>Main Mode Failure</td>
+<td>You cannot connect because of an IPsec security policy mismatch.</td>
+<td>Contact the IPsec policy owner.</td>
+</tr>
+<tr>
+<td>Quick Mode Failure</td>
+<td>You cannot connect because of an IPsec security policy mismatch.</td>
+<td>Contact the IPsec policy owner.</td>
+</tr>
+<tr>
+<td>User Mode Failure</td>
+<td>You cannot connect because of an IPsec security policy mismatch.</td>
+<td>Contact the IPsec policy owner.</td>
+</tr>
+<tr>
+<td>Credential Failure</td>
+<td>You cannot connect because the root certification authority (CA) on this computer does not match the root CA on the remote computer.</td>
+<td>Update the trusted root certificate.</td>
+</tr>
+<tr>
+<td>Expired Certificate</td>
+<td>The certificate used for IPsec authentication has expired.</td>
+<td>Request a certificate.</td>
+</tr>
+<tr>
+<td>Other certificate failures</td>
+<td>A valid certificate was not found for IPsec authentication.</td>
+<td>Request a certificate.</td>
+</tr>
+<tr>
+<td>Kerberos failure</td>
+<td>The computer is not part of this domain.</td>
+<td>Join this computer to a domain.</td>
+</tr>
+<tr>
+<td>Preshared Key</td>
+<td>Reset the preshared keys.</td>
+<td>Reset the preshared keys.</td>
+</tr>
+</tbody>
+</table>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/FWP/windows-filtering-platform-start-page">Windows Filtering Platform</a></p>
+<!-- raw HTML omitted -->
+<p><a href="designing-ndf-helper-class-extensions.html">Designing NDF Helper Class Extensions</a></p>
+<!-- raw HTML omitted -->
+<p><a href="registering-ndf-helper-class-extensions.html">Registering NDF Helper Class Extensions</a></p>
+<!-- raw HTML omitted -->
+<p><a href="ndf-helper-class-examples.html">NDF Helper Class Examples</a></p>
+<!-- raw HTML omitted -->
+</body>

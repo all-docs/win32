@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data Flow in the DVD Navigator</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Data Flow in the DVD Navigator
+ms.assetid: 14f9cfa3-5ef6-419c-9196-2e4060549c03
+title: Data Flow in the DVD Navigator
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Data Flow in the DVD Navigator</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>The DVD Navigator has methods to stop and pause playback. These methods are similar â€” but not identical â€” to the <strong>Stop</strong> and <strong>Pause</strong> methods in <a href="/windows/desktop/api/Control/nn-control-imediacontrol"><strong>IMediaControl</strong></a>. Here is the difference between them:</p>
+<ul>
+<li>The <strong>IDvdControl2</strong> methods change what the DVD Navigator reads from the disk. They do not change the state of the graph.</li>
+<li>The <strong>IMediaControl</strong> methods change the state of the graph. They do not change what the DVD Navigator reads from the disk. (There is one important exception, explained in the next section, related to the <strong>Stop</strong> method.)</li>
+</ul>
+<p>For example, <a href="/windows/desktop/api/Strmif/nf-strmif-idvdcontrol2-pause"><strong>IDvdControl2::Pause</strong></a> method issues the Annex J &quot;Pause_On&quot; command, but does not pause the filter graph. The <a href="/windows/desktop/api/Control/nf-control-imediacontrol-pause"><strong>IMediaControl::Pause</strong></a> method, on the other hand, pauses the graph but does not issue any DVD command.</p>
+<p>In general, use the <strong>IMediaControl::Pause</strong> and <strong>Stop</strong> methods instead of the corresponding <strong>IDvdControl2</strong> methods. The <strong>IMediaControl</strong> methods have very small latencies, whereas the <strong>IDvdControl2</strong> methods can have up to two seconds of latency.</p>
+<p>Stopping Playback</p>
+<p>The behavior of <a href="/windows/desktop/api/Control/nf-control-imediacontrol-stop"><strong>IMediaControl::Stop</strong></a> depends on a flag that you can set with the <a href="/windows/desktop/api/Strmif/nf-strmif-idvdcontrol2-setoption"><strong>IDvdControl2::SetOption</strong></a> method.</p>
+<ul>
+<li>If the DVD_ResetOnStop flag is <strong>FALSE</strong>, <strong>IMediaControl::Stop</strong> stops the graph, but does not change the DVD Navigator's domain. When you call run again, playback resumes from the current position.</li>
+<li>If DVD_ResetOnStop is <strong>TRUE</strong>, <strong>IMediaControl::Stop</strong> causes the DVD Navigator to reset. When you call <a href="/windows/desktop/api/Control/nf-control-imediacontrol-run"><strong>IMediaControl::Run</strong></a> again, the DVD Navigator plays from the First Play domain, as if you were inserting the DVD for the first time.</li>
+</ul>
+<p>The DVD_ResetOnStop flag is <strong>TRUE</strong> by default, for compatibility with older applications. Generally, however, you should override the default and set the flag to <strong>FALSE</strong>. The reason is that certain events can cause the graph to stop during playback. For example, if the display resolution changes, the filter graph stops, reconnects the video renderer, and restarts. If DVD_ResetOnStop is <strong>TRUE</strong>, playback will restart from the beginning of the disc. That is probably not what the user expects.</p>
+<p>At the beginning of your application, therefore, call <strong>SetOption</strong> with DVD_ResetOnStop set to <strong>FALSE</strong>. If you want to stop playback and have it resume from the same location, call <strong>IMediaControl::Stop</strong> or <strong>IMediaControl::Pause</strong>. If you want to stop playback and reset the disk, call <strong>SetOption</strong> with DVD_ResetOnStop equal to <strong>TRUE</strong>; then call <strong>IMediaControl::Stop</strong>; finally, call <strong>SetOption</strong> again and reset DVD_ResetOnStop to <strong>FALSE</strong>.</p>
+<p>Pausing Playback</p>
+<p>If you give the DVD Navigator a command while the graph is paused, the command may not complete until the graph runs again. In some situations, this can cause a deadlock in your application. There are two rules you should follow to avoid deadlocks:</p>
+<ul>
+<li>While paused, do not issue more than one asynchronous DVD command.</li>
+<li>While paused, do not block the application's UI thread or the thread that changes the state of the graph.</li>
+</ul>
+<p>The second rule is worth examining in more detail. Here are some specific scenarios that may cause a deadlock:</p>
+<ul>
+<li>
+<p><strong>Scenario</strong>: While paused, the application issues a DVD command with the blocking flag. This can cause a deadlock if the thread that issues the DVD command is the same thread that issues the run command. The DVD command blocks until the graph runs, but the graph cannot run until the command completes.</p>
+<p><strong>Recommendation</strong>: Issue the DVD command on a separate worker thread, or don't use the blocking flag.</p>
+</li>
+<li>
+<p><strong>Scenario</strong>: While paused, the application issues a DVD command, then calls <a href="/windows/desktop/api/Strmif/nf-strmif-idvdcmd-waitforend"><strong>IDvdCmd::WaitForEnd</strong></a> on the command object. This situation is equivalent to the previous example. If you call <strong>Wait</strong> from the UI thread, the UI thread cannot run the graph until the <strong>Wait</strong> method unblocks, but the <strong>Wait</strong> method will not unblock until the graph runs.</p>
+<p><strong>Recommendation</strong>: Call <strong>Wait</strong> on a worker thread.</p>
+</li>
+<li>
+<p><strong>Scenario</strong>: While the graph is running, the application issues a DVD command with the blocking flag, and then calls pause from another thread. This is a possible race condition because the graph may pause before the command is issued. If one of the two threads is the UI thread, you may cause a deadlock similar to the previous two examples. This example illustrates the importance of writing thread-safe code if your application uses multiple threads.</p>
+<p><strong>Recommendation</strong>: If you use worker threads, make sure your code is thread-safe.</p>
+</li>
+<li>
+<p><strong>Scenario</strong>: While paused, the application disables the run command from the UI, and then issues an asynchronous DVD command. This case is not strictly a deadlock, because the application thread is still running. However, the user is now prevented from running the graph, and therefore the command will never complete.</p>
+<p><strong>Recommendation</strong>: When pausing, always leave the run command enabled.</p>
+</li>
+</ul>
+<p>Seeking a DVD to a Specified Time</p>
+<p>To accurately seek to a specified time on a disc, call <a href="/windows/desktop/api/Control/nf-control-imediacontrol-run"><strong>IMediaControl::Run</strong></a>. Then call <a href="/windows/desktop/api/Strmif/nf-strmif-idvdcontrol2-playattime"><strong>IDvdControl2::PlayAtTime</strong></a>, specifying the time and setting <em>dwFlags</em> to DVD_CMD_FLAG_Flush.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="dvd-applications.html">DVD Applications</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

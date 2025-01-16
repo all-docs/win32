@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Device Properties (Core Audio APIs)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Device Properties
+ms.assetid: ad8753ba-ad20-4122-b0f2-eb165f98db67
+title: Device Properties (Core Audio APIs)
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Device Properties (Core Audio APIs)</h1>
+<p>During the process of enumerating <a href="audio-endpoint-devices.html">audio endpoint devices</a>, a client application can interrogate the endpoint objects for their device properties. The device properties are exposed in MMDevice API's implementation of the <a href="/windows/win32/api/propsys/nn-propsys-ipropertystore"><strong>IPropertyStore</strong></a> interface. Given a reference to the <a href="/windows/desktop/api/Mmdeviceapi/nn-mmdeviceapi-immdevice"><strong>IMMDevice</strong></a> interface of an endpoint object, a client can obtain a reference to the endpoint object's property store by calling the <a href="/windows/desktop/api/Mmdeviceapi/nf-mmdeviceapi-immdevice-openpropertystore"><strong>IMMDevice::OpenPropertyStore</strong></a> method.</p>
+<p>Clients can read these properties, but should not set them. Property values are stored as <strong>PROPVARIANT</strong> structures.</p>
+<p>The endpoint manager sets the basic device properties for endpoints. The endpoint manager is the Windows component that is responsible for detecting the presence of audio endpoint devices.</p>
+<p>Each <strong>PKEY_Xxx</strong> property identifier in the following list is a constant of type <strong>PROPERTYKEY</strong> that is defined in header file <strong>Functiondiscoverykeys_devpkey.h</strong>. All audio endpoint devices have these device properties.</p>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="pkey-deviceinterface-friendlyname.html"><strong>PKEY_DeviceInterface_FriendlyName</strong></a></td>
+<td>The friendly name of the audio adapter to which the endpoint device is attached (for example, &quot;XYZ Audio Adapter&quot;).</td>
+</tr>
+<tr>
+<td><a href="pkey-device-devicedesc.html"><strong>PKEY_Device_DeviceDesc</strong></a></td>
+<td>The device description of the endpoint device (for example, &quot;Speakers&quot;).</td>
+</tr>
+<tr>
+<td><a href="pkey-device-friendlyname.html"><strong>PKEY_Device_FriendlyName</strong></a></td>
+<td>The friendly name of the endpoint device (for example, &quot;Speakers (XYZ Audio Adapter)&quot;).</td>
+</tr>
+<tr>
+<td><strong>PKEY_Device_InstanceId</strong></td>
+<td>Stores the audio endpoint <a href="/windows-hardware/drivers/install/device-instance-ids">device instance identifier</a>. The value can also be aquired via <a href="/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdevice-getid"><strong>IMMDevice::GetId</strong></a> method. For more information about this property, see <a href="endpoint-id-strings.html">Endpoint ID Strings</a> and <a href="/windows-hardware/drivers/install/devpkey-device-instanceid">DEVPKEY_Device_InstanceId</a>.</td>
+</tr>
+<tr>
+<td><strong>PKEY_Device_ContainerId</strong></td>
+<td>Stores the <a href="/windows-hardware/drivers/install/container-ids">container identifier</a> of the PnP device that implements the audio endpoint. For more information about this property, see <a href="/windows-hardware/drivers/install/devpkey-device-containerid">DEVPKEY_Device_ContainerId</a>.</td>
+</tr>
+</tbody>
+</table>
+<p>Some audio endpoint devices might have additional properties that do not appear in the preceding list. For more information about additional properties, see <a href="audio-endpoint-properties.html">Audio Endpoint Properties</a>.</p>
+<p>For more information about <strong>PROPERTYKEY</strong>, see the <a href="/windows/win32/api/wtypes/ns-wtypes-propertykey">Windows Property System documentation</a>.</p>
+<p>The following code example prints the display names of all audio-rendering endpoint devices in the system:</p>
+<pre lang="C++"><code>//-----------------------------------------------------------
+// This function enumerates all active (plugged in) audio
+// rendering endpoint devices. It prints the friendly name
+// and endpoint ID string of each endpoint device.
+//-----------------------------------------------------------
+#define EXIT_ON_ERROR(hres)  \
+              if (FAILED(hres)) { goto Exit; }
+#define SAFE_RELEASE(punk)  \
+              if ((punk) != NULL)  \
+                { (punk)-&gt;Release(); (punk) = NULL; }
+
+const CLSID CLSID_MMDeviceEnumerator = __uuidof(MMDeviceEnumerator);
+const IID IID_IMMDeviceEnumerator = __uuidof(IMMDeviceEnumerator);
+
+void PrintEndpointNames()
+{
+    HRESULT hr = S_OK;
+    IMMDeviceEnumerator *pEnumerator = NULL;
+    IMMDeviceCollection *pCollection = NULL;
+    IMMDevice *pEndpoint = NULL;
+    IPropertyStore *pProps = NULL;
+    LPWSTR pwszID = NULL;
+
+    hr = CoCreateInstance(
+           CLSID_MMDeviceEnumerator, NULL,
+           CLSCTX_ALL, IID_IMMDeviceEnumerator,
+           (void**)&amp;pEnumerator);
+    EXIT_ON_ERROR(hr)
+
+    hr = pEnumerator-&gt;EnumAudioEndpoints(
+                        eRender, DEVICE_STATE_ACTIVE,
+                        &amp;pCollection);
+    EXIT_ON_ERROR(hr)
+
+    UINT  count;
+    hr = pCollection-&gt;GetCount(&amp;count);
+    EXIT_ON_ERROR(hr)
+
+    if (count == 0)
+    {
+        printf(&quot;No endpoints found.\n&quot;);
+    }
+
+    // Each loop prints the name of an endpoint device.
+    for (ULONG i = 0; i &lt; count; i++)
+    {
+        // Get pointer to endpoint number i.
+        hr = pCollection-&gt;Item(i, &amp;pEndpoint);
+        EXIT_ON_ERROR(hr)
+
+        // Get the endpoint ID string.
+        hr = pEndpoint-&gt;GetId(&amp;pwszID);
+        EXIT_ON_ERROR(hr)
+        
+        hr = pEndpoint-&gt;OpenPropertyStore(
+                          STGM_READ, &amp;pProps);
+        EXIT_ON_ERROR(hr)
+
+        PROPVARIANT varName;
+        // Initialize container for property value.
+        PropVariantInit(&amp;varName);
+
+        // Get the endpoint's friendly-name property.
+        hr = pProps-&gt;GetValue(
+                       PKEY_Device_FriendlyName, &amp;varName);
+        EXIT_ON_ERROR(hr)
+
+        // GetValue succeeds and returns S_OK if PKEY_Device_FriendlyName is not found.
+        // In this case vartName.vt is set to VT_EMPTY.      
+        if (varName.vt != VT_EMPTY)
+        {
+            // Print endpoint friendly name and endpoint ID.
+            printf(&quot;Endpoint %d: \&quot;%S\&quot; (%S)\n&quot;, 
+                    i, varName.pwszVal, pwszID);
+        }
+
+        CoTaskMemFree(pwszID);
+        pwszID = NULL;
+        PropVariantClear(&amp;varName);
+        SAFE_RELEASE(pProps)
+        SAFE_RELEASE(pEndpoint)
+    }
+    SAFE_RELEASE(pEnumerator)
+    SAFE_RELEASE(pCollection)
+    return;
+
+Exit:
+    printf(&quot;Error!\n&quot;);
+    CoTaskMemFree(pwszID);
+    SAFE_RELEASE(pEnumerator)
+    SAFE_RELEASE(pCollection)
+    SAFE_RELEASE(pEndpoint)
+    SAFE_RELEASE(pProps)
+}
+</code></pre>
+<p>The FAILED macro in the preceding code example is defined in header file Winerror.h.</p>
+<p>In the preceding code example, the <strong>for</strong>-loop body in the PrintEndpointNames function calls the <a href="/windows/desktop/api/Mmdeviceapi/nf-mmdeviceapi-immdevice-getid"><strong>IMMDevice::GetId</strong></a> method to obtain the <a href="endpoint-id-strings.html">endpoint ID string</a> for the audio endpoint device that is represented by the <strong>IMMDevice</strong> interface instance. The string uniquely identifies the device with respect to all of the other audio endpoint devices in the system. A client can use the endpoint ID string to create an instance of the audio endpoint device at a later time or in a different process by calling the <a href="/windows/desktop/api/Mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdevice"><strong>IMMDeviceEnumerator::GetDevice</strong></a> method. Clients should treat the contents of the endpoint ID string as opaque. That is, clients should not attempt to parse the contents of the string to obtain information about the device. The reason is that the string format is undefined and might change from one implementation of the MMDevice API to the next.</p>
+<p>The friendly device names and endpoint ID strings that are obtained by the PrintEndpointNames function in the preceding code example are identical to the friendly device names and endpoint ID strings that are provided by DirectSound during device enumeration. For more information, see <a href="audio-events-for-legacy-audio-applications.html">Audio Events for Legacy Audio Applications</a>.</p>
+<p>In the preceding code example, the PrintEndpointNames function calls the <strong>CoCreateInstance</strong> function to create an enumerator for the audio endpoint devices in the system. Unless the calling program previously called either the <strong>CoInitialize</strong> or <strong>CoInitializeEx</strong> function to initialize the COM library, the <strong>CoCreateInstance</strong> call will fail. For more information about <strong>CoCreateInstance</strong>, <strong>CoInitialize</strong>, and <strong>CoInitializeEx</strong>, see the Windows SDK documentation.</p>
+<p>For more information about the <strong>IMMDeviceEnumerator</strong>, <strong>IMMDeviceCollection</strong>, and <strong>IMMDevice</strong> interfaces, see <a href="mmdevice-api.html">MMDevice API</a>.</p>
+<h2>Related topics</h2>
+<p><a href="audio-endpoint-devices.html">Audio Endpoint Devices</a></p>
+</body>

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Leaky Bucket Buffer Model (Microsoft Media Foundation)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The &amp;#0034;leaky bucket&amp;#0034; model is a way to model the buffering requirements for smooth playback.
+ms.assetid: 2f7f80d6-3abb-462f-a571-b223a1d59da6
+title: The Leaky Bucket Buffer Model (Microsoft Media Foundation)
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>The Leaky Bucket Buffer Model (Microsoft Media Foundation)</h1>
+<p>When you stream media over a network, the decoder receives encoded data at a theoretically constant rate (the transmission rate). The decoder consumes this data to produce decoded output. In the general case, however, the decoder consumes the data at a <em>variable</em> rate, because then encoder can use a variable encoding rate.</p>
+<p>The &quot;leaky bucket&quot; model is a way to model the buffering requirements for smooth playback. In this model, the decoder maintains a buffer. Encoded data goes from the network into the buffer, and from the buffer into the decoder. If the buffer underflows, it means the decoder is removing data from the buffer faster than the network is delivering it. If the buffer overflows, it means the network is delivering data faster than the decoder consumes it.</p>
+<p>This topic describes the &quot;leaky bucket&quot; model of buffers for encoding and decoding.</p>
+<ul>
+<li><a href="#the-leaky-bucket">The Leaky Bucket</a></li>
+<li><a href="#the-bucket-in-use">The Bucket in Use</a></li>
+<li><a href="#setting-leaky-bucket-values-for-asf-streams">Setting Leaky Bucket Values for ASF Streams</a></li>
+<li><a href="#leaky-bucket-values-in-the-asf-multiplexer">Leaky Bucket Values in the ASF Multiplexer</a></li>
+<li><a href="#updating-leaky-bucket-values-in-the-asf-media-sink">Updating Leaky Bucket Values in the ASF Media Sink</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>The Leaky Bucket</h2>
+<p>To understand the leaky bucket model, consider a bucket with a small hole at the bottom. Three parameters define the bucket:</p>
+<ul>
+<li>The capacity (B)</li>
+<li>The rate at which water flows out of the bucket (R)</li>
+<li>The initial fullness of the bucket (F)</li>
+</ul>
+<p>In this metaphor, the bucket is the buffer:</p>
+<p><img src="images/asf-components03.png" alt="illustration showing a buffer as a bucket, input rate as water entering the bucket, and output rate as water leaving through a hole in the bucket" /></p>
+<p>If water is poured into the bucket at exactly rate <em>R</em>, the bucket will remain at F, because the input rate equals the output rate. If the input rate increases while <em>R</em> remains constant, the bucket accumulates water. If the input rate is larger than <em>R</em> for a sustained period, eventually the bucket overflows. However, the input rate can vary around <em>R</em> without overflowing the bucket, as long as the average input rate does not exceed the capacity of the bucket. The larger the capacity, the more the input rate can vary within a given window of time.</p>
+<p>In ASF, the leaky bucket is defined by three parameters:</p>
+<ul>
+<li>The average bit rate, in bytes per second, which corresponds to the output rate (<em>R</em>)</li>
+<li>The buffer window, measured in milliseconds, which corresponds to the bucket capacity (<em>B</em>).</li>
+<li>The initial buffer fullness, which is generally set to zero.</li>
+</ul>
+<p>The bit rate measures the average number of bits per second in the encoded stream. The buffer window measures the number of milliseconds of data at that bit rate that can fit in the buffer. The size of the buffer in bits is equal to R * (B / 1000).</p>
+<p>ASF payload data may enter the leaky bucket at irregular times and in irregular amounts, but must leave the bucket at a constant positive bit rate. Because of the buffer window, there is a possible delay between the time that payload enters the bucket and when it leaves. The maximum delay that can occur is <em>B</em>/<em>R</em>. The payload data that enters into the bucket is according to the presentation time and must never overflow the bucket. In addition to the presentation time, each payload also has a send timeâ€”the time at which the payload data leaves the bucket according to the bit rate. Send time must be earlier than the presentation time to ensure that, when the leaky bucket gets close to being full, every payload leaves the bucket before or at its presentation time. To accomplish this, the presentation times are shifted ahead by the <em>B</em>/<em>R</em> value (the <em>preroll</em>), and the send times get a head start starting at zero. The send time must be no later than the presentation time because that would indicate that the payload entered the bucket too late and cannot be included in the data object. The preroll value is included in the <a href="asf-file-structure.html">ASF Header Object</a> .</p>
+<p>For glitch-free streaming over the network, compressed streams within the media content must maintain a constant bit rate throughout the playback duration. The ASF leaky bucket model ensures that media data is sent across the network at a constant bit rate. The parameters of the leaky bucket are specified in the Extended Stream Properties Object of the <a href="asf-file-structure.html">ASF Header Object</a>. In Microsoft Media Foundation, they are set as attributes on the media type that represents the stream.</p>
+<p>The leaky bucket values are defined both in the ASF file sink and the underlying ASF multiplexer object, and the Windows Media encoder. These values could be same or different. For example, consider a streaming scenario, which requires the audio samples to be delivered later than the video samples so that the file can be streamed without latency. To achieve this, the audio stream's leaky bucket in the media sink can be set to a value higher than the value set in the Windows Media audio encoder.</p>
+<p>To set B/R values in the encoder, the application must set the <a href="mfpkey-ravgproperty.html"><strong>MFPKEY_RAVG</strong></a>, <a href="mfpkey-bavgproperty.html"><strong>MFPKEY_BAVG</strong></a>, <a href="mfpkey-rmaxproperty.html"><strong>MFPKEY_RMAX</strong></a>, and <a href="mfpkey-bmaxproperty.html"><strong>MFPKEY_BMAX</strong></a> properties. For information about setting properties in the encoder, see <a href="configuring-the-encoder.html">Encoding Properties</a>.</p>
+<h2>The Bucket in Use</h2>
+<p>The goal of an encoder is to ensure that the content never overflows the buffer. The encoder uses the bit rate and buffer window values as guides. The actual number of bits passed over any period of time equal to the buffer window can never be greater than twice the size of the buffer.</p>
+<p>Consider the following example: You have a 3-gallon bucket with a hole in it through which 1 gallon can flow per minute. You put the bucket under a spigot and open the valve to let out water at a rate of 1 gallon per minute. The water flows out of the bucket as quickly as it enters, leaving no extra in the bucket. Then you increase the flow from the spigot to 2 gallons per minute. Each minute that the water flows at this rate, 2 gallons go into the bucket and 1 gallon leaks out, leaving 1 gallon in the bucket. At the end of 3 minutes, 6 gallons of water have gone into the bucket, 3 gallons have leaked out, and the bucket is full.</p>
+<p>In practice, the theoretical maximum data rate over an interval equal to the buffer window is never achieved. The previous example assumed a constant data rate. Given the same 3-gallon bucket, you could increase the flow rate from the spigot to 6 gallons per minute for one minute and then turn the spigot off for two minutes. Even though the total amount of water put into the bucket is within the theoretical maximum for the buffer window, the concentration of that amount into one part of the window causes the bucket to overflow. At 6 gallons per minute, the 3-gallon bucket overflows shortly after 30 seconds pass. Therefore, the actual maximum amount of data that can be delivered to the buffer over the duration of any interval equal to the buffer window setting depends upon the size of individual samples and when they are delivered.</p>
+<p>So far the examples have only discussed the buffer used by the decoder, but a leaky bucket buffer is also used by the encoder which creates the compressed content. The encoder makes whatever adjustments are necessary to the compression algorithms to keep the bit rate of the compressed samples within the boundaries described by the bit rate and buffer window, assuming that the samples will be delivered to the decoder at a constant rate. You can think of the encoder bucket as mirroring the decoder bucket. The encoder bucket is filled at a variable rate determined by the size of the individual samples and leaks at a constant rate equal to the average bit rate.</p>
+<p>Consider the following example of an encoder and decoder connected together over a network. You encode a video file at 30 frames per second with a bit rate of 6,000 bits per second and a buffer window of 3 seconds (a total buffer size of 18,000 bits). The first sample is encoded as a key frame and takes up 7,000 bits. The encoder buffer now contains 7,000 bits. The next 29 frames are all delta frames that total 3,000 bits. So the first second of content (30 frames) would put the buffer fullness at 10,000 bits if nothing were leaking out. We know that the bit rate of the stream is 6,000 bits per second, so after the first second of encoded content is put in the encoder buffer, the fullness drops to 4,000 bits. In the decoding application, this stream is delivered to the decoder buffer at 6,000 bits per second. After one second, the buffer contains 6,000 bits. The first sample contains 7,000 bits, so the decoder buffer must be filled more before the decoder begins removing samples.</p>
+<h2>Setting Leaky Bucket Values for ASF Streams</h2>
+<p>In a file-encoding scenario, an application can set the leaky bucket values while configuring the streams in the <a href="asf-profile.html">ASF Profile</a>.</p>
+<p>After you have created the stream and have a reference to the stream's <a href="/windows/desktop/api/wmcontainer/nn-wmcontainer-imfasfstreamconfig"><strong>IMFASFStreamConfig</strong></a> interface, you can set the values by using the following attributes:</p>
+<ul>
+<li><a href="mf-asfstreamconfig-leakybucket1-attribute.html"><strong>MF_ASFSTREAMCONFIG_LEAKYBUCKET1</strong></a> (average leaky bucket values)</li>
+<li><a href="mf-asfstreamconfig-leakybucket2-attribute.html"><strong>MF_ASFSTREAMCONFIG_LEAKYBUCKET2</strong></a> (maximum leaky bucket values)</li>
+</ul>
+<p>For information about adding streams and getting the <strong>IMFASFStreamConfig</strong> pointer, see <a href="adding-stream-information-to-the-asf-file-sink.html">Adding Stream Information to the ASF File Sink</a>.</p>
+<p>These values contain the following set of information:</p>
+<ul>
+<li>Average bit rate: Get the average bit rate from the output media type that is selected during media type negotiation. Use the <a href="mf-mt-audio-avg-bytes-per-second-attribute.html"><strong>MF_MT_AUDIO_AVG_BYTES_PER_SECOND</strong></a> attribute (for audio streams) or the <a href="mf-mt-avg-bitrate-attribute.html"><strong>MF_MT_AVG_BITRATE</strong></a> attribute (for video streams).</li>
+<li>Buffer window: If you have an instance of the encoder and have negotiated output media types, you can update this value later by querying the encoder for the <a href="/windows/desktop/api/wmcodecdsp/nn-wmcodecdsp-iwmcodecleakybucket"><strong>IWMCodecLeakyBucket</strong></a> interface and then calling <a href="../wmformat/iwmcodecleakybucket-getbuffersizebits.html"><strong>IWMCodecLeakyBucket::GetBufferSizeBits</strong></a> (wmcodecifaces.h, wmcodecdspuuid.lib). Otherwise, Use the default value of 3000 milliseconds.</li>
+<li>Initial buffer size: Set to 0.</li>
+</ul>
+<p>The values provided by the application depend on the type of encoding and the media type of the stream. For example, <a href="constant-bit-rate-encoding.html">Constant Bit Rate Encoding</a> requires a predetermined fixed bit rate and a buffer window. The application can specify these leaky bucket values by setting the <a href="mfpkey-videowindowproperty.html"><strong>MFPKEY_VIDEOWINDOW</strong></a> encoding property and the <a href="mf-asfstreamconfig-leakybucket1-attribute.html"><strong>MF_ASFSTREAMCONFIG_LEAKYBUCKET1</strong></a> attribute on the stream. The specified buffer window values are used to make sure that the encoded file has the correct send times marked on the data packets and the preroll value appears in the ASF Header Object. It is sufficient to set <strong>MF_ASFSTREAMCONFIG_LEAKYBUCKET1</strong> because these specified values are copied into the <a href="mf-asfstreamconfig-leakybucket2-attribute.html"><strong>MF_ASFSTREAMCONFIG_LEAKYBUCKET2</strong></a> attribute.</p>
+<p>For 2-pass encoding modes you need to set both of these attributes to specify the average and maximum values.</p>
+<p>For VBR encoding, the application can query for the leaky bucket values used by the encoder only after the encoding pass is complete. Therefore, while configuring the media sink, the application can choose not to set the attributes or properties related to leaky buckets. After encoding, the application must query the encoder for the <a href="mfpkey-ravgproperty.html"><strong>MFPKEY_RAVG</strong></a>, <a href="mfpkey-bavgproperty.html"><strong>MFPKEY_BAVG</strong></a>, <a href="mfpkey-rmaxproperty.html"><strong>MFPKEY_RMAX</strong></a>, and <a href="mfpkey-bmaxproperty.html"><strong>MFPKEY_BMAX</strong></a> properties and set them in the media sink so that the accurate values are reflected in the Header Object. For code example about how to update the values for VBR encoding, see &quot;Update Encoding Properties in the File Sink&quot; in <a href="tutorial--1-pass-windows-media-encoding.html">Tutorial: 1-Pass Windows Media Encoding</a>.</p>
+<p>If you are copying Windows Media content from source to media sink without encoding, the leaky bucket values must be set in the media sink.</p>
+<h2>Leaky Bucket Values in the ASF Multiplexer</h2>
+<p>In Media Foundation, the leaky bucket values are used by the <a href="asf-multiplexer.html">ASF Multiplexer</a> to set up the internal leaky bucket values that it uses to generate data packets. The payload is contained within a media sample and a series of media samples constitutes an ASF data packet. Based on the leaky bucket values and the presentation time, the multiplexer assigns a send time for each media sample so that the bit rates of the packets being sent across the network is at a constant bit rate (<em>R</em>).</p>
+<p>An application cannot set leaky bucket values in the multiplexer directly. The values must be provided on the ASF media sink, which sets the appropriate values on the multiplexer. The values set in <a href="mf-asfstreamconfig-leakybucket1-attribute.html"><strong>MF_ASFSTREAMCONFIG_LEAKYBUCKET1</strong></a> and <a href="mf-asfstreamconfig-leakybucket2-attribute.html"><strong>MF_ASFSTREAMCONFIG_LEAKYBUCKET2</strong></a> are used by the multiplexer to validate the samples sent to the ASF media sink are generated by using the specified values.</p>
+<h2>Updating Leaky Bucket Values in the ASF Media Sink</h2>
+<p>An application can overwrite the stream-level leaky bucket values (set in the ASF profile during stream creation) by setting the <a href="mfpkey-asfstreamsink-corrected-leakybucket-property.html"><strong>MFPKEY_ASFSTREAMSINK_CORRECTED_LEAKYBUCKET</strong></a> property in the media sink's property store. To get a reference to the property store, use the ContentInfo object implemented by the media sink. For more information, see <a href="setting-properties-in-the-file-sink.html">Setting Properties in the File Sink</a>.</p>
+<p><strong>Note</strong>Â Â This operation is only allowed for audio streams.</p>
+<p>This property must be set after you have set the output type on the encoder. Based on the bit rate set in the media type, the encoder calculates the buffer size to ensure that the generated media samples never overflow the buffer. The encoder makes necessary adjustments during compression to keep the bit rate of the compressed samples within the boundaries described by the bit rate and buffer window.</p>
+<p>Similar to the stream configuration attributes for leaky buckets, set the average bit rate and the buffer size, and the initial buffer fullness in an array of DWORDs. For more information, see &quot;Setting Leaky Bucket Values for ASF Streams&quot; section in this topic.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="asf-support-in-media-foundation.html">ASF Support in Media Foundation</a></p>
+<!-- raw HTML omitted -->
+<p><a href="windows-media-codecs.html">Windows Media Codecs</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

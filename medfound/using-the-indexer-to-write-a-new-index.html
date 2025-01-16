@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using the Indexer to Write a New Index</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic shows how to write an index for an Advanced Systems Format (ASF) file.
+ms.assetid: a14e3bef-0232-4259-930a-d860ed9230fd
+title: Using the Indexer to Write a New Index
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using the Indexer to Write a New Index</h1>
+<p>This topic shows how to write an index for an Advanced Systems Format (ASF) file.</p>
+<p>Here is the general procedure for creating an ASF index:</p>
+<ol>
+<li>Initialize a new instance of the ASF indexer object, as described in <a href="indexer-creation-and-configuration.html">Indexer Creation and Configuration</a>.</li>
+<li>Optionally, configure the indexer.</li>
+<li>Send ASF data packets to the indexer.</li>
+<li>Commit the index.</li>
+<li>Get the completed index from the indexer, and write it to a stream.</li>
+</ol>
+<h2>Configure the Indexer</h2>
+<p>To use the indexer to write a new index object, the indexer object must have the flag MFASF_INDEXER_WRITE_NEW_INDEX set with a call to <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-setflags"><strong>IMFASFIndexer::SetFlags</strong></a> before it is initialized with <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-initialize"><strong>IMFASFIndexer::Initialize</strong></a>.</p>
+<p>When the indexer is configured for writing an index, the caller chooses the streams to be indexed. By default, the indexer attempts to create an Index Object for all streams. The default time interval is one second.</p>
+<p><a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-setindexstatus"><strong>IMFASFIndexer::SetIndexStatus</strong></a> can be used to override the indexer object's default choice of streams and index types.</p>
+<p>The following example code shows the initialization of an ASF_INDEX_DESCRIPTOR and an ASF_INDEX_IDENTIFIER before a call to <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-setindexstatus"><strong>SetIndexStatus</strong></a>.</p>
+<pre><code>ASF_INDEX_DESCRIPTOR IndexerType;
+ZeroMemory(&amp;IndexerType, sizeof(ASF_INDEX_DESCRIPTOR));
+
+ASF_INDEX_IDENTIFIER IndexIdentifier;
+ZeroMemory(&amp;IndexIdentifier, sizeof(ASF_INDEX_IDENTIFIER));
+
+IndexIdentifier.guidIndexType = GUID_NULL;
+IndexIdentifier.wStreamNumber = 1;
+
+IndexerType.Identifier = IndexIdentifier;
+IndexerType.cPerEntryBytes  = MFASFINDEXER_PER_ENTRY_BYTES_DYNAMIC;
+IndexerType.dwInterval  = MFASFINDEXER_NO_FIXED_INTERVAL;
+
+hr = pIndexer-&gt;SetIndexStatus((BYTE*)&amp;IndexerType, sizeof(ASF_INDEX_DESCRIPTOR), TRUE);
+</code></pre>
+<p>The index identifier must have its GUID index type set to GUID_NULL to indicate that the index type will be presentation time-based. The index identifier must also be initialized with the stream number of the ASF stream to be indexed. After the index identifier is set, use it to initialize the index descriptor.</p>
+<p>The index descriptor structure has members which must be set before the call to <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-setindexstatus"><strong>SetIndexStatus</strong></a>. <strong>Identifier</strong> is an <a href="/windows/desktop/api/wmcontainer/ns-wmcontainer-asf_index_identifier"><strong>ASF_INDEX_IDENTIFIER</strong></a> structure that identifies the stream number and the type of index. <strong>cPerEntryBytes</strong> is the number of bytes used for each index entry. If the value is MFASFINDEXER_PER_ENTRY_BYTES_DYNAMIC, the index entries have variable size. <strong>dwInterval</strong> is the indexing interval. A value of MFASFINDEXER_NO_FIXED_INTERVAL indicates that there is no fixed indexing interval.</p>
+<h2>Send ASF Data Packets to the Indexer</h2>
+<p>Because the indexer is a WMContainer level object, it must be used in conjunction with the multiplexer during packet generation.</p>
+<p>Packets returned from <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfmultiplexer-getnextpacket"><strong>GetNextPacket</strong></a> can be sent to the indexer object through calls to <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-generateindexentries"><strong>GenerateIndexEntries</strong></a> where it creates index entries for each packet sent.</p>
+<p>The following code demonstrates how this may be done:</p>
+<pre lang="C++"><code>HRESULT SendSampleToMux(
+    IMFASFMultiplexer *pMux,
+    IMFASFIndexer *pIndex,
+    IMFSample *pSample,
+    WORD wStream,
+    IMFByteStream *pDestStream
+    )
+{
+    IMFSample *pOutputSample = NULL;
+    IMFMediaBuffer *pDataPacket = NULL;
+
+    DWORD dwMuxStatus = ASF_STATUSFLAGS_INCOMPLETE;
+
+    HRESULT hr = pMux-&gt;ProcessSample(wStream, pSample, 0);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    while (dwMuxStatus &amp; ASF_STATUSFLAGS_INCOMPLETE)
+    {
+        hr = pMux-&gt;GetNextPacket(&amp;dwMuxStatus, &amp;pOutputSample);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        if (pOutputSample)
+        {
+            // Send the data packet to the indexer
+            hr = pIndex-&gt;GenerateIndexEntries(pOutputSample);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+
+            // Convert the sample to a contiguous buffer.
+            hr = pOutputSample-&gt;ConvertToContiguousBuffer(&amp;pDataPacket);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+
+            // Write the buffer to the byte stream.
+            hr = WriteBufferToByteStream(pDestStream, pDataPacket, NULL);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+        }
+
+        SafeRelease(&amp;pOutputSample);
+        SafeRelease(&amp;pDataPacket);
+    }
+
+done:
+    SafeRelease(&amp;pOutputSample);
+    SafeRelease(&amp;pDataPacket);
+    return hr;
+}
+</code></pre>
+<p>For more information, see <a href="generating-new-asf-data-packets.html">Generating New ASF Data Packets</a>.</p>
+<h2>Commit the Index</h2>
+<p>After the last packet has had an index entry created for it, the index must be committed. This is done with a call to <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-commitindex"><strong>IMFASFIndexer::CommitIndex</strong></a>. <strong>CommitIndex</strong> takes a pointer to the ContentInfo object which describes the content of the ASF file. Committing the index finishes the indexing and updates the header with new information about file size and seekability.</p>
+<h2>Get the Completed Index</h2>
+<p>To get the completed index from the indexer, perform the following steps:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-getindexwritespace"><strong>IMFASFIndexer::GetIndexWriteSpace</strong></a> to get the size of the index.</li>
+<li>Call <a href="/windows/desktop/api/mfapi/nf-mfapi-mfcreatememorybuffer"><strong>MFCreateMemoryBuffer</strong></a> to create a media buffer. You can either allocate an buffer that is large enough to hold the entire index, of allocate a smaller buffer and get the index in chunks.</li>
+<li>Call <a href="/windows/desktop/api/wmcontainer/nf-wmcontainer-imfasfindexer-getcompletedindex"><strong>IMFASFIndexer::GetCompletedIndex</strong></a> to get the index data. On the first call, set the <em>cbOffsetWithinIndex</em> parameter to zero. If you get the index in chunks, increment <em>cbOffsetWithinIndex</em> each time by the size of the data from the previous call.</li>
+<li>Call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediabuffer-lock"><strong>IMFMediaBuffer::Lock</strong></a> to get a pointer to the index data and the size of the data.</li>
+<li>Write the index data to the ASF file.</li>
+<li>Call <a href="/windows/desktop/api/mfobjects/nf-mfobjects-imfmediabuffer-unlock"><strong>IMFMediaBuffer::Unlock</strong></a> to unlock the media buffer.</li>
+<li>Repeat steps 3â€“6 until you have written the entire index.</li>
+</ol>
+<p>The following code shows these steps:</p>
+<pre lang="C++"><code>HRESULT WriteASFIndex(IMFASFIndexer *pIndex,IMFByteStream *pStream)
+{
+    const DWORD cbChunkSize = 4096;
+
+    IMFMediaBuffer *pBuffer = NULL;
+
+    QWORD cbIndex = 0;
+    DWORD cbIndexWritten = 0;
+
+    HRESULT hr = pIndex-&gt;GetIndexWriteSpace(&amp;cbIndex);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = MFCreateMemoryBuffer(cbChunkSize, &amp;pBuffer);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    while (cbIndexWritten &lt; cbIndex)
+    {
+        BYTE *pData = NULL;
+        DWORD cbData = 0;
+        DWORD cbWritten = 0;
+
+        hr = pIndex-&gt;GetCompletedIndex(pBuffer, cbIndexWritten);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        hr = pBuffer-&gt;Lock(&amp;pData, NULL, &amp;cbData);
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        hr = pStream-&gt;Write(pData, cbData, &amp;cbWritten);
+
+        (void)pBuffer-&gt;Unlock();
+
+        if (FAILED(hr))
+        {
+            goto done;
+        }
+
+        cbIndexWritten += cbData;
+    }
+
+done:
+    SafeRelease(&amp;pBuffer);
+    return hr;
+};
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="asf-index-object.html">ASF Indexer</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

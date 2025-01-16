@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Customize Toolbars</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: How to Customize Toolbars
+description: Most Windows-based applications use toolbar controls to provide users with convenient access to the program functionality.
+ms.assetid: 0CE2988E-D887-433B-BFB2-5F3442E8E1B7
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to Customize Toolbars</h1>
+<p>Most Windows-based applications use toolbar controls to provide users with convenient access to the program functionality. However, static toolbars have some shortcomingsâ€”such as too little space to effectively display all the available tools. The solution to this problem is to make your application's toolbars user-customizable. Then, users can choose to display only the tools they need, and they can organize them in a way that suits their personal workstyle.</p>
+<blockquote>
+<p>[!Note]<br />
+Toolbars in dialog boxes cannot be customized.</p>
+</blockquote>
+<p>Â </p>
+<p>To enable customization, include the <a href="common-control-styles.html"><strong>CCS_ADJUSTABLE</strong></a> common controls style flag when you create the toolbar control. There are two basic approaches to customization:</p>
+<ul>
+<li>The customization dialog box. This system-provided dialog box is the simplest approach. It gives users a graphical user interface that allows them to add, delete, or move icons.</li>
+<li>Dragging and dropping tools. Implementing drag-and-drop functionality allows users to move tools to another location on the toolbar or delete them by dragging them off the toolbar. It provides users a quick and easy way to organize their toolbar, but does not allow them to add tools.</li>
+</ul>
+<p>You can implement either approach or both, depending on the needs of the application. Neither of these two approaches to customization provides a built-in mechanism, such as a Cancel or Undo button, to return the toolbar to its former state. You must explicitly use the toolbar control API to store the toolbar's precustomization state. If necessary, you can later use this stored information to restore the toolbar to its original state.</p>
+<h2>What you need to know</h2>
+<h3>Technologies</h3>
+<ul>
+<li><a href="window-controls.html">Windows Controls</a></li>
+</ul>
+<h3>Prerequisites</h3>
+<ul>
+<li>C/C++</li>
+<li>Windows User Interface Programming</li>
+</ul>
+<h2>Instructions</h2>
+<h3>Customization Dialog Box</h3>
+<p>The customization dialog box is provided by the toolbar control to give users a simple way to add, move, or delete tools. Users can launch it by double-clicking the toolbar. Applications can launch the customization dialog box programmatically by sending the toolbar control a <a href="tb-customize.html"><strong>TB_CUSTOMIZE</strong></a> message.</p>
+<p>The following illustration shows an example of the toolbar customization dialog box.</p>
+<p><img src="images/tb-customdlg.png" alt="screen shot of a window with a three-item toolbar, and a dialog box with lists of the available and current toolbar buttons" /></p>
+<p>The tools in the list box on the right are those currently on the toolbar. Initially, this list will contain the tools that you specify when you create the toolbar. The list box in the left contains the tools that are available to add to the toolbar. Your application is responsible for populating that list (other than with the Separator, which appears automatically).</p>
+<p>The toolbar control notifies your application that it is launching a customization dialog box by sending its parent window a <a href="tbn-beginadjust.html">TBN_BEGINADJUST</a> notification code followed by a <a href="tbn-initcustomize.html">TBN_INITCUSTOMIZE</a> notification code. In most cases, the application does not need to respond to these notification codes. However, if you do not want the Customize Toolbar dialog box to display a Help button, handle TBN_INITCUSTOMIZE by returning TBNRF_HIDEHELP.</p>
+<p>The toolbar control then collects the information it needs to initialize the dialog box by sending three series of notification codes, in the following order:</p>
+<ul>
+<li>A <a href="tbn-queryinsert.html">TBN_QUERYINSERT</a> notification code for each button on the toolbar to determine where buttons can be inserted. Return <strong>FALSE</strong> to prevent a button from being inserted to the left of the button specified in the notification message. If you return <strong>FALSE</strong> to all TBN_QUERYINSERT notification codes, the dialog box will not be displayed.</li>
+<li>A <a href="tbn-querydelete.html">TBN_QUERYDELETE</a> notification code for each tool that is currently on the toolbar. Return <strong>TRUE</strong> if a tool can be deleted, or <strong>FALSE</strong> if not.</li>
+<li>A series of <a href="tbn-getbuttoninfo.html">TBN_GETBUTTONINFO</a> notification codes to populate the list of available buttons. To add a button to the list, fill in the <a href="/windows/win32/api/commctrl/ns-commctrl-nmtoolbara"><strong>NMTOOLBAR</strong></a> structure that is passed with the notification code and return <strong>TRUE</strong>. When you have no more tools to add, return <strong>FALSE</strong>. Note that you can return information for buttons that are already on the toolbar; these buttons will not be added to the list.</li>
+</ul>
+<p>The dialog box is then displayed, and the user can begin to customize the toolbar.</p>
+<p>When the dialog box is open, your application can receive a variety of notification codes, depending on the user's actions:</p>
+<ul>
+<li><a href="tbn-queryinsert.html">TBN_QUERYINSERT</a>. The user has changed the location of a tool on the toolbar or added a tool. Return <strong>FALSE</strong> to prevent the tool from being inserted at that location.</li>
+<li><a href="tbn-deletingbutton.html">TBN_DELETINGBUTTON</a>. The user is about to remove a tool from the toolbar.</li>
+<li><a href="tbn-custhelp.html">TBN_CUSTHELP</a>. The user has clicked the Help button.</li>
+<li><a href="tbn-toolbarchange.html">TBN_TOOLBARCHANGE</a>. The user has added, moved, or deleted a tool.</li>
+<li><a href="tbn-reset.html">TBN_RESET</a>. The user has clicked the Reset button.</li>
+</ul>
+<p>After the dialog box is destroyed, your application will receive a <a href="tbn-endadjust.html">TBN_ENDADJUST</a> notification code.</p>
+<p>The following code example shows one way to implement toolbar customization.</p>
+<pre lang="C++"><code>// The buttons are stored in an array of TBBUTTON structures. 
+//
+// Constants such as STD_FILENEW are identifiers for the 
+// built-in bitmaps that have already been assigned as the toolbar's 
+// image list.
+//
+// Constants such as IDM_NEW are application-defined command identifiers.
+
+TBBUTTON allButtons[] = 
+    {
+        { MAKELONG(STD_FILENEW,  ImageListID), IDM_NEW,   TBSTATE_ENABLED, 0, {0}, 0, (INT_PTR)L&quot;New&quot; },
+        { MAKELONG(STD_FILEOPEN, ImageListID), IDM_OPEN,  TBSTATE_ENABLED, 0, {0}, 0, (INT_PTR)L&quot;Open&quot;},
+        { MAKELONG(STD_FILESAVE, ImageListID), IDM_SAVE,  TBSTATE_ENABLED, 0, {0}, 0, (INT_PTR)L&quot;Save&quot;},
+        { MAKELONG(STD_CUT,      ImageListID), IDM_CUT,   TBSTATE_ENABLED, 0, {0}, 0, (INT_PTR)L&quot;Cut&quot; },
+        { MAKELONG(STD_COPY,     ImageListID), IDM_COPY,  TBSTATE_ENABLED, 0, {0}, 0, (INT_PTR)L&quot;Copy&quot;},
+        { MAKELONG(STD_PASTE,    ImageListID), IDM_PASTE, TBSTATE_ENABLED, 0, {0}, 0, (INT_PTR)L&quot;Paste&quot;}
+    };
+
+// The following appears in the window's message handler.
+
+case WM_NOTIFY: 
+    {
+        switch (((LPNMHDR)lParam)-&gt;code) 
+        {
+        
+        case TBN_GETBUTTONINFO:  
+            {
+                LPTBNOTIFY lpTbNotify = (LPTBNOTIFY)lParam;
+
+                // Pass the next button from the array. There is no need to filter out buttons
+                // that are already usedâ€”they will be ignored.
+                
+                int buttonCount = sizeof(allButtons) / sizeof(TBBUTTON);
+                
+                if (lpTbNotify-&gt;iItem &lt; buttonCount)
+                {
+                    lpTbNotify-&gt;tbButton = allButtons[lpTbNotify-&gt;iItem];
+                    return TRUE;
+                }
+                
+                else
+                
+                {
+                    return FALSE;  // No more buttons.
+                }
+            }
+            
+            break;
+
+            case TBN_QUERYINSERT:
+            
+            case TBN_QUERYDELETE:
+                return TRUE; 
+        }
+    }
+</code></pre>
+<h3>Dragging and Dropping Tools</h3>
+<p>Users can also rearrange the buttons on a toolbar by pressing the SHIFT key and dragging the button to another location. The drag-and-drop process is handled automatically by the toolbar control. It displays a ghost image of the button as it is dragged, and rearranges the toolbar after it is dropped. Users cannot add buttons in this way, but they can delete a button by dropping it off the toolbar.</p>
+<p>Although the toolbar control normally does this operation automatically, it also sends your application two notification codes: <a href="tbn-querydelete.html">TBN_QUERYDELETE</a> and <a href="tbn-queryinsert.html">TBN_QUERYINSERT</a>. To control the drag-and-drop process, handle these notification codes as follows:</p>
+<ul>
+<li>The <a href="tbn-querydelete.html">TBN_QUERYDELETE</a> notification code is sent as soon as the user attempts to move the button, before the ghost button is displayed. Return <strong>FALSE</strong> to prevent the button from being moved. If you return <strong>TRUE</strong>, the user will be able to either move the tool or delete it by dropping it off the toolbar. If a tool can be moved, it can be deleted. However, if the user deletes a tool, the toolbar control will send your application a <a href="tbn-deletingbutton.html">TBN_DELETINGBUTTON</a> notification code, at which point you can choose to reinsert the button at its original location, thereby canceling the deletion.</li>
+<li>The <a href="tbn-queryinsert.html">TBN_QUERYINSERT</a> notification code is sent when the user attempts to drop the button on the toolbar. To prevent the button that is being moved from being dropped to the left of the button specified in the notification, return <strong>FALSE</strong>. This notification code is not sent if the user drops the tool off the toolbar.</li>
+</ul>
+<p>If the user attempts to drag a button without also pressing the SHIFT key, the toolbar control will not handle the drag-and-drop operation. However, it will send your application a <a href="tbn-begindrag.html">TBN_BEGINDRAG</a> notification code to indicate the start of a drag operation, and a <a href="tbn-enddrag.html">TBN_ENDDRAG</a> notification code to indicate the end. If you want to enable this form of drag-and-drop, your application must handle these notification codes, provide the necessary user interface, and modify the toolbar to reflect any changes.</p>
+<h3>Saving and Restoring Toolbars</h3>
+<p>In the process of customizing a toolbar, your application might need to save information so that you can restore the toolbar to its original state. To initiate saving or restoring a toolbar state, send the toolbar control a <a href="tb-saverestore.html"><strong>TB_SAVERESTORE</strong></a> message with the <em>wParam</em> set to <strong>TRUE</strong>. The <em>wParam</em> value of this message specifies whether you are requesting a save or a restore operation. After the message is sent, there are two ways to handle the save/restore operation:</p>
+<ul>
+<li>With common controls <a href="common-control-versions.html">version 4.72</a> and earlier, you must implement a <a href="tbn-getbuttoninfo.html">TBN_GETBUTTONINFO</a> handler. The toolbar control sends this notification code to request information about each button as it is restored.</li>
+<li>Version 5.80 includes a save/restore option. At the beginning of the process, and as each button is saved or restored, your application will receive a <a href="tbn-save.html">TBN_SAVE</a> or <a href="tbn-restore.html">TBN_RESTORE</a> notification code. To use this option, you must implement notification handlers to provide the bitmap and state information that is needed to successfully save or restore the toolbar state.</li>
+</ul>
+<p>Toolbar states are saved in a data stream that consists of blocks of Shell-defined data alternating with blocks of application-defined data. One data block of each type is stored for each button, along with an optional block of global data that applications can place at the beginning of the stream. During the save process, your <a href="tbn-save.html">TBN_SAVE</a> handler adds the application-defined blocks to the data stream. During the restore process, the <a href="tbn-restore.html">TBN_RESTORE</a> handler reads each block and gives the Shell the information it needs to reconstruct the toolbar.</p>
+<h3>How to Handle a TBN_SAVE Notification</h3>
+<p>The first <a href="tbn-save.html">TBN_SAVE</a> notification code is sent at the beginning of the save process. Before any buttons are saved, the members of the <a href="/windows/win32/api/commctrl/ns-commctrl-nmtbsave"><strong>NMTBSAVE</strong></a> structure are set as shown in the following table.</p>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Setting</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>iItem</strong></td>
+<td>â€“1</td>
+</tr>
+<tr>
+<td><strong>cbData</strong></td>
+<td>The amount of memory needed for Shell-defined data.</td>
+</tr>
+<tr>
+<td><strong>cButtons</strong></td>
+<td>The number of buttons.</td>
+</tr>
+<tr>
+<td><strong>pData</strong></td>
+<td>The calculated amount of memory needed for application-defined data. Typically, you include some global data, plus data for each button. Add that value to <strong>cbData</strong> and allocate enough memory to <strong>pData</strong> to hold it all.</td>
+</tr>
+<tr>
+<td><strong>pCurrent</strong></td>
+<td>The first unused byte in the data stream. If you do not require global toolbar information, set <strong>pCurrent</strong> = <strong>pData</strong> so that it points to the start of the data stream. If you do require global toolbar information, store it at <strong>pData</strong>, then set <strong>pCurrent</strong> to the beginning of the unused portion of the data stream before returning.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>If you want to add some global toolbar information, put it at the start of the data stream. Advance <strong>pCurrent</strong> to the end of the global data so that it points to the beginning of the unused portion of the data stream, and return.</p>
+<p>After you return, the Shell starts saving button information. It adds the Shell-defined data for the first button at <strong>pCurrent</strong> and then advances <strong>pCurrent</strong> to the start of the unused portion.</p>
+<p>After each button is saved, a <a href="tbn-save.html">TBN_SAVE</a> notification code is sent and <a href="/windows/win32/api/commctrl/ns-commctrl-nmtbsave"><strong>NMTBSAVE</strong></a> is returned with these members set as follows.</p>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Setting</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>iItem</strong></td>
+<td>The zero-based index of the button number.</td>
+</tr>
+<tr>
+<td><strong>pCurrent</strong></td>
+<td>A pointer to the first unused byte in the data stream. If you want to store additional information about the button, store it at the location pointed to by <strong>pCurrent</strong> and update <strong>pCurrent</strong> to point to the first unused portion of the data stream after that.</td>
+</tr>
+<tr>
+<td><a href="/windows/desktop/api/Commctrl/ns-commctrl-tbbutton"><strong>TBBUTTON</strong></a></td>
+<td>A <a href="/windows/desktop/api/Commctrl/ns-commctrl-tbbutton"><strong>TBBUTTON</strong></a> structure that describes the button that is being saved.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>When you receive the notification code, you should extract any button-specific information you need from <a href="/windows/desktop/api/Commctrl/ns-commctrl-tbbutton"><strong>TBBUTTON</strong></a>. Remember that when you add a button, you can use the <strong>dwData</strong> member of <strong>TBBUTTON</strong> to hold application-specific data. Load your data into the data stream at <strong>pCurrent</strong>. Advance <strong>pCurrent</strong> to the end of your data, again pointing to the beginning of the unused portion of the stream, and return.</p>
+<p>The Shell then goes to the next button, adds its information to <strong>pData</strong>, advances <strong>pCurrent</strong>, loads <a href="/windows/desktop/api/Commctrl/ns-commctrl-tbbutton"><strong>TBBUTTON</strong></a>, and sends another <a href="tbn-save.html">TBN_SAVE</a> notification code. This process continues until all buttons are saved.</p>
+<h3>Restoring Saved Toolbars</h3>
+<p>The restore process basically reverses the save process. At the beginning, your application will receive a <a href="tbn-restore.html">TBN_RESTORE</a> notification code with the <strong>iItem</strong> member of the <a href="/windows/win32/api/commctrl/ns-commctrl-nmtbrestore"><strong>NMTBRESTORE</strong></a> structure set to â€“1. The <strong>cbData</strong> member is set to the size of <strong>pData</strong>, and <strong>cButtons</strong> is set to the number of buttons.</p>
+<p>Your notification handler should extract the global information that was placed at the beginning of <strong>pData</strong> during the save, and advance <strong>pCurrent</strong> to the start of the first block of Shell-defined data. Set <strong>cBytesPerRecord</strong> to the size of the data blocks you used to save the button data. Set <strong>cButtons</strong> to the number of buttons, and return.</p>
+<p>The next <a href="/windows/win32/api/commctrl/ns-commctrl-nmtbrestore"><strong>NMTBRESTORE</strong></a> is for the first button. The <strong>pCurrent</strong> member points to the start of your first block of button data, and <strong>iItem</strong> is set to the button index. Extract that data and advance <strong>pCurrent</strong>. Load the data into <a href="/windows/desktop/api/Commctrl/ns-commctrl-tbbutton"><strong>TBBUTTON</strong></a>, and return. To omit a button from the restored toolbar, set the <strong>idCommand</strong> member of <strong>TBBUTTON</strong> to zero. The Shell will repeat the process for the remaining buttons. In addition to the <a href="/windows/win32/api/commctrl/ns-commctrl-nmtbsave"><strong>NMTBSAVE</strong></a> and <strong>NMTBRESTORE</strong> messages, you can also use messages such as <a href="tbn-reset.html">TBN_RESET</a> to save and restore a toolbar.</p>
+<p>The following code example saves a toolbar before it is customized, and restores it if the application receives a <a href="tbn-reset.html">TBN_RESET</a> message.</p>
+<pre lang="C++"><code>int               i;
+LPNMHDR           lpnmhdr;
+static int        nResetCount;
+static LPTBBUTTON lpSaveButtons;
+LPARAM            lParam;
+
+switch( lpnmhdr-&gt;code)
+{
+    case TBN_BEGINADJUST: // Begin customizing the toolbar.
+    {
+        LPTBNOTIFY  lpTB = (LPTBNOTIFY)lparam;
+       
+        // Allocate memory for the button information.
+        
+        nResetCount   = SendMessage(lpTB-&gt;hdr.hwndFrom, TB_BUTTONCOUNT, 0, 0);
+        lpSaveButtons = (LPTBBUTTON)GlobalAlloc(GPTR, sizeof(TBBUTTON) * nResetCount);
+      
+        // In case the user presses reset, save the current configuration 
+        // so the original toolbar can be restored.
+        
+        for(i = 0; i &lt; nResetCount; i++)
+        {
+            SendMessage(lpTB-&gt;hdr.hwndFrom, 
+                        TB_GETBUTTON, i, 
+                        (LPARAM)(lpSaveButtons + i));
+        }
+    }
+    
+    return TRUE;
+   
+    case TBN_RESET:
+    {
+        LPTBNOTIFY lpTB = (LPTBNOTIFY)lparam;
+        
+        int nCount, i;
+    
+        // Remove all of the existing buttons, starting with the last one.
+        
+        nCount = SendMessage(lpTB-&gt;hdr.hwndFrom, TB_BUTTONCOUNT, 0, 0);
+        
+        for(i = nCount - 1; i &gt;= 0; i--)
+        {
+            SendMessage(lpTB-&gt;hdr.hwndFrom, TB_DELETEBUTTON, i, 0);
+        }
+      
+        SendMessage(lpTB-&gt;hdr.hwndFrom,      // Restore the saved buttons.
+                    TB_ADDBUTTONS, 
+                    (WPARAM)nResetCount, 
+                    (LPARAM)lpSaveButtons);
+    }
+    
+    return TRUE;
+   
+    case TBN_ENDADJUST:                // Free up the memory you allocated.
+        GlobalFree((HGLOBAL)lpSaveButtons);
+        
+        return TRUE;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-toolbar-controls.html">Using Toolbar Controls</a></p>
+<!-- raw HTML omitted -->
+<p><a href="toolbar-standard-button-image-index-values.html"><strong>Toolbar Standard Button Image Index Values</strong></a></p>
+<!-- raw HTML omitted -->
+<p><a href="https://github.com/microsoftarchive/msdn-code-gallery-microsoft/tree/master/OneCodeTeam/Windows%20common%20controls%20demo%20(CppWindowsCommonControls)/%5BC++%5D-Windows%20common%20controls%20demo%20(CppWindowsCommonControls)/C++/CppWindowsCommonControls">Windows common controls demo (CppWindowsCommonControls)</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

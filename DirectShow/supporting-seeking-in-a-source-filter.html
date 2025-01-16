@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Supporting Seeking in a Source Filter</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic describes how to implement seeking in a Microsoft DirectShow source filter. It uses the Ball Filter sample as the starting point and describes the additional code needed to support seeking in this filter.
+ms.assetid: a2b4be09-2fd6-4aac-8ad6-c3d62377c1f2
+title: Supporting Seeking in a Source Filter
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Supporting Seeking in a Source Filter</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>This topic describes how to implement seeking in a Microsoft DirectShow source filter. It uses the <a href="ball-filter-sample.html">Ball Filter</a> sample as the starting point and describes the additional code needed to support seeking in this filter.</p>
+<p>The <a href="ball-filter-sample.html">Ball Filter</a> sample is a source filter that creates an animated bouncing ball. This article describes how to add seeking functionality to this filter. Once you have added this functionality, you can render the filter in GraphEdit and control the ball by dragging the GraphEdit slider.</p>
+<p>This topic contains the following sections:</p>
+<ul>
+<li><a href="#overview-of-seeking-in-directshow">Overview of Seeking in DirectShow</a></li>
+<li><a href="#quick-overview-of-the-ball-filter">Quick Overview of the Ball Filter</a></li>
+<li><a href="#modifying-the-ball-filter-for-seeking">Modifying the Ball Filter for Seeking</a></li>
+<li><a href="#limitations-of-the-csourceseeking-class">Limitations of the CSourceSeeking Class</a></li>
+</ul>
+<h2>Overview of Seeking in DirectShow</h2>
+<p>An application seeks the filter graph by calling an <a href="/windows/desktop/api/Strmif/nn-strmif-imediaseeking"><strong>IMediaSeeking</strong></a> method on the Filter Graph Manager. The Filter Graph Manager then distributes the call to every renderer in the graph. Each renderer sends the call upstream, through the output pin of the next upstream filter. The call travels upstream until it reaches a filter that can execute the seek command, typically a source filter or a parser filter. In general, the filter that originates the time stamps also handles seeking.</p>
+<p>A filter responds to a seek command as follows:</p>
+<ol>
+<li>The filter flushes the graph. This clears any stale data from graph, which improves responsiveness. Otherwise, samples that were buffered prior to the seek command might get delivered.</li>
+<li>The filter calls <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-newsegment"><strong>IPin::NewSegment</strong></a> to inform downstream filters of the new stop time, start time, and playback rate.</li>
+<li>The filter then sets the discontinuity flag on the first sample after the seek command.</li>
+</ol>
+<p>Time stamps start from zero after any seek command (including rate changes).</p>
+<h2>Quick Overview of the Ball Filter</h2>
+<p>The Ball filter is a push source, which means that it uses a worker thread to deliver samples downstream, as opposed to a pull source, which passively waits for a downstream filter to request samples. The Ball filter is built from the <a href="csource.html"><strong>CSource</strong></a> class, and its output pin is built from the <a href="csourcestream.html"><strong>CSourceStream</strong></a> class. The <strong>CSourceStream</strong> class creates the worker thread that drives the flow of data. This thread enters a loop that gets samples from the allocator, fills them with data, and delivers them downstream.</p>
+<p>Most of the action in <a href="csourcestream.html"><strong>CSourceStream</strong></a> happens in the <a href="csourcestream-fillbuffer.html"><strong>CSourceStream::FillBuffer</strong></a> method, which the derived class implements. The argument to this method is a pointer to the sample to be delivered. The Ball filter's implementation of <strong>FillBuffer</strong> retrieves the address of the sample buffer and draws directly to the buffer by setting individual pixel values. (The drawing is done by a helper class, CBall, so you can ignore the details regarding bit depths, palettes, and so forth.)</p>
+<h2>Modifying the Ball Filter for Seeking</h2>
+<p>To make the Ball filter seekable, use the <a href="csourceseeking.html"><strong>CSourceSeeking</strong></a> class, which is designed for implementing seeking in filters with one output pin. Add the <strong>CSourceSeeking</strong> class to the inheritance list for the CBallStream class:</p>
+<pre lang="C++"><code>class CBallStream :  // Defines the output pin.
+    public CSourceStream, public CSourceSeeking
+</code></pre>
+<p>Also, you will need to add an initializer for <a href="csourceseeking.html"><strong>CSourceSeeking</strong></a> to the CBallStream constructor:</p>
+<pre lang="C++"><code>    CSourceSeeking(NAME(&quot;SeekBall&quot;), (IPin*)this, phr, &amp;m_cSharedState),
+</code></pre>
+<p>This statement calls the base constructor for <a href="csourceseeking.html"><strong>CSourceSeeking</strong></a>. The parameters are a name, a pointer to the owning pin, an <strong>HRESULT</strong> value, and the address of a critical section object. The name is used only for debugging, and the <a href="name.html"><strong>NAME</strong></a> macro compiles to an empty string in retail builds. The pin directly inherits <strong>CSourceSeeking</strong>, so the second parameter is a pointer to itself, cast to an <a href="/windows/desktop/api/Strmif/nn-strmif-ipin"><strong>IPin</strong></a> pointer. The <strong>HRESULT</strong> value is ignored in the current version of the base classes; it remains for compatibility with previous versions. The critical section protects shared data, such as the current start time, stop time, and playback rate.</p>
+<p>Add the following statement inside the <a href="csourceseeking.html"><strong>CSourceSeeking</strong></a> constructor:</p>
+<pre lang="C++"><code>m_rtStop = 60 * UNITS;
+</code></pre>
+<p>The <em>m_rtStop</em> variable specifies the stop time. By default, the value is _I64_MAX / 2, which is approximately 14,600 years. The previous statement sets it to a more conservative 60 seconds.</p>
+<p>Two additional member variables must be added to CBallStream:</p>
+<pre lang="C++"><code>BOOL            m_bDiscontinuity; // If true, set the discontinuity flag.
+REFERENCE_TIME  m_rtBallPosition; // Position of the ball. 
+</code></pre>
+<p>After every seek command, the filter must set the discontinuity flag on the next sample by calling <a href="/windows/desktop/api/Strmif/nf-strmif-imediasample-setdiscontinuity"><strong>IMediaSample::SetDiscontinuity</strong></a>. The <em>m_bDiscontinuity</em> variable will keep track of this. The <em>m_rtBallPosition</em> variable will specify the position of the ball within the video frame. The original Ball filter calculates the position from the stream time, but the stream time resets to zero after each seek command. In a seekable stream, the absolute position is independent of the stream time.</p>
+<h3>QueryInterface</h3>
+<p>The <a href="csourceseeking.html"><strong>CSourceSeeking</strong></a> class implements the <a href="/windows/desktop/api/Strmif/nn-strmif-imediaseeking"><strong>IMediaSeeking</strong></a> interface. To expose this interface to clients, override the <a href="cunknown-nondelegatingqueryinterface.html"><strong>NonDelegatingQueryInterface</strong></a> method:</p>
+<pre lang="C++"><code>STDMETHODIMP CBallStream::NonDelegatingQueryInterface
+    (REFIID riid, void **ppv)
+{
+    if( riid == IID_IMediaSeeking ) 
+    {
+        return CSourceSeeking::NonDelegatingQueryInterface( riid, ppv );
+    }
+    return CSourceStream::NonDelegatingQueryInterface(riid, ppv);
+}
+</code></pre>
+<p>The method is called &quot;NonDelegating&quot; because of the way the DirectShow base classes support Component Object Model (COM) aggregation. For more information, see the &quot;How to Implement IUnknown&quot; topic in the DirectShow SDK.</p>
+<h3>Seeking Methods</h3>
+<p>The <a href="csourceseeking.html"><strong>CSourceSeeking</strong></a> class maintains several member variables relating to seeking.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Description</th>
+<th>Default Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>m_rtStart</em></td>
+<td>Start time</td>
+<td>Zero</td>
+</tr>
+<tr>
+<td><em>m_rtStop</em></td>
+<td>Stop time</td>
+<td>_I64_MAX / 2</td>
+</tr>
+<tr>
+<td><em>m_dRateSeeking</em></td>
+<td>Playback rate</td>
+<td>1.0</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>The <a href="csourceseeking.html"><strong>CSourceSeeking</strong></a> implementation of <a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-setpositions"><strong>IMediaSeeking::SetPositions</strong></a> updates the start and stop times, and then calls two pure virtual methods on the derived class, <a href="csourceseeking-changestart.html"><strong>CSourceSeeking::ChangeStart</strong></a> and <a href="csourceseeking-changestop.html"><strong>CSourceSeeking::ChangeStop</strong></a>. The implementation of <a href="/windows/desktop/api/Strmif/nf-strmif-imediaseeking-setrate"><strong>IMediaSeeking::SetRate</strong></a> is similar: It updates the playback rate and then calls the pure virtual method <a href="csourceseeking-changerate.html"><strong>CSourceSeeking::ChangeRate</strong></a>. In each of these virtual methods, the pin must do the following:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-beginflush"><strong>IPin::BeginFlush</strong></a> to start flushing data.</li>
+<li>Halt the streaming thread.</li>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-endflush"><strong>IPin::EndFlush</strong></a>.</li>
+<li>Restart the streaming thread.</li>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-newsegment"><strong>IPin::NewSegment</strong></a>.</li>
+<li>Set the discontinuity flag on the next sample.</li>
+</ol>
+<p>The order of these steps is crucial, because the streaming thread can block while it waits to deliver a sample or get a new sample. The <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-beginflush"><strong>BeginFlush</strong></a> method ensures that the streaming thread is not blocked and therefore will not deadlock in step 2. The <a href="/windows/desktop/api/Strmif/nf-strmif-ipin-endflush"><strong>EndFlush</strong></a> call informs the downstream filters to expect new samples, so they do not reject them when the thread starts again in step 4.</p>
+<p>The following private method performs steps 1 through 4:</p>
+<pre lang="C++"><code>void CBallStream::UpdateFromSeek()
+{
+    if (ThreadExists()) 
+    {
+        DeliverBeginFlush();
+        // Shut down the thread and stop pushing data.
+        Stop();
+        DeliverEndFlush();
+        // Restart the thread and start pushing data again.
+        Pause();
+    }
+}
+</code></pre>
+<p>When the streaming thread starts again, it calls the <a href="csourcestream-onthreadstartplay.html"><strong>CSourceStream::OnThreadStartPlay</strong></a> method. Override this method to perform steps 5 and 6:</p>
+<pre lang="C++"><code>HRESULT CBallStream::OnThreadStartPlay()
+{
+    m_bDiscontinuity = TRUE;
+    return DeliverNewSegment(m_rtStart, m_rtStop, m_dRateSeeking);
+}
+</code></pre>
+<p>In the <a href="csourceseeking-changestart.html"><strong>ChangeStart</strong></a> method, set the stream time to zero and the position of the ball to the new start time. Then call CBallStream::UpdateFromSeek:</p>
+<pre lang="C++"><code>HRESULT CBallStream::ChangeStart( )
+{
+    {
+        CAutoLock lock(CSourceSeeking::m_pLock);
+        m_rtSampleTime = 0;
+        m_rtBallPosition = m_rtStart;
+    }
+    UpdateFromSeek();
+    return S_OK;
+}
+</code></pre>
+<p>In the <a href="csourceseeking-changestop.html"><strong>ChangeStop</strong></a> method, call CBallStream::UpdateFromSeek if the new stop time is less than the current position. Otherwise, the stop time is still in the future, so there's no need to flush the graph.</p>
+<pre lang="C++"><code>HRESULT CBallStream::ChangeStop( )
+{
+    {
+        CAutoLock lock(CSourceSeeking::m_pLock);
+        if (m_rtBallPosition &lt; m_rtStop)
+        {
+            return S_OK;
+        }
+    }
+
+    // We're already past the new stop time. Flush the graph.
+    UpdateFromSeek();
+    return S_OK;
+}
+</code></pre>
+<p>For rate changes, the <a href="csourceseeking-setrate.html"><strong>CSourceSeeking::SetRate</strong></a> method sets <em>m_dRateSeeking</em> to the new rate (discarding the old value) before it calls <a href="csourceseeking-changerate.html"><strong>ChangeRate</strong></a>. Unfortunately, if the caller gave an invalid rateâ€”for example, less than zeroâ€”it's too late by the time <strong>ChangeRate</strong> is called. One solution is to override <strong>SetRate</strong> and check for valid rates:</p>
+<pre lang="C++"><code>HRESULT CBallStream::SetRate(double dRate)
+{
+    if (dRate &lt;= 1.0)
+    {
+        return E_INVALIDARG;
+    }
+    {
+        CAutoLock lock(CSourceSeeking::m_pLock);
+        m_dRateSeeking = dRate;
+    }
+    UpdateFromSeek();
+    return S_OK;
+}
+// Now ChangeRate won't ever be called, but it's pure virtual, so it needs
+// a dummy implementation.
+HRESULT CBallStream::ChangeRate() { return S_OK; }
+</code></pre>
+<h3>Drawing in the Buffer</h3>
+<p>Here is the modified version of <a href="csourcestream-fillbuffer.html"><strong>CSourceStream::FillBuffer</strong></a>, the routine that draws the ball on each frame:</p>
+<pre lang="C++"><code>HRESULT CBallStream::FillBuffer(IMediaSample *pMediaSample)
+{
+    BYTE *pData;
+    long lDataLen;
+    pMediaSample-&gt;GetPointer(&amp;pData);
+    lDataLen = pMediaSample-&gt;GetSize();
+    {
+        CAutoLock cAutoLockShared(&amp;m_cSharedState);
+        if (m_rtBallPosition &gt;= m_rtStop) 
+        {
+            // End of the stream.
+            return S_FALSE;
+        }
+        // Draw the ball in its current position.
+        ZeroMemory( pData, lDataLen );
+        m_Ball-&gt;MoveBall(m_rtBallPosition);
+        m_Ball-&gt;PlotBall(pData, m_BallPixel, m_iPixelSize);
+        
+        // The sample times are modified by the current rate.
+        REFERENCE_TIME rtStart, rtStop;
+        rtStart = static_cast&lt;REFERENCE_TIME&gt;(
+                      m_rtSampleTime / m_dRateSeeking);
+        rtStop  = rtStart + static_cast&lt;int&gt;(
+                      m_iRepeatTime / m_dRateSeeking);
+        pMediaSample-&gt;SetTime(&amp;rtStart, &amp;rtStop);
+
+        // Increment for the next loop.
+        m_rtSampleTime += m_iRepeatTime;
+        m_rtBallPosition += m_iRepeatTime;
+    }
+    pMediaSample-&gt;SetSyncPoint(TRUE);
+    if (m_bDiscontinuity) 
+    {
+        pMediaSample-&gt;SetDiscontinuity(TRUE);
+        m_bDiscontinuity = FALSE;
+    }
+    return NOERROR;
+}
+</code></pre>
+<p>The major differences between this version and the original are the following:</p>
+<ul>
+<li>As mentioned earlier, the <em>m_rtBallPosition</em> variable is used to set the position of the ball, rather than the stream time.</li>
+<li>After holding the critical section, the method checks whether the current position exceeds the stop time. If so, it returns <strong>S_FALSE</strong>, which signals the base class to stop sending data and deliver an end-of-stream notification.</li>
+<li>The time stamps are divided by the current rate.</li>
+<li>If <em>m_bDiscontinuity</em> is <strong>TRUE</strong>, the method sets the discontinuity flag on the sample.</li>
+</ul>
+<p>There is another minor difference. Because the original version relies on having exactly one buffer, it fills the entire buffer with zeroes once, when streaming begins. After that, it just erases the ball from its previous position. However, this optimization reveals a slight bug in the Ball filter. When the <a href="cbaseoutputpin-decideallocator.html"><strong>CBaseOutputPin::DecideAllocator</strong></a> method calls <a href="/windows/desktop/api/Strmif/nf-strmif-imeminputpin-notifyallocator"><strong>IMemInputPin::NotifyAllocator</strong></a>, it sets the read-only flag to <strong>FALSE</strong>. As a result, the downstream filter is free to write on the buffer. One solution is to override <strong>DecideAllocator</strong> so that it sets the read-only flag to <strong>TRUE</strong>. For simplicity, however, the new version simply removes the optimization altogether. Instead, this version fills the buffer with zeroes each time.</p>
+<h3>Miscellaneous Changes</h3>
+<p>In the new version, these two lines are removed from the CBall constructor:</p>
+<pre lang="C++"><code>    m_iRandX = rand();
+    m_iRandY = rand();
+</code></pre>
+<p>The original Ball filter uses these values to add some randomness to the initial ball position. For our purposes, we want the ball to be deterministic. Also, some variables have been changed from <a href="creftime.html"><strong>CRefTime</strong></a> objects to <a href="reference-time.html"><strong>REFERENCE_TIME</strong></a> variables. (The <strong>CRefTime</strong> class is a thin wrapper for a <strong>REFERENCE_TIME</strong> value.) Lastly, the implementation of <a href="/windows/desktop/api/Strmif/nf-strmif-iqualitycontrol-notify"><strong>IQualityControl::Notify</strong></a> has been modified slightly; you can refer to the source code for details.</p>
+<h2>Limitations of the CSourceSeeking Class</h2>
+<p>The <a href="csourceseeking.html"><strong>CSourceSeeking</strong></a> class is not meant for filters with multiple output pins, because of issues with cross-pin communication. For example, imagine a parser filter that receives an interleaved audio-video stream, splits the stream into its audio and video components, and delivers video from one output pin and audio from another. Both output pins will receive every seek command, but the filter should seek only once per seek command. The solution is to designate one of the pins to control seeking and to ignore seek commands received by the other pin.</p>
+<p>After the seek command, however, both pins should flush data. To complicate matters further, the seek command happens on the application thread, not the streaming thread. Therefore, you must make certain that neither pin is blocked and waiting for a <a href="/windows/desktop/api/Strmif/nf-strmif-imeminputpin-receive"><strong>IMemInputPin::Receive</strong></a> call to return, or it might cause a deadlock. For more information about thread-safe flushing in pins, see <a href="threads-and-critical-sections.html">Threads and Critical Sections</a>.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="writing-source-filters.html">Writing Source Filters</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

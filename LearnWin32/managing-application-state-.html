@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Managing Application State</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Managing Application State
+description: A window procedure is just a function that gets invoked for every message, so it is inherently stateless. Therefore, you need a way to track the state of your application from one function call to the next.
+ms.assetid: 2f03961e-a886-4947-8f5d-62543c6b8815
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Managing Application State</h1>
+<p>A window procedure is just a function that gets invoked for every message, so it is inherently stateless. Therefore, you need a way to track the state of your application from one function call to the next.</p>
+<p>The simplest approach is simply to put everything in global variables. This works well enough for small programs, and many of the SDK samples use this approach. In a large program, however, it leads to a proliferation of global variables. Also, you might have several windows, each with its own window procedure. Keeping track of which window should access which variables becomes confusing and error-prone.</p>
+<p>The <a href="/windows/desktop/api/winuser/nf-winuser-createwindowexa"><strong>CreateWindowEx</strong></a> function provides a way to pass any data structure to a window. When this function is called, it sends the following two messages to your window procedure:</p>
+<ul>
+<li><a href="/windows/desktop/winmsg/wm-nccreate"><strong>WM_NCCREATE</strong></a></li>
+<li><a href="/windows/desktop/winmsg/wm-create"><strong>WM_CREATE</strong></a></li>
+</ul>
+<p>These messages are sent in the order listed. (These are not the only two messages sent during <a href="/windows/desktop/api/winuser/nf-winuser-createwindowexa"><strong>CreateWindowEx</strong></a>, but we can ignore the others for this discussion.)</p>
+<p>The <a href="/windows/desktop/winmsg/wm-nccreate"><strong>WM_NCCREATE</strong></a> and <a href="/windows/desktop/winmsg/wm-create"><strong>WM_CREATE</strong></a> message are sent before the window becomes visible. That makes them a good place to initialize your UIâ€”for example, to determine the initial layout of the window.</p>
+<p>The last parameter of <a href="/windows/desktop/api/winuser/nf-winuser-createwindowexa"><strong>CreateWindowEx</strong></a> is a pointer of type <strong>void*</strong>. You can pass any pointer value that you want in this parameter. When the window procedure handles the <a href="/windows/desktop/winmsg/wm-nccreate"><strong>WM_NCCREATE</strong></a> or <a href="/windows/desktop/winmsg/wm-create"><strong>WM_CREATE</strong></a> message, it can extract this value from the message data.</p>
+<p>Let's see how you would use this parameter to pass application data to your window. First, define a class or structure that holds state information.</p>
+<pre lang="C++"><code>// Define a structure to hold some state information.
+
+struct StateInfo {
+    // ... (struct members not shown)
+};
+</code></pre>
+<p>When you call <a href="/windows/desktop/api/winuser/nf-winuser-createwindowexa"><strong>CreateWindowEx</strong></a>, pass a pointer to this structure in the final <strong>void*</strong> parameter.</p>
+<pre lang="C++"><code>StateInfo *pState = new (std::nothrow) StateInfo;
+
+if (pState == NULL)
+{
+    return 0;
+}
+
+// Initialize the structure members (not shown).
+
+HWND hwnd = CreateWindowEx(
+    0,                              // Optional window styles.
+    CLASS_NAME,                     // Window class
+    L&quot;Learn to Program Windows&quot;,    // Window text
+    WS_OVERLAPPEDWINDOW,            // Window style
+
+    // Size and position
+    CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+
+    NULL,       // Parent window    
+    NULL,       // Menu
+    hInstance,  // Instance handle
+    pState      // Additional application data
+    );
+</code></pre>
+<p>When you receive the <a href="/windows/desktop/winmsg/wm-nccreate"><strong>WM_NCCREATE</strong></a> and <a href="/windows/desktop/winmsg/wm-create"><strong>WM_CREATE</strong></a> messages, the <em>lParam</em> parameter of each message is a pointer to a <a href="/windows/win32/api/winuser/ns-winuser-createstructa"><strong>CREATESTRUCT</strong></a> structure. The <strong>CREATESTRUCT</strong> structure, in turn, contains the pointer that you passed into <a href="/windows/desktop/api/winuser/nf-winuser-createwindowexa"><strong>CreateWindowEx</strong></a>.</p>
+<p><img src="images/appstate01.png" alt="diagram that shows the layout of the createstruct structure" /></p>
+<p>Here is how you extract the pointer to your data structure. First, get the <a href="/windows/win32/api/winuser/ns-winuser-createstructa"><strong>CREATESTRUCT</strong></a> structure by casting the <em>lParam</em> parameter.</p>
+<pre lang="C++"><code>CREATESTRUCT *pCreate = reinterpret_cast&lt;CREATESTRUCT*&gt;(lParam);
+</code></pre>
+<p>The <strong>lpCreateParams</strong> member of the <a href="/windows/win32/api/winuser/ns-winuser-createstructa"><strong>CREATESTRUCT</strong></a> structure is the original void pointer that you specified in <a href="/windows/desktop/api/winuser/nf-winuser-createwindowexa"><strong>CreateWindowEx</strong></a>. Get a pointer to your own data structure by casting <strong>lpCreateParams</strong>.</p>
+<pre lang="C++"><code>pState = reinterpret_cast&lt;StateInfo*&gt;(pCreate-&gt;lpCreateParams);
+</code></pre>
+<p>Next, call the <a href="/windows/desktop/api/winuser/nf-winuser-setwindowlongptra"><strong>SetWindowLongPtr</strong></a> function and pass in the pointer to your data structure.</p>
+<pre lang="C++"><code>SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pState);
+</code></pre>
+<p>The purpose of this last function call is to store the <em>StateInfo</em> pointer in the instance data for the window. Once you do this, you can always get the pointer back from the window by calling <a href="/windows/desktop/api/winuser/nf-winuser-getwindowlongptra"><strong>GetWindowLongPtr</strong></a>:</p>
+<pre lang="C++"><code>LONG_PTR ptr = GetWindowLongPtr(hwnd, GWLP_USERDATA);
+StateInfo *pState = reinterpret_cast&lt;StateInfo*&gt;(ptr);
+</code></pre>
+<p>Each window has its own instance data, so you can create multiple windows and give each window its own instance of the data structure. This approach is especially useful if you define a class of windows and create more than one window of that classâ€”for example, if you create a custom control class. It is convenient to wrap the <a href="/windows/desktop/api/winuser/nf-winuser-getwindowlongptra"><strong>GetWindowLongPtr</strong></a> call in a small helper function.</p>
+<pre lang="C++"><code>inline StateInfo* GetAppState(HWND hwnd)
+{
+    LONG_PTR ptr = GetWindowLongPtr(hwnd, GWLP_USERDATA);
+    StateInfo *pState = reinterpret_cast&lt;StateInfo*&gt;(ptr);
+    return pState;
+}
+</code></pre>
+<p>Now you can write your window procedure as follows.</p>
+<pre lang="C++"><code>LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    StateInfo *pState;
+    if (uMsg == WM_CREATE)
+    {
+        CREATESTRUCT *pCreate = reinterpret_cast&lt;CREATESTRUCT*&gt;(lParam);
+        pState = reinterpret_cast&lt;StateInfo*&gt;(pCreate-&gt;lpCreateParams);
+        SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pState);
+    }
+    else
+    {
+        pState = GetAppState(hwnd);
+    }
+
+    switch (uMsg)
+    {
+
+
+    // Remainder of the window procedure not shown ...
+
+    }
+    return TRUE;
+}
+</code></pre>
+<h2>An Object-Oriented Approach</h2>
+<p>We can extend this approach further. We have already defined a data structure to hold state information about the window. It makes sense to provide this data structure with member functions (methods) that operate on the data. This naturally leads to a design where the structure (or class) is responsible for all of the operations on the window. The window procedure would then become part of the class.</p>
+<p>In other words, we would like to go from this:</p>
+<pre lang="C++"><code>// pseudocode
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    StateInfo *pState;
+
+    /* Get pState from the HWND. */
+
+    switch (uMsg)
+    {
+        case WM_SIZE:
+            HandleResize(pState, ...);
+            break;
+
+        case WM_PAINT:
+            HandlePaint(pState, ...);
+            break;
+
+       // And so forth.
+    }
+}
+</code></pre>
+<p>To this:</p>
+<pre lang="C++"><code>// pseudocode
+
+LRESULT MyWindow::WindowProc(UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg)
+    {
+        case WM_SIZE:
+            this-&gt;HandleResize(...);
+            break;
+
+        case WM_PAINT:
+            this-&gt;HandlePaint(...);
+            break;
+    }
+}
+</code></pre>
+<p>The only problem is how to hook up the <code>MyWindow::WindowProc</code> method. The <a href="/windows/desktop/api/winuser/nf-winuser-registerclassa"><strong>RegisterClass</strong></a> function expects the window procedure to be a function pointer. You can't pass a pointer to a (non-static) member function in this context. However, you can pass a pointer to a <em>static</em> member function and then delegate to the member function. Here is a class template that shows this approach:</p>
+<pre lang="C++"><code>template &lt;class DERIVED_TYPE&gt; 
+class BaseWindow
+{
+public:
+    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+    {
+        DERIVED_TYPE *pThis = NULL;
+
+        if (uMsg == WM_NCCREATE)
+        {
+            CREATESTRUCT* pCreate = (CREATESTRUCT*)lParam;
+            pThis = (DERIVED_TYPE*)pCreate-&gt;lpCreateParams;
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pThis);
+
+            pThis-&gt;m_hwnd = hwnd;
+        }
+        else
+        {
+            pThis = (DERIVED_TYPE*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+        }
+        if (pThis)
+        {
+            return pThis-&gt;HandleMessage(uMsg, wParam, lParam);
+        }
+        else
+        {
+            return DefWindowProc(hwnd, uMsg, wParam, lParam);
+        }
+    }
+
+    BaseWindow() : m_hwnd(NULL) { }
+
+    BOOL Create(
+        PCWSTR lpWindowName,
+        DWORD dwStyle,
+        DWORD dwExStyle = 0,
+        int x = CW_USEDEFAULT,
+        int y = CW_USEDEFAULT,
+        int nWidth = CW_USEDEFAULT,
+        int nHeight = CW_USEDEFAULT,
+        HWND hWndParent = 0,
+        HMENU hMenu = 0
+        )
+    {
+        WNDCLASS wc = {0};
+
+        wc.lpfnWndProc   = DERIVED_TYPE::WindowProc;
+        wc.hInstance     = GetModuleHandle(NULL);
+        wc.lpszClassName = ClassName();
+
+        RegisterClass(&amp;wc);
+
+        m_hwnd = CreateWindowEx(
+            dwExStyle, ClassName(), lpWindowName, dwStyle, x, y,
+            nWidth, nHeight, hWndParent, hMenu, GetModuleHandle(NULL), this
+            );
+
+        return (m_hwnd ? TRUE : FALSE);
+    }
+
+    HWND Window() const { return m_hwnd; }
+
+protected:
+
+    virtual PCWSTR  ClassName() const = 0;
+    virtual LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) = 0;
+
+    HWND m_hwnd;
+};
+</code></pre>
+<p>The <code>BaseWindow</code> class is an abstract base class, from which specific window classes are derived. For example, here is the declaration of a simple class derived from <code>BaseWindow</code>:</p>
+<pre lang="C++"><code>class MainWindow : public BaseWindow&lt;MainWindow&gt;
+{
+public:
+    PCWSTR  ClassName() const { return L&quot;Sample Window Class&quot;; }
+    LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam);
+};
+</code></pre>
+<p>To create the window, call <code>BaseWindow::Create</code>:</p>
+<pre lang="C++"><code>int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow)
+{
+    MainWindow win;
+
+    if (!win.Create(L&quot;Learn to Program Windows&quot;, WS_OVERLAPPEDWINDOW))
+    {
+        return 0;
+    }
+
+    ShowWindow(win.Window(), nCmdShow);
+
+    // Run the message loop.
+
+    MSG msg = { };
+    while (GetMessage(&amp;msg, NULL, 0, 0))
+    {
+        TranslateMessage(&amp;msg);
+        DispatchMessage(&amp;msg);
+    }
+
+    return 0;
+}
+</code></pre>
+<p>The pure-virtual <code>BaseWindow::HandleMessage</code> method is used to implement the window procedure. For example, the following implementation is equivalent to the window procedure shown at the start of <a href="your-first-windows-program.html">Module 1</a>.</p>
+<pre lang="C++"><code>LRESULT MainWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg)
+    {
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+
+    case WM_PAINT:
+        {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(m_hwnd, &amp;ps);
+            FillRect(hdc, &amp;ps.rcPaint, (HBRUSH) (COLOR_WINDOW+1));
+            EndPaint(m_hwnd, &amp;ps);
+        }
+        return 0;
+
+    default:
+        return DefWindowProc(m_hwnd, uMsg, wParam, lParam);
+    }
+    return TRUE;
+}
+</code></pre>
+<p>Notice that the window handle is stored in a member variable (<em>m_hwnd</em>), so we do not need to pass it as a parameter to <code>HandleMessage</code>.</p>
+<p>Many of the existing Windows programming frameworks, such as Microsoft Foundation Classes (MFC) and Active Template Library (ATL), use approaches that are basically similar to the one shown here. Of course, a fully generalized framework such as MFC is more complex than this relatively simplistic example.</p>
+<h2>Next</h2>
+<p><a href="module-2--using-com-in-your-windows-program.html">Module 2: Using COM in Your Windows Program</a></p>
+<h2>Related topics</h2>
+<p><a href="basewindow-sample.html">BaseWindow Sample</a></p>
+</body>

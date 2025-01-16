@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Add Client Drawing Effects to a Text Layout</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: How to Add Client Drawing Effects to a Text Layout
+description: Provides a short tutorial on adding client drawing effects to a DirectWrite application that displays text using the IDWriteTextLayout interface and a custom text renderer.
+ms.assetid: b66ff814-2113-48b0-8913-3d30a5d20077
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to Add Client Drawing Effects to a Text Layout</h1>
+<p>Provides a short tutorial on adding client drawing effects to a <a href="direct-write-portal.html">DirectWrite</a> application that displays text using the <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextlayout"><strong>IDWriteTextLayout</strong></a> interface and a custom text renderer.</p>
+<p>The end product of this tutorial is an application that displays text that has ranges of text with a different color drawing effect on each, as shown in the following screen shot.</p>
+<p><img src="images/drawingeffects.png" alt="screen shot of &quot;client drawing effect example!&quot; in different colors" /></p>
+<blockquote>
+<p>[!Note]<br />
+This tutorial is meant to be a simplified example of how to create custom client drawing effects, not an example of a simple method for drawing color text. See the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextlayout-setdrawingeffect"><strong>IDWriteTextLayout::SetDrawingEffect</strong></a> reference page for more information.</p>
+</blockquote>
+<p>Â </p>
+<p>This tutorial contains the following parts:</p>
+<ul>
+<li><a href="#step-1-create-a-text-layout">Step 1: Create a Text Layout</a></li>
+<li><a href="#step-2-implement-a-custom-drawing-effect-class">Step 2: Implement a Custom Drawing Effect Class</a></li>
+<li><a href="#step-3-implement-a-custom-text-renderer-class">Step 3: Implement a Custom Text Renderer Class</a>
+<ul>
+<li><a href="#the-constructor">The Constructor</a></li>
+<li><a href="#the-drawglyphrun-method">The DrawGlyphRun Method</a></li>
+<li><a href="#the-destructor">The Destructor</a></li>
+</ul>
+</li>
+<li><a href="#step-4-create-the-text-renderer">Step 4: Create the Text Renderer</a></li>
+<li><a href="#step-5-instantiate-the-color-drawing-effect-objects">Step 5: Instantiate the Color Drawing Effect Objects</a></li>
+<li><a href="#step-6-set-the-drawing-effect-for-specific-text-ranges">Step 6: Set the Drawing Effect for Specific Text Ranges</a></li>
+<li><a href="#step-7-draw-the-text-layout-using-the-custom-renderer">Step 7: Draw the Text Layout Using the Custom Renderer</a></li>
+<li><a href="#step-8-clean-up">Step 8: Clean up</a></li>
+</ul>
+<h2>Step 1: Create a Text Layout</h2>
+<p>To begin, you will need an application with an <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextlayout"><strong>IDWriteTextLayout</strong></a> object. If you already have an application that displays text with a text layout, or you are using the Custom DrawingEffect Example Code, skip to Step 2.</p>
+<p>To add a text layout you must do the following:</p>
+<ol>
+<li>
+<p>Declare a pointer to an <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextlayout"><strong>IDWriteTextLayout</strong></a> interface as a member of the class.</p>
+<pre lang="C++"><code>IDWriteTextLayout* pTextLayout_;
+
+</code></pre>
+</li>
+<li>
+<p>At the end of the <strong>CreateDeviceIndependentResources</strong> method, create an <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextlayout"><strong>IDWriteTextLayout</strong></a> interface object by calling the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritefactory-createtextlayout"><strong>CreateTextLayout</strong></a> method.</p>
+<pre lang="C++"><code>// Create a text layout using the text format.
+if (SUCCEEDED(hr))
+{
+    RECT rect;
+    GetClientRect(hwnd_, &amp;rect); 
+    float width  = rect.right  / dpiScaleX_;
+    float height = rect.bottom / dpiScaleY_;
+
+    hr = pDWriteFactory_-&gt;CreateTextLayout(
+        wszText_,      // The string to be laid out and formatted.
+        cTextLength_,  // The length of the string.
+        pTextFormat_,  // The text format to apply to the string (contains font information, etc).
+        width,         // The width of the layout box.
+        height,        // The height of the layout box.
+        &amp;pTextLayout_  // The IDWriteTextLayout interface pointer.
+        );
+}
+
+</code></pre>
+</li>
+<li>
+<p>Finally, remember to release the text layout in the destructor.</p>
+<pre lang="C++"><code>SafeRelease(&amp;pTextLayout_);
+</code></pre>
+</li>
+</ol>
+<h2>Step 2: Implement a Custom Drawing Effect Class</h2>
+<p>Other than the methods inherited from IUnknown, a custom client drawing effect interface has no requirements as to what it must implement. In this case, the <strong>ColorDrawingEffect</strong> class simply holds a <a href="../direct2d/d2d1-color-f.html"><strong>D2D1_COLOR_F</strong></a> value and declares methods to get and set this value, as well as a constructor that can set the color initially.</p>
+<p>After a client drawing effect is applied to a text range in a <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextlayout"><strong>IDWriteTextLayout</strong></a> object, the drawing effect is passed to the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawglyphrun"><strong>IDWriteTextRenderer::DrawGlyphRun</strong></a> method of any glyph run that is to be rendered. The methods of the drawing effect are then available to the text renderer.</p>
+<p>A client drawing effect can be as complex as you want to make it, carrying more information than in this example, as well as providing methods to alter glyphs, create objects to be used for drawing, and so on.</p>
+<h2>Step 3: Implement a Custom Text Renderer Class</h2>
+<p>In order to take advantage of a client drawing effect, you must implement a custom text renderer. This text renderer will apply the drawing effect passed to it by the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextlayout-draw"><strong>IDWriteTextLayout::Draw</strong></a> method to the glyph run being drawn.</p>
+<h3>The Constructor</h3>
+<p>The constructor for the custom text renderer stores the <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1factory"><strong>ID2D1Factory</strong></a> object that will be used to create <a href="../direct2d/direct2d-portal.html">Direct2D</a> objects, and the Direct2D render target that the text will be drawn on to.</p>
+<pre lang="C++"><code>CustomTextRenderer::CustomTextRenderer(
+    ID2D1Factory* pD2DFactory, 
+    ID2D1HwndRenderTarget* pRT
+    )
+:
+cRefCount_(0), 
+pD2DFactory_(pD2DFactory), 
+pRT_(pRT)
+{
+    pD2DFactory_-&gt;AddRef();
+    pRT_-&gt;AddRef();
+}
+</code></pre>
+<h3>The DrawGlyphRun Method</h3>
+<p>A glyph run is a set of glyphs that share the same format, including the client drawing effect. The <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawglyphrun"><strong>DrawGlyphRun</strong></a> method takes care of the text rendering for a specified glyph run.</p>
+<p>First, create an <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1pathgeometry"><strong>ID2D1PathGeometry</strong></a> and an <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1geometrysink"><strong>ID2D1GeometrySink</strong></a>, and then retrieve the glyph run outline by using <a href="/windows/win32/api/dwrite/nf-dwrite-idwritefontface-getglyphrunoutline"><strong>IDWriteFontFace::GetGlyphRunOutline</strong></a>. Then transform the origin of the geometry by using the <a href="../direct2d/direct2d-portal.html">Direct2D</a>Â <a href="../direct2d/id2d1factory-createtransformedgeometry.html"><strong>ID2D1Factory::CreateTransformedGeometry</strong></a> method, as shown in the following code.</p>
+<pre lang="C++"><code>HRESULT hr = S_OK;
+
+// Create the path geometry.
+ID2D1PathGeometry* pPathGeometry = NULL;
+hr = pD2DFactory_-&gt;CreatePathGeometry(
+        &amp;pPathGeometry
+        );
+
+// Write to the path geometry using the geometry sink.
+ID2D1GeometrySink* pSink = NULL;
+if (SUCCEEDED(hr))
+{
+    hr = pPathGeometry-&gt;Open(
+        &amp;pSink
+        );
+}
+
+// Get the glyph run outline geometries back from DirectWrite and place them within the
+// geometry sink.
+if (SUCCEEDED(hr))
+{
+    hr = glyphRun-&gt;fontFace-&gt;GetGlyphRunOutline(
+        glyphRun-&gt;fontEmSize,
+        glyphRun-&gt;glyphIndices,
+        glyphRun-&gt;glyphAdvances,
+        glyphRun-&gt;glyphOffsets,
+        glyphRun-&gt;glyphCount,
+        glyphRun-&gt;isSideways,
+        glyphRun-&gt;bidiLevel%2,
+        pSink
+        );
+}
+
+// Close the geometry sink
+if (SUCCEEDED(hr))
+{
+    hr = pSink-&gt;Close();
+}
+
+// Initialize a matrix to translate the origin of the glyph run.
+D2D1::Matrix3x2F const matrix = D2D1::Matrix3x2F(
+    1.0f, 0.0f,
+    0.0f, 1.0f,
+    baselineOriginX, baselineOriginY
+    );
+
+// Create the transformed geometry
+ID2D1TransformedGeometry* pTransformedGeometry = NULL;
+if (SUCCEEDED(hr))
+{
+    hr = pD2DFactory_-&gt;CreateTransformedGeometry(
+        pPathGeometry,
+        &amp;matrix,
+        &amp;pTransformedGeometry
+        );
+}
+</code></pre>
+<p>Next, declare a <a href="../direct2d/direct2d-portal.html">Direct2D</a> solid brush object.</p>
+<pre lang="C++"><code>ID2D1SolidColorBrush* pBrush = NULL;
+</code></pre>
+<p>If the <em>clientDrawingEffect</em> parameter is not NULL, query the object for the <strong>ColorDrawingEffect</strong> interface. This will work because you will set this class as the client drawing effect on text ranges of the text layout object.</p>
+<p>Once you have a pointer to the <strong>ColorDrawingEffect</strong> interface, you can retrieve the <a href="../direct2d/d2d1-color-f.html"><strong>D2D1_COLOR_F</strong></a> value that it stores using the <strong>GetColor</strong> method. Then, use the <strong>D2D1_COLOR_F</strong> to create a <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1solidcolorbrush"><strong>ID2D1SolidColorBrush</strong></a> in that color.</p>
+<p>If the <em>clientDrawingEffect</em> parameter is <strong>NULL</strong>, then just create a black <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1solidcolorbrush"><strong>ID2D1SolidColorBrush</strong></a>.</p>
+<pre lang="C++"><code>// If there is a drawing effect create a color brush using it, otherwise create a black brush.
+if (clientDrawingEffect != NULL)
+{
+    // Go from IUnknown to ColorDrawingEffect.
+    ColorDrawingEffect *colorDrawingEffect;
+
+    clientDrawingEffect-&gt;QueryInterface(__uuidof(ColorDrawingEffect), reinterpret_cast&lt;void**&gt;(&amp;colorDrawingEffect));
+
+    // Get the color from the ColorDrawingEffect object.
+    D2D1_COLOR_F color;
+
+    colorDrawingEffect-&gt;GetColor(&amp;color);
+
+    // Create the brush using the color specified by our ColorDrawingEffect object.
+    if (SUCCEEDED(hr))
+    {
+        hr = pRT_-&gt;CreateSolidColorBrush(
+            color,
+            &amp;pBrush);
+    }
+
+    SafeRelease(&amp;colorDrawingEffect);
+}
+else
+{
+    // Create a black brush.
+    if (SUCCEEDED(hr))
+    {
+        hr = pRT_-&gt;CreateSolidColorBrush(
+            D2D1::ColorF(
+            D2D1::ColorF::Black
+            ),
+            &amp;pBrush);
+    }
+}
+</code></pre>
+<p>Finally, draw the outline geometry and fill it using the solid color brush that you just created.</p>
+<pre lang="C++"><code>if (SUCCEEDED(hr))
+{
+    // Draw the outline of the glyph run
+    pRT_-&gt;DrawGeometry(
+        pTransformedGeometry,
+        pBrush
+        );
+
+    // Fill in the glyph run
+    pRT_-&gt;FillGeometry(
+        pTransformedGeometry,
+        pBrush
+        );
+}
+</code></pre>
+<h3>The Destructor</h3>
+<p>Don't forget to release the <a href="../direct2d/direct2d-portal.html">Direct2D</a> factory and render target in the destructor.</p>
+<pre lang="C++"><code>CustomTextRenderer::~CustomTextRenderer()
+{
+    SafeRelease(&amp;pD2DFactory_);
+    SafeRelease(&amp;pRT_);
+}
+</code></pre>
+<h2>Step 4: Create the Text Renderer</h2>
+<p>In the <strong>CreateDeviceDependent</strong> resources, create the custom text renderer object. It is device dependent because it uses the <strong>ID2D1RenderTarget</strong>, which is itself device dependent.</p>
+<pre lang="C++"><code>// Create the text renderer
+pTextRenderer_ = new CustomTextRenderer(
+                        pD2DFactory_,
+                        pRT_
+                        );
+</code></pre>
+<h2>Step 5: Instantiate the Color Drawing Effect Objects</h2>
+<p>Instantiate <strong>ColorDrawingEffect</strong> objects in red, green, and blue.</p>
+<pre lang="C++"><code>// Instantiate some custom color drawing effects.
+redDrawingEffect_ = new ColorDrawingEffect(
+    D2D1::ColorF(
+        D2D1::ColorF::Red
+        )
+    );
+
+blueDrawingEffect_ = new ColorDrawingEffect(
+    D2D1::ColorF(
+        D2D1::ColorF::Blue
+        )
+    );
+
+greenDrawingEffect_ = new ColorDrawingEffect(
+    D2D1::ColorF(
+        D2D1::ColorF::Green
+        )
+    );
+</code></pre>
+<h2>Step 6: Set the Drawing Effect for Specific Text Ranges</h2>
+<p>Set the drawing effect for specific ranges of text by using the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextlayout-setdrawingeffect"><strong>IDWriteTextLayou::SetDrawingEffect</strong></a> method and a <a href="/windows/win32/api/dwrite/ns-dwrite-dwrite_text_range"><strong>DWRITE_TEXT_RANGE</strong></a> struct.</p>
+<pre lang="C++"><code>// Set the drawing effects.
+
+// Red.
+if (SUCCEEDED(hr))
+{
+    // Set the drawing effect for the specified range.
+    DWRITE_TEXT_RANGE textRange = {0,
+                                   14};
+    if (SUCCEEDED(hr))
+    {
+        hr = pTextLayout_-&gt;SetDrawingEffect(redDrawingEffect_, textRange);
+    }
+}
+
+// Blue.
+if (SUCCEEDED(hr))
+{
+    // Set the drawing effect for the specified range.
+    DWRITE_TEXT_RANGE textRange = {14,
+                                   7};
+    if (SUCCEEDED(hr))
+    {
+        hr = pTextLayout_-&gt;SetDrawingEffect(blueDrawingEffect_, textRange);
+    }
+}
+
+// Green.
+if (SUCCEEDED(hr))
+{
+    // Set the drawing effect for the specified range.
+    DWRITE_TEXT_RANGE textRange = {21,
+                                   8};
+    if (SUCCEEDED(hr))
+    {
+        hr = pTextLayout_-&gt;SetDrawingEffect(greenDrawingEffect_, textRange);
+    }
+}
+</code></pre>
+<h2>Step 7: Draw the Text Layout Using the Custom Renderer</h2>
+<p>You must call the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextlayout-draw"><strong>IDWriteTextLayout::Draw</strong></a> method rather than the <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-drawtext(constwchar_uint32_idwritetextformat_constd2d1_rect_f__id2d1brush_d2d1_draw_text_options_dwrite_measuring_mode)"><strong>ID2D1RenderTarget::DrawText</strong></a> or <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-drawtextlayout"><strong>ID2D1RenderTarget::DrawTextLayout</strong></a> methods.</p>
+<pre lang="C++"><code>// Draw the text layout using DirectWrite and the CustomTextRenderer class.
+hr = pTextLayout_-&gt;Draw(
+        NULL,
+        pTextRenderer_,  // Custom text renderer.
+        origin.x,
+        origin.y
+        );
+
+</code></pre>
+<h2>Step 8: Clean up</h2>
+<p>In the DemoApp destructor, release the custom text renderer.</p>
+<pre lang="C++"><code>SafeRelease(&amp;pTextRenderer_);
+</code></pre>
+<p>After that, add code to release the client drawing effect classes.</p>
+<pre lang="C++"><code>SafeRelease(&amp;redDrawingEffect_);
+SafeRelease(&amp;blueDrawingEffect_);
+SafeRelease(&amp;greenDrawingEffect_);
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

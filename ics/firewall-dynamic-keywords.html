@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Firewall dynamic keywords</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Firewall dynamic keywords
+description: You use the firewall dynamic keywords APIs to manage dynamic keyword addresses in Microsoft Defender Firewall.
+keywords:</p>
+<ul>
+<li>Firewall dynamic keywords
+ms.topic: article
+ms.date: 05/17/2021</li>
+</ul>
+<hr />
+<h1>Firewall dynamic keywords</h1>
+<p>You use the firewall dynamic keywords APIs to manage <em>dynamic keyword addresses</em> in <a href="/windows/security/threat-protection/windows-firewall/windows-firewall-with-advanced-security">Microsoft Defender Firewall</a>. A dynamic keyword address is used to create a set of IP addresses to which one or more firewall rules can refer. Dynamic keyword addresses support both IPv4 and IPv6.</p>
+<blockquote>
+<p>[!NOTE]
+For API reference content for the APIs introduced in this topic, see <a href="firewall-dynamic-keywords-reference.html">Firewall dynamic keywords reference</a>.</p>
+</blockquote>
+<h2>Operations on dynamic keyword addresses</h2>
+<p>With the Firewall dynamic keywords APIs, you can perform the following operations.</p>
+<ul>
+<li>Add dynamic keyword addresses</li>
+<li>Delete dynamic keyword addresses</li>
+<li>Enumerate dynamic keyword addresses by ID, or by type</li>
+<li>Update dynamic keyword addresses</li>
+<li>Subscribe to, and handle, dynamic keyword address change notifications</li>
+</ul>
+<p>There are code examples for all of those operations later in this topic.</p>
+<p>Once you've added a dynamic keyword address, it persists across reboots. You must delete a dynamic keyword address once you're done with the object.</p>
+<p>There are two classes of dynamic keyword addresses, as described in the next two sections.</p>
+<h2>AutoResolve dynamic keyword addresses</h2>
+<p>The first type is <em>AutoResolve</em>, where the <em>keyword</em> field represents a resolvable name, and the IP addresses aren't defined upon creation.</p>
+<p>These objects are intended to have their IP addresses resolved automatically. That is, not through an admin at object creation time; nor through the operating system (OS) itself. A component outside of the firewall service must do the IP address resolution for these objects, and update them appropriately. The implementation of such a component is outside the scope of this content.</p>
+<p>A dynamic keyword address is indicated as being <em>AutoResolve</em> by setting the <strong>FW_DYNAMIC_KEYWORD_ADDRESS_FLAGS_AUTO_RESOLVE</strong> flag in the object when calling the <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwadddynamickeywordaddress0"><strong>FWAddDynamicKeywordAddress0</strong></a> function. The <em>keyword</em> field should be used to represent the value being resolved—that is, a fully qualified domain name (FQDN) or hostname. The <em>addresses</em> field must initially be NULL for these objects. These objects won't have their IP addresses persisted across boot cycles, and you should re-evaluate/re-populate their addresses during the next boot cycle.</p>
+<blockquote>
+<p>[!NOTE]
+AutoResolve dynamic keyword address objects trigger notifications on <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwadddynamickeywordaddress0"><strong>FWAddDynamicKeywordAddress0</strong></a> and <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwdeletedynamickeywordaddress0"><strong>FWDeleteDynamicKeywordAddress0</strong></a>, but not <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwupdatedynamickeywordaddress0"><strong>FWUpdateDynamicKeywordAddress0</strong></a>.</p>
+</blockquote>
+<h2>Non-AutoResolve dynamic keyword addresses</h2>
+<p>The second type is <em>non-AutoResolve</em>, where the <em>keyword</em> field is any string, and the addresses are defined at creation time.</p>
+<p>These objects are used to store a set of IP address, subnets, or ranges. The <em>keyword</em> field here is used for management convenience, and it can be set to any string. The <em>addresses</em> field must be non-NULL upon creation. Addresses for these objects are persisted across reboots.</p>
+<blockquote>
+<p>[!NOTE]
+Non-AutoResolve dynamic keyword address objects trigger notifications on <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwadddynamickeywordaddress0"><strong>FWAddDynamicKeywordAddress0</strong></a>, <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwdeletedynamickeywordaddress0"><strong>FWDeleteDynamicKeywordAddress0</strong></a>, and also <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwupdatedynamickeywordaddress0"><strong>FWUpdateDynamicKeywordAddress0</strong></a>.</p>
+</blockquote>
+<h2>More about dynamic keyword addresses</h2>
+<p>All dynamic keyword addresses must have a unique <a href="/windows/win32/api/guiddef/ns-guiddef-guid"><strong>GUID</strong></a> identifier to represent them.</p>
+<p>The <a href="/windows/win32/api/fwpmu/nf-fwpmu-fwpmdynamickeywordsubscribe0"><strong>FwpmDynamicKeywordSubscribe0</strong></a> API delivers notifications to a client when dynamic keyword addresses change. There's no payload delivered to the client describing exactly what changed on the system. If you need to know what objects changed, then you should query the current state of objects on the system using the <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwenumdynamickeywordaddressbyid0"><strong>FWEnumDynamicKeywordAddressById0</strong></a> or <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwenumdynamickeywordaddressesbytype0"><strong>FWEnumDynamicKeywordAddressesByType0</strong></a> APIs. You can use the various flags to request notifications for only a subset of objects. If you use no flags, then change notifications will be delivered for all objects.</p>
+<p>A firewall rule can use dynamic keyword addresses instead of explicitly defining IP addresses for its remote address condition. A firewall rule can use both dynamic keyword addresses and statically defined remote address ranges. A single dynamic keyword address object can be re-used across multiple firewall rules. If a firewall rule doesn't have any configured remote addresses (that is, configured with only AutoResolve objects which have not yet been resolved), then the rule won't be enforced. Furthermore, if a rule uses multiple dynamic keyword addresses, then the rule will be enforced for all addresses that are currently resolved, even if there are other objects that are not yet resolved. When a dynamic keyword address is updated, all associated rule objects will have their remote addresses updated as well.</p>
+<p>The operating system (OS) itself doesn't enforce any dependencies between a rule and a dynamic keyword address. This means that either object can be created first—the rule can reference dynamic keyword address IDs that don't yet exist (in which case, the rule won't be enforced). Furthermore, you can delete a dynamic keyword address even if it's in use by a firewall rule. This topic outlines how an admin can configure rules to use dynamic keyword address.</p>
+<h2>Code examples</h2>
+<p>To try out each of these code examples, first launch Visual Studio and create a new project based on the <strong>Console App</strong> project template. You can just replace the contents of <code>main.cpp</code> with the code listing.</p>
+<p>Most of the code examples use the <a href="https://github.com/Microsoft/wil">Windows Implementation Libraries (WIL)</a>. A convenient way to install WIL is to go to Visual Studio, click <strong>Project</strong> &gt; <strong>Manage NuGet Packages...</strong> &gt; <strong>Browse</strong>, type or paste <strong>Microsoft.Windows.ImplementationLibrary</strong> in the search box, select the item in search results, and then click <strong>Install</strong> to install the package for that project.</p>
+<blockquote>
+<p>[!NOTE]
+Pointer types for the NetFw free functions are published via <code>NetFw.h</code>, but a static-link library isn't published. Use the <a href="/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibraryexw">LoadLibraryExW</a>/<a href="/windows/win32/api/libloaderapi/nf-libloaderapi-getprocaddress">GetProcAddress</a> pattern for calling these functions, as shown in these code examples.</p>
+</blockquote>
+<h3>Add a dynamic keyword address</h3>
+<p>This example shows how to use the <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwadddynamickeywordaddress0"><strong>FWAddDynamicKeywordAddress0</strong></a> function.</p>
+<pre lang="cpp"><code>// main.cpp in a Console App project.
+#include &lt;windows.h&gt;
+#include &lt;wil/resource.h&gt;
+#include &lt;netfw.h&gt;
+
+// {26548e4f-d486-4a1d-8a1d-22b0837cd53b}
+const GUID DYNAMIC_KEYWORD_ADDRESS_ID_1 =
+{
+    0x26548e4f,
+    0xd486,
+    0x4a1d,
+    {0x8a,0x1d,0x22,0xb0,0x83,0x7c,0xd5,0x3b}
+};
+
+// {e9d5c993-9369-4a96-8228-9c5c37aac51a}
+const GUID DYNAMIC_KEYWORD_ADDRESS_ID_2 =
+{
+    0xe9d5c993,
+    0x9369,
+    0x4a96,
+    {0x82,0x28,0x9c,0x5c,0x37,0xaa,0xc5,0x1a}
+};
+
+int main()
+{
+    DWORD error = ERROR_SUCCESS;
+    PFN_FWADDDYNAMICKEYWORDADDRESS0 addDynamicKeywordAddressFn = NULL;
+    HMODULE moduleHandle = NULL;
+    FW_DYNAMIC_KEYWORD_ADDRESS0 autoResolveKeywordAddress = { 0 };
+    FW_DYNAMIC_KEYWORD_ADDRESS0 nonAutoResolveKeywordAddress = { 0 };
+
+    // Use LoadLibrary/GetProcAddress to invoke this function
+    moduleHandle = LoadLibraryExW(L&quot;firewallapi.dll&quot;, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    auto onExitFreeModuleHandle = wil::scope_exit([&amp;]
+        {
+            if (moduleHandle)
+            {
+                FreeLibrary(moduleHandle);
+            }
+        });
+
+    if (moduleHandle != NULL)
+    {
+        addDynamicKeywordAddressFn = (PFN_FWADDDYNAMICKEYWORDADDRESS0)GetProcAddress(
+            moduleHandle,
+            &quot;FWAddDynamicKeywordAddress0&quot;
+        );
+    }
+
+    if (addDynamicKeywordAddressFn == NULL)
+    {
+        error = GetLastError();
+        return error;
+    }
+
+    // Ensure the ID is unique. If not, the add operation will fail with ERROR_ALREADY_EXISTS
+    // and you should invoke the API with a new ID.
+
+    // Initialize and add an auto-resolve dynamic keyword address
+    autoResolveKeywordAddress.id = DYNAMIC_KEYWORD_ADDRESS_ID_1;
+    autoResolveKeywordAddress.keyword = L&quot;bing.com&quot;;
+    autoResolveKeywordAddress.flags = FW_DYNAMIC_KEYWORD_ADDRESS_FLAGS_AUTO_RESOLVE;
+    // must be NULL as we have set the auto resolve flag
+    autoResolveKeywordAddress.addresses = NULL;
+
+    error = addDynamicKeywordAddressFn(&amp;autoResolveKeywordAddress);
+    if (error != ERROR_SUCCESS)
+    {
+        return error;
+    }
+
+    // Initialize and add a non auto-resolve dynamic keyword address
+    nonAutoResolveKeywordAddress.id = DYNAMIC_KEYWORD_ADDRESS_ID_2;
+    nonAutoResolveKeywordAddress.keyword = L&quot;myServerIPs&quot;;
+    nonAutoResolveKeywordAddress.flags = 0;
+    nonAutoResolveKeywordAddress.addresses = L&quot;10.0.0.5,20.0.0.0/24,30.0.0.0-40.0.0.0&quot;;
+
+    error = addDynamicKeywordAddressFn(&amp;nonAutoResolveKeywordAddress);
+    if (error != ERROR_SUCCESS)
+    {
+        return error;
+    }
+    return error;
+}
+</code></pre>
+<h3>Delete a dynamic keyword address</h3>
+<p>This example shows how to use the <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwdeletedynamickeywordaddress0"><strong>FWDeleteDynamicKeywordAddress0</strong></a> function.</p>
+<pre lang="cpp"><code>// main.cpp in a Console App project.
+#include &lt;windows.h&gt;
+#include &lt;wil/resource.h&gt;
+#include &lt;netfw.h&gt;
+
+// {26548e4f-d486-4a1d-8a1d-22b0837cd53b}
+const GUID DYNAMIC_KEYWORD_ADDRESS_ID_1 =
+{
+    0x26548e4f,
+    0xd486,
+    0x4a1d,
+    {0x8a,0x1d,0x22,0xb0,0x83,0x7c,0xd5,0x3b}
+};
+
+
+// {e9d5c993-9369-4a96-8228-9c5c37aac51a}
+const GUID DYNAMIC_KEYWORD_ADDRESS_ID_2 =
+{
+    0xe9d5c993,
+    0x9369,
+    0x4a96,
+    {0x82,0x28,0x9c,0x5c,0x37,0xaa,0xc5,0x1a}
+};
+
+int main()
+{
+    DWORD error = ERROR_SUCCESS;
+    PFN_FWDELETEDYNAMICKEYWORDADDRESS0 deleteDynamicKeywordAddressFn = NULL;
+    HMODULE moduleHandle = NULL;
+
+    // Use LoadLibrary/GetProcAddress to invoke this function
+    moduleHandle = LoadLibraryExW(L&quot;firewallapi.dll&quot;, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    auto onExitFreeModuleHandle = wil::scope_exit([&amp;]
+        {
+            if (moduleHandle)
+            {
+                FreeLibrary(moduleHandle);
+            }
+        });
+
+
+    if (moduleHandle != NULL)
+    {
+        deleteDynamicKeywordAddressFn = (PFN_FWDELETEDYNAMICKEYWORDADDRESS0)GetProcAddress(
+            moduleHandle,
+            &quot;FWDeleteDynamicKeywordAddress0&quot;
+        );
+    }
+
+    if (deleteDynamicKeywordAddressFn == NULL)
+    {
+        error = GetLastError();
+        return error;
+    }
+
+    // Invoke the functions
+    error = deleteDynamicKeywordAddressFn(DYNAMIC_KEYWORD_ADDRESS_ID_1);
+    if (error != ERROR_SUCCESS)
+    {
+        wprintf(L&quot;Failed to delete object with ID 1, err=[%d]&quot;, error);
+    }
+
+    error = deleteDynamicKeywordAddressFn(DYNAMIC_KEYWORD_ADDRESS_ID_2);
+    if (error != ERROR_SUCCESS)
+    {
+        wprintf(L&quot;Failed to delete object with ID 2, err=[%d]&quot;, error);
+    }
+
+    return error;
+}
+</code></pre>
+<h3>Enumerate and free dynamic keyword addresses by ID</h3>
+<p>This example shows how to use the <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwenumdynamickeywordaddressbyid0"><strong>FWEnumDynamicKeywordAddressById0</strong></a> and <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwfreedynamickeywordaddressdata0"><strong>FWFreeDynamicKeywordAddressData0</strong></a> functions.</p>
+<pre lang="cpp"><code>// main.cpp in a Console App project.
+#include &lt;windows.h&gt;
+#include &lt;wil/resource.h&gt;
+#include &lt;netfw.h&gt;
+
+// {26548e4f-d486-4a1d-8a1d-22b0837cd53b}
+const GUID DYNAMIC_KEYWORD_ADDRESS_ID_1 =
+{
+    0x26548e4f,
+    0xd486,
+    0x4a1d,
+    {0x8a,0x1d,0x22,0xb0,0x83,0x7c,0xd5,0x3b}
+};
+
+// {e9d5c993-9369-4a96-8228-9c5c37aac51a}
+const GUID DYNAMIC_KEYWORD_ADDRESS_ID_2 =
+{
+    0xe9d5c993,
+    0x9369,
+    0x4a96,
+    {0x82,0x28,0x9c,0x5c,0x37,0xaa,0xc5,0x1a}
+};
+
+int main()
+{
+    DWORD error = ERROR_SUCCESS;
+    PFN_FWENUMDYNAMICKEYWORDADDRESSBYID0 enumDynamicKeywordAddressByIdFn = NULL;
+    PFN_FWFREEDYNAMICKEYWORDADDRESSDATA0 freeDynamicKeywordAddressDataFn = NULL;
+    HMODULE moduleHandle = NULL;
+    PFW_DYNAMIC_KEYWORD_ADDRESS_DATA0 dynamicKeywordAddressData = NULL;
+
+    // Use LoadLibrary/GetProcAddress to invoke this function
+    moduleHandle = LoadLibraryExW(L&quot;firewallapi.dll&quot;, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    auto onExitFreeModuleHandle = wil::scope_exit([&amp;]
+        {
+            if (moduleHandle)
+            {
+                FreeLibrary(moduleHandle);
+            }
+        });
+
+    if (moduleHandle != NULL)
+    {
+        enumDynamicKeywordAddressByIdFn = (PFN_FWENUMDYNAMICKEYWORDADDRESSBYID0)GetProcAddress(
+            moduleHandle,
+            &quot;FWEnumDynamicKeywordAddressById0&quot;
+        );
+        freeDynamicKeywordAddressDataFn = (PFN_FWFREEDYNAMICKEYWORDADDRESSDATA0)GetProcAddress(
+            moduleHandle,
+            &quot;FWFreeDynamicKeywordAddressData0&quot;
+        );
+    }
+
+    if (enumDynamicKeywordAddressByIdFn == NULL ||
+        freeDynamicKeywordAddressDataFn == NULL)
+    {
+        error = GetLastError();
+        return error;
+    }
+
+    error = enumDynamicKeywordAddressByIdFn(
+        DYNAMIC_KEYWORD_ADDRESS_ID_1,
+        &amp;dynamicKeywordAddressData
+    );
+    if (error != ERROR_SUCCESS)
+    {
+        return error;
+    }
+
+    if (dynamicKeywordAddressData != NULL)
+    {
+        // Process this dynamic keyword address
+    }
+
+    // Free the dynamic keyword address
+    freeDynamicKeywordAddressDataFn(dynamicKeywordAddressData);
+    return error;
+}
+</code></pre>
+<h3>Enumerate and free dynamic keyword addresses by type</h3>
+<p>This example shows how to use the <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwenumdynamickeywordaddressesbytype0"><strong>FWEnumDynamicKeywordAddressesByType0</strong></a> and <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwfreedynamickeywordaddressdata0"><strong>FWFreeDynamicKeywordAddressData0</strong></a> functions.</p>
+<pre lang="cpp"><code>// main.cpp in a Console App project.
+#include &lt;windows.h&gt;
+#include &lt;wil/resource.h&gt;
+#include &lt;netfw.h&gt;
+
+int main()
+{
+    DWORD error = ERROR_SUCCESS;
+    PFN_FWENUMDYNAMICKEYWORDADDRESSESBYTYPE0 enumDynamicKeywordAddressesByTypeFn = NULL;
+    PFN_FWFREEDYNAMICKEYWORDADDRESSDATA0 freeDynamicKeywordAddressDataFn = NULL;
+    HMODULE moduleHandle = NULL;
+
+    PFW_DYNAMIC_KEYWORD_ADDRESS_DATA0 dynamicKeywordAddressData = NULL;
+    PFW_DYNAMIC_KEYWORD_ADDRESS_DATA0 currDynamicKeywordAddressData = NULL;
+
+    // Use LoadLibrary/GetProcAddress to invoke this function
+    moduleHandle = LoadLibraryExW(L&quot;firewallapi.dll&quot;, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    auto onExitFreeModuleHandle = wil::scope_exit([&amp;]
+        {
+            if (moduleHandle)
+            {
+                FreeLibrary(moduleHandle);
+            }
+        });
+
+    if (moduleHandle != NULL)
+    {
+        enumDynamicKeywordAddressesByTypeFn = (PFN_FWENUMDYNAMICKEYWORDADDRESSESBYTYPE0)GetProcAddress(
+            moduleHandle,
+            &quot;FWEnumDynamicKeywordAddressesByType0&quot;
+        );
+        freeDynamicKeywordAddressDataFn = (PFN_FWFREEDYNAMICKEYWORDADDRESSDATA0)GetProcAddress(
+            moduleHandle,
+            &quot;FWFreeDynamicKeywordAddressData0&quot;
+        );
+    }
+
+    if (enumDynamicKeywordAddressesByTypeFn == NULL ||
+        freeDynamicKeywordAddressDataFn == NULL)
+    {
+        error = GetLastError();
+        return error;
+    }
+
+    // Invoke enum for ALL dynamic keyword addresses
+    error = enumDynamicKeywordAddressesByTypeFn(
+        FW_DYNAMIC_KEYWORD_ADDRESS_ENUM_FLAGS_ALL,
+        &amp;dynamicKeywordAddressData
+    );
+    if (error != ERROR_SUCCESS)
+    {
+        return error;
+    }
+
+    currDynamicKeywordAddressData = dynamicKeywordAddressData;
+    while (currDynamicKeywordAddressData != NULL)
+    {
+        // Process this dynamic keyword address
+
+        // iterate to the next one in the list
+        currDynamicKeywordAddressData = currDynamicKeywordAddressData-&gt;next;
+    }
+
+    // Free the dynamic keyword addresses
+    freeDynamicKeywordAddressDataFn(dynamicKeywordAddressData);
+
+    return error;
+}
+</code></pre>
+<h3>Update dynamic keyword addresses</h3>
+<p>This example shows how to use the <a href="/windows/win32/api/netfw/nc-netfw-pfn_fwupdatedynamickeywordaddress0"><strong>FWUpdateDynamicKeywordAddress0</strong></a> function.</p>
+<pre lang="cpp"><code>// main.cpp in a Console App project.
+#include &lt;windows.h&gt;
+#include &lt;wil/resource.h&gt;
+#include &lt;netfw.h&gt;
+
+// {26548e4f-d486-4a1d-8a1d-22b0837cd53b}
+const GUID DYNAMIC_KEYWORD_ADDRESS_ID_1 =
+{
+    0x26548e4f,
+    0xd486,
+    0x4a1d,
+    {0x8a,0x1d,0x22,0xb0,0x83,0x7c,0xd5,0x3b}
+};
+
+int main()
+{
+    DWORD error = ERROR_SUCCESS;
+    PFN_FWUPDATEDYNAMICKEYWORDADDRESS0 updateDynamicKeywordAddressFn = NULL;
+    HMODULE moduleHandle = NULL;
+    BOOL appendToCurrentAddresses = TRUE;
+
+    // Use LoadLibrary/GetProcAddress to invoke this function
+    moduleHandle = LoadLibraryExW(L&quot;firewallapi.dll&quot;, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    auto onExitFreeModuleHandle = wil::scope_exit([&amp;]
+        {
+            if (moduleHandle)
+            {
+                FreeLibrary(moduleHandle);
+            }
+        });
+
+    if (moduleHandle != NULL)
+    {
+        updateDynamicKeywordAddressFn = (PFN_FWUPDATEDYNAMICKEYWORDADDRESS0)GetProcAddress(
+            moduleHandle,
+            &quot;FWUpdateDynamicKeywordAddress0&quot;
+        );
+    }
+
+    if (updateDynamicKeywordAddressFn == NULL)
+    {
+        error = GetLastError();
+        return error;
+    }
+
+    // Invoke the function
+    error = updateDynamicKeywordAddressFn(
+        DYNAMIC_KEYWORD_ADDRESS_ID_1,
+        L&quot;20.0.0.5&quot;,
+        appendToCurrentAddresses);
+    return error;
+}
+</code></pre>
+<h3>Subscribe to, and handle, dynamic keyword address change notifications</h3>
+<p>This example shows how to use the <a href="/windows/win32/api/fwpmu/nf-fwpmu-fwpmdynamickeywordsubscribe0"><strong>FwpmDynamicKeywordSubscribe0</strong></a> and <a href="/windows/win32/api/fwpmu/nf-fwpmu-fwpmdynamickeywordunsubscribe0"><strong>FwpmDynamicKeywordUnsubscribe0</strong></a> functions, and the <a href="/windows/win32/api/fwpmu/nc-fwpmu-fwpm_dynamic_keyword_callback0"><strong>FWPM_DYNAMIC_KEYWORD_CALLBACK0</strong></a> callback.</p>
+<pre lang="cppwinrt"><code>// main.cpp in a Console App project.
+#include &lt;windows.h&gt;
+#include &lt;netfw.h&gt;
+#include &lt;fwpmu.h&gt;
+#pragma comment(lib, &quot;Fwpuclnt&quot;)
+
+void CALLBACK TestCallback(_Inout_ VOID* /*pNotification*/, _Inout_ VOID* pContext)
+{
+    DWORD error = ERROR_SUCCESS;
+    PFN_FWENUMDYNAMICKEYWORDADDRESSESBYTYPE0 enumDynamicKeywordAddressesByTypeFn = NULL;
+    PFN_FWFREEDYNAMICKEYWORDADDRESSDATA0 freeDynamicKeywordAddressDataFn = NULL;
+    HMODULE moduleHandle = NULL;
+
+    PFW_DYNAMIC_KEYWORD_ADDRESS_DATA0 dynamicKeywordAddressData = NULL;
+    PFW_DYNAMIC_KEYWORD_ADDRESS_DATA0 currDynamicKeywordAddressData = NULL;
+    HANDLE* waitHandle = (HANDLE*)pContext;
+
+    // Use LoadLibrary/GetProcAddress to invoke this function
+    moduleHandle = LoadLibraryW(L&quot;firewallapi.dll&quot;);
+    if (moduleHandle != NULL)
+    {
+        enumDynamicKeywordAddressesByTypeFn = (PFN_FWENUMDYNAMICKEYWORDADDRESSESBYTYPE0)GetProcAddress(
+            moduleHandle,
+            &quot;FWEnumDynamicKeywordAddressesByType0&quot;
+        );
+        freeDynamicKeywordAddressDataFn = (PFN_FWFREEDYNAMICKEYWORDADDRESSDATA0)GetProcAddress(
+            moduleHandle,
+            &quot;FWFreeDynamicKeywordAddressData0&quot;
+        );
+    }
+
+    if (enumDynamicKeywordAddressesByTypeFn == NULL ||
+        freeDynamicKeywordAddressDataFn == NULL)
+    {
+        return;
+    }
+
+    // Invoke enum for ALL AutoResolve dynamic keyword addresses
+    error = enumDynamicKeywordAddressesByTypeFn(
+        FW_DYNAMIC_KEYWORD_ADDRESS_ENUM_FLAGS_AUTO_RESOLVE,
+        &amp;dynamicKeywordAddressData
+    );
+    if (error != ERROR_SUCCESS)
+    {
+        return;
+    }
+
+    currDynamicKeywordAddressData = dynamicKeywordAddressData;
+    while (currDynamicKeywordAddressData != NULL)
+    {
+        // Process this dynamic keyword address
+
+        currDynamicKeywordAddressData = currDynamicKeywordAddressData-&gt;next;
+    }
+
+    // Free the dynamic keyword addresses
+    freeDynamicKeywordAddressDataFn(dynamicKeywordAddressData);
+
+    SetEvent(*waitHandle);
+}
+
+int main()
+{
+    DWORD error = ERROR_SUCCESS;
+    HANDLE notifyHandle;
+    HANDLE waitHandle;
+
+    waitHandle = CreateEventW(
+        NULL,
+        TRUE,
+        FALSE,
+        L&quot;subscriptionWaitEvent&quot;
+    );
+
+
+    // Subscribe for change notifications
+    error = FwpmDynamicKeywordSubscribe0(
+        FWPM_NOTIFY_ADDRESSES_AUTO_RESOLVE,
+        TestCallback,
+        &amp;waitHandle,
+        &amp;notifyHandle);
+    if (error != ERROR_SUCCESS)
+    {
+        return error;
+    }
+
+    WaitForSingleObject(waitHandle, INFINITE);
+
+    // When client is ready to unsubscribe
+    error = FwpmDynamicKeywordUnsubscribe0(notifyHandle);
+
+    return error;
+}
+</code></pre>
+<h2>Related topics</h2>
+<ul>
+<li><a href="firewall-dynamic-keywords-reference.html">Firewall dynamic keywords reference</a></li>
+</ul>
+</body>

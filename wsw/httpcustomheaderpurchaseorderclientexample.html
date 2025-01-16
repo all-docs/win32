@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HttpCustomHeaderPurchaseOrderClientExample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: HttpCustomHeaderPurchaseOrderClientExample
+description: This examples shows how to use custom headers with service proxy.
+ms.assetid: d56e68cd-c910-4f41-a672-c894ba134e3b
+keywords:</p>
+<ul>
+<li>HttpCustomHeaderPurchaseOrderClientExample Native-Web-Services</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>HttpCustomHeaderPurchaseOrderClientExample</h1>
+<p>This examples shows how to use custom headers with service proxy.</p>
+<ul>
+<li><a href="#httpcustomheaderclientcpp">HttpCustomHeaderClient.cpp</a></li>
+<li><a href="#purchaseorderwsdl">PurchaseOrder.wsdl</a></li>
+<li><a href="#ordersessionheaderxsd">OrderSessionHeader.xsd</a></li>
+<li><a href="#makefile">Makefile</a></li>
+</ul>
+<h2>HttpCustomHeaderClient.cpp</h2>
+<pre lang="C++"><code>//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;string.h&quot;
+#include &quot;OrderSessionHeader.xsd.h&quot;
+#include &quot;PurchaseOrder.wsdl.h&quot;
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+
+HRESULT CALLBACK AddSessionHeader(
+    __in WS_MESSAGE* message,
+    __in WS_HEAP* heap,
+    __in void* state,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(heap);
+
+    _OrderSession* orderSession = (_OrderSession*) state;
+    // Add reply sessionID
+    return WsAddCustomHeader(
+        message, 
+        &amp;OrderSessionHeader_xsd.globalElements.OrderSession, 
+        WS_WRITE_REQUIRED_VALUE,
+        orderSession, 
+        sizeof(*orderSession), 
+        0, 
+        error);
+}
+
+HRESULT CALLBACK RetrieveSessionHeader(
+    __in WS_MESSAGE* message,
+    __in WS_HEAP* heap,
+    __in void* state,
+    __in_opt WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(heap);
+
+    _OrderSession* inputOrderSession = (_OrderSession*) state;
+    _OrderSession* outputOrderSession = NULL;
+
+    HRESULT hr = WsGetCustomHeader(
+        message, 
+        &amp;OrderSessionHeader_xsd.globalElements.OrderSession, 
+        WS_SINGLETON_HEADER,
+        0,
+        WS_READ_REQUIRED_POINTER, 
+        NULL, 
+        &amp;outputOrderSession, 
+        sizeof(outputOrderSession), 
+        NULL, 
+        error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    
+    wprintf(L&quot;%.*s == %.*s\n&quot;, 
+        outputOrderSession-&gt;sessionId.length,
+        outputOrderSession-&gt;sessionId.chars,
+        inputOrderSession-&gt;sessionId.length,
+        inputOrderSession-&gt;sessionId.chars
+        );
+    fflush(stdout);
+    
+    return NOERROR;
+}
+
+
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_ERROR* error = NULL;
+    WS_SERVICE_PROXY* serviceProxy = NULL;
+    WS_HEAP* heap = NULL;
+    WS_ENDPOINT_ADDRESS address = {0};
+    WS_STRING serviceUrl = WS_STRING_VALUE(L&quot;http://localhost/example&quot;);
+    address.url = serviceUrl;
+    WS_CALL_PROPERTY callProperties[2];
+    WS_STRING sessionId = WS_STRING_VALUE(L&quot;ExampleSession&quot;);
+    _OrderSession orderSession;
+    orderSession.sessionId = sessionId;
+    WS_PROXY_MESSAGE_CALLBACK_CONTEXT inputMessageContext = {0};
+    WS_PROXY_MESSAGE_CALLBACK_CONTEXT outputMessageContext = {0};
+    
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    // Create a heap to store deserialized data
+    hr = WsCreateHeap(
+        /*maxSize*/ 2048, 
+        /*trimSize*/ 512, 
+        NULL, 
+        0, 
+        &amp;heap, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    hr = WsCreateServiceProxy(
+            WS_CHANNEL_TYPE_REQUEST, 
+            WS_HTTP_CHANNEL_BINDING, 
+            NULL, 
+            NULL,
+            0,
+            NULL, 
+            0, 
+            &amp;serviceProxy, 
+            error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    
+    // Open channel to address
+    hr = WsOpenServiceProxy(
+            serviceProxy, 
+            &amp;address, 
+            NULL, 
+            error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    inputMessageContext.callback = AddSessionHeader;
+    inputMessageContext.state = &amp;orderSession;
+    outputMessageContext.callback = RetrieveSessionHeader;
+    outputMessageContext.state = &amp;orderSession;
+    
+    callProperties[0].id = WS_CALL_PROPERTY_SEND_MESSAGE_CONTEXT;
+    callProperties[0].value = &amp;inputMessageContext;
+    callProperties[0].valueSize = sizeof(inputMessageContext);
+    
+    callProperties[1].id = WS_CALL_PROPERTY_RECEIVE_MESSAGE_CONTEXT;
+    callProperties[1].value = &amp;outputMessageContext;
+    callProperties[1].valueSize = sizeof(outputMessageContext);
+    
+    for (int i = 0; i &lt; 100; i++)
+    {
+        WS_STRING productName = {0};
+        WS_STRING expectedShipDate = {0};
+        unsigned int orderID;
+        productName.chars = L&quot;Pencil&quot;;
+        productName.length = 6;
+    
+        hr = PurchaseOrderBinding_Order(
+            serviceProxy, 
+            100, 
+            productName, 
+            &amp;orderID, 
+            &amp;expectedShipDate, 
+            heap, 
+            callProperties, 
+            WsCountOf(callProperties), 
+            NULL, 
+            error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+        // Print out confirmation contents
+        wprintf(L&quot;Expected ship date for order %lu is %.*s\n&quot;,
+            orderID,
+            expectedShipDate.length,
+            expectedShipDate.chars);
+    
+        hr = WsResetHeap(heap, error);
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+    
+        
+    }
+    
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    if (serviceProxy != NULL)
+    {
+        WsCloseServiceProxy(serviceProxy, NULL, NULL);
+        WsFreeServiceProxy(serviceProxy);
+    }
+    
+    
+    if (heap != NULL)
+    {
+        WsFreeHeap(heap);
+    }
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+
+
+</code></pre>
+<h2>PurchaseOrder.wsdl</h2>
+<pre lang="syntax"><code>&lt;wsdl:definitions 
+    xmlns:soap=&quot;http://schemas.xmlsoap.org/wsdl/soap/&quot; 
+    xmlns:tns=&quot;http://example.org&quot; 
+    xmlns:xsd=&quot;http://www.w3.org/2001/XMLSchema&quot; 
+    xmlns:wsaw=&quot;http://www.w3.org/2006/05/addressing/wsdl&quot; 
+    xmlns:soap12=&quot;http://schemas.xmlsoap.org/wsdl/soap12/&quot; 
+    xmlns:wsdl=&quot;http://schemas.xmlsoap.org/wsdl/&quot; 
+    targetNamespace=&quot;http://example.org&quot;&gt;
+    &lt;wsdl:types&gt;
+        &lt;xsd:schema targetNamespace=&quot;http://example.org&quot; elementFormDefault=&quot;qualified&quot;&gt;
+            &lt;xsd:element name=&quot;PurchaseOrderType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;quantity&quot; type=&quot;xsd:int&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;productName&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;OrderConfirmationType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;expectedShipDate&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;GetOrderStatusType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;GetOrderStatusResponseType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;status&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;OrderNotFoundFaultType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+        &lt;/xsd:schema&gt;
+    &lt;/wsdl:types&gt;
+    &lt;wsdl:message name=&quot;PurchaseOrder&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:PurchaseOrderType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;OrderConfirmation&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:OrderConfirmationType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;GetOrderStatus&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetOrderStatusType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;GetOrderStatusResponse&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetOrderStatusResponseType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;OrderNotFoundFault&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:OrderNotFoundFaultType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:portType name=&quot;IPurchaseOrder&quot;&gt;
+        &lt;wsdl:operation name=&quot;Order&quot;&gt;
+            &lt;wsdl:input message=&quot;tns:PurchaseOrder&quot; wsaw:Action=&quot;http://example.org/purchaseorder&quot;/&gt;
+            &lt;wsdl:output message=&quot;tns:OrderConfirmation&quot; wsaw:Action=&quot;http://example.org/orderconfirmation&quot;/&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;OrderStatus&quot;&gt;
+            &lt;wsdl:input message=&quot;tns:GetOrderStatus&quot; wsaw:Action=&quot;http://example.org/getorderstatus&quot;/&gt;
+            &lt;wsdl:output message=&quot;tns:GetOrderStatusResponse&quot; wsaw:Action=&quot;http://example.org/getorderstatusresponse&quot;/&gt;
+            &lt;wsdl:fault name=&quot;OrderNotFound&quot; message=&quot;tns:OrderNotFoundFault&quot; wsaw:Action=&quot;http://example.org/ordernotfound&quot;/&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:portType&gt;
+    &lt;wsdl:binding name=&quot;PurchaseOrderBinding&quot; type=&quot;tns:IPurchaseOrder&quot;&gt;
+        &lt;soap:binding transport=&quot;http://schemas.xmlsoap.org/soap/http&quot;/&gt;
+        &lt;wsdl:operation name=&quot;Order&quot;&gt;
+            &lt;soap:operation soapAction=&quot;http://example.org/purchaseorder&quot; style=&quot;document&quot;/&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;OrderStatus&quot;&gt;
+            &lt;soap:operation soapAction=&quot;http://example.org/getorderstatus&quot; style=&quot;document&quot;/&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:output&gt;
+            &lt;wsdl:fault name=&quot;OrderNotFound&quot;&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:fault&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:binding&gt;
+    &lt;wsdl:service name=&quot;PurchaseOrderService&quot;&gt;
+        &lt;wsdl:port name=&quot;IPurchaseOrder&quot; binding=&quot;tns:PurchaseOrderBinding&quot;&gt;
+            &lt;soap:address location=&quot;http://example.org/IPurchaseOrder&quot;/&gt;
+        &lt;/wsdl:port&gt;
+    &lt;/wsdl:service&gt;
+&lt;/wsdl:definitions&gt;
+</code></pre>
+<h2>OrderSessionHeader.xsd</h2>
+<pre lang="syntax"><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;xsd:schema targetNamespace=&quot;http://example.org/session&quot;
+    elementFormDefault=&quot;qualified&quot;
+    xmlns:xsd=&quot;http://www.w3.org/2001/XMLSchema&quot;
+&gt;
+        &lt;xsd:element name=&quot;OrderSession&quot;&gt;
+            &lt;xsd:complexType&gt;
+                &lt;xsd:sequence&gt;
+                    &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;sessionId&quot; type=&quot;xsd:string&quot;/&gt;
+                &lt;/xsd:sequence&gt;
+            &lt;/xsd:complexType&gt;
+        &lt;/xsd:element&gt;
+ &lt;/xsd:schema&gt;
+</code></pre>
+<h2>Makefile</h2>
+<pre lang="syntax"><code>!include &lt;Win32.Mak&gt;
+
+EXTRA_LIBS = WebServices.lib
+
+all: $(OUTDIR) $(OUTDIR)\WsHttpCustomHeaderClient.exe
+
+&quot;$(OUTDIR)&quot; :
+    if not exist &quot;$(OUTDIR)/$(NULL)&quot; mkdir &quot;$(OUTDIR)&quot;
+    
+$(OUTDIR)\PurchaseOrder.wsdl.c $(OUTDIR)\OrderSessionHeader.xsd.c: PurchaseOrder.wsdl OrderSessionHeader.xsd
+     Wsutil.exe /wsdl:PurchaseOrder.wsdl /xsd:OrderSessionHeader.xsd /string:WS_STRING /out:$(OUTDIR)
+    
+$(OUTDIR)\PurchaseOrder.wsdl.obj: $(OUTDIR)\PurchaseOrder.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; $(OUTDIR)\PurchaseOrder.wsdl.c
+
+$(OUTDIR)\OrderSessionHeader.xsd.obj: $(OUTDIR)\OrderSessionHeader.xsd.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; $(OUTDIR)\OrderSessionHeader.xsd.c
+
+$(OUTDIR)\HttpCustomHeaderClient.obj: HttpCustomHeaderClient.cpp $(OUTDIR)\PurchaseOrder.wsdl.c $(OUTDIR)\OrderSessionHeader.xsd.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; HttpCustomHeaderClient.cpp
+
+$(OUTDIR)\WsHttpCustomHeaderClient.exe: $(OUTDIR)\HttpCustomHeaderClient.obj $(OUTDIR)\PurchaseOrder.wsdl.obj $(OUTDIR)\OrderSessionHeader.xsd.obj
+    $(link) $(ldebug) $(conlflags) $(conlibsmt) $(EXTRA_LIBS) -out:$(OUTDIR)\WsHttpCustomHeaderClient.exe $(OUTDIR)\HttpCustomHeaderClient.obj $(OUTDIR)\PurchaseOrder.wsdl.obj $(OUTDIR)\OrderSessionHeader.xsd.obj /PDB:$(OUTDIR)\WsHttpCustomHeaderClient.PDB
+
+clean:
+    $(CLEANUP)
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

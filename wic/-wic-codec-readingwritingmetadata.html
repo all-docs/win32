@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Overview of Reading and Writing Image Metadata</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic provides an overview of how you can use the Windows Imaging Component (WIC)Â APIs to read and write metadata that is embedded in image files.
+ms.assetid: b1e0b936-a13a-42dd-8470-957ba1d90423
+title: Overview of Reading and Writing Image Metadata
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Overview of Reading and Writing Image Metadata</h1>
+<p>This topic provides an overview of how you can use the Windows Imaging Component (WIC)Â APIs to read and write metadata that is embedded in image files.</p>
+<p>This topic contains the following sections.</p>
+<ul>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#introduction">Introduction</a></li>
+<li><a href="#reading-metadadata-using-a-query-reader">Reading Metadadata Using a Query Reader</a>
+<ul>
+<li><a href="#obtaining-a-query-reader">Obtaining a Query Reader</a></li>
+<li><a href="#reading-metadata">Reading Metadata</a></li>
+<li><a href="#additional-query-reader-methods">Additional Query Reader Methods</a></li>
+</ul>
+</li>
+<li><a href="#writing-metadata-using-a-query-writer">Writing Metadata Using a Query Writer</a>
+<ul>
+<li><a href="#obtaining-a-query-writer">Obtaining a Query Writer</a></li>
+<li><a href="#adding-metadata">Adding Metadata</a></li>
+<li><a href="#removing-metadata">Removing Metadata</a></li>
+<li><a href="#copying-metadata-for-re-encoding">Copying Metadata for Re-encoding</a></li>
+</ul>
+</li>
+<li><a href="#fast-metadata-encoding">Fast Metadata Encoding</a>
+<ul>
+<li><a href="#adding-padding-to-metadata-blocks">Adding Padding to Metadata Blocks</a></li>
+<li><a href="#obtaining-a-fast-metadata-encoder">Obtaining a Fast Metadata Encoder</a></li>
+<li><a href="#using-the-fast-metadata-encoder">Using the Fast Metadata Encoder</a></li>
+</ul>
+</li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Prerequisites</h2>
+<p>To understand this topic, you should be familiar with the WIC metadata system as described in the <a href="-wic-about-metadata.html">WIC Metadata Overview</a>. You should also be familiar with the query language used to read and write metadata, as described in <a href="-wic-codec-metadataquerylanguage.html">Metadata Query Language Overview</a>.</p>
+<h2>Introduction</h2>
+<p>WIC provides application developers with Component Object Model (COM) components to read and write metadata embedded in image files. There are two ways to read and write metadata:</p>
+<ul>
+<li>Using a query reader/writer and a query expression to query metadata blocks for nested blocks or specific metadata within a block.</li>
+<li>Using a metadata handler (a metadata reader or a metadata writer) to access the nested metadata blocks or specific metadata within the metadata blocks.</li>
+</ul>
+<p>The easiest of these is to use a query reader/writer and a query expression to access the metadata. A query reader (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicmetadataqueryreader"><strong>IWICMetadataQueryReader</strong></a>) is used to read metadata while a query writer (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicmetadataquerywriter"><strong>IWICMetadataQueryWriter</strong></a>) is used to write metadata. Both of these use a query expression to read or write the desired metadata. Behind the scenes, a query reader (and writer) uses a metadata handler to access the metadata described by the query expression.</p>
+<p>The more advanced method is to directly access the metadata handlers. A metadata handler is obtained from the individual frames using a block reader (<a href="/windows/desktop/api/Wincodecsdk/nn-wincodecsdk-iwicmetadatablockreader"><strong>IWICMetadataBlockReader</strong></a>) or a block writer (<a href="/windows/desktop/api/Wincodecsdk/nn-wincodecsdk-iwicmetadatablockwriter"><strong>IWICMetadataBlockWriter</strong></a>). The two types of metadata handlers available are the metadata reader (<a href="/windows/desktop/api/Wincodecsdk/nn-wincodecsdk-iwicmetadatareader"><strong>IWICMetadataReader</strong></a>) and the metadata writer (<a href="/windows/desktop/api/Wincodecsdk/nn-wincodecsdk-iwicmetadatawriter"><strong>IWICMetadataWriter</strong></a>).</p>
+<p>The following diagram of the contents of a JPEG image file is used throughout the examples in this topic. The image represented by this diagram was created by using Microsoft Paint; the rating metadata was added by using the Photo Gallery feature of WindowsÂ Vista.</p>
+<p><img src="graphics/jpeg.png" alt="illustration of jpeg image with rating metadata" /></p>
+<h2>Reading Metadadata Using a Query Reader</h2>
+<p>The easiest way to read metadata is to use the query reader interface, <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicmetadataqueryreader"><strong>IWICMetadataQueryReader</strong></a>. The query reader enables you to read metadata blocks and items within metadata blocks using a query expression.</p>
+<p>There are three ways to obtain a query reader: through a bitmap decoder (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapdecoder"><strong>IWICBitmapDecoder</strong></a>), through its individual frames (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframedecode"><strong>IWICBitmapFrameDecode</strong></a>), or through a query writer (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicmetadataquerywriter"><strong>IWICMetadataQueryWriter</strong></a>).</p>
+<h3>Obtaining a Query Reader</h3>
+<p>The following example code shows how to obtain a bitmap decoder from the imaging factory and retrieve an individual bitmap frame. This code also performs setup work needed to obtain a query reader from a decoded frame.</p>
+<pre><code>IWICImagingFactory *pFactory = NULL;
+IWICBitmapDecoder *pDecoder = NULL;
+IWICBitmapFrameDecode *pFrameDecode = NULL;
+IWICMetadataQueryReader *pQueryReader = NULL;
+IWICMetadataQueryReader *pEmbedReader = NULL;
+PROPVARIANT value;
+
+// Initialize COM
+CoInitialize(NULL);
+
+// Initialize PROPVARIANT
+PropVariantInit(&amp;value);
+
+//Create the COM imaging factory
+HRESULT hr = CoCreateInstance(
+    CLSID_WICImagingFactory,
+    NULL,
+    CLSCTX_INPROC_SERVER,
+    IID_IWICImagingFactory,
+    (LPVOID*)&amp;pFactory);
+
+// Create the decoder
+if (SUCCEEDED(hr))
+{
+    hr = pFactory-&gt;CreateDecoderFromFilename(
+        L&quot;test.jpg&quot;,
+        NULL,
+        GENERIC_READ,
+        WICDecodeMetadataCacheOnDemand,
+        &amp;pDecoder);
+}
+
+// Get a single frame from the image
+if (SUCCEEDED(hr))
+{
+    hr = pDecoder-&gt;GetFrame(
+         0,  //JPEG has only one frame.
+         &amp;pFrameDecode); 
+}
+</code></pre>
+<p>The bitmap decoder for the test.jpg file is obtained by using the <strong>CreateDecoderFromFilename</strong> method of the imaging factory. In this method, the fourth parameter is set to the value WICDecodeMetadataCacheOnDemand from the <a href="/windows/desktop/api/Wincodec/ne-wincodec-wicdecodeoptions"><strong>WICDecodeOptions</strong></a> enumeration. This tells the decoder to cache the metadata when the metadata is needed; either by obtaining a query reader or the underlying metadata reader. Using this option enables you to retain the stream to the metadata required for fast metadata encoding and enables lossless decoding of the JPEG image. Alternatively, you could use the other <strong>WICDecodeOptions</strong> value, WICDecodeMetadataCacheOnLoad, which caches the embedded image metadata as soon as the image is loaded.</p>
+<p>To obtain the frame's query reader, make a simple call to the frame's <strong>GetMetadataQueryReader</strong> method. The following code demonstrates this call.</p>
+<pre><code>// Get the query reader
+if (SUCCEEDED(hr))
+{
+    hr = pFrameDecode-&gt;GetMetadataQueryReader(&amp;pQueryReader);
+}
+</code></pre>
+<p>Similarly, a query reader can also be obtained at the decoder level. A simple call to the decoder's <strong>GetMetadataQueryReader</strong> method gets the decoder's query reader. An decoder's query reader, unlike a frame's query reader, reads metadata for an image that is outside of the individual frames. However, this scenario is not common, and the native image formats do not support this capability. The native image CODECS provided by WIC read and write metadata at the frame level even for single-frame formats such as JPEG.</p>
+<h3>Reading Metadata</h3>
+<p>Before you move on to actually reading metadata, look at the following diagram of a JPEG file that includes embedded metadata blocks and actual data to retrieve. This diagram provides callouts to specific metadata blocks and items within the image providing the metadata query expression to each block or item.</p>
+<p><img src="graphics/jpegwithcallouts.png" alt="illustration of jpeg image with metadata callouts" /></p>
+<p>To query for embedded metadata blocks or specific items by name, call the <strong>GetMetadataByName</strong> method. This method takes a query expression and a <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant">PROPVARIANT</a> in which the metadata item is returned. The following code queries for a nested metadata block and converts the <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown">IUnknown</a> component provided by the PROPVARIANT value to a query reader if found.</p>
+<pre><code>if (SUCCEEDED(hr))
+{
+    // Get the nested IFD reader
+    hr = pQueryReader-&gt;GetMetadataByName(L&quot;/app1/ifd&quot;, &amp;value);
+    if (value.vt == VT_UNKNOWN)
+    {
+        hr = value.punkVal-&gt;QueryInterface(IID_IWICMetadataQueryReader, (void **)&amp;pEmbedReader);
+    }
+    PropVariantClear(&amp;value); // Clear value for new query
+}
+</code></pre>
+<p>The query expression &quot;/app1/ifd&quot; is querying for the IFD block nested in the App1 block. The JPEG image file contains the IFD nested metadata block, so the <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant">PROPVARIANT</a> is returned with a variable type (vt) of <code>VT_UNKNOWN</code> and a pointer to an <a href="/windows/win32/api/unknwn/nn-unknwn-iunknown">IUnknown</a> interface (punkVal). You then query the IUnknown interface for a query reader.</p>
+<p>The following code demonstrates a new query based on the new query reader relative to the nested IFD block.</p>
+<pre><code>if (SUCCEEDED(hr))
+{
+    hr = pEmbedReader-&gt;GetMetadataByName(L&quot;/{ushort=18249}&quot;, &amp;value);
+    PropVariantClear(&amp;value); // Clear value for new query
+}
+</code></pre>
+<p>The query expression &quot;/{ushort=18249}&quot; queries the IFD block for the MicrosoftPhoto rating embedded under tag 18249. The <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant">PROPVARIANT</a> value will now contain a value type of <code>VT_UI2</code> and a data value of 50.</p>
+<p>However, it is not necessary to obtain a nested block before querying for specific data values. For instance, instead of querying for the nested IFD and then for the MicrosoftPhoto rating, you can instead use the root metadata block and the query shown in the following code to obtain the same information.</p>
+<pre><code>if (SUCCEEDED(hr))
+{
+    hr = pQueryReader-&gt;GetMetadataByName(L&quot;/app1/ifd/{ushort=18249}&quot;, &amp;value);
+    PropVariantClear(&amp;value);
+}
+</code></pre>
+<p>In addition to querying for specific metadata items in a metadata block, you can also enumerate all the metadata items in a metadata block (not including metadata items in nested metadata blocks). To enumerate the metadata items in the current block, the query reader's <strong>GetEnumeration</strong> method is used. This method obtains an <strong>IEnumString</strong> interface populated with the metadata items in the current block. For example, the following code enumerates the XMP rating and MicrosoftPhoto rating for the nested IFD block that was obtained earlier.</p>
+<pre><code>IEnumString *metadataItems = NULL;
+
+if (SUCCEEDED(hr))
+{
+    hr = pEmbedReader-&gt;GetEnumerator(&amp;metadataItems);
+}
+</code></pre>
+<p>For more information on identifying appropriate tags for various image formats and metadata formats, see <a href="-wic-native-image-format-metadata-queries.html">Native Image Format Metadata Queries</a>.</p>
+<h3>Additional Query Reader Methods</h3>
+<p>In addition to reading metadata, you can also obtain additional information about the query reader and obtain metadata through other means. The query reader provides two methods that provide information about the query reader, <strong>GetContainerFormat</strong> and <strong>GetLocation</strong>.</p>
+<p>With the embedded query reader, you can use <strong>GetContainerFormat</strong> to determine the type of metadata block, and you can call <strong>GetLocation</strong> to obtain the path relative to the root metadata block. The following code queries the embedded query reader for its location.</p>
+<pre><code>// Determine the metadata block format
+
+if (SUCCEEDED(hr))
+{
+    hr = pEmbedReader-&gt;GetContainerFormat(&amp;containerGUID);
+}
+
+// Determine the query reader's location
+if (SUCCEEDED(hr))
+{
+    UINT length;
+    WCHAR readerNamespace[100];
+    hr = pEmbedReader-&gt;GetLocation(100, readerNamespace, &amp;length);
+}
+</code></pre>
+<p>The call to <strong>GetContainerFormat</strong> for the embedded query reader returns the IFD metadata format GUID. The call to <strong>GetLocation</strong> returns a namespace of &quot;/app1/ifd&quot;; providing you with the relative path from which subsequent queries to the new query reader will be executed. Of course, the preceding code isn't very useful, but it does demonstrate how to use the <strong>GetLocation</strong> method for finding nested metadata blocks.</p>
+<h2>Writing Metadata Using a Query Writer</h2>
+<blockquote>
+<p>[!Note]<br />
+Some of the code examples provided in this section are not shown in the context of the actual steps required to write metadata. To view the code examples in the context of a working sample, see the How-to: Re-encode an Image with Metadata tutorial.</p>
+</blockquote>
+<p>Â </p>
+<p>The main component for writing metadata is the query writer (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicmetadataquerywriter"><strong>IWICMetadataQueryWriter</strong></a>). The query writer enables you to set and remove metadata blocks and items within a metadata block.</p>
+<p>Like the query reader, there are three ways to obtain a query writer: through a bitmap encoder (<a href="/windows/desktop/api/wincodec/nn-wincodec-iwicbitmapencoder"><strong>IWICBitmapEncoder</strong></a>), through its individual frames (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframeencode"><strong>IWICBitmapFrameEncode</strong></a>), or through a fast metadata encoder (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicfastmetadataencoder"><strong>IWICFastMetadataEncoder</strong></a>).</p>
+<h3>Obtaining a Query Writer</h3>
+<p>The most common query writer is for an individual frame of a bitmap. This query writer sets and removes an image frame's metadata blocks and items. To obtain an image frame's query writer, call the frame's <strong>GetMetadataQueryWriter</strong> method. The following code demonstrates the simple method call to obtain a frame's query writer.</p>
+<pre><code>IWICMetadataQueryWriter &amp;pFrameQWriter = NULL;
+
+//Obtain a query writer from the frame.
+hr = pFrameEncode-&gt;GetMetadataQueryWriter(&amp;pFrameQWriter);
+</code></pre>
+<p>Similarly, a query writer can also be obtained for the encoder level. A simple call to the encoder's <strong>GetMetadataQueryWriter</strong> method gets the encoder's query writer. An encoder's query writer, unlike a frame's query writer, writes metadata for an image outside of the individual frame. However, this scenario is not common, and the native image formats do not support this capability. The native image codecs provided by WIC read and write metadata at the frame level even for single-frame formats such as JPEG.</p>
+<p>You can also obtain a query writer directly from the imaging factory (<a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicimagingfactory"><strong>IWICImagingFactory</strong></a>). There are two imaging factory methods that return a query writer: <strong>CreateQueryWriter</strong> and <strong>CreateQueryWriterFromReader</strong>.</p>
+<p><strong>CreateQueryWriter</strong> creates a query writer for the specified metadata format and vendor. This query writer enables you to write metadata for a specific metadata format and add it to the image. The following code demonstrates a <strong>CreateQueryWriter</strong> call to create an XMP query writer.</p>
+<pre><code>IWICMetadataQueryWriter *pXMPWriter = NULL;
+
+// Create XMP block
+GUID vendor = GUID_VendorMicrosoft;
+hr = pFactory-&gt;CreateQueryWriter(
+        GUID_MetadataFormatXMP,
+        &amp;vendor,
+        &amp;pXMPWriter);
+</code></pre>
+<p>In this example, the friendly name <code>GUID_MetadataFormatXMP</code> is used as the <em>guidMetadataFormat</em> parameter. It represents the XMP metadata format GUID, and vendor represents the Microsoft created handler. Alternatively, <strong>NULL</strong> can be passed as the <em>pguidVendor</em> parameter with the same results if no other XMP handler exists. If a custom XMP handler is installed alongside the native XMP handler, passing <strong>NULL</strong> for the vendor will result in the query writer with the lowest GUID being returned.</p>
+<p><strong>CreateQueryWriterFromReader</strong> is similar to the <strong>CreateQueryWriter</strong> method except that it prepopulates the new query writer with the data provided by the query reader. This is useful for re-encoding an image while maintaining the existing metadata, or for removing unwanted metadata. The following code demonstrates a <strong>CreateQueryWriterFromReader</strong> call.</p>
+<pre><code>hr = pFrameDecode-&gt;GetMetadataQueryReader(&amp;pFrameQReader);
+
+// Copy metadata using query readers
+if(SUCCEEDED(hr) &amp;&amp; pFrameQReader)
+{
+    IWICMetadataQueryWriter *pNewWriter = NULL;
+
+    GUID vendor = GUID_VendorMicrosoft;
+    hr = pFactory-&gt;CreateQueryWriterFromReader(
+        pFrameQReader,
+        &amp;vendor,
+        &amp;pNewWriter);
+</code></pre>
+<h3>Adding Metadata</h3>
+<p>After you obtain a query writer, you can use it to add metadata blocks and items. To write metadata, you use the query writer's <strong>SetMetadataByName</strong> method. <strong>SetMetadataByName</strong> takes two parameters: a query expression (<em>wzName</em>) and a pointer to a <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant">PROPVARIANT</a> (<em>pvarValue</em>). The query expression defines the block or item to set while the PROPVARIANT provides the actual data value to set.</p>
+<p>The following example demonstrates how to add a title by using the XMP query writer previously obtained by using the <strong>CreateQueryWriter</strong> method.</p>
+<pre><code>// Write metadata to the XMP writer
+if (SUCCEEDED(hr))
+{
+    PROPVARIANT value;
+    PropVariantInit(&amp;value);
+
+    value.vt = VT_LPWSTR;
+    value.pwszVal = L&quot;Metadata Test Image.&quot;;
+   
+    hr = pXMPWriter-&gt;SetMetadataByName(L&quot;/dc:title&quot;, &amp;value);
+
+    PropVariantClear(&amp;value);
+}
+</code></pre>
+<p>In this example, value's type (vt) is set to <code>VT_LPWSTR</code>, indicating that a string will be used as the data value. Because <em>value</em>'s type is a string, <em>pwszVal</em> is used to set the title to use. <strong>SetMetadataByName</strong> is then called using the query expression &quot;/dc:title&quot; and the newly set <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant">PROPVARIANT</a>. The query expression used indicates that the title property in the digital camera (dc) schema should be set. Note that the expression is not &quot;/xmp/dc:title&quot;; this is because the query writer is already specific to XMP and does not contain an embedded XMP block, which &quot;/xmp/dc:title&quot; would suggest.</p>
+<p>Up to this point you haven't actually added any metadata to an image frame. You've simply populated a query writer with data. To add to a frame a metadata block represented by the query writer, you again call <strong>SetMetadataByName</strong> using the query writer as the value of the <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant">PROPVARIANT</a>. This effectively copies the metadata in the query writer to the image frame. The following code demonstrates how to add the metadata in the XMP query writer previously obtained to a frame's root metadata block.</p>
+<pre><code>// Get the frame's query writer and write the XMP query writer to it
+if (SUCCEEDED(hr))
+{
+    hr = pFrameEncode-&gt;GetMetadataQueryWriter(&amp;pFrameQWriter);
+
+    // Copy the metadata in the XMP query writer to the frame
+    if (SUCCEEDED(hr))
+    {
+        PROPVARIANT value;
+
+        PropVariantInit(&amp;value);
+        value.vt = VT_UNKNOWN;
+        value.punkVal = pXMPWriter;
+        value.punkVal-&gt;AddRef();
+
+        hr = pFrameQWriter-&gt;SetMetadataByName(L&quot;/&quot;, &amp;value);
+
+        PropVariantClear(&amp;value);
+    }
+}
+</code></pre>
+<p>In this example, a value type (vt) of <code>VT_UNKOWN</code> is used; indicating a COM interface value type. The XMP query writer (piXMPWriter) is then used as the value of the <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant">PROPVARIANT</a>, adding a reference to it by using the AddRef method. Finally, the XMP query writer is set by calling the frame's <strong>SetMetadataByName</strong> method and passing the query expression &quot;/&quot;, indicating the root block, and the newly set PROPVARIANT.</p>
+<blockquote>
+<p>[!Note]<br />
+If the frame already contains the metadata block you are trying to add, the metadata you are adding will be added and existing metadata overwritten.</p>
+</blockquote>
+<p>Â </p>
+<h3>Removing Metadata</h3>
+<p>A query writer also enables you to remove metadata by calling the <strong>RemoveMetadataByName</strong> method. <strong>RemoveMetadataByName</strong> takes a query expression and removes the metadata block or item if it exists. The following code demonstrates how to remove the title that was previously added.</p>
+<pre><code>if (SUCCEEDED(hr))
+{
+    hr = pFrameQWriter-&gt;RemoveMetadataByName(L&quot;/xmp/dc:title&quot;);
+}
+</code></pre>
+<p>The following code demonstrates how to remove the entire XMP metadata block.</p>
+<pre><code>if (SUCCEEDED(hr))
+{
+    hr = pFrameQWriter-&gt;RemoveMetadataByName(L&quot;/xmp&quot;);
+}
+</code></pre>
+<h3>Copying Metadata for Re-encoding</h3>
+<blockquote>
+<p>[!Note]<br />
+The code in this section is valid only when the source and destination image formats are the same. You cannot copy all of an image's metadata in a single operation when encoding to a different image format.</p>
+</blockquote>
+<p>Â </p>
+<p>To preserve metadata while re-encoding an image to the same image format, there are methods available for copying all the metadata in a single operation. Each of these operations follows a similar pattern; each sets the decoded frame's metadata directly into the new frame being encoded.</p>
+<p>The preferred method to copy metadata is to initialize the new frame's block writer with the decoded frame's block reader. The following code demonstrates this method.</p>
+<pre><code>if (SUCCEEDED(hr) &amp;&amp; formatsEqual)
+{
+    // Copy metadata using metadata block reader/writer
+    if (SUCCEEDED(hr))
+    {
+        pFrameDecode-&gt;QueryInterface(
+            IID_IWICMetadataBlockReader,
+            (void**)&amp;pBlockReader);
+    }
+    if (SUCCEEDED(hr))
+    {
+        pFrameEncode-&gt;QueryInterface(
+            IID_IWICMetadataBlockWriter,
+            (void**)&amp;pBlockWriter);
+    }
+    if (SUCCEEDED(hr))
+    {
+        pBlockWriter-&gt;InitializeFromBlockReader(pBlockReader);
+    }
+}
+</code></pre>
+<p>In this example, the block reader and the block writer are obtained from the source frame and destination frame, respectively. The block writer is then initialized from the block reader. This initializes the block reader with the pre-populated metadata of the block reader.</p>
+<p>Another method to copy metadata is to write the metadata block referenced by the query reader using the encoder's query writer. The following code demonstrates this method.</p>
+<pre><code>if (SUCCEEDED(hr) &amp;&amp; formatsEqual)
+{
+    hr = pFrameDecode-&gt;GetMetadataQueryReader(&amp;pFrameQReader);
+
+    // Copy metadata using query readers
+    if(SUCCEEDED(hr))
+    {
+        hr = pFrameEncode-&gt;GetMetadataQueryWriter(&amp;pFrameQWriter);
+        if (SUCCEEDED(hr))
+        {
+            PropVariantClear(&amp;value);
+            value.vt=VT_UNKNOWN;
+            value.punkVal=pFrameQReader;
+            value.punkVal-&gt;AddRef();
+            hr = pFrameQWriter-&gt;SetMetadataByName(L&quot;/&quot;, &amp;value);
+            PropVariantClear(&amp;value);
+        }
+    }
+}
+</code></pre>
+<p>Here, a query reader is obtained from the decoded frame and then used as the property value of the <a href="/windows/win32/api/propidlbase/ns-propidlbase-propvariant">PROPVARIANT</a> with a value type set to VT_UNKNOWN. The query writer for the encoder is obtained and the query expression &quot;/&quot; is used to set the metadata at the root navigation path. You can also use this method when setting nested metadata blocks, by adjusting the query expression to the desired location.</p>
+<p>Similarly, you can create a query writer based on the decoded frame's query reader by using the imaging factory's <strong>CreateQueryWriterFromReader</strong> method. The query writer created in this operation will be prepopulated with the metadata from the query reader and can then be set in the frame. The following code demonstrates the <strong>CreateQueryWriterFromReader</strong> copy operation.</p>
+<pre><code>IWICMetadataQueryWriter *pNewWriter = NULL;
+
+GUID vendor = GUID_VendorMicrosoft;
+hr = pFactory-&gt;CreateQueryWriterFromReader(
+    pFrameQReader,
+    &amp;vendor,
+    &amp;pNewWriter);
+
+if (SUCCEEDED(hr))
+{
+    // Get the frame's query writer
+    hr = pFrameEncode-&gt;GetMetadataQueryWriter(&amp;pFrameQWriter);
+}
+
+// Set the query writer to the frame.
+if (SUCCEEDED(hr))
+{
+    PROPVARIANT value;
+
+    PropVariantInit(&amp;value);
+    value.vt = VT_UNKNOWN;
+    value.punkVal = pNewWriter;
+    value.punkVal-&gt;AddRef();
+    hr = pFrameQWriter-&gt;SetMetadataByName(L&quot;/&quot;,&amp;value);
+}
+</code></pre>
+<p>This method uses a separate query writer is created that is based on the data of the query reader. This new query writer then set in the frame.</p>
+<p>Again, these operations to copy metadata only work when the source and destination images have the same format. This is because different image formats store the metadata blocks in different locations. For instance, both JPEG and TIFF support XMP metadata blocks. In JPEG images, the XMP block is at the root metadata block as illustrated in the <a href="-wic-about-metadata.html">WIC Metadata Overview</a>. However, in a TIFF image, the XMP block is nested in a root IFD block. The following diagram illustrates the differences between a JPEG image and a TIFF image with the same rating metadata.</p>
+<p><img src="graphics/jpgvstiff.png" alt="jpeg and tiff comparison." /></p>
+<h2>Fast Metadata Encoding</h2>
+<p>It is not always necessary to re-encode an image to write new metadata to it. Metadata can also be written by using a fast metadata encoder. A fast metadata encoder can write a limited amount of metadata to an image without re-encoding the image. This is accomplished by writing the new metadata within the empty padding provided by some metadata formats. The native metadata formats that support metadata padding are Exif, IFD, GPS and XMP.</p>
+<h3>Adding Padding to Metadata Blocks</h3>
+<p>Before you can perform fast metadata encoding, there must be room within the metadata block to write more metadata. If there is not enough room within the existing padding to write the new metadata, the fast metadata encoding will fail. To add metadata padding to an image, the image must be re-encoded. You can add padding the same way you would add any other metadata item, by using a query expression, if the metadata block you are padding supports it. The following example demonstrates how to add padding to an IFD block embedded in an App1 block.</p>
+<pre><code>if (SUCCEEDED(hr))
+{
+    // Add metadata padding
+    PROPVARIANT padding;
+
+    PropVariantInit(&amp;padding);
+    padding.vt = VT_UI4;
+    padding.uiVal = 4096; // 4KB
+
+    hr = pFrameQWriter-&gt;SetMetadataByName(L&quot;/app1/ifd/PaddingSchema:padding&quot;, &amp;padding);
+
+    PropVariantClear(&amp;padding);
+}
+</code></pre>
+<p>To add padding, create a PROPVARIANT of type VT_UI4 and a value corresponding to the number of bytes of padding to add. A typical value is 4096 bytes. The metadata queries for JPEG, TIFF, and JPEG-XR are in this table.</p>
+<table>
+<thead>
+<tr>
+<th>Metadata format</th>
+<th>JPEG metadata query</th>
+<th>TIFF, JPEG-XR metadata query</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IFD</td>
+<td>/app1/ifd/PaddingSchema:Padding</td>
+<td>/ifd/PaddingSchema:Padding</td>
+</tr>
+<tr>
+<td>EXIF</td>
+<td>/app1/ifd/exif/PaddingSchema:Padding</td>
+<td>/ifd/exif/PaddingSchema:Padding</td>
+</tr>
+<tr>
+<td>XMP</td>
+<td>/xmp/PaddingSchema:Padding</td>
+<td>/ifd/xmp/PaddingSchema:Padding</td>
+</tr>
+<tr>
+<td>GPS</td>
+<td>/app1/ifd/gps/PaddingSchema:Padding</td>
+<td>/ifd/gps/PaddingSchema:Padding</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<h3>Obtaining a Fast Metadata Encoder</h3>
+<p>When you have an image with metadata padding, a fast metadata encoder can be obtained by using the imaging factory methods <strong>CreateFastMetadataEncoderFromDecoder</strong> and <strong>CreateFastMetadataEncoderFromFrameDecode</strong>.</p>
+<p>As the name implies, <strong>CreateFastMetadataEncoderFromDecoder</strong> creates a fast metadata encoder for decoder-level metadata. The native image formats provided by WIC do not support decoder-level metadata but this method is provided in case such an image format is developed in the future.</p>
+<p>The more common scenario is to obtain a fast metadata encoder from an image frame by using <strong>CreateFastMetadataEncoderFromFrameDecode</strong>. The following code obtains a decoded frame's fast metadata encoder and changes the rating value in the App1 block.</p>
+<pre><code>if (SUCCEEDED(hr))
+{
+    IWICFastMetadataEncoder *pFME = NULL;
+    IWICMetadataQueryWriter *pFMEQW = NULL;
+
+    hr = pFactory-&gt;CreateFastMetadataEncoderFromFrameDecode(
+        pFrameDecode, 
+        &amp;pFME);
+}
+</code></pre>
+<h3>Using the Fast Metadata Encoder</h3>
+<p>From the fast metadata encoder, you can obtain a query writer. This enables you to write metadata by using a query expression as previously demonstrated. After metadata has been set in the query writer, commit the fast metadata encoder to finalize the metadata update. The following code demonstrates setting and committing the metadata changes</p>
+<pre><code>    if (SUCCEEDED(hr))
+    {
+        hr = pFME-&gt;GetMetadataQueryWriter(&amp;pFMEQW);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Add additional metadata
+        PROPVARIANT value;
+
+        PropVariantInit(&amp;value);
+
+        value.vt = VT_UI4;
+        value.uiVal = 99;
+        hr = pFMEQW-&gt;SetMetadataByName(L&quot;/app1/ifd/{ushort=18249}&quot;, &amp;value);
+
+        PropVariantClear(&amp;value);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pFME-&gt;Commit();
+    }
+}
+</code></pre>
+<p>If <strong>Commit</strong> fails for any reason, you will need to re-encode the image to ensure the new metadata is added to the image.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><strong>Conceptual</strong></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-about-windows-imaging-codec.html">Windows Imaging Component Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-about-metadata.html">WIC Metadata Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-metadataquerylanguage.html">Metadata Query Language Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-metadatahandlers.html">Metadata Extensibility Overview</a></p>
+<!-- raw HTML omitted -->
+<p><a href="-wic-codec-jpegmetadataencoding.html">How-to: Re-encode a JPEG Image with Metadata</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,1076 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Protected User Mode Audio (PUMA)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: WindowsÂ Vista introduced Protected User Mode Audio (PUMA), the user-mode audio engine in the Protected Environment (PE) that provides a safer environment for audio processing and rendering.
+ms.assetid: 27a50026-9e48-48b1-9249-7528a97333c9
+title: Protected User Mode Audio (PUMA)
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Protected User Mode Audio (PUMA)</h1>
+<p>WindowsÂ Vista introduced Protected User Mode Audio (PUMA), the user-mode audio engine in the Protected Environment (PE) that provides a safer environment for audio processing and rendering. It allows only the acceptable audio outputs to be enabled and ensures that the outputs are disabled reliably. For more information about PUMA, see <a href="https://download.microsoft.com/download/5/D/6/5D6EAF2B-7DDF-476B-93DC-7CF0072878E6/output_protect.doc">Output Content Protection and Windows Vista</a>.</p>
+<p>PUMA has been updated for WindowsÂ 7 to provide the following features:</p>
+<ul>
+<li>Setting Serial Copying Management System (SCMS) bits on S/PDIF endpoints and High-bandwidth Digital Content Protection (HDCP) bits on High-Definition Multimedia Interface (HDMI) endpoints.</li>
+<li>Enabling SCMS and HDMI protection controls outside of a Protected Environment (PE).</li>
+</ul>
+<h2>DRM Protection in Audio Drivers</h2>
+<p>Digital Rights Management (DRM) provides the ability to package media data in a secure container and attach usage rules to the content. For example, the content provider might use <strong>Copy Protection</strong> or <strong>Digital Output Disable</strong> to disable direct digital copies or transmission out of the PC system.</p>
+<p>The audio stack in certain Microsoft products supports DRM by implementing the usage rules that govern playback of the audio content. To play the protected content, the underlying audio driver must be a <em>trusted driver</em>; that is, the driver must be logo-certified for DRMLevel 1300. For information about developing trusted drivers, you can use interfaces that are defined in the Windows 2000 Driver Development Kit (&quot;DDK&quot;) or later. Drivers developed with the DDK will implement the necessary interfaces to DRM. For more information, see <a href="/windows-hardware/drivers/audio/digital-rights-management">Digital Rights Management</a>.</p>
+<p>To render the protected content, the trusted driver must check whether <strong>Copy Protection</strong> and <strong>Digital Output Disable</strong> are set on the content flowing through the audio stack, and respond to the settings accordingly.</p>
+<h3>Copy Protection Rule</h3>
+<p><strong>Copy Protection</strong> indicates that direct digital copies are not allowed on the system. Exhibit B to the WHQL Testing Agreement has been updated to reflect the new expectations and requirements of a driver when <strong>Copy Protection</strong> is set on the content. For WindowsÂ 7, the built-in HD audio class driver complies with the latest requirements.</p>
+<p>In addition to ensuring that content is not allowed to pass to another component or be stored on any nonvolatile storage medium that is not authenticated by the DRM system, the audio driver performs the following tasks when <strong>Copy Protection</strong> is set:</p>
+<ul>
+<li>The driver enables HDCP on HDMI endpoints.</li>
+<li>For S/PDIF interfaces, the driver validates that the combination of L, Cp and Category Code bits indicates an SCMS state of &quot;Copy Never&quot;, as defined in IEC 60958.</li>
+<li>The L bit is set to 0 and the Category Code is set to &quot;Digital Signal Mixer&quot;.</li>
+</ul>
+<p>The <strong>DRMRIGHTS</strong> structure, used by trusted audio drivers, specifies the DRM content rights assigned to a KS audio pin or to a port-class driver's stream object. The <strong>CopyProtect</strong> member indicates whether <strong>Copy Protection</strong> is set on the audio content.</p>
+<p>For WindowsÂ 7, the use of <strong>CopyProtect</strong> is stricter. The driver ensures that the protection controls are set on the audio interfaces, HDCP is set for HDMI output, and SCMS is set for S/PDIF output by setting the state to &quot;Copy Never&quot;.</p>
+<h3>Digital Output Disable Rule</h3>
+<p><strong>Digital Output Disable</strong> indicates that the content is not allowed to be transmitted out of the system. In WindowsÂ 7, the built-in HD audio class driver responds to this setting by enabling HDCP on HDMI endpoints. This is similar to the driver's response to the <strong>Copy Protection</strong> setting.</p>
+<h2>Enabling Content-Protection Mechanisms Outside of a Protected Environment</h2>
+<p>PUMA resides in a separate process in the Protected Environment (PE). In Windows Vista, to use the audio content protection controls offered by PUMA, a media application must be in a PE. Because only Media Foundation APIs can interact with a PE, the content protection controls are limited to applications using Media Foundation APIs to stream audio content.</p>
+<p>In WindowsÂ 7, any application can access the content protection controls provided by the PUMA Output Trust Authority (OTA), regardless of whether they are in a PE or using Media Foundation APIs for audio playback.</p>
+<h2>Implementation Instructions</h2>
+<p>The following steps are required for an audio application to control SCMS or HDCP content protection on an audio endpoint. Supported Audio APIs are DirectShow, DirectSound, and WASAPI.</p>
+<p>This example code uses the following interfaces.</p>
+<ul>
+<li><a href="/windows/desktop/api/Mmdeviceapi/nn-mmdeviceapi-immdeviceenumerator"><strong>IMMDeviceEnumerator</strong></a></li>
+<li><a href="/windows/desktop/api/Mmdeviceapi/nn-mmdeviceapi-immdevice"><strong>IMMDevice</strong></a></li>
+<li><a href="/windows/desktop/api/Audioclient/nn-audioclient-iaudioclient"><strong>IAudioClient</strong></a></li>
+<li><a href="/windows/desktop/api/Mmdeviceapi/nn-mmdeviceapi-immdevicecollection"><strong>IMMDeviceCollection</strong></a></li>
+<li><a href="/windows/win32/api/mfidl/nn-mfidl-imftrustedoutput"><strong>IMFTrustedOutput</strong></a></li>
+<li><a href="/windows/win32/api/mfidl/nn-mfidl-imfoutputpolicy"><strong>IMFOutputPolicy</strong></a></li>
+</ul>
+<p>The media application must perform the following tasks.</p>
+<ol>
+<li>
+<p>Set up the development environment.</p>
+<ul>
+<li>
+<p>Reference the required interfaces, include the headers shown in the following code.</p>
+<pre lang="cpp"><code>#include &lt;MMdeviceapi.h&gt;        // Device endpoint definitions
+#include &lt;Mfidl.h&gt;              // OTA interface definitions
+</code></pre>
+</li>
+<li>
+<p>Link to the Mfuuid.lib to use the OTA interfaces.</p>
+</li>
+<li>
+<p>Disable the kernel debugger and driver verifier to avoid any authentication checking errors.</p>
+</li>
+</ul>
+</li>
+<li>
+<p>Enumerate all endpoints in the system and select the target endpoint from the endpoint collection, as shown in the following code. For more information about enumerating devices, see <a href="/previous-versions//ms678716(v=vs.85)">Enumerating Audio Devices</a>.</p>
+<pre lang="cpp"><code>BOOL IsDigitalEndpoint(IMMDevice *pDevice)
+{
+   PROPVARIANT         var;
+   IPropertyStore      *pProperties = NULL;
+   EndpointFormFactor  formfactor;
+   BOOL                bResult = FALSE;
+   HRESULT             hr = S_OK;
+   PropVariantInit(&amp;var);
+   // Open endpoint properties
+   hr = pDevice-&gt;OpenPropertyStore(STGM_READ, &amp;pProperties);
+   IF_FAILED_JUMP(hr, Exit);
+
+   // get form factor 
+   hr = pProperties-&gt;GetValue(PKEY_AudioEndpoint_FormFactor, &amp;var);
+   IF_FAILED_JUMP(hr, Exit);
+   formfactor = (EndpointFormFactor)var.uiVal;
+   // DigitalAudioDisplayDevice is defined same as HDMI formfactor
+   if ((SPDIF == formfactor) || (DigitalAudioDisplayDevice == formfactor))
+   {
+       bResult = TRUE;
+   }
+
+Exit:
+   PropVariantClear(&amp;var);
+   SAFE_RELEASE(pProperties);
+   return bResult;
+}
+</code></pre>
+<pre lang="cpp"><code>/******************************************************************
+*                                                                 *
+*  GetDevice:  Selects an endpoint that meets the requirements.   *
+*                                                                 *
+*  ppDevice: Receives a pointer to an IMMDevice interface of      *
+*            the device's endpoint object                         *                                             *                                            *
+*                                                                 *
+******************************************************************/
+HRESULT GetDevice(IMMDevice** ppDevice)
+{
+   IMMDeviceEnumerator    *pEnumerator = NULL;
+   IMMDevice              *pDevice = NULL;
+   IMMDeviceCollection    *pEndpoints = NULL;
+   UINT                    cEndpoints = 0;
+
+   const CLSID CLSID_MMDeviceEnumerator = __uuidof(MMDeviceEnumerator);
+   const IID IID_IMMDeviceEnumerator = __uuidof(IMMDeviceEnumerator);
+
+   // Get enumerator for audio endpoint devices
+   hr = CoCreateInstance(
+       CLSID_MMDeviceEnumerator, 
+       NULL,
+       CLSCTX_ALL, 
+       IID_IMMDeviceEnumerator,
+       (void**)&amp;pEnumerator));
+
+
+   EXIT_ON_ERROR(hr)
+
+   // Enumerate all active endpoints,
+   hr = pEnumerator-&gt;EnumAudioEndpoints (
+       eRender,
+       DEVICE_STATE_ACTIVE,
+       &amp;pEndpoints);
+   EXIT_ON_ERROR(hr)
+
+   hr = pEndpoints-&gt;GetCount(&amp;cEndpoints);
+   EXIT_ON_ERROR(hr)
+
+   for (UINT i = 0; i &lt; cEndpoints; i++)
+   {
+       hr = pEndpoints-&gt;Item(i, &amp;pDevice);
+       IF_FAILED_JUMP(hr, Exit);
+       {
+           // Select the endpoint that meets the requirements.
+           // For example, SPDIF analog output or HDMI
+           if (IsDigitalEndpoint(pDevice))
+           {
+               *(ppDevice) = pDevice;
+               (*ppDevice)-&gt;AddRef();
+               break;
+           }
+       }
+       SAFE_RELEASE(pDevice);
+   }
+Exit:
+   if (FAILED(hr))
+   {
+       // Notify error.
+       // Not Shown.
+   }
+   SAFE_RELEASE(pEndpoints);
+   SAFE_RELEASE(pEnumerator);
+}
+</code></pre>
+</li>
+<li>
+<p>Use the <a href="/windows/desktop/api/Mmdeviceapi/nn-mmdeviceapi-immdevice"><strong>IMMDevice</strong></a> pointer to the endpoint returned by the enumeration process to activate the desired audio streaming API and prepare for streaming. Different audio APIs require slightly different preparation.</p>
+<ul>
+<li>For DShow audio applications:
+<ol>
+<li>
+<p>Create a DirectShow COM object by calling <a href="/windows/desktop/api/Mmdeviceapi/nf-mmdeviceapi-immdevice-activate"><strong>IMMDevice::Activate</strong></a> and specifying IID_IBaseFilter as the interface identifier.</p>
+<pre lang="cpp"><code>IUnknown *pDShowFilter = NULL;
+...
+hr = pDevice-&gt;Activate (
+                  IID_IBaseFilter,
+                  CLSCTX_INPROC_SERVER, NULL,
+                  reinterpret_cast&lt;void **&gt;(&amp;pDShowFilter));
+</code></pre>
+</li>
+<li>
+<p>Build a DirectShow filter graph with this COM object activated by the device. For more information about this process, see &quot;Building the Filter Graph&quot; in DirectShow SDK documentation.</p>
+</li>
+</ol>
+</li>
+<li>For DSound audio applications:
+<ol>
+<li>
+<p>Create a DSound COM object by calling <a href="/windows/desktop/api/Mmdeviceapi/nf-mmdeviceapi-immdevice-activate"><strong>IMMDevice::Activate</strong></a> and specifying IID_IDirectSound8 as the interface identifier.</p>
+<pre lang="cpp"><code>IDirectSound8  *pDSSound8;
+...
+hr = pDevice-&gt;Activate (
+                  IID_IDirectSound8,
+                  CLSCTX_INPROC_SERVER, NULL,
+                  reinterpret_cast&lt;void **&gt;(&amp;pDSSound8));
+</code></pre>
+</li>
+<li>
+<p>Use DSound object created above to program DSound for steaming. For more information about this process, see <a href="/previous-versions//bb219818(v=vs.85)">DirectSound</a>.</p>
+</li>
+</ol>
+</li>
+<li>For WASAPI:
+<ol>
+<li>
+<p>Create an <a href="/windows/desktop/api/Audioclient/nn-audioclient-iaudioclient"><strong>IAudioClient</strong></a> COM object by calling <a href="/windows/desktop/api/Mmdeviceapi/nf-mmdeviceapi-immdevice-activate"><strong>IMMDevice::Activate</strong></a> and specifying IID_IAudioClient as the interface identifier.</p>
+<pre lang="cpp"><code>IAudioClient *pIAudioClient = NULL;
+...
+hr = pDevice-&gt;Activate (
+                  IID_IAudioClient,
+                  CLSCTX_INPROC_SERVER, NULL,
+                  reinterpret_cast&lt;void **&gt;(&amp;pIAudioClient));
+</code></pre>
+</li>
+<li>
+<p>Open the audio stream.</p>
+<pre lang="cpp"><code>hr = pIAudioClient-&gt;Initialize(...);
+</code></pre>
+</li>
+</ol>
+</li>
+</ul>
+</li>
+<li>
+<p>Start audio streaming.</p>
+</li>
+<li>
+<p>Set the protection policy on the stream.</p>
+<ol>
+<li>
+<p>For WASAPI clients, get a reference to the <a href="/windows/win32/api/mfidl/nn-mfidl-imftrustedoutput"><strong>IMFTrustedOutput</strong></a> interface of the output trust authority (OTA) object for the stream by calling <a href="/windows/desktop/api/Audioclient/nf-audioclient-iaudioclient-getservice"><strong>IAudioClient::GetService</strong></a> and specifying IID_IMFTrustedOutput as the interface identifier.</p>
+<pre lang="cpp"><code>IMFTrustedOutput*       pTrustedOutput = NULL;
+hr = pIAudioClient&gt;GetService(
+               __uuidof(IMFTrustedOutput),
+               (void**)&amp; pTrustedOutput);
+</code></pre>
+</li>
+<li>
+<p>Get a count of the available OTA objects by calling <a href="/windows/win32/api/mfidl/nf-mfidl-imftrustedoutput-getoutputtrustauthoritycount"><strong>IMFTrustedOutput::GetOutputTrustAuthorityCount</strong></a>.</p>
+<pre lang="cpp"><code>hr = pTrustedOutput-&gt;GetOutputTrustAuthorityCount(&amp;m_dwCountOTA);
+</code></pre>
+</li>
+<li>
+<p>Enumerate the OTA collection and get a reference to the OTA object that supports the action PEACTION_PLAY. All OTAs expose the <a href="/windows/win32/api/mfidl/nn-mfidl-imfoutputtrustauthority"><strong>IMFOutputTrustAuthority</strong></a> interface.</p>
+<pre lang="cpp"><code>hr = pMFTrustedOutput-&gt;GetOutputTrustAuthorityByIndex(I, &amp;pMFOutputTrustAuthority);
+hr = pMFOutputTrustAuthority-&gt;GetAction(&amp;action) 
+</code></pre>
+</li>
+<li>
+<p>Use the <a href="/windows/win32/api/mfidl/nn-mfidl-imftrustedoutput"><strong>IMFTrustedOutput</strong></a> interface to set the protection policy on the stream.</p>
+<pre lang="cpp"><code>hr = pTrustedOutput -&gt;SetPolicy(&amp;pPolicy, nPolicy, &amp;pbTicket, &amp;cbTicket);
+</code></pre>
+<blockquote>
+<p>[!Note]
+If you are using the EVR, <a href="/windows/win32/api/mfidl/nf-mfidl-imfoutputtrustauthority-setpolicy"><strong>SetPolicy</strong></a> raises the <a href="../medfound/mepolicyset.html">MEPolicySet</a> event and returns MF_S_WAIT_FOR_POLICY_SET to indicate that the OTA will enforce the policy asynchronously. However, in this example code, the application is a direct WASAPI client that retrieved the OTA object from the audio client (Step 5 a). Unlike the EVR, an audio client and other WASAPI objects do not implement media event generators. Without media event generators, <strong>IMFTrustedOutput::SetPolicy</strong> does not return MF_S_WAIT_FOR_POLICY_SET.</p>
+<p>The audio policy settings must be set after audio streaming starts, otherwise <a href="/windows/win32/api/mfidl/nf-mfidl-imftrustedoutput-getoutputtrustauthoritybyindex"><strong>IMFTrustedOutput::GetOutputTrustAuthorityByIndex</strong></a> fails. Also, to support this feature, the underlying audio driver must be a <em>trusted driver</em>.</p>
+</blockquote>
+<p>Â </p>
+<p>In the example code, <em>pPolicy</em> is a pointer to the <a href="/windows/win32/api/mfidl/nn-mfidl-imfoutputpolicy"><strong>IMFOutputPolicy</strong></a> interface of a client-implemented policy object. For information, see <a href="../medfound/microsoft-media-foundation-sdk.html">Media Foundation SDK</a> documentation.</p>
+<p>In the implementation of the <a href="/windows/win32/api/mfidl/nf-mfidl-imfoutputpolicy-generaterequiredschemas"><strong>IMFOutputPolicy::GenerateRequiredSchemas</strong></a> method, a collection of the output protection systems (schemas) must be generated that the OTA must enforce. Each schema is identified by a GUID and contains configuration data for the protection system. Make sure that the protection systems in the collection are restricted to using trusted audio drivers. This restriction is identified by the GUID, <strong>MFPROTECTION_TRUSTEDAUDIODRIVERS</strong>,DISABLE, or CONSTRICTAUDIO. If MFPROTECTION_TRUSTEDAUDIODRIVERS is used, the configuration data for this schema is a DWORD. For more information about the schemas and the related configuration data, see Protected Environment SDK documentation.</p>
+<p>The client must also provide the schema definition, by implementing the <a href="/windows/win32/api/mfidl/nn-mfidl-imfoutputschema"><strong>IMFOutputSchema</strong></a> interface. <a href="/windows/win32/api/mfidl/nf-mfidl-imfoutputschema-getschematype"><strong>IMFOutputSchema::GetSchemaType</strong></a> retrieves <strong>MFPROTECTION_TRUSTEDAUDIODRIVERS</strong> as the schema GUID. <a href="/windows/win32/api/mfidl/nf-mfidl-imfoutputschema-getconfigurationdata"><strong>IMFOutputSchema::GetConfigurationData</strong></a> returns a pointer to the schema's configuration data.</p>
+</li>
+</ol>
+</li>
+<li>
+<p>Continue audio streaming.</p>
+</li>
+<li>
+<p>Make sure the protection policy is clear before stopping streaming.</p>
+<p>Release the related policy interface references above.</p>
+<p>The release calls clear the previously set policy settings.</p>
+<blockquote>
+<p>[!Note]<br />
+Every time a stream is restarted, the protection policy must be set again on the stream. The procedure is described in step 5-d.</p>
+</blockquote>
+<pre lang="cpp"><code>pMFOutputTrustAuthority-&gt;Release()
+pMFTrustedOutput-&gt;Release()
+</code></pre>
+</li>
+</ol>
+<p>The following code examples show a sample implementation of the policy and schema objects.</p>
+<pre lang="cpp"><code>//OTADsoundSample.cpp
+#include &lt;stdio.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;initguid.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;mmreg.h&gt;
+#include &lt;dsound.h&gt;
+
+#include &lt;mfidl.h&gt;
+#include &lt;Mmdeviceapi.h&gt;
+#include &lt;AVEndpointKeys.h&gt;
+#include &quot;OTADSoundSample.h&quot;
+
+#define STATIC_KSDATAFORMAT_SUBTYPE_AC3\
+    DEFINE_WAVEFORMATEX_GUID(WAVE_FORMAT_DOLBY_AC3_SPDIF)
+DEFINE_GUIDSTRUCT(&quot;00000092-0000-0010-8000-00aa00389b71&quot;, KSDATAFORMAT_SUBTYPE_AC3);
+#define KSDATAFORMAT_SUBTYPE_AC3 DEFINE_GUIDNAMED(KSDATAFORMAT_SUBTYPE_AC3)
+
+
+HRESULT SetOTAPolicy(IMMDevice *_pMMDevice,
+                     DWORD _dwConfigData,
+                     IMFTrustedOutput **_ppMFTrustedOutput,
+                     IMFOutputTrustAuthority **ppMFOutputTrustAuthority,
+                     IMFOutputPolicy **_ppMFOutputPolicy);
+HRESULT ClearOTAPolicy(IMFTrustedOutput *_pMFTrustedOutput,
+                       IMFOutputTrustAuthority *_pMFOutputTrustAuthority,
+                       IMFOutputPolicy *_pMFOutputPolicy);
+
+
+const CLSID CLSID_MMDeviceEnumerator = __uuidof(MMDeviceEnumerator);
+const IID IID_IMMDeviceEnumerator = __uuidof(IMMDeviceEnumerator);
+
+BOOL IsDigitalEndpoint(IMMDevice *pDevice)
+{
+    PROPVARIANT         var;
+    IPropertyStore      *pProperties = NULL;
+    EndpointFormFactor  formfactor;
+    BOOL                bResult = FALSE;
+    HRESULT             hr = S_OK;
+    PropVariantInit(&amp;var);
+
+    // Open endpoint properties
+    hr = pDevice-&gt;OpenPropertyStore(STGM_READ, &amp;pProperties);
+    IF_FAILED_JUMP(hr, Exit);
+
+    // get form factor 
+    hr = pProperties-&gt;GetValue(PKEY_AudioEndpoint_FormFactor, &amp;var);
+    IF_FAILED_JUMP(hr, Exit);
+
+    formfactor = (EndpointFormFactor)var.uiVal;
+    if ((SPDIF == formfactor) || (DigitalAudioDisplayDevice == formfactor))
+    {
+        bResult = TRUE;
+    }
+
+Exit:
+    PropVariantClear(&amp;var);
+    SAFE_RELEASE(pProperties);
+
+    return bResult;
+}
+
+
+HRESULT GetDigitalAudioEndpoint(IMMDevice** ppDevice)
+{
+    IMMDeviceEnumerator    *pEnumerator = NULL;
+    IMMDevice              *pDevice = NULL;
+    IMMDeviceCollection    *pEndpoints = NULL;
+    UINT                    cEndpoints = 0;
+    HRESULT hr = S_OK;
+
+    *ppDevice = NULL;
+    // Get enumerator for audio endpoint devices.
+    hr = CoCreateInstance(CLSID_MMDeviceEnumerator, NULL,
+                          CLSCTX_ALL, IID_IMMDeviceEnumerator,
+                          (void**)&amp;pEnumerator);
+    IF_FAILED_JUMP(hr, Exit);
+
+    // Enumerate all active render endpoints, 
+    hr = pEnumerator-&gt;EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &amp;pEndpoints);
+    IF_FAILED_JUMP(hr, Exit);
+
+    hr = pEndpoints-&gt;GetCount(&amp;cEndpoints);
+    IF_FAILED_JUMP(hr, Exit);
+
+    for (UINT i = 0; i &lt; cEndpoints; i++)
+    {
+        hr = pEndpoints-&gt;Item(i, &amp;pDevice);
+        IF_FAILED_JUMP(hr, Exit);
+        // Select the endpoint that meets the requirements.
+        // For example, SPDIF analog output or HDMI
+        // Not Shown.
+        if (IsDigitalEndpoint(pDevice))
+        {
+            *ppDevice = pDevice;
+            (*ppDevice)-&gt;AddRef();
+            break;
+        }
+        SAFE_RELEASE(pDevice);
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        // Notify error.
+        // Not Shown.
+    }
+    SAFE_RELEASE(pEndpoints);
+    SAFE_RELEASE(pEnumerator);
+    return hr; 
+}
+
+
+//-------------------------------------------------------------------
+int __cdecl wmain(int argc, char* argv[])
+{
+    IMMDevice *pEndpoint=NULL;
+    HRESULT hr = S_OK;
+
+    // DSound related variables
+    IDirectSound8*          DSSound8 = NULL; 
+    IDirectSoundBuffer*     DSBuffer = NULL; 
+    DSBUFFERDESC            DSBufferDesc;
+    WAVEFORMATEXTENSIBLE    wfext;
+    WORD nChannels = 2;
+    DWORD nSamplesPerSec = 48000;
+    WORD wBitsPerSample = 16;
+
+    // OTA related variables
+    IMFTrustedOutput *pMFTrustedOutput=NULL;
+    IMFOutputPolicy *pMFOutputPolicy=NULL;
+    IMFOutputTrustAuthority *pMFOutputTrustAuthority=NULL;
+    DWORD dwConfigData=0;
+
+    // Initialize COM
+    hr = CoInitialize(NULL);
+    IF_FAILED_JUMP(hr, Exit);
+
+    printf(&quot;OTA test app for DSound\n&quot;);
+
+    hr = GetDigitalAudioEndpoint(&amp;pEndpoint);
+    IF_FAILED_JUMP(hr, Exit);
+
+    if (pEndpoint)
+    {
+        printf(&quot;Found digital audio endpoint.\n&quot;);
+    }
+    //
+    // Active DSound interface
+    //
+    hr = pEndpoint-&gt;Activate(IID_IDirectSound8, CLSCTX_INPROC_SERVER, NULL, reinterpret_cast&lt;void **&gt;(&amp;DSSound8));
+    IF_FAILED_JUMP(hr, Exit);
+
+    nChannels = 2;
+    nSamplesPerSec = 48000;
+    wBitsPerSample = 16;
+
+    ZeroMemory(&amp;wfext, sizeof(wfext));
+    wfext.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+    wfext.Format.nChannels = nChannels;
+    wfext.Format.nSamplesPerSec = nSamplesPerSec;
+    wfext.Format.wBitsPerSample = wBitsPerSample;
+    wfext.Format.nBlockAlign = (nChannels * wBitsPerSample) / 8;
+    wfext.Format.nAvgBytesPerSec = nSamplesPerSec * ((nChannels * wBitsPerSample) / 8);
+    wfext.Format.cbSize = 22;
+    wfext.Samples.wValidBitsPerSample = wBitsPerSample;
+    wfext.dwChannelMask = 0x3;
+    wfext.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+#if 1 
+    wfext.SubFormat = KSDATAFORMAT_SUBTYPE_AC3;
+#endif
+
+    ZeroMemory(&amp;DSBufferDesc, sizeof(DSBufferDesc));
+    DSBufferDesc.dwSize = sizeof(DSBufferDesc);
+    DSBufferDesc.dwFlags = DSBCAPS_GLOBALFOCUS | DSBCAPS_LOCSOFTWARE | DSBCAPS_GETCURRENTPOSITION2;
+    DSBufferDesc.lpwfxFormat = (WAVEFORMATEX *)&amp;wfext;
+    DSBufferDesc.dwBufferBytes = wfext.Format.nAvgBytesPerSec / 100;
+
+    HWND hwnd = GetForegroundWindow();
+    hr = DSSound8-&gt;SetCooperativeLevel(hwnd, DSSCL_PRIORITY);
+    IF_FAILED_JUMP(hr, Exit);
+
+    hr = DSSound8-&gt;CreateSoundBuffer(&amp;DSBufferDesc, &amp;DSBuffer, NULL);
+    IF_FAILED_JUMP(hr, Exit);
+
+    hr = DSBuffer-&gt;Play(0, 0, DSBPLAY_LOOPING);
+    IF_FAILED_JUMP(hr, Exit);
+
+    printf(&quot;Will set the following audio policy:\n&quot;);
+    printf(&quot;Test Certificate Enable: %s\n&quot;, TRUE ? &quot;True&quot; : &quot;False&quot;);
+    printf(&quot;Copy OK: %s\n&quot;, FALSE ? &quot;True&quot; : &quot;False&quot;);
+    printf(&quot;Digital Output Disable: %s\n&quot;, FALSE ? &quot;True&quot; : &quot;False&quot;);
+    printf(&quot;DRM Level: %u\n&quot;, 1300);
+
+    // Set policy when the stream is in RUN state
+    dwConfigData = MAKE_MFPROTECTIONDATA_TRUSTEDAUDIODRIVERS2(TRUE, /*_bTestCertificateEnable*/ 
+                                                              FALSE, /*_bDigitalOutputDisable*/ 
+                                                              FALSE, /*_bCopyOK*/ 
+                                                              1300 /*_dwDrmLevel*/);
+
+    hr = SetOTAPolicy(pEndpoint,dwConfigData, &amp;pMFTrustedOutput, &amp;pMFOutputTrustAuthority,&amp;pMFOutputPolicy); 
+    IF_FAILED_JUMP(hr, Exit);
+
+    //
+    // Perform all the necessary streaming operations here.
+    //
+
+    // stop audio streaming
+    DSBuffer-&gt;Stop();
+
+    // In order for the stream to restart successfully 
+    // Need to release the following OutputTrust* interface to release audio endpoint
+    hr = ClearOTAPolicy(pMFTrustedOutput,pMFOutputTrustAuthority,pMFOutputPolicy);
+    IF_FAILED_JUMP(hr, Exit);
+
+    // After above release operations, the following Play() will succeed without device-in-use error message 0x8889000A
+    DSBuffer-&gt;SetCurrentPosition(0);
+    hr = DSBuffer-&gt;Play(0, 0, DSBPLAY_LOOPING);
+    IF_FAILED_JUMP(hr, Exit);
+
+    // Need to reset the new audio protection state because previous settings were gone with the ClearOTAPolicy call.
+    dwConfigData = MAKE_MFPROTECTIONDATA_TRUSTEDAUDIODRIVERS2(TRUE, /*_bTestCertificateEnable*/ 
+                                                              FALSE, /*_bDigitalOutputDisable*/ 
+                                                              FALSE, /*_bCopyOK*/ 
+                                                              1300 /*_dwDrmLevel*/);
+
+    hr = SetOTAPolicy(pEndpoint,dwConfigData, &amp;pMFTrustedOutput, &amp;pMFOutputTrustAuthority,&amp;pMFOutputPolicy); 
+    IF_FAILED_JUMP(hr, Exit);
+
+    // Clean up setting before leaving your streaming app.
+    hr = ClearOTAPolicy(pMFTrustedOutput,pMFOutputTrustAuthority,pMFOutputPolicy);
+    IF_FAILED_JUMP(hr, Exit);
+
+    DSBuffer-&gt;SetCurrentPosition(0);
+
+Exit:
+    SAFE_RELEASE(DSBuffer);
+    SAFE_RELEASE(DSSound8);
+
+    SAFE_RELEASE(pEndpoint);
+
+    CoUninitialize();
+
+    return 0;
+}
+</code></pre>
+<pre lang="cpp"><code>//OTADSoundSample.h
+// Macro defines
+#define IF_FAILED_JUMP(_hresult, label)                         \
+    if(FAILED(_hresult))                                        \
+    {                                                           \
+        goto label;                                             \
+    }
+
+#define SAFE_RELEASE(p) \
+    if (NULL != p) { \
+        (p)-&gt;Release(); \
+        (p) = NULL; \
+    }
+
+#define IF_TRUE_ACTION_JUMP(condition, action, label)           \
+    if(condition)                                               \
+    {                                                           \
+        action;                                                 \
+        goto label;                                             \
+    }
+</code></pre>
+<pre lang="cpp"><code>// outputpolicy.h
+
+class CTrustedAudioDriversOutputPolicy : public CMFAttributesImpl&lt;IMFOutputPolicy&gt; 
+{
+friend
+    HRESULT CreateTrustedAudioDriversOutputPolicy(DWORD dwConfigData, IMFOutputPolicy **ppMFOutputPolicy);
+private:
+    ULONG m_cRefCount;
+    DWORD m_dwConfigData;
+    GUID m_guidOriginator;
+    IMFOutputSchema *m_pOutputSchema;
+    
+    CTrustedAudioDriversOutputPolicy(DWORD dwConfigData, HRESULT &amp;hr);
+    ~CTrustedAudioDriversOutputPolicy();
+
+public:
+    // IUnknown methods
+    HRESULT STDMETHODCALLTYPE QueryInterface(/* [in] */ REFIID riid,/* [out] */ LPVOID *ppvObject);
+    ULONG STDMETHODCALLTYPE AddRef();
+    ULONG STDMETHODCALLTYPE Release();
+    
+    // IMFOutputPolicy methods
+    HRESULT STDMETHODCALLTYPE
+        GenerateRequiredSchemas( 
+            /* [in] */ DWORD dwAttributes,
+            /* [in] */ GUID guidOutputSubType,
+            /* [in] */ GUID *rgGuidProtectionSchemasSupported,
+            /* [in] */ DWORD cProtectionSchemasSupported,
+            /* [annotation][out] */ 
+            __out  IMFCollection **ppRequiredProtectionSchemas);
+
+    HRESULT STDMETHODCALLTYPE GetOriginatorID(/* [annotation][out] */ __out  GUID *pguidOriginatorID);
+
+    HRESULT STDMETHODCALLTYPE GetMinimumGRLVersion(/* [annotation][out] */ __out  DWORD *pdwMinimumGRLVersion);
+}; // CTrustedAudioDriversOutputPolicy
+
+class CTrustedAudioDriversOutputSchema : public CMFAttributesImpl&lt;IMFOutputSchema&gt; 
+{
+
+friend
+    HRESULT CreateTrustedAudioDriversOutputSchema(
+        DWORD dwConfigData,
+        GUID guidOriginatorID,
+        IMFOutputSchema **ppMFOutputSchema
+    );
+
+private:
+    CTrustedAudioDriversOutputSchema(DWORD dwConfigData, GUID guidOriginatorID);
+    ~CTrustedAudioDriversOutputSchema();
+
+    ULONG m_cRefCount;
+    DWORD m_dwConfigData;
+    GUID m_guidOriginatorID;
+    
+public:
+    // IUnknown methods
+    HRESULT STDMETHODCALLTYPE QueryInterface(
+       /* [in] */ REFIID riid,
+       /* [out] */ LPVOID *ppvObject
+    );
+    ULONG STDMETHODCALLTYPE AddRef();
+    ULONG STDMETHODCALLTYPE Release();
+
+    // IMFOutputSchema methods
+    HRESULT STDMETHODCALLTYPE GetConfigurationData(__out DWORD *pdwVal);
+    HRESULT STDMETHODCALLTYPE GetOriginatorID(__out GUID *pguidOriginatorID);
+    HRESULT STDMETHODCALLTYPE GetSchemaType(__out GUID *pguidSchemaType);
+
+}; // CTrustedAudioDriversOutputSchema
+</code></pre>
+<pre lang="cpp"><code>// outputpolicy.cpp
+
+#include &lt;windows.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;mfidl.h&gt;
+#include &lt;atlstr.h&gt;
+#include &lt;attributesbase.h&gt;
+#include &quot;OTADSoundSample.h&quot;
+
+#include &lt;Mmdeviceapi.h&gt;
+#include &quot;OutputPolicy.h&quot;
+
+#define RETURN_INTERFACE(T, iid, ppOut) \
+    if (IsEqualIID(__uuidof(T), (iid))) { \
+        this-&gt;AddRef(); \
+        *(ppOut) = static_cast&lt;T *&gt;(this); \
+        return S_OK; \
+    } else {} (void)0
+
+//--------------------------------------------------------------------------
+// Implementation for CTrustedAudioDriversOutputPolicy
+//--------------------------------------------------------------------------
+// constructor
+CTrustedAudioDriversOutputPolicy::CTrustedAudioDriversOutputPolicy(DWORD dwConfigData, HRESULT &amp;hr)
+: m_cRefCount(1), m_dwConfigData(dwConfigData), m_pOutputSchema(NULL)
+{
+    hr = CoCreateGuid(&amp;m_guidOriginator);
+    IF_FAILED_JUMP(hr, Exit);
+
+    hr = CreateTrustedAudioDriversOutputSchema(dwConfigData, m_guidOriginator, &amp;m_pOutputSchema);
+    IF_FAILED_JUMP(hr, Exit);
+
+Exit:
+    if (FAILED(hr))
+    {
+        printf(&quot;CreateTrustedAudioDriversOutputSchema failed: hr = 0x%08x&quot;, hr);
+    }
+    return;
+}
+
+// destructor
+CTrustedAudioDriversOutputPolicy::~CTrustedAudioDriversOutputPolicy()
+{
+    if (NULL != m_pOutputSchema) 
+    {
+        m_pOutputSchema-&gt;Release();
+    }
+}
+
+
+// IUnknown::QueryInterface
+HRESULT STDMETHODCALLTYPE
+    CTrustedAudioDriversOutputPolicy::QueryInterface(
+        /* [in] */ REFIID riid,
+        /* [out] */ LPVOID *ppvObject)
+{
+    HRESULT hr = E_NOINTERFACE;
+
+    IF_TRUE_ACTION_JUMP((NULL == ppvObject), hr = E_POINTER, Exit);
+
+    *ppvObject = NULL;
+
+    RETURN_INTERFACE(IUnknown, riid, ppvObject);
+    RETURN_INTERFACE(IMFAttributes, riid, ppvObject);
+    RETURN_INTERFACE(IMFOutputPolicy, riid, ppvObject);    
+
+Exit:
+    return hr;
+}
+
+// IUnknown::AddRef
+ULONG STDMETHODCALLTYPE CTrustedAudioDriversOutputPolicy::AddRef() 
+{
+    ULONG uNewRefCount = InterlockedIncrement(&amp;m_cRefCount);
+    return uNewRefCount;
+}
+
+// IUnknown::Release
+ULONG STDMETHODCALLTYPE CTrustedAudioDriversOutputPolicy::Release() 
+{
+    ULONG uNewRefCount = InterlockedDecrement(&amp;m_cRefCount);
+    if (0 == uNewRefCount) 
+    {
+        delete this;
+    }
+    return uNewRefCount;
+}
+
+// IMFOutputPolicy::GenerateRequiredSchemas
+HRESULT STDMETHODCALLTYPE CTrustedAudioDriversOutputPolicy::GenerateRequiredSchemas
+( 
+        /* [in] */ DWORD dwAttributes,
+        /* [in] */ GUID guidOutputSubType,
+        /* [in] */ GUID *rgGuidProtectionSchemasSupported,
+        /* [in] */ DWORD cProtectionSchemasSupported,
+        /* [annotation][out] */ 
+        __out  IMFCollection **ppRequiredProtectionSchemas
+)
+{
+    HRESULT hr = S_OK;
+    bool bTrustedAudioDriversSupported = false;
+    // if we've made it this far then the Output Trust Authority supports Trusted Audio Drivers
+    // create a collection and put our output policy in it
+    // then give that collection to the caller
+    CComPtr&lt;IMFCollection&gt; pMFCollection;
+
+    // sanity checks
+    IF_TRUE_ACTION_JUMP((NULL == ppRequiredProtectionSchemas), hr = E_POINTER, Exit); 
+    *ppRequiredProtectionSchemas = NULL;
+
+    IF_TRUE_ACTION_JUMP((NULL == rgGuidProtectionSchemasSupported) &amp;&amp; (0 != cProtectionSchemasSupported), 
+                    hr = E_POINTER, Exit); 
+
+    // log all the supported protection schemas
+    for (DWORD i = 0; i &lt; cProtectionSchemasSupported; i++) 
+    {
+        if (IsEqualIID(MFPROTECTION_TRUSTEDAUDIODRIVERS, rgGuidProtectionSchemasSupported[i])) 
+        {
+            bTrustedAudioDriversSupported = true;
+        }
+    }
+
+    if (!bTrustedAudioDriversSupported) 
+    {
+        return HRESULT_FROM_WIN32(ERROR_RANGE_NOT_FOUND);
+    }
+
+
+    // create the collection
+    hr = MFCreateCollection(&amp;pMFCollection);
+    if (FAILED(hr)) 
+    {
+        return hr;
+    }
+
+    // add our output policy to the collection
+    hr = pMFCollection-&gt;AddElement(m_pOutputSchema);
+    if (FAILED(hr)) 
+    {
+        return hr;
+    }
+Exit:
+    // give the collection to the caller
+    return pMFCollection.CopyTo(ppRequiredProtectionSchemas); // increments refcount
+}// GenerateRequiredSchemas
+
+HRESULT STDMETHODCALLTYPE CTrustedAudioDriversOutputPolicy::GetOriginatorID(__out  GUID *pguidOriginatorID) 
+{
+    if (NULL == pguidOriginatorID) 
+    {
+        return E_POINTER;
+    }
+    *pguidOriginatorID = m_guidOriginator;
+    return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE CTrustedAudioDriversOutputPolicy::GetMinimumGRLVersion(__out  DWORD *pdwMinimumGRLVersion) 
+{
+    if (NULL == pdwMinimumGRLVersion) 
+    {
+        return E_POINTER;
+    }
+    *pdwMinimumGRLVersion = 0;
+    return S_OK;
+}
+
+//--------------------------------------------------------------------------
+// Implementation for CTrustedAudioDriversOutputSchema
+//--------------------------------------------------------------------------
+// constructor
+CTrustedAudioDriversOutputSchema::CTrustedAudioDriversOutputSchema
+(    
+    DWORD dwConfigData, 
+    GUID guidOriginatorID
+)
+: m_cRefCount(1)
+, m_dwConfigData(dwConfigData)
+, m_guidOriginatorID(guidOriginatorID)
+{}
+
+// destructor
+CTrustedAudioDriversOutputSchema::~CTrustedAudioDriversOutputSchema() {}
+
+// IUnknown::QueryInterface
+HRESULT STDMETHODCALLTYPE CTrustedAudioDriversOutputSchema::QueryInterface
+(
+        /* [in] */ REFIID riid,
+        /* [out] */ LPVOID *ppvObject
+) 
+{
+    HRESULT hr = E_NOINTERFACE;
+
+    IF_TRUE_ACTION_JUMP((NULL == ppvObject), hr = E_POINTER, Exit);
+    *ppvObject = NULL;
+
+    RETURN_INTERFACE(IUnknown, riid, ppvObject);
+    RETURN_INTERFACE(IMFAttributes, riid, ppvObject);
+    RETURN_INTERFACE(IMFOutputSchema, riid, ppvObject);
+
+Exit:
+    return hr;
+}
+
+// IUnknown::AddRef
+ULONG STDMETHODCALLTYPE CTrustedAudioDriversOutputSchema::AddRef() 
+{
+    ULONG uNewRefCount = InterlockedIncrement(&amp;m_cRefCount);
+    return uNewRefCount;
+}
+
+// IUnknown::Release
+ULONG STDMETHODCALLTYPE CTrustedAudioDriversOutputSchema::Release() 
+{
+    ULONG uNewRefCount = InterlockedDecrement(&amp;m_cRefCount);
+    if (0 == uNewRefCount) 
+    {
+        delete this;
+    }
+    return uNewRefCount;
+}
+// IMFOutputSchema::GetConfigurationData
+HRESULT STDMETHODCALLTYPE CTrustedAudioDriversOutputSchema::GetConfigurationData(__out DWORD *pdwVal) 
+{
+    if (NULL == pdwVal) { return E_POINTER; }
+    *pdwVal = m_dwConfigData;
+    return S_OK;
+}
+
+// IMFOutputSchema::GetOriginatorID
+HRESULT STDMETHODCALLTYPE CTrustedAudioDriversOutputSchema::GetOriginatorID(__out GUID *pguidOriginatorID) 
+{
+    if (NULL == pguidOriginatorID) { return E_POINTER; }
+    *pguidOriginatorID = m_guidOriginatorID;
+    return S_OK;
+}
+// IMFOutputSchema::GetSchemaType
+HRESULT STDMETHODCALLTYPE CTrustedAudioDriversOutputSchema::GetSchemaType(__out GUID *pguidSchemaType) 
+{
+    if (NULL == pguidSchemaType) { return E_POINTER; }
+    *pguidSchemaType = MFPROTECTION_TRUSTEDAUDIODRIVERS;
+    return S_OK;
+}
+
+//---------------------------------------------------------------------------------------------------
+//
+// Other subroutine declarations
+//
+//---------------------------------------------------------------------------------------------------
+HRESULT CreateTrustedAudioDriversOutputPolicy(DWORD dwConfigData, IMFOutputPolicy **ppMFOutputPolicy) 
+{
+    if (NULL == ppMFOutputPolicy) 
+    {
+        return E_POINTER;
+    }
+
+    *ppMFOutputPolicy = NULL;
+
+    HRESULT hr = S_OK;
+    CTrustedAudioDriversOutputPolicy *pPolicy = new CTrustedAudioDriversOutputPolicy(dwConfigData, hr);
+    if (NULL == pPolicy) 
+    {
+        return E_OUTOFMEMORY;
+    }
+    if (FAILED(hr)) 
+    {
+        delete pPolicy;
+        return hr;
+    }
+    *ppMFOutputPolicy = static_cast&lt;IMFOutputPolicy *&gt;(pPolicy);
+    return S_OK;
+}// CreateTrustedAudioDriversOutputPolicy
+
+HRESULT CreateTrustedAudioDriversOutputSchema
+(
+    DWORD dwConfigData,
+    GUID guidOriginatorID,
+    IMFOutputSchema **ppMFOutputSchema) 
+{
+    if (NULL == ppMFOutputSchema) 
+    {
+        return E_POINTER;
+    }
+
+    *ppMFOutputSchema = NULL;
+
+    CTrustedAudioDriversOutputSchema *pSchema =
+        new CTrustedAudioDriversOutputSchema(dwConfigData, guidOriginatorID);
+
+    if (NULL == pSchema) 
+    {
+        return E_OUTOFMEMORY;
+    }
+
+    *ppMFOutputSchema = static_cast&lt;IMFOutputSchema *&gt;(pSchema);
+
+    return S_OK;
+}// CreateTrustedAudioDriversOutputSchema
+
+
+
+HRESULT SetOTAPolicy(IMMDevice *_pMMDevice,
+                     DWORD _dwConfigData,
+                     IMFTrustedOutput **_ppMFTrustedOutput,
+                     IMFOutputTrustAuthority **ppMFOutputTrustAuthority,
+                     IMFOutputPolicy **_ppMFOutputPolicy)
+{
+    HRESULT hr = S_OK;
+
+    DWORD dwCountOfOTAs = 0;
+    bool bRet = false;
+
+    hr = CreateTrustedAudioDriversOutputPolicy(_dwConfigData, _ppMFOutputPolicy);
+    IF_FAILED_JUMP(hr, Exit);
+
+    // activate IMFTrustedOutput
+    hr = _pMMDevice-&gt;Activate(__uuidof(IMFTrustedOutput), CLSCTX_ALL, NULL,
+                             (void**)_ppMFTrustedOutput);
+    IF_FAILED_JUMP(hr, Exit);
+
+    // get count of Output Trust Authorities on this trusted output
+    hr = (*_ppMFTrustedOutput)-&gt;GetOutputTrustAuthorityCount(&amp;dwCountOfOTAs);
+    IF_FAILED_JUMP(hr, Exit);
+
+    // sanity check - fail on endpoints with no output trust authorities
+    IF_TRUE_ACTION_JUMP((0 == dwCountOfOTAs), hr = E_NOTFOUND, Exit);
+
+    printf(&quot;dwCountOfOTAs = %d\n&quot;, dwCountOfOTAs);
+
+     
+    // loop over each output trust authority on the endpoint
+    for (DWORD i = 0; i &lt; dwCountOfOTAs; i++) 
+    {
+        // get the output trust authority
+        hr = (*_ppMFTrustedOutput)-&gt;GetOutputTrustAuthorityByIndex(i, ppMFOutputTrustAuthority);
+        IF_FAILED_JUMP(hr, Exit);
+
+
+        // log the purpose of the output trust authority
+        MFPOLICYMANAGER_ACTION action;
+        hr = (*ppMFOutputTrustAuthority)-&gt;GetAction(&amp;action);
+        if (FAILED(hr)) 
+        {
+            return hr;
+        }
+
+        printf(&quot; It's %s.&quot;, (PEACTION_PLAY==action) ? &quot;PEACTION_PLAY&quot; :
+                            (PEACTION_COPY==action) ? &quot;PEACTION_COPY&quot; :
+                            &quot;Others&quot;);
+ 
+        // only PEACTION_PLAY Output Trust Authorities are relevant
+        if (PEACTION_PLAY != action) 
+        {
+            printf(&quot;Skipping as the OTA action is not PEACTION_PLAY&quot;);
+            SAFE_RELEASE(*ppMFOutputTrustAuthority);
+            continue;
+        }
+
+        BYTE *pbTicket = NULL;
+        DWORD cbTicket = 0;
+        // audio ota does not support ticket, leaving it NULL is ok.
+        hr = (*ppMFOutputTrustAuthority)-&gt;SetPolicy(_ppMFOutputPolicy, 1, &amp;pbTicket, &amp;cbTicket);
+        IF_FAILED_JUMP(hr, Exit);
+        printf(&quot;SetPolicy succeeded.\n&quot;);
+
+        bRet = true;
+        break;
+
+    }// for each output trust authority
+
+Exit:
+    if (bRet)
+    {
+        hr = S_OK;
+    }
+    if (FAILED(hr))
+    {
+        printf(&quot;failure code is 0x%0x\n&quot;, hr);
+        SAFE_RELEASE(*ppMFOutputTrustAuthority);
+        SAFE_RELEASE(*_ppMFTrustedOutput);
+        if (*_ppMFOutputPolicy)
+        {
+            delete (*_ppMFOutputPolicy);
+        }
+    }
+
+    return hr;
+}
+
+
+HRESULT ClearOTAPolicy(IMFTrustedOutput *_pMFTrustedOutput,
+                       IMFOutputTrustAuthority *_pMFOutputTrustAuthority,
+                       IMFOutputPolicy *_pMFOutputPolicy)
+{
+    SAFE_RELEASE(_pMFOutputTrustAuthority);
+    SAFE_RELEASE(_pMFTrustedOutput);
+    if (_pMFOutputPolicy)
+    {
+        delete _pMFOutputPolicy;
+    }
+    return S_OK;
+}
+</code></pre>
+<pre lang="cpp"><code>//OTADSoundSample.rc
+#include &quot;windows.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Version
+#include &lt;ntverp.h&gt;
+
+#define VER_FILETYPE                VFT_DLL
+#define VER_FILESUBTYPE             VFT2_UNKNOWN
+#define VER_FILEDESCRIPTION_STR     &quot;Default Device Heuristic Dumper&quot;
+#define VER_INTERNALNAME_STR        &quot;DefaultDeviceDump.exe&quot;
+#define VER_ORIGINALFILENAME_STR    &quot;DefaultDeviceDump.exe&quot;
+
+#include &quot;common.ver&quot;
+</code></pre>
+<pre lang="cpp"><code>Sources file:
+
+TARGETNAME=OTADSoundSample
+TARGETTYPE=PROGRAM
+TARGET_DESTINATION=retail
+UMTYPE=console
+UMENTRY=wmain
+UMBASE=0x1000000
+#_NT_TARGET_VERSION=$(_NT_TARGET_VERSION_VISTA)
+MSC_WARNING_LEVEL=$(MSC_WARNING_LEVEL) /WX
+USE_ATL=1
+ATL_VER=70
+USE_NATIVE_EH=1
+USE_MSVCRT=1
+C_DEFINES=-DUNICODE -D_UNICODE
+INCLUDES=$(INCLUDES);  
+
+SOURCES=OTADSoundSample.cpp \
+        OTADSoundSample.rc \
+        outputpolicy.cpp\
+
+TARGETLIBS=\
+       $(SDK_LIB_PATH)\advapi32.lib         \
+       $(SDK_LIB_PATH)\kernel32.lib         \
+       $(SDK_LIB_PATH)\User32.lib           \
+       $(SDK_LIB_PATH)\shlwapi.lib          \
+       $(SDK_LIB_PATH)\ole32.lib            \
+       $(SDK_LIB_PATH)\oleaut32.lib         \
+       $(SDK_LIB_PATH)\rpcrt4.lib           \
+       $(SDK_LIB_PATH)\strmiids.lib         \
+       $(SDK_LIB_PATH)\uuid.lib             \
+       $(SDK_LIB_PATH)\SetupAPI.lib         \
+       $(SDK_LIB_PATH)\mfplat.lib \
+</code></pre>
+<h2>Related topics</h2>
+<p><a href="programming-guide.html">Programming Guide</a></p>
+<p><a href="user-mode-audio-components.html">User-Mode Audio Components</a></p>
+</body>

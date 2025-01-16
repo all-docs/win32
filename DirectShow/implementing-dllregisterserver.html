@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Implementing DllRegisterServer</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Implementing DllRegisterServer
+ms.assetid: aaa4069e-0b6a-4a76-b950-1a85a9ed969d
+title: Implementing DllRegisterServer
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Implementing DllRegisterServer</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>The final step is to implement the <strong>DllRegisterServer</strong> function. The DLL that contains the component must export this function. The function will be called by a set-up application, or when the user runs the Regsvr32.exe tool.</p>
+<p>The following example shows a minimal implementation of <strong>DlLRegisterServer</strong>:</p>
+<pre lang="C++"><code>STDAPI DllRegisterServer(void)
+{
+    return AMovieDllRegisterServer2(TRUE);
+}
+</code></pre>
+<p>The <a href="amoviedllregisterserver2.html"><strong>AMovieDllRegisterServer2</strong></a> function creates registry entries for every component in the</p>
+<pre><code>g_Templates
+</code></pre>
+<p>array. However, this function has some limitations. First, it assigns every filter to the &quot;DirectShow Filters&quot; category (CLSID_LegacyAmFilterCategory), but not every filter belongs in this category. Capture filters and compression filters, for example, have their own categories. Second, if your filter supports a hardware device, you might need to register two additional pieces of information that <strong>AMovieDLLRegisterServer2</strong> does not handle: the <em>medium</em> and the <em>pin category</em>. A medium defines a method of communication in a hardware device, such as a bus. The pin category defines the function of a pin. For information on mediums, see &quot;KSPIN_MEDIUM&quot; in the Microsoft Windows Driver Development Kit (DDK). For a list of pin categories, see <a href="pin-property-set.html">Pin Property Set</a>.</p>
+<p>If you want to specify a filter category, a medium, or a pin category, call the <a href="/windows/desktop/api/Strmif/nf-strmif-ifiltermapper2-registerfilter"><strong>IFilterMapper2::RegisterFilter</strong></a> method from within <strong>DllRegisterServer</strong>. This method takes a pointer to a <a href="/windows/desktop/api/strmif/ns-strmif-regfilter2"><strong>REGFILTER2</strong></a> structure, which specifies information about the filter.</p>
+<p>To complicate matters somewhat, the <strong>REGFILTER2</strong> structure supports two different formats for registering pins. The <strong>dwVersion</strong> member specifies the format:</p>
+<ul>
+<li>If <strong>dwVersion</strong> is 1, the pin format is <strong>AMOVIESETUP_PIN</strong> (described previously).</li>
+<li>If <strong>dwVersion</strong> is 2, the pin format is <a href="/windows/desktop/api/strmif/ns-strmif-regfilterpins2"><strong>REGFILTERPINS2</strong></a>.</li>
+</ul>
+<p>The <strong>REGFILTERPINS2</strong> structure includes entries for pin mediums and pin categories. Also, it uses bit flags for some items that <strong>AMOVIESETUP_PIN</strong> declares as Boolean values.</p>
+<p>The following example shows how to call <strong>IFilterMapper2::RegisterFilter</strong> from inside <strong>DllRegisterServer</strong>:</p>
+<pre lang="C++"><code>REGFILTER2 rf2FilterReg = {
+    1,              // Version 1 (no pin mediums or pin category).
+    MERIT_NORMAL,   // Merit.
+    1,              // Number of pins.
+    &amp;sudPins        // Pointer to pin information.
+};
+
+STDAPI DllRegisterServer(void)
+{
+    HRESULT hr;
+    IFilterMapper2 *pFM2 = NULL;
+
+    hr = AMovieDllRegisterServer2(TRUE);
+    if (FAILED(hr))
+        return hr;
+
+    hr = CoCreateInstance(CLSID_FilterMapper2, NULL, CLSCTX_INPROC_SERVER,
+            IID_IFilterMapper2, (void **)&amp;pFM2);
+
+    if (FAILED(hr))
+        return hr;
+
+    hr = pFM2-&gt;RegisterFilter(
+        CLSID_SomeFilter,                // Filter CLSID. 
+        g_wszName,                       // Filter name.
+        NULL,                            // Device moniker. 
+        &amp;CLSID_VideoCompressorCategory,  // Video compressor category.
+        g_wszName,                       // Instance data.
+        &amp;rf2FilterReg                    // Pointer to filter information.
+    );
+    pFM2-&gt;Release();
+    return hr;
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

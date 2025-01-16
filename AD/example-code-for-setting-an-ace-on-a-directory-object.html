@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Example Code for Setting an ACE on a Directory Object</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Example Code for Setting an ACE on a Directory Object
+description: This topic includes several code examples that add an Access Control Entry (ACE) to the Discretionary Access Control List (DACL) of the security descriptor of a directory object.
+ms.assetid: fb1ad9f5-af2f-4ad1-a58b-6439cca6fd23
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Active Directory examples Active Directory , setting an ACE on a directory object
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Example Code for Setting an ACE on a Directory Object</h1>
+<h2>Define the SetRight function</h2>
+<p>The following code example defines a function that adds an Access Control Entry (ACE) to the Discretionary Access Control List (DACL) of the security descriptor of a specified object in Active Directory Domain Services. The subroutine enables you to:</p>
+<ul>
+<li>Grant or deny access to the entire object.</li>
+<li>Grant or deny access to a specific property on the object.</li>
+<li>Grant or deny access to a set of properties on the object.</li>
+<li>Grant or deny the right to create a specific type of child object.</li>
+<li>Set an ACE that can be inherited by all child objects or by child objects of a specified object class.</li>
+</ul>
+<p>Following this Visual Basic code example are several code examples that show how to use the <strong>SetRight</strong> function to set different types of ACEs.</p>
+<pre lang="VB"><code>Const ACL_REVISION_DS = &amp;H4
+
+Public Function SetRight(objectDN As String, _
+               accessrights As Long, _
+               accesstype As Long, _
+               aceinheritflags As Long, _
+               objectGUID As String, _
+               inheritedObjectGUID As String, _
+               trustee As String) As Boolean
+             
+Dim dsobject As IADs
+Dim sd As IADsSecurityDescriptor
+Dim dacl As IADsAccessControlList
+Dim newace As New AccessControlEntry
+Dim lflags As Long
+
+On Error GoTo Cleanup
+ 
+' Bind to the specified object.
+Set dsobject = GetObject(objectDN)
+ 
+' Read the security descriptor on the object.
+Set sd = dsobject.Get(&quot;ntSecurityDescriptor&quot;)
+ 
+' Get the DACL from the security descriptor.
+Set dacl = sd.DiscretionaryAcl
+ 
+' Set the properties of the new ACE.
+newace.AccessMask = accessrights
+newace.AceType = accesstype
+newace.AceFlags = aceinheritflags
+newace.trustee = trustee
+ 
+' Set the GUID for the object type or inherited object type.
+lflags = 0
+
+If Not objectGUID = vbNullString Then
+   newace.ObjectType = objectGUID
+   lflags = lflags Or &amp;H1 'ADS_FLAG_OBJECT_TYPE_PRESENT
+End If
+
+If Not inheritedObjectGUID = vbNullString Then
+   newace.InheritedObjectType = inheritedObjectGUID
+   lflags = lflags Or &amp;H2 'ADS_FLAG_INHERITED_OBJECT_TYPE_PRESENT
+End If
+
+If Not (lflags = 0) Then newace.Flags = lflags
+ 
+' Set the ACL Revision.
+dacl.AclRevision = ACL_REVISION_DS
+
+' Add the ACE to the DACL and to the security descriptor.
+dacl.AddAce newace
+sd.DiscretionaryAcl = dacl
+ 
+' Apply it to the object.
+dsobject.Put &quot;ntSecurityDescriptor&quot;, sd
+dsobject.SetInfo
+SetRight = True
+Exit Function
+
+Cleanup:
+Set dsobject = Nothing
+Set sd = Nothing
+Set dacl = Nothing
+Set newace = Nothing
+SetRight = False
+
+End Function
+</code></pre>
+<pre lang="C++"><code>HRESULT SetRight(
+          IADs *pObject,
+          long lAccessMask,
+          long lAccessType,
+          long lAccessInheritFlags,
+          LPOLESTR szObjectGUID,
+          LPOLESTR szInheritedObjectGUID,
+          LPOLESTR szTrustee)
+{
+VARIANT varSD;
+HRESULT hr = E_FAIL;
+IADsAccessControlList *pACL = NULL;
+IADsSecurityDescriptor *pSD = NULL;
+IDispatch *pDispDACL = NULL;
+IADsAccessControlEntry *pACE = NULL;
+IDispatch *pDispACE = NULL;
+long lFlags = 0L;
+ 
+// The following code example takes the szTrustee in an expected naming format 
+// and assumes it is the name for the correct trustee.
+// The application should validate the specified trustee.
+if (!szTrustee || !pObject)
+    return E_INVALIDARG;
+ 
+VariantInit(&amp;varSD);
+ 
+// Get the nTSecurityDescriptor.
+// Type should be VT_DISPATCH - an IDispatch pointer to the security descriptor object.
+hr = pObject-&gt;Get(_bstr_t(&quot;nTSecurityDescriptor&quot;), &amp;varSD);
+if ( FAILED(hr) || varSD.vt != VT_DISPATCH ) {
+    wprintf(L&quot;get nTSecurityDescriptor failed: 0x%x\n&quot;, hr);
+    return hr;
+}
+ 
+hr = V_DISPATCH( &amp;varSD )-&gt;QueryInterface(IID_IADsSecurityDescriptor,(void**)&amp;pSD);
+if ( FAILED(hr) ) {
+    wprintf(L&quot;QueryInterface for IADsSecurityDescriptor failed: 0x%x\n&quot;, hr);
+    goto cleanup;
+}
+ 
+// Get the DACL.
+hr = pSD-&gt;get_DiscretionaryAcl(&amp;pDispDACL);
+if (SUCCEEDED(hr)) 
+    hr = pDispDACL-&gt;QueryInterface(IID_IADsAccessControlList,(void**)&amp;pACL);
+if ( FAILED(hr) ) {
+    wprintf(L&quot;Could not get DACL: 0x%x\n&quot;, hr);
+    goto cleanup;
+}
+ 
+// Create the COM object for the new ACE.
+hr  = CoCreateInstance( 
+               CLSID_AccessControlEntry,
+               NULL,
+               CLSCTX_INPROC_SERVER,
+               IID_IADsAccessControlEntry,
+               (void **)&amp;pACE
+               );
+if ( FAILED(hr) ) {
+    wprintf(L&quot;Could not create ACE object: 0x%x\n&quot;, hr);
+    goto cleanup;
+}
+ 
+// Set the properties for the new ACE.
+ 
+// Set the mask that specifies the access right.
+hr = pACE-&gt;put_AccessMask( lAccessMask );
+ 
+// Set the trustee.
+hr = pACE-&gt;put_Trustee( szTrustee );
+ 
+// Set AceType.
+hr = pACE-&gt;put_AceType( lAccessType );
+ 
+// Set AceFlags to specify whether other objects can inherit the ACE from the specified object.
+hr = pACE-&gt;put_AceFlags( lAccessInheritFlags );
+ 
+// If an szObjectGUID is specified, add ADS_FLAG_OBJECT_TYPE_PRESENT 
+// to the lFlags mask and set the ObjectType.
+if (szObjectGUID)
+{
+    lFlags |= ADS_FLAG_OBJECT_TYPE_PRESENT;
+    hr = pACE-&gt;put_ObjectType( szObjectGUID );
+}
+ 
+// If an szInheritedObjectGUID is specified, add ADS_FLAG_INHERITED_OBJECT_TYPE_PRESENT 
+// to the lFlags mask and set the InheritedObjectType.
+if (szInheritedObjectGUID)
+{
+    lFlags |= ADS_FLAG_INHERITED_OBJECT_TYPE_PRESENT;
+    hr = pACE-&gt;put_InheritedObjectType( szInheritedObjectGUID );
+}
+ 
+// Set flags if ObjectType or InheritedObjectType were set.
+if (lFlags)
+    hr = pACE-&gt;put_Flags(lFlags);
+ 
+// Add the ACE to the ACL to the SD to the cache to the object.
+// Call the QueryInterface method for the IDispatch pointer to pass to the AddAce method.
+hr = pACE-&gt;QueryInterface(IID_IDispatch, (void**)&amp;pDispACE);
+if (SUCCEEDED(hr))
+{
+    // Set the ACL revision.
+    hr = pACL-&gt;put_AclRevision(ACL_REVISION_DS);
+
+    // Add the ACE.
+    hr = pACL-&gt;AddAce(pDispACE);
+    if (SUCCEEDED(hr))
+    {
+        // Write the DACL.
+        hr = pSD-&gt;put_DiscretionaryAcl(pDispDACL);
+        if (SUCCEEDED(hr))
+        {
+            // Write the ntSecurityDescriptor property to the property cache.
+            hr = pObject-&gt;Put(CComBSTR(&quot;nTSecurityDescriptor&quot;), varSD);
+            if (SUCCEEDED(hr))
+            {
+                // Call SetInfo to update the property on the object in the directory.
+                hr = pObject-&gt;SetInfo();
+            }
+        }
+    }
+}
+ 
+cleanup:
+if (pDispACE)
+    pDispACE-&gt;Release();
+if (pACE)
+    pACE-&gt;Release();
+if (pACL)
+    pACL-&gt;Release();
+if (pDispDACL)
+    pDispDACL-&gt;Release();
+if (pSD)
+    pSD-&gt;Release();
+ 
+VariantClear(&amp;varSD);
+return hr;
+}
+</code></pre>
+<h2>Grant or deny access to the entire object</h2>
+<p>The following Visual Basic code example builds a binding string for the Users container and then calls the <strong>SetRight</strong> function to set an ACE on the Users container. This example sets an ACE that grants the trustee the right to read or write any property on the object.</p>
+<pre lang="VB"><code>Dim rootDSE As IADs
+Dim objectDN As String
+Dim bResult As Boolean
+Const ADS_RIGHT_READ_PROP = &amp;H10
+Const ADS_RIGHT_WRITE_PROP = &amp;H20
+ 
+' Bind to the Users container in the local domain.
+Set rootDSE = GetObject(&quot;LDAP://rootDSE&quot;)
+objectDN = &quot;LDAP://cn=users,&quot; &amp; rootDSE.Get(&quot;defaultNamingContext&quot;)
+ 
+' Grant trustee the right to read/write any property.
+bResult = SetRight objectDN, _
+  ADS_RIGHT_READ_PROP Or ADS_RIGHT_WRITE_PROP, _
+   ADS_ACETYPE_ACCESS_ALLOWED, _
+    0, _
+    vbNullString, _
+    vbNullString, _
+    &quot;someone@fabrikam.com&quot; ' Trustee
+
+If bResult = True Then
+    MsgBox (&quot;The trustee can read or write any property.&quot;)
+Else
+    MsgBox (&quot;An error occurred.&quot;)
+End If
+</code></pre>
+<p>The following C++ code example sets an ACE that grants the trustee permission to read or write any property on the object. The code example assumes that <em>pObject</em> and <em>szTrustee</em> are set to valid values. For more information, see <a href="setting-access-rights-on-an-object.html">Setting Access Rights on an Object</a>.</p>
+<pre lang="C++"><code>HRESULT hr;
+IADs *pObject;
+LPWSTR szTrustee;
+ 
+hr = SetRight(
+          pObject,  // IADs pointer to the object
+          ADS_RIGHT_READ_PROP | ADS_RIGHT_WRITE_PROP,
+          ADS_ACETYPE_ACCESS_ALLOWED,
+          0,        // Not inheritable
+          NULL,     // No object type GUID
+          NULL,     // No inherited object type GUID
+          szTrustee
+          );
+</code></pre>
+<h2>Grant or deny access to a specific property on the object</h2>
+<p>This code example calls the <strong>SetRight</strong> function to grant the trustee the right to read or write a specific property on the object. Be aware that you must specify the <strong>schemaIDGUID</strong> of the property and you must specify <strong>ADS_ACETYPE_ACCESS_ALLOWED_OBJECT</strong> to indicate that this is an object-specific ACE. This code example also specifies the <strong>ADS_ACEFLAG_INHERIT_ACE</strong> flag which indicates that the ACE can be inherited by child objects.</p>
+<pre lang="VB"><code>' Grant trustee the right to read the Telephone-Number property
+' of all child objects in the Users container. 
+' {bf967a49-0de6-11d0-a285-00aa003049e2} is the schemaIDGUID of 
+' the Telephone-Number property.
+
+bResult = SetRight objectDN, _
+     ADS_RIGHT_WRITE_PROP Or ADS_RIGHT_READ_PROP, _
+     ADS_ACETYPE_ACCESS_ALLOWED_OBJECT, _
+      ADS_ACEFLAG_INHERIT_ACE, _
+       &quot;{bf967a49-0de6-11d0-a285-00aa003049e2}&quot;, _
+       vbNullString, _
+       &quot;someone@fabrikam.com&quot; ' Trustee
+
+If bResult = True Then
+    MsgBox (&quot;The trustee can read the telephone number property.&quot;)
+Else
+    MsgBox (&quot;An error occurred.&quot;)
+End If
+</code></pre>
+<pre lang="C++"><code>// Grant trustee the right to read the Telephone-Number property
+// of all child objects in the Users container. 
+// {bf967a49-0de6-11d0-a285-00aa003049e2} is the schemaIDGUID of 
+// the Telephone-Number property.
+hr = SetRight(
+          pObject,  // IADs pointer to the object.
+          ADS_RIGHT_READ_PROP | ADS_RIGHT_WRITE_PROP,
+          ADS_ACETYPE_ACCESS_ALLOWED_OBJECT,
+          ADS_ACEFLAG_INHERIT_ACE,
+          L&quot;{bf967a49-0de6-11d0-a285-00aa003049e2}&quot;,
+          NULL,     // No inherited object type GUID.
+          szTrustee
+          );
+</code></pre>
+<h2>Grant or deny access to a set of properties on the object</h2>
+<p>This code example calls the <strong>SetRight</strong> function to grant the trustee the right to read or write a specific set of properties on the object. Specify <strong>ADS_ACETYPE_ACCESS_ALLOWED_OBJECT</strong> to indicate that this is an object-specific ACE.</p>
+<p>A property set is defined by a <strong>controlAccessRight</strong> object in the Extended Rights container of the Configuration partition. To identify the property set in the ACE, specify the <strong>rightsGUID</strong> property of a <strong>controlAccessRight</strong> object. Be aware that this property set GUID is also set in the <strong>attributeSecurityGUID</strong> property of every <strong>attributeSchema</strong> object included in the property set. For more information, see <a href="control-access-rights.html">Control Access Rights</a>.</p>
+<p>This code example also specifies inheritance flags that set the ACE as inheritable by child objects, but ineffective on the immediate object. In addition, the sample specifies the GUID of the User class, which indicates that the ACE can be inherited only by objects of that class.</p>
+<pre lang="VB"><code>' Grant trustee permission to read or write a set of properties.
+' {77B5B886-944A-11d1-AEBD-0000F80367C1} is a GUID that identifies 
+' a property set.
+' {bf967aba-0de6-11d0-a285-00aa003049e2} is a GUID that identifies the
+' User class, so this ACE is inherited only by objects of that class.
+
+bResult = SetRight objectDN, _
+        ADS_RIGHT_READ_PROP Or ADS_RIGHT_WRITE_PROP, _
+          ADS_ACETYPE_ACCESS_ALLOWED_OBJECT, _
+          ADS_ACEFLAG_INHERIT_ACE Or ADS_ACEFLAG_INHERIT_ONLY_ACE, _
+          &quot;{77B5B886-944A-11d1-AEBD-0000F80367C1}&quot;, _
+          &quot;{bf967aba-0de6-11d0-a285-00aa003049e2}&quot;, _
+          &quot;someone@fabrikam.com&quot; ' Trustee
+
+If bResult = True Then
+    MsgBox (&quot;The trustee can read or write a set of properties.&quot;)
+Else
+    MsgBox (&quot;An error occurred.&quot;)
+End If
+</code></pre>
+<pre lang="C++"><code>// Grant trustee the right to read or write a set of properties.
+// {77B5B886-944A-11d1-AEBD-0000F80367C1} is a GUID that identifies 
+// a property set (rightsGUID of a controlAccessRight object).
+// {bf967aba-0de6-11d0-a285-00aa003049e2} is the schemaIDGUID of the
+// User class, so this ACE is inherited only by objects of that class.
+hr = SetRight(
+          pObject,  // IADs pointer to the object.
+          ADS_RIGHT_READ_PROP | ADS_RIGHT_WRITE_PROP,
+          ADS_ACETYPE_ACCESS_ALLOWED_OBJECT,
+          ADS_ACEFLAG_INHERIT_ACE | ADS_ACEFLAG_INHERIT_ONLY_ACE,
+          L&quot;{77B5B886-944A-11d1-AEBD-0000F80367C1}&quot;,
+          L&quot;{bf967aba-0de6-11d0-a285-00aa003049e2}&quot;,
+          szTrustee
+          );
+</code></pre>
+<h2>Grant or deny permission to create a specific type of child object</h2>
+<p>The following code example calls the <strong>SetRight</strong> function to grant a specified trustee the right to create and delete User objects in the subtree under the specified object. Be aware that the sample specifies the GUID of the User class, which means that the ACE allows only the trustee to create User objects, not objects of other classes. Specify <strong>ADS_ACETYPE_ACCESS_ALLOWED_OBJECT</strong> to indicate that this is an object-specific ACE.</p>
+<pre lang="VB"><code>' Grant trustee the right to create or delete User objects 
+' in the specified object. 
+' {bf967aba-0de6-11d0-a285-00aa003049e2} is a GUID that identifies the
+' User class.
+
+bResult = SetRight objectDN, _
+          ADS_RIGHT_DS_CREATE_CHILD Or ADS_RIGHT_DS_DELETE_CHILD, _
+           ADS_ACETYPE_ACCESS_ALLOWED_OBJECT, _
+           0, _
+           &quot;{bf967aba-0de6-11d0-a285-00aa003049e2}&quot;, _
+           vbNullString, _
+           &quot;jeffsmith@fabrikam.com&quot; 'trustee
+
+If bResult = True Then
+    MsgBox (&quot;The trustee can create or delete User objects.&quot;)
+Else
+    MsgBox (&quot;An error occurred.&quot;)
+End If
+</code></pre>
+<pre lang="C++"><code>// Grant trustee the right to create or delete User objects 
+// in the specified object. 
+// {bf967aba-0de6-11d0-a285-00aa003049e2} is the schemaIDGUID of the
+// User class.
+hr = SetRight(
+          pObject,  // IADs pointer to the object.
+          ADS_RIGHT_DS_CREATE_CHILD | ADS_RIGHT_DS_DELETE_CHILD,
+          ADS_ACETYPE_ACCESS_ALLOWED_OBJECT,
+          0,        // Not inheritable.
+          L&quot;{bf967aba-0de6-11d0-a285-00aa003049e2}&quot;,
+          NULL,     // No inherited object type GUID.
+          szTrustee
+          );
+</code></pre>
+<p>For more information, and the <strong>schemaIDGUID</strong> of a predefined attribute or class, see the attribute or class reference page in the <a href="/windows/desktop/ADSchema/active-directory-schema">Active Directory Schema</a> reference. For more information, and a code example that can be used to obtain a <strong>schemaIDGUID</strong> programmatically, see <a href="reading-attributeschema-and-classschema-objects.html">Reading attributeSchema and classSchema Objects</a>.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

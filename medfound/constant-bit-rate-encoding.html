@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Constant Bit Rate Encoding</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Constant Bit Rate Encoding
+ms.assetid: 0f084f3f-7432-4514-ae6a-c8179a99dec7
+title: Constant Bit Rate Encoding
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Constant Bit Rate Encoding</h1>
+<p>In constant bit rate (CBR) encoding, the encoder knows the bit rate of the output media samples and the buffer window (leaky bucket parameters) before the encoding session begins. The encoder uses the same number of bits to encode each second of sample throughout the duration of the file to achieve the target bit rate for a stream. This limits the variation in the size of the stream samples. Also, during the encoding session the bit rate is not exactly at the specified value but remains close to the target bit rate.</p>
+<p>CBR encoding is useful when you want to know the bit rate or approximate duration of a file without parsing the entire file. This is required in live streaming scenarios where the media content needs to be streamed at a predictable bit rate and with consistent bandwidth usage.</p>
+<p>The disadvantage of CBR encoding is that the quality of the encoded content will not be constant. Because some content is more difficult to compress, parts of a CBR stream will be of lower quality than others. For example, a typical movie has some scenes that are fairly static and some scenes that are full of action. If you encode a movie using CBR, the scenes that are static, and therefore easy to encode efficiently, will be of higher quality than the action scenes, which would have required higher sample sizes to maintain the same quality.</p>
+<p>In general, variations in the quality of a CBR file are more pronounced at lower bit rates. At higher bit rates, the quality of a CBR-encoded file will still vary, but the quality issues will be less noticeable to the user. When using CBR encoding, you should set the bandwidth as high as your delivery scenario allows.</p>
+<ul>
+<li><a href="#cbr-configuration-settings">CBR Configuration Settings</a></li>
+<li><a href="#leaky-bucket-settings">Leaky Bucket Settings</a></li>
+</ul>
+<h3>CBR Configuration Settings</h3>
+<p>You must configure an encoder by specifying the type of encoding and the various stream specific settings before the encoding session.</p>
+<p><strong>To configure the encoder for CBR encoding</strong></p>
+<ol>
+<li>
+<p>Specify the CBR encoding mode.</p>
+<p>By default, the encoder is configured to use CBR encoding. Encoder configuration is set through property values. These properties are defined in wmcodecdsp.h. You can explicitly specify this mode by setting the <a href="mfpkey-vbrenabledproperty.html"><strong>MFPKEY_VBRENABLED</strong></a> property to VARIANT_FALSE. For information about how to set properties on encoders, see <a href="configuring-the-encoder.html">Configuring the Encoder</a>.</p>
+</li>
+<li>
+<p>Choose the encoding bit rate.</p>
+<p>For CBR encoding, you must know the bit rate at which you want to encode the stream before the encoding session begins. You must set the bit rate during while you are configuring the encoder. To do this, while you are performing media type negotiation, check the <a href="mf-mt-audio-avg-bytes-per-second-attribute.html"><strong>MF_MT_AUDIO_AVG_BYTES_PER_SECOND</strong></a> attribute (for audio streams) or the <a href="mf-mt-avg-bitrate-attribute.html"><strong>MF_MT_AVG_BITRATE</strong></a> attribute (for video streams) of the available output media types and choose an output media type that has the average bit rate closest to the target bit rate you want to achieve. For more information, see <a href="media-type-negotiation-on-the-encoder.html">Media Type Negotiation on the Encoder</a>.</p>
+</li>
+</ol>
+<p>The following code example shows the implementation for SetEncodingProperties. This function sets stream level encoding properties for CBR and VBR.</p>
+<pre lang="C++"><code>//-------------------------------------------------------------------
+//  SetEncodingProperties
+//  Create a media source from a URL.
+//
+//  guidMT:  Major type of the stream, audio or video
+//  pProps:  A pointer to the property store in which 
+//           to set the required encoding properties.
+//-------------------------------------------------------------------
+
+HRESULT SetEncodingProperties (const GUID guidMT, IPropertyStore* pProps)
+{
+    if (!pProps)
+    {
+        return E_INVALIDARG;
+    }
+
+    if (EncodingMode == NONE)
+    {
+        return MF_E_NOT_INITIALIZED;
+    }
+   
+    HRESULT hr = S_OK;
+
+    PROPVARIANT var;
+
+    switch (EncodingMode)
+    {
+        case CBR:
+            // Set VBR to false.
+            hr = InitPropVariantFromBoolean(FALSE, &amp;var);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+
+            hr = pProps-&gt;SetValue(MFPKEY_VBRENABLED, var);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+
+            // Set the video buffer window.
+            if (guidMT == MFMediaType_Video)
+            {
+                hr = InitPropVariantFromInt32(VIDEO_WINDOW_MSEC, &amp;var);
+                if (FAILED(hr))
+                {
+                    goto done;
+                }
+
+                hr = pProps-&gt;SetValue(MFPKEY_VIDEOWINDOW, var);    
+                if (FAILED(hr))
+                {
+                    goto done;
+                }
+            }
+            break;
+
+        case VBR:
+            //Set VBR to true.
+            hr = InitPropVariantFromBoolean(TRUE, &amp;var);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+
+            hr = pProps-&gt;SetValue(MFPKEY_VBRENABLED, var);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+
+            // Number of encoding passes is 1.
+
+            hr = InitPropVariantFromInt32(1, &amp;var);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+
+            hr = pProps-&gt;SetValue(MFPKEY_PASSESUSED, var);
+            if (FAILED(hr))
+            {
+                goto done;
+            }
+
+            // Set the quality level.
+
+            if (guidMT == MFMediaType_Audio)
+            {
+                hr = InitPropVariantFromUInt32(98, &amp;var);
+                if (FAILED(hr))
+                {
+                    goto done;
+                }
+
+                hr = pProps-&gt;SetValue(MFPKEY_DESIRED_VBRQUALITY, var);    
+                if (FAILED(hr))
+                {
+                    goto done;
+                }
+            }
+            else if (guidMT == MFMediaType_Video)
+            {
+                hr = InitPropVariantFromUInt32(95, &amp;var);
+                if (FAILED(hr))
+                {
+                    goto done;
+                }
+
+                hr = pProps-&gt;SetValue(MFPKEY_VBRQUALITY, var);    
+                if (FAILED(hr))
+                {
+                    goto done;
+                }
+            }
+            break;
+
+        default:
+            hr = E_UNEXPECTED;
+            break;
+    }    
+
+done:
+    PropVariantClear(&amp;var);
+    return hr;
+}
+</code></pre>
+<h3>Leaky Bucket Settings</h3>
+<p>For CBR encoding, the average and the maximum leaky bucket values for the stream are the same. For more information about these parameters, see <a href="the-leaky-bucket-buffer-model.html">The Leaky Bucket Buffer Model</a>.</p>
+<p>To CBR-encode audio streams, you need to set the leaky bucket values after negotiating the output media type on the encoder. The encoder calculates the buffer window internally based on the average bit rate set on the output media type.</p>
+<p>To set leaky bucket values create an array of DWORDs can set the following values in the <a href="mfpkey-asfstreamsink-corrected-leakybucket-property.html"><strong>MFPKEY_ASFSTREAMSINK_CORRECTED_LEAKYBUCKET</strong></a> property in the media sink's property store. For more information, see <a href="setting-properties-in-the-file-sink.html">Setting Properties in the File Sink</a>.</p>
+<ul>
+<li>Average bit rate: Get the average bit rate from the output media type that is selected during media type negotiation. Use the <a href="mf-mt-audio-avg-bytes-per-second-attribute.html"><strong>MF_MT_AUDIO_AVG_BYTES_PER_SECOND</strong></a> attribute.</li>
+<li>Buffer window: Query the encoder for the <a href="/windows/desktop/api/wmcodecdsp/nn-wmcodecdsp-iwmcodecleakybucket"><strong>IWMCodecLeakyBucket</strong></a> interface and then call <a href="../wmformat/iwmcodecleakybucket-getbuffersizebits.html"><strong>IWMCodecLeakyBucket::GetBufferSizeBits</strong></a> (wmcodecifaces.h, wmcodecdspuuid.lib).</li>
+<li>Initial buffer size: Set to 0.</li>
+</ul>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="asf-encoding-types.html">ASF Encoding Types</a></p>
+<!-- raw HTML omitted -->
+<p><a href="tutorial--1-pass-windows-media-encoding.html">Tutorial: 1-Pass Windows Media Encoding</a></p>
+<!-- raw HTML omitted -->
+<p><a href="tutorial--writing-a-wma-file-by-using-cbr-encoding.html">Tutorial: Writing a WMA File by Using CBR Encoding</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

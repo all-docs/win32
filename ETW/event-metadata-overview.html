@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Event Metadata Overview</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: 'This is an overview of what to expect for the end-to-end journey of an event for each of the four tracing technologies furnished by Microsoft: TraceLogging, Manifest-based, WPP, and MOF.'
+ms.assetid: 6102593C-C6D5-4BDB-A0EF-067AF91DE00B
+title: Event Metadata Overview
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Event Metadata Overview</h1>
+<p>This is an overview of what to expect for the end-to-end journey of an event for each of the four tracing technologies furnished by Microsoft: <a href="../tracelogging/trace-logging-about.html">TraceLogging</a>, <a href="writing-manifest-based-events.html">Manifest-based</a>, <a href="windows-software-trace-preprocessor.html">WPP</a>, and <a href="tracing-events.html">MOF</a>. It approaches the problem with respect to both an individual event's payload and the accompanying metadata that describes its structure, making it possible to later decode the event into sensible pieces of data. Understanding the journey of each piece of an event is important when choosing which tracing technology is appropriate for a project. There is no one-size-fits-all solution to tracing.</p>
+<h2>Event Payloads</h2>
+<p>For any of the Microsoft-provided tracing technologies, when calling the Write command (for instance <a href="/windows/desktop/api/Evntprov/nf-evntprov-eventwrite"><strong>EventWrite</strong></a> for manifest-based or <a href="/windows/win32/api/traceloggingprovider/nf-traceloggingprovider-traceloggingwrite"><strong>TraceLoggingWrite</strong></a> for TraceLogging), the data provided for the event at runtime is folded into a contiguous binary blob called the event payload. This is separate from the event schema or event metadata (discussed below), which describes the layout of this binary blob for decoding tools. How exactly the generation of the event payload happens varies depending on the tracing technology used and ultimately whether the event is classic (<a href="/windows/win32/api/evntrace/nf-evntrace-traceevent"><strong>TraceEvent</strong></a> style) or modern (<strong>EventWrite</strong> style).</p>
+<p>For classic events, the flag in <a href="/windows/win32/api/evntrace/ns-evntrace-event_trace_header"><strong>EVENT_TRACE_HEADER</strong></a> is passed into <a href="/windows/win32/api/evntrace/nf-evntrace-traceevent"><strong>TraceEvent</strong></a> which determines how this occurs:</p>
+<p>- If <strong>WNODE_FLAG_USE_MOF_PTR</strong> is specified, an array of <a href="/windows/win32/api/evntrace/ns-evntrace-mof_field"><strong>MOF_FIELDS</strong></a> follows the <a href="/windows/win32/api/evntrace/ns-evntrace-event_trace_header"><strong>EVENT_TRACE_HEADER</strong></a> in memory. The ETW runtime will concatenate the event data as specified in these fields to form the event payload.</p>
+<p>- If <strong>WNODE_FLAG_USE_MOF_PTR</strong> is not specified, the event payload is constructed by the user directly in memory following the <a href="/windows/win32/api/evntrace/ns-evntrace-event_trace_header"><strong>EVENT_TRACE_HEADER</strong></a>.</p>
+<p>Both MOF and WPP are classic providers. However, the WPP implementation takes care of all of this for you.</p>
+<p>For non-classic events, a number of <a href="/windows/desktop/api/Evntprov/ns-evntprov-event_data_descriptor"><strong>EVENT_DATA_DESCRIPTORS</strong></a> are passed into <a href="/windows/desktop/api/Evntprov/nf-evntprov-eventwrite"><strong>EventWrite</strong></a>. The ETW runtime will concatenate the event data as specified in these descriptors to form the event payload.</p>
+<p>Both Manifest-based and TraceLogging technologies are generally modern providers. With manifest-based, if you let mc.exe generate logging code for you (um or km switch), payload generation is taken care of for you. Payload generation is always taken care of by TraceLogging.</p>
+<p>The end result is that a payload for an event is generated at runtime. All payloads are fundamentally similar in that they are binary blobs of data containing only the field data for that particular event, regardless of the tracing technology used and which field types are supported by that tracing technology. Without the event metadata, the event payload is meaningless and unintelligable.</p>
+<p>The ETW runtime's duty is then to carry this event blob from the provider to the consumer, where it is re-associated with its metadata and becomes decodable. The ETW runtime will add a bit of extra metadata indicating the circumstances of the payload -- for instance things like the timestamp, thread ID, and keywords of the event. This information is relevant to how the event was routed through the runtime, and it is also useful for understanding the identity and context of the event at decoding time. It is eventually surfaced as part of the <a href="/windows/win32/api/evntrace/ns-evntrace-event_trace"><strong>EVENT_TRACE</strong></a> or <a href="/windows/win32/api/evntcons/ns-evntcons-event_record"><strong>EVENT_RECORD</strong></a> for the consumer</p>
+<h2>Event Metadata</h2>
+<p>The journey for event metadata is different depending on which tracing technology is used, and it is one of the largest considerations when comparing each technology.</p>
+<h3>MOF</h3>
+<p>Event metadata is authored by hand by the creator of the event in the form of a special MOF schema in a .mof file. The schema authored must match the payload that is logged in order for the event to be correctly decoded by consumers. Event decoders require that the .mof file is registered on the system using <a href="../wmisdk/mofcomp.html">mofcomp.exe</a>. For more information on publishing MOF schemas, see <a href="publishing-your-event-schema-for-a-classic-provider.html">Publishing Your Event Schema for a Classic Provider</a>.</p>
+<h3>WPP</h3>
+<p>Event metadata is automatically generated and stored in your binary's .pdb by tracewpp.exe during the build process. This metadata can later be extracted in the form of a standalone .tmf file by way of tracepdb.exe. Event decoders typically require either the .pdb or the .tmf file. For more information on tracepdb.exe, see <a href="/windows-hardware/drivers/devtest/tracepdb-overview">Tracepdb Overview</a>, and for more information on tracewpp.exe, see <a href="/windows-hardware/drivers/devtest/tracewpp-task">TraceWPP task</a>.</p>
+<h3>Manifest-based</h3>
+<p>Event definitions are authored in a .man file. Event manifests are run through the manifest compiler (<a href="../wes/message-compiler--mc-exe-.html">mc.exe</a>), generating the headers needed for source compilation as well as several .bin binary resource files. These resource files must then be compiled as resources into a binary and the resulting binary placed on the system that intends to decode events from that manifest-based provider. Additionally, the manifest must be installed on the system using <a href="../wes/windows-event-log-tools.html">wevtutil.exe</a> Most importantly, the <strong>resourceFileName</strong> and <strong>messageFileName</strong> attributes on the provider XML element in the installed event manifest must correctly identify the full absolute path to the binary in which the resource files were placed. Note that these paths may be overwritten at manifest install time by using the wevtutil.exe switches /rf and /mf. A system that has not correctly and fully performed these steps will be unable to decode events from this provider. Event decoders thus require an installed manifest, and the binary with the associated resources installed in the location specified by resource and message file paths. For more information on publishing manifest-based schemas, see <a href="publishing-your-event-schema-for-a-manifest-base-provider.html">Publishing Your Event Schema for a Manifest-based Provider</a>.</p>
+<h3>TraceLogging</h3>
+<p>All TraceLogging events are self-describing. The event metadata necessary to decode the event is automatically generated and transmitted along with the payload in a compact binary format. Event decoders need only the TraceLogging event and an understanding of the TraceLogging metadata format.</p>
+<h2>Configuring TDH for Decoding</h2>
+<p>There are many decoding tools out there. However, it is recommended that you use TDH where possible, as it decodes all tracing technologies with a unified API. Depending on the type of tracing you are interested in decoding, TDH may require explicit configuration.</p>
+<h3>MOF</h3>
+<p>TDH utilizes MOF decoding data registered on the system using mofcomp.exe. For more information, see <a href="publishing-your-event-schema-for-a-classic-provider.html">Publishing Your Event Schema for a Classic Provider</a>.</p>
+<h3>WPP</h3>
+<p>TDH must be pointed towards either the .pdb file or the associated .tmf for the WPP provider you are trying to decode. This can be performed by calling <a href="/windows/desktop/api/Tdh/nf-tdh-tdhsetdecodingparameter"><strong>TdhSetDecodingParameter</strong></a>. Otherwise, the decoding engine will fall back on the environment variable TRACE_FORMAT_SEARCH_PATH.</p>
+<h3>Manifest-based</h3>
+<p>TDH utilizes all manifest-based providers registered on the system using wevtutil.exe.</p>
+<h3>TraceLogging</h3>
+<p>The newest versions of TDH automatically detect and decode TraceLogging events with no additional steps.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

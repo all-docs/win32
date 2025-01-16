@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using an Input Method Editor in a Game</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Using an Input Method Editor in a Game
+description: This article explains how you can implement a basic IME edit control in a full-screen Microsoft DirectX application.
+ms.assetid: 760ed960-08a3-e967-282e-7fbdbaeb7a4d
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Using an Input Method Editor in a Game</h1>
+<blockquote>
+<p>[!Note]<br />
+This article details working with the Windows XP Input Method Editor (IME). Changes were made to the IME for Windows Vista that are not fully detailed in this article.</p>
+</blockquote>
+<p>An input method editor (IME) is a program that allows easy text entry using a standard keyboard for East Asian languages such as Chinese, Japanese, Korean, and other languages with complex characters. For example, with IMEs a user can type complex characters in a word processor, or a player of a massive multiplayer online game can chat with friends in complex characters.</p>
+<p>This article explains how you can implement a basic IME edit control in a full-screen Microsoft DirectX application. Applications that take advantage of DXUT automatically get IME functionality. For applications that do not make use of the framework, this article describes how to add IME support to an edit control.</p>
+<p>Contents:</p>
+<ul>
+<li><a href="#default-ime-behavior">Default IME Behavior</a></li>
+<li><a href="#using-imes-with-dxut">Using IMEs with DXUT</a></li>
+<li><a href="#overriding-the-default-ime-behavior">Overriding the Default IME Behavior</a></li>
+<li><a href="#functions">Functions</a></li>
+<li><a href="#ime-messages">Messages</a></li>
+<li><a href="#examples">Examples</a>
+<ul>
+<li><a href="#cht-ime-version-42-43-and-44">CHT IME version 4.2, 4.3 and 4.4</a></li>
+<li><a href="#cht-ime-version-50">CHT IME version 5.0</a></li>
+<li><a href="#cht-ime-version-51-52-and-chs-ime-version-53">CHT IME version 5.1, 5.2 and CHS IME version 5.3</a></li>
+<li><a href="#chs-ime-version-41">CHS IME version 4.1</a></li>
+<li><a href="#chs-ime-version-42">CHS IME version 4.2</a></li>
+</ul>
+</li>
+<li><a href="#ime-messages">IME Messages</a>
+<ul>
+<li><a href="#wm_inputlangchange">WM_INPUTLANGCHANGE</a></li>
+<li><a href="/windows">WM_IME_STARTCOMPOSITION</a></li>
+<li><a href="/windows">WM_IME_COMPOSITION</a></li>
+<li><a href="/windows">WM_IME_ENDCOMPOSITION</a></li>
+<li><a href="/windows">WM_IME_NOTIFY</a></li>
+</ul>
+</li>
+<li><a href="#rendering">Rendering</a>
+<ul>
+<li><a href="#input-locale-indicator">Input Locale Indicator</a></li>
+<li><a href="#composition-window">Composition Window</a></li>
+<li><a href="#reading-and-candidate-windows">Reading and Candidate Windows</a></li>
+</ul>
+</li>
+<li><a href="#limitations">Limitations</a></li>
+<li><a href="#registry-information">Registry Information</a></li>
+<li><a href="#appendix-a-cht-versions-per-operating-system">Appendix A: CHT Versions per Operating System</a></li>
+<li><a href="#further-information">Further Information</a></li>
+<li><a href="#getreadingstring">GetReadingString</a></li>
+<li><a href="#showreadingwindow">ShowReadingWindow</a></li>
+</ul>
+<h2>Default IME Behavior</h2>
+<p>IMEs map keyboard input to phonetic components or other language elements specific to a selected language. In a typical scenario, the user types keys that represent pronunciation of a complex character. If the IME recognizes the pronunciation as valid, it presents the user with a list of word or phrase candidates from which the user can select a final choice. The chosen word is then sent to the application through a series of Microsoft Windows <a href="/windows/desktop/inputdev/wm-char"><strong>WM_CHAR</strong></a> messages. Because the IME works at a level below the application by intercepting keyboard input, the presence of an IME is transparent to the application. Almost all Windows applications can readily take advantage of IMEs without being aware of their existence and without requiring special coding.</p>
+<p>A typical IME displays several windows to guide the user through character entry, as shown in the following examples.</p>
+<p><img src="images/ime-elements.png" alt="ime displays several windows" /></p>
+<table>
+<thead>
+<tr>
+<th>Window Type</th>
+<th>Description</th>
+<th>IME Output</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A. Reading Window</td>
+<td>Contains keystrokes from the keyboard; typically changes after each keystroke.</td>
+<td>reading string</td>
+</tr>
+<tr>
+<td>B. Composition Window</td>
+<td>Contains the collection of characters that the user has composed with the IME. These characters are drawn by the IME on top of the application. When the user notifies the IME that the composition string is satisfactory, the IME then sends the composition string to the application via a series of WM_CHAR messages.</td>
+<td>composition string</td>
+</tr>
+<tr>
+<td>C. Candidate Window</td>
+<td>When the user has entered a valid pronunciation, the IME displays a list of candidate characters that all match the given pronunciation. The user then selects the intended character from this list, and the IME adds this character to the Composition Window display.</td>
+<td>the next character in the composition string</td>
+</tr>
+<tr>
+<td>D. <a href="/windows/desktop/Intl/nls-terminology">Input Locale</a> indicator</td>
+<td>Shows the language the user has selected for keyboard input. This indicator is embedded in the Windows taskbar. The input language can be selected by opening the Regional and Language Options Control Panel and then clicking Details on the Languages tab.</td>
+<td>-</td>
+</tr>
+</tbody>
+</table>
+<h2>Using IMEs with DXUT</h2>
+<p>In DXUT, the CDXUTIMEEditBox class implements IME functionality. This class is derived from the CDXUTEditBox class, the basic edit control provided by the framework. CDXUTIMEEditBox extends that edit control to support IMEs by overriding the CDXUTIMEEditBox methods. The classes are designed this way to help developers learn what they need to take from the framework to implement IME support in their own edit controls. The rest of this topic explains how the framework, and CDXUTIMEEditBox in particular, overrides a basic edit control to implement IME functionality.</p>
+<p>Most of the IME-specific variables in CDXUTIMEEditBox are declared as static, because many IME buffers and states are specific to the process. For instance, a process has only one buffer for the composition string. Even if the process has ten edit controls, they will all be sharing the same composition string buffer. The composition string buffer for CDXUTIMEEditBox is therefore static, preventing the application from taking up unnecessary memory space.</p>
+<p>CDXUTIMEEditBox is implemented in the following DXUT code:</p>
+<p>(SDK root)\Samples\C++\Common\DXUTgui.cpp</p>
+<h2>Overriding the Default IME Behavior</h2>
+<p>Normally an IME uses standard Windows procedures to create a window (see <a href="/windows/desktop/winmsg/using-windows">Using Windows</a>). Under normal circumstances, this produces satisfactory results. However, when the application presents in full-screen mode, as is common for games, standard windows no longer work and may not display on top of the application. To overcome this issue, the application must draw the IME windows itself instead of relying on Windows to perform this task.</p>
+<p>When the default IME window creation behavior does not provide what an application requires, the application can override the IME window handling. An application can achieve this by processing IME-related messages and calling the <a href="/windows/desktop/Intl/input-method-manager">Input Method Manager</a> (IMM) API.</p>
+<p>When a user interacts with an IME to input complex characters, the IMM sends messages to the application to notify it of important events, such as starting a composition or showing the candidate window. An application typically ignores these messages and passes them to the default message handler, which causes the IME to handle them. When the application, instead of the default handler, handles the messages, it controls exactly what happens at each of the IME events. Often the message handler retrieves the content of the various IME windows by calling the IMM API. Once the application has this information, it can properly draw the IME windows itself when it needs to render to the display.</p>
+<h2>Functions</h2>
+<p>An IME needs to get the reading string, hide the reading window, and get the orientation of reading window. This table shows the functionalities per IME version:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Getting reading string</th>
+<th>Hiding reading window</th>
+<th>Orientation of reading window</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Before version 6.0</strong></td>
+<td>A. Reading Window Access IME private data directly. See &quot;4 Structure&quot;</td>
+<td>Trap IME private messages. See &quot;3 Messages&quot;</td>
+<td>Examine registry information. See &quot;5 Registry Information&quot;</td>
+</tr>
+<tr>
+<td><strong>After version 6.0</strong></td>
+<td><a href="#getreadingstring">GetReadingString</a></td>
+<td><a href="#showreadingwindow">ShowReadingWindow</a></td>
+<td><a href="#getreadingstring">GetReadingString</a></td>
+</tr>
+</tbody>
+</table>
+<h2>Messages</h2>
+<p>The following messages don't have to be processed for newer IME that implements <a href="#showreadingwindow">ShowReadingWindow</a>().</p>
+<p>The following messages are trapped by application message handler (i.e. they are not passed to DefWindowProc) to prevent the reading window from showing up.</p>
+<pre lang="syntax"><code>Msg == WM_IME_NOTIFY
+wParam == IMN_PRIVATE
+lParam == 1, 2 (CHT IME version 4.2, 4.3 and 4.4 / CHS IME 4.1 and 4.2)
+lParam == 16, 17, 26, 27, 28 (CHT IME version 5.0, 5.1, 5.2 / CHS IME 5.3)
+</code></pre>
+<h2>Examples</h2>
+<p>The following examples illustrate how to get reading string information from older IME that doesn't have GetReadingString(). The code generates the following outputs:</p>
+<table>
+<thead>
+<tr>
+<th>Output</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DWORD dwlen</td>
+<td>Length of the reading string.</td>
+</tr>
+<tr>
+<td>DWORD dwerr</td>
+<td>Index of the error character.</td>
+</tr>
+<tr>
+<td>LPWSTR wstr</td>
+<td>Pointer to the reading string.</td>
+</tr>
+<tr>
+<td>BOOL unicode</td>
+<td>If true, the reading string is in Unicode format. Otherwise it's in multibyte format.</td>
+</tr>
+</tbody>
+</table>
+<h3>CHT IME version 4.2, 4.3 and 4.4</h3>
+<pre lang="syntax"><code>LPINPUTCONTEXT lpIMC = _ImmLockIMC(himc);
+LPBYTE p = *(LPBYTE *)((LPBYTE)_ImmLockIMCC(lpIMC-&gt;hPrivate) + 24);
+if (!p) break;
+dwlen = *(DWORD *)(p + 7*4 + 32*4);
+dwerr = *(DWORD *)(p + 8*4 + 32*4);
+wstr = (WCHAR *)(p + 56);
+unicode = TRUE;
+</code></pre>
+<h3>CHT IME version 5.0</h3>
+<pre lang="syntax"><code>LPINPUTCONTEXT lpIMC = _ImmLockIMC(himc);
+LPBYTE p = *(LPBYTE *)((LPBYTE)_ImmLockIMCC(lpIMC-&gt;hPrivate) + 3*4);
+if (!p) break;
+p = *(LPBYTE *)((LPBYTE)p + 1*4 + 5*4 + 4*2 );
+if (!p) break;
+dwlen = *(DWORD *)(p + 1*4 + (16*2+2*4) + 5*4 + 16);
+dwerr = *(DWORD *)(p + 1*4 + (16*2+2*4) + 5*4 + 16 + 1*4);
+wstr = (WCHAR *)(p + 1*4 + (16*2+2*4) + 5*4);
+unicode = FALSE;
+</code></pre>
+<h3>CHT IME version 5.1, 5.2 and CHS IME version 5.3</h3>
+<pre lang="syntax"><code>LPINPUTCONTEXT lpIMC = _ImmLockIMC(himc);
+LPBYTE p = *(LPBYTE *)((LPBYTE)_ImmLockIMCC(lpIMC-&gt;hPrivate) + 4);
+if (!p) break;
+p = *(LPBYTE *)((LPBYTE)p + 1*4 + 5*4); 
+if (!p) break;
+dwlen = *(DWORD *)(p + 1*4 + (16*2+2*4) + 5*4 + 16 * 2);
+dwerr = *(DWORD *)(p + 1*4 + (16*2+2*4) + 5*4 + 16 * 2 + 1*4);
+wstr  = (WCHAR *) (p + 1*4 + (16*2+2*4) + 5*4);
+unicode = TRUE;
+</code></pre>
+<h3>CHS IME version 4.1</h3>
+<pre lang="syntax"><code>// GetImeId(1) returns VS_FIXEDFILEINFO:: dwProductVersionLS of IME file
+int offset = ( GetImeId( 1 ) &gt;= 0x00000002 ) ? 8 : 7;
+LPINPUTCONTEXT lpIMC = _ImmLockIMC(himc);
+BYTE p = *(LPBYTE *)((LPBYTE)_ImmLockIMCC(lpIMC-&gt;hPrivate) + offset * 4);
+if (!p) break;
+dwlen = *(DWORD *)(p + 7*4 + 16*2*4);
+dwerr = *(DWORD *)(p + 8*4 + 16*2*4);
+dwerr = min(dwerr, dwlen);
+wstr = (WCHAR *)(p + 6*4 + 16*2*1);
+unicode = TRUE;
+</code></pre>
+<h3>CHS IME version 4.2</h3>
+<pre lang="syntax"><code>int nTcharSize = IsNT() ? sizeof(WCHAR) : sizeof(char);
+LPINPUTCONTEXT lpIMC = _ImmLockIMC(himc);
+BYTE p = *(LPBYTE *)((LPBYTE)_ImmLockIMCC(lpIMC-&gt;hPrivate) + 1*4 + 1*4 + 6*4);
+if (!p) break;
+dwlen = *(DWORD *)(p + 1*4 + (16*2+2*4) + 5*4 + 16 * nTcharSize);
+dwerr = *(DWORD *)(p + 1*4 + (16*2+2*4) + 5*4 + 16 * nTcharSize + 1*4);
+wstr  = (WCHAR *) (p + 1*4 + (16*2+2*4) + 5*4);
+unicode = IsNT() ? TRUE : FALSE;
+</code></pre>
+<h2>IME Messages</h2>
+<p>A full-screen application must properly handle the following IME-related messages:</p>
+<h3>WM_INPUTLANGCHANGE</h3>
+<p>The IMM sends a WM_INPUTLANGCHANGE message to the active window of an application after the input locale has been changed by the user with a key combination (usually ALT+SHIFT), or with the input locale indicator on the taskbar or language bar. The language bar is an on-screen control with which the user can configure a text service. (See <a href="/windows/desktop/TSF/how-to-set-up-tsf">How to show the language bar</a>.) The following screen shot shows a language selection list that is displayed when the user clicks on the locale indicator.</p>
+<p><img src="images/ime-langselection.png" alt="language selection list that is displayed when the user clicks on the locale indicator" /></p>
+<p>When the IMM sends a WM_INPUTLANGCHANGE message, CDXUTIMEEditBox must perform several important tasks:</p>
+<ol>
+<li>The GetKeyboardLayout method is called to return the input locale identifier (ID) for the application thread. The CDXUTIMEEditBox class saves this ID in its static member variable s_hklCurrent for later use. It is important for the application to know the current input locale, because the IME for each language has its own distinct behavior. The developer may need to provide different code for different input locales.</li>
+<li>CDXUTIMEEditBox initializes a string to display in the edit box language indicator. This indicator can display the active input language when the application is running in full-screen mode and neither the taskbar nor language bar is visible.</li>
+<li>The ImmGetConversionStatus method is called to indicate whether the input locale is in native or non-native conversion mode. Native conversion mode lets the user enter text in the chosen language. Non-native conversion mode makes the keyboard act as a standard English keyboard. It is important to give the user a visual cue as to what type of conversion mode the IME is in, so that the user can easily know what characters to expect when hitting a key. CDXUTIMEEditBox provides this visual cue with a language indicator color. When the input locale uses an IME with native conversion mode, the CDXUTIMEEditBox class draws the indicator text with the color defined by the m_IndicatorImeColor parameter. When the IME is in non-native conversion mode, or no IME is used at all, the class draws the indicator text with the color defined by the m_IndicatorEngColor parameter.</li>
+<li>CDXUTIMEEditBox checks the input locale and sets the static member variable s_bInsertOnType to TRUE for Korean and FALSE for all other languages. This flag is required because of the different behaviors of Korean IMEs and all other IMEs. When entering characters in languages other than Korean, the user-entered text is displayed in the composition window, and the user can freely change the content of the composition string. The user presses the ENTER key when satisfied with the composition string, and the composition string is sent to the application as a series of WM_CHAR messages. In Korean IMEs, however, when a user presses a key to enter text, a character is immediately sent to the application. When the user subsequently presses more keys to modify that initial character, the character in the edit box changes to reflect additional input from the user. Essentially, the user is composing characters in the edit box. These two behaviors are different enough that CDXUTIMEEditBox must code for each of them specifically.</li>
+<li>The static member method SetupImeApi is called to retrieve addresses of two functions from the IME module: GetReadingString and ShowReadingWindow. If these functions exist, ShowReadingWindow is called to hide the default reading window for this IME. Because the application renders the reading window itself, it notifies the IME to disable drawing the default reading window so that it will not interfere with full-screen rendering.</li>
+</ol>
+<p>The IMM sends a WM_IME_SETCONTEXT message when a window of the application is activated. The lParam parameter of this message contains a flag that indicates to the IME which windows should get drawn and which should not. Because the application is handling all of the drawing, it does not need the IME to draw any of the IME windows. Therefore, the application's message handler simply sets lParam to 0 and returns.</p>
+<p>In order for applications to support IME, special processing is needed for the IME-related message WM_IME_SETCONTEXT. Since Windows typically sends this message to the application prior to calling the PanoramaInitialize() method, Panorama doesn't have a chance to process the UI for showing candidate list windows.</p>
+<p>The following code snippet specifies to Windows applications not to display any UI associated with the candidate list window, allowing Panorama to specifically handle this UI.</p>
+<pre lang="syntax"><code>case WM_IME_SETCONTEXT:
+         lParam = 0;
+    lRet = DefWindowProc(hWnd, msg, wParam, lParam);
+    break;
+    //... more message processing
+    return lRet;
+</code></pre>
+<h3>WM_IME_STARTCOMPOSITION</h3>
+<p>The IMM sends a WM_IME_STARTCOMPOSITION message to the application when an IME composition is about to begin as a result of keystrokes by the user. If the IME uses the composition window, it displays the current composition string in a composition window. CDXUTIMEEditBox handles this message by performing two tasks:</p>
+<ol>
+<li>CDXUTIMEEditBox clears the composition string buffer and attribute buffer. These buffers are static members of CDXUTIMEEditBox.</li>
+<li>CDXUTIMEEditBox sets the s_bHideCaret static member variable to TRUE. This member, defined in the base CDXUTEditBox class, controls whether the cursor in the edit box should be drawn when the edit box is rendered. The composition window functions similarly to an edit box with text and cursor. To avoid confusion when the composition window is visible, the edit box hides its cursor so that only one cursor is visible at a time.</li>
+</ol>
+<h3>WM_IME_COMPOSITION</h3>
+<p>The IMM sends a WM_IME_COMPOSITION message to the application when the user enters a keystroke to change the composition string. The value of lParam indicates what type of information the application can retrieve from the Input Method Manager (IMM). The application should retrieve the available information by calling <a href="/windows/desktop/api/imm/nf-imm-immgetcompositionstringa"><strong>ImmGetCompositionString</strong></a> and then should save the information in its private buffer so that it can render the IME elements later.</p>
+<p>CDXUTIMEEditBox checks for and retrieves the following composition string data:</p>
+<table>
+<thead>
+<tr>
+<th><a href="/windows/desktop/Intl/wm-ime-composition"><strong>WM_IME_COMPOSITION</strong></a> lParam Flag Value</th>
+<th>Data</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GCS_COMPATTR</td>
+<td>Composition Attribute</td>
+<td>This attribute contains information such as the status of each character in the composition string (for example, converted or non-converted). This information is needed because CDXUTIMEEditBox colors the composition string characters differently based upon their attributes.</td>
+</tr>
+<tr>
+<td>GCS_COMPCLAUSE</td>
+<td>Composition Clause Information</td>
+<td>This clause information is used when the Japanese IME is active. When a Japanese composition string is converted, characters may be grouped together as a clause that gets converted to a single entity. When the user moves the cursor, CDXUTIMEEditBox uses this information to highlight the entire clause, instead of just a single character within the clause.</td>
+</tr>
+<tr>
+<td>GCS_COMPSTR</td>
+<td>Composition String</td>
+<td>This string is the up-to-date string being composed by the user. This is also the string displayed in the composition window.</td>
+</tr>
+<tr>
+<td>GCS_CURSORPOS</td>
+<td>Composition Cursor Position</td>
+<td>The composition window implements a cursor, similar to the cursor in an edit box. The application can retrieve the cursor position when processing the WM_IME_COMPOSITION message in order to draw the cursor properly.</td>
+</tr>
+<tr>
+<td>GCS_RESULTSTR</td>
+<td>Result String</td>
+<td>The result string is available when the user is about to complete the composition process. This string should be retrieved and the characters should be sent to the edit box.</td>
+</tr>
+</tbody>
+</table>
+<h3>WM_IME_ENDCOMPOSITION</h3>
+<p>The IMM sends a WM_IME_ENDCOMPOSITION message to the application when the IME composition operation is ending. This can occur when the user presses the ENTER key to approve the composition string, or the ESC key to cancel the composition. CDXUTIMEEditBox handles this message by setting the composition string buffer to be empty. It then sets s_bHideCaret to FALSE because the composition window is closed and the cursor in the edit box should again be visible.</p>
+<p>The CDXUTIMEEditBox message handler also sets s_bShowReadingWindow to FALSE. This flag controls whether the class draws the reading window when the edit box renders itself, so it must be set to FALSE when a composition ends.</p>
+<h3>WM_IME_NOTIFY</h3>
+<p>The IMM sends a WM_IME_NOTIFY message to the application whenever an IME window changes. An application that handles the drawing of the IME windows should process this message so that it is aware of any update to the content of the window. The wParam indicates the command or the change that is taking place. CDXUTIMEEditBox handles the following commands:</p>
+<table>
+<thead>
+<tr>
+<th>IME Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><!-- raw HTML omitted -->IMN_SETOPENSTATUS<!-- raw HTML omitted --></td>
+<td>This attribute contains information such as the status of each character in the composition string (for example, converted or non-converted). This information is needed because CDXUTIMEEditBox colors the composition string characters differently based upon their attributes.</td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted -->IMN_OPENCANDIDATE<!-- raw HTML omitted --> / <!-- raw HTML omitted -->IMN_CHANGECANDIDATE<!-- raw HTML omitted --></td>
+<td>Sent to the application when the candidate window is about to be opened or updated, respectively. The candidate window opens when a user wishes to change the converted text choice. The window is updated when a user moves the selection indicator or changes the page. CDXUTIMEEditBox uses one message handler for both of these commands because the tasks required are exactly the same:<!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->CDXUTIMEEditBox sets the bShowWindow member of the candidate list structure s_CandList to TRUE to indicate that the candidate window needs to be drawn during frame rendering.<!-- raw HTML omitted --><!-- raw HTML omitted -->CDXUTIMEEditBox retrieves the candidate list by calling <!-- raw HTML omitted --><!-- raw HTML omitted -->ImmGetCandidateList<!-- raw HTML omitted --><!-- raw HTML omitted -->, first to get the required buffer size, and then again to get the actual data.<!-- raw HTML omitted --><!-- raw HTML omitted -->The private candidate list structure s_CandList is initialized with the retrieved candidate data.<!-- raw HTML omitted --><!-- raw HTML omitted -->The candidate strings are stored as an array of strings.<!-- raw HTML omitted --><!-- raw HTML omitted -->The index of the selected entry, as well as the page index, is saved.<!-- raw HTML omitted --><!-- raw HTML omitted -->CDXUTIMEEditBox checks whether the candidate window style is vertical or horizontal. If the window style is horizontal, an additional string buffer, the HoriCand member of s_CandList, must be initialized with all of the candidate strings, with space characters inserted between all adjacent strings. When rendering a vertical candidate window, the individual candidate strings are drawn one at a time, with the y coordinates incremented for each string. However, this HoriCand string should be used when rendering a horizontal candidate window, because the space character is the best way to separate two adjacent strings on the same line.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted -->IMN_CLOSECANDIDATE<!-- raw HTML omitted --></td>
+<td>Sent to the application when a candidate window is about to close. This happens when a user has made a selection from the candidate list. CDXUTIMEEditBox handles this command by setting the visible flag of the candidate window to FALSE and then clearing the candidate string buffer.</td>
+</tr>
+<tr>
+<td>IMN_PRIVATE</td>
+<td>Sent to the application when the IME has updated its reading string as a result of the user typing or removing characters. The application should retrieve the reading string and save it for rendering. CDXUTIMEEditBox has two methods to retrieve the reading string, based upon how reading strings are supported in the IME: <!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted -->If the IME supports the GetReadingString function, GetReadingString is called to retrieve the reading string.<!-- raw HTML omitted --><!-- raw HTML omitted -->If the IME does not implement GetReadingString, CDXUTIMEEditBox retrieves the reading string from the input context content.<!-- raw HTML omitted --><!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<h2>Rendering</h2>
+<p>Rendering of the IME elements and windows is straightforward. CDXUTIMEEditBox lets the base class render first because IME windows should appear on top of the edit control. After the base edit box is rendered, CDXUTIMEEditBox checks the visibility flag of each IME window (indicator, composition, candidate, and reading window) and draws the window if it should be visible. See Default IME Behavior for descriptions of the different IME window types.</p>
+<h3>Input Locale Indicator</h3>
+<p>The input locale indicator is rendered before any other IME windows because it is an element that is always displayed. It should therefore appear below other IME windows. CDXUTIMEEditBox renders the indicator by calling the RenderIndicator method, in which the indicator font color is determined by examining the s_ImeState static variable, which reflects the current IME conversion mode. When the IME is enabled and native conversion is active, the method uses m_IndicatorImeColor as the indicator color. If the IME is disabled or is in non-native conversion mode, m_IndicatorImeColor is used to draw the indicator text. By default, the indicator window itself is drawn to the right of the edit box. Applications can change this behavior by overriding the RenderIndicator method.</p>
+<p>The following figure shows the different appearances of an input locale indicator for English, Japanese in alphanumeric conversion mode, and Japanese in native conversion mode:</p>
+<p><img src="images/ime-indicator.png" alt="different appearances of an input locale indicator for english and japanese" /></p>
+<h3>Composition Window</h3>
+<p>The drawing of the composition window is handled in the RenderComposition method of CDXUTIMEEditBox. The composition window floats above the edit box. It should be drawn at the cursor position of the underlying edit control. CDXUTIMEEditBox handles the rendering as follows:</p>
+<ol>
+<li>The entire composition string is drawn using the default composition string colors.</li>
+<li>Characters with certain special attributes should be drawn in different colors, so CDXUTIMEEditBox reviews the characters of the composition string and inspects the string attribute. If the attribute calls for different colors, the character is drawn again with the appropriate colors.</li>
+<li>The cursor of the composition window is drawn to complete the rendering.</li>
+</ol>
+<p>The cursor should blink for Korean IMEs, but it should not for other IMEs. RenderComposition determines whether the cursor should be visible based upon timer values when the Korean IME is used.</p>
+<h3>Reading and Candidate Windows</h3>
+<p>The reading and candidate windows are rendered by the same CDXUTIMEEditBox method, RenderCandidateReadingWindow. Both windows contain an array of strings for vertical layout, or a single string in the case of horizontal layout. The bulk of the code in RenderCandidateReadingWindow is used to position the window so that no part of the window falls outside the application window and gets clipped.</p>
+<h2>Limitations</h2>
+<p>IMEs sometimes contain advanced features to improve the ease of inputting text. Some of the features found in newer IMEs are shown in the following figures. These advanced features are not present in DXUT. Implementing support for these advanced features can be challenging because there is no interface defined to obtain the necessary information from the IMEs.</p>
+<p>Advanced Traditional Chinese IME with expanded candidate list:</p>
+<p><img src="images/ime-advanced1.png" alt="advanced traditional chinese ime with expanded candidate list" /></p>
+<p>Advanced Japanese IME with some candidate entries that contain additional text to describe their meanings:</p>
+<p><img src="images/ime-advanced2.png" alt="advanced japanese ime with some candidate entries that contain additional text to describe their meanings" /></p>
+<p>Advanced Korean IME that includes a handwriting recognition system:</p>
+<p><img src="images/ime-advanced3.png" alt="advanced korean ime that includes a handwriting recognition system" /></p>
+<h2>Registry Information</h2>
+<p>The following registry information is checked to determine the orientation of the reading window, when the current IME is older CHT New Phonetic that doesn't implement GetReadingString().</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HKCU\software\microsoft\windows\currentversion\IME_Name</td>
+<td>keyboard mapping</td>
+</tr>
+</tbody>
+</table>
+<p>Where: IME_Name is MSTCIPH if the IME file version is 5.1 or later; otherwise IME_Name is TINTLGNT.</p>
+<p>The orientation of reading window is horizontal if either:</p>
+<ul>
+<li>The IME is version 5.0 and keyboard mapping value is 0x22 or 0x23</li>
+<li>The IME is version 5.1 or version 5.2 and keyboard mapping value is 0x22, 0x23 or 0x24.</li>
+</ul>
+<p>If neither condition is met, the reading window is vertical.</p>
+<h2>Appendix A: CHT Versions per Operating System</h2>
+<table>
+<thead>
+<tr>
+<th>Operating System</th>
+<th>CHT IME Version</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows 98</td>
+<td>4.2</td>
+</tr>
+<tr>
+<td>Windows 2000</td>
+<td>4.3</td>
+</tr>
+<tr>
+<td>unknown</td>
+<td>4.4</td>
+</tr>
+<tr>
+<td>Windows ME</td>
+<td>5.0</td>
+</tr>
+<tr>
+<td>Office XP</td>
+<td>5.1</td>
+</tr>
+<tr>
+<td>Windows XP</td>
+<td>5.2</td>
+</tr>
+<tr>
+<td>Standalone web downloadble</td>
+<td>6.0</td>
+</tr>
+</tbody>
+</table>
+<h2>Further Information</h2>
+<p>For additional information, see the following:</p>
+<ul>
+<li><a href="/windows/desktop/DxTechArts/installing-and-using-input-method-editors">Installing and Using Input Method Editors</a></li>
+<li><a href="/windows/desktop/Intl/creating-your-own-format-selection-user-interface">International Text Display</a></li>
+<li><a href="https://www.unicode.org/">The Unicode Consortium</a></li>
+<li>Developing International Software. Dr. International. 2nd ed. Redmond, WA: Microsoft Press, 2003.</li>
+</ul>
+<h2>GetReadingString</h2>
+<p>Gets reading string information.</p>
+<p><strong>Parameters</strong></p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><em>himc</em></p>
+<!-- raw HTML omitted -->
+<p>[in] Input context.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><em>uReadingBufLen</em></p>
+<!-- raw HTML omitted -->
+<p>[in] Length of lpwReadingBuf, in WCHAR. If it is zero, it means query reading buffer length.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><em>lpwReadingBuf</em></p>
+<!-- raw HTML omitted -->
+<p>[out] Return reading string (not zero end).</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><em>pnErrorIndex</em></p>
+<!-- raw HTML omitted -->
+<p>[out] Return index of error character in the reading string if there is.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><em>pfIsVertical</em></p>
+<!-- raw HTML omitted -->
+<p>[out] If it is TRUE, reading UI is vertical. Otherwise, horizontal puMaxReadingLen.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><em>puMaxReadingLen</em></p>
+<!-- raw HTML omitted -->
+<p>[out] The reading UI length. The max reading length is not fixed; it depends not only on keyboard layout, but also on input mode (for example, internal code, surrogate input).</p>
+<!-- raw HTML omitted -->
+<p><strong>Return Values</strong></p>
+<p>The reading string length.</p>
+<p><strong>Remarks</strong></p>
+<p>If the return value is greater than the value of uReadingBufLen, then all output parameters are undefined.</p>
+<p>This function is implemented in CHT IME 6.0 or later, and can be acquired by GetProcAddress on an IME module handle; the IME module handle can be acquired by ImmGetIMEFileName and LoadLibrary.</p>
+<p><strong>Requirements</strong></p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><strong>Header</strong></p>
+<!-- raw HTML omitted -->
+<p>Declared in Imm.h.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><strong>Import Library</strong></p>
+<!-- raw HTML omitted -->
+<p>Use Imm.lib.</p>
+<!-- raw HTML omitted -->
+<h2>ShowReadingWindow</h2>
+<p>Show (or hide) the reading window.</p>
+<p><strong>Parameters</strong></p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><em>himc</em></p>
+<!-- raw HTML omitted -->
+<p>[in] Input context.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><em>bShow</em></p>
+<!-- raw HTML omitted -->
+<p>[in] Set to TRUE to show the reading window (or FALSE to hide it).</p>
+<!-- raw HTML omitted -->
+<p><strong>Return Values</strong></p>
+<p><strong>Remarks</strong></p>
+<p>Return TRUE if successful or FALSE if otherwise.</p>
+<p><strong>Requirements</strong></p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><strong>Header</strong></p>
+<!-- raw HTML omitted -->
+<p>Declared in Imm.h.</p>
+<!-- raw HTML omitted -->
+<p><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><strong>Import Library</strong></p>
+<!-- raw HTML omitted -->
+<p>Use Imm.lib.</p>
+<!-- raw HTML omitted -->
+</body>

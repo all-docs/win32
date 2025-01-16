@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HttpCalculatorWithSslPolicyServiceExample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: HttpCalculatorWithSslPolicyServiceExample
+description: Review a Windows Web Services API (WWSAPI) C++ example of an HTTP calculator with SSL policy service.
+ms.assetid: 5b3fc119-10c2-444b-91d3-415ad36a65ab
+keywords:</p>
+<ul>
+<li>HttpCalculatorWithSslPolicyServiceExample Native-Web-Services</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>HttpCalculatorWithSslPolicyServiceExample</h1>
+<p>This example shows how to use service host for hosting a calculator service over HTTP, with SSL transport security and HTTP header basic authentication. In this setup, the transport connection is protected (signed, encrypted) by SSL which also provides server authentication. Client authentication is provided by a username/password pair supplied in HTTP headers using the basic scheme.</p>
+<ul>
+<li><a href="#httpcalculatorwithsslpolicyservicecpp">HttpCalculatorWithSslPolicyService.cpp</a></li>
+<li><a href="#calculatorservicewithpolicywsdl">CalculatorServiceWithPolicy.wsdl</a></li>
+<li><a href="#makefile">Makefile</a></li>
+</ul>
+<h2>HttpCalculatorWithSslPolicyService.cpp</h2>
+<pre lang="C++"><code>//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;string.h&quot;
+#include &quot;wincrypt.h&quot;
+#include &quot;CalculatorServiceWithPolicy.wsdl.h&quot;
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+HANDLE closeServer = NULL;  
+
+
+HRESULT CALLBACK Add(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in int a, 
+    __in int b, 
+    __out int* result, 
+    __in const WS_ASYNC_CONTEXT* asyncContext, 
+    __in WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(context);
+    UNREFERENCED_PARAMETER(asyncContext);
+    UNREFERENCED_PARAMETER(error);
+
+    *result = a + b;
+    printf (&quot;%d + %d = %d\n&quot;, a, b, *result);
+    fflush(stdout);
+    return NOERROR;
+}
+
+HRESULT CALLBACK Subtract(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in int a, 
+    __in int b, 
+    __out int* result, 
+    __in const WS_ASYNC_CONTEXT* asyncContext, 
+    __in WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(context);
+    UNREFERENCED_PARAMETER(asyncContext);
+    UNREFERENCED_PARAMETER(error);
+
+    *result = a - b;
+    printf (&quot;%d - %d = %d\n&quot;, a, b, *result);
+    fflush(stdout);
+    return NOERROR;
+}
+
+HRESULT CALLBACK CloseChannelCallback(
+    __in const WS_OPERATION_CONTEXT* context, 
+    __in const WS_ASYNC_CONTEXT* asyncContext)
+{
+    UNREFERENCED_PARAMETER(context);
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    SetEvent(closeServer);
+    return NOERROR;
+}
+
+static const DefaultBinding_ICalculatorFunctionTable calculatorFunctions = {Add, Subtract};
+
+// Method contract for the service
+static const WS_SERVICE_CONTRACT calculatorContract = 
+{
+    &amp;CalculatorServiceWithPolicy_wsdl.contracts.DefaultBinding_ICalculator, // comes from the generated header.
+    NULL, // for not specifying the default contract
+    &amp;calculatorFunctions // specified by the user
+};
+
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_SERVICE_HOST* host = NULL;
+    WS_SERVICE_ENDPOINT* serviceEndpoint = NULL;
+    const  WS_SERVICE_ENDPOINT* serviceEndpoints[1];
+    WS_ERROR* error = NULL;
+    WS_HEAP* heap = NULL;
+    const WS_STRING url = WS_STRING_VALUE(L&quot;https://localhost:8443/example&quot;);
+    
+    
+    WS_SERVICE_PROPERTY_CLOSE_CALLBACK closeCallbackProperty = {CloseChannelCallback};
+    WS_SERVICE_ENDPOINT_PROPERTY serviceProperties[1];
+    serviceProperties[0].id = WS_SERVICE_ENDPOINT_PROPERTY_CLOSE_CHANNEL_CALLBACK;
+    serviceProperties[0].value = &amp;closeCallbackProperty;
+    serviceProperties[0].valueSize = sizeof(closeCallbackProperty);
+    
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Create a heap to store deserialized data
+    hr = WsCreateHeap(
+        /*maxSize*/ 2048, 
+        /*trimSize*/ 512, 
+        NULL, 
+        0, 
+        &amp;heap, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    hr = DefaultBinding_ICalculator_CreateServiceEndpoint(
+        NULL,
+        &amp;url,
+        (DefaultBinding_ICalculatorFunctionTable*)&amp;calculatorFunctions,
+        NULL,
+        serviceProperties,
+        WsCountOf(serviceProperties),
+        heap,
+        &amp;serviceEndpoint,
+        error);
+    
+    if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    serviceEndpoints[0] = serviceEndpoint;
+    
+    hr = WsCreateServiceHost(serviceEndpoints, 1, NULL, 0, &amp;host, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // WsOpenServiceHost to start the listeners in the service host 
+    hr = WsOpenServiceHost(host, NULL, error);
+    if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    
+    // Create Event object for closing the server
+    closeServer = CreateEvent(
+        NULL, 
+        TRUE, 
+        FALSE, 
+        NULL);
+    if (closeServer == NULL)
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto Exit;
+    }   
+    WaitForSingleObject(closeServer, INFINITE);
+    // Close the service host
+    hr = WsCloseServiceHost(host, NULL, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    if (host != NULL)
+    {
+        WsFreeServiceHost(host);
+    }
+    
+    
+    if (heap != NULL)
+    {
+        WsFreeHeap(heap);
+    }
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    if (closeServer != NULL)
+    {
+        CloseHandle(closeServer);
+    }
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+
+
+
+</code></pre>
+<h2>CalculatorServiceWithPolicy.wsdl</h2>
+<pre lang="syntax"><code>&lt;wsdl:definitions 
+    xmlns:soap=&quot;https://schemas.xmlsoap.org/wsdl/soap/&quot; 
+    xmlns:tns=&quot;https://Example.org&quot; 
+    xmlns:xsd=&quot;https://www.w3.org/2001/XMLSchema&quot; 
+    xmlns:wsaw=&quot;https://www.w3.org/2006/05/addressing/wsdl&quot; 
+    xmlns:wsu=&quot;https://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd&quot; 
+    xmlns:wsp=&quot;https://schemas.xmlsoap.org/ws/2004/09/policy&quot; 
+    xmlns:soap12=&quot;https://schemas.xmlsoap.org/wsdl/soap12/&quot; 
+    targetNamespace=&quot;https://Example.org&quot; 
+    xmlns:wsdl=&quot;https://schemas.xmlsoap.org/wsdl/&quot;&gt;
+    &lt;wsp:Policy wsu:Id=&quot;policy1&quot;&gt;
+      &lt;wsp:ExactlyOne&gt;
+              &lt;sp:TransportBinding xmlns:sp=&quot;https://schemas.xmlsoap.org/ws/2005/07/securitypolicy&quot;&gt;
+                  &lt;wsp:Policy&gt;
+                      &lt;sp:TransportToken&gt;
+                          &lt;wsp:Policy&gt;
+                              &lt;sp:HttpsToken RequireClientCertificate=&quot;false&quot; /&gt;
+                          &lt;/wsp:Policy&gt;
+                      &lt;/sp:TransportToken&gt;
+                      &lt;sp:AlgorithmSuite&gt;
+                          &lt;wsp:Policy&gt;
+                              &lt;sp:Basic256 /&gt;
+                          &lt;/wsp:Policy&gt;
+                      &lt;/sp:AlgorithmSuite&gt;
+                      &lt;sp:Layout&gt;
+                          &lt;wsp:Policy&gt;
+                              &lt;sp:Strict /&gt;
+                          &lt;/wsp:Policy&gt;
+                      &lt;/sp:Layout&gt;
+                      &lt;sp:IncludeTimestamp /&gt;
+                  &lt;/wsp:Policy&gt;
+              &lt;/sp:TransportBinding&gt;
+      &lt;/wsp:ExactlyOne&gt;
+    &lt;/wsp:Policy&gt;
+
+    &lt;wsdl:types&gt;
+        &lt;xsd:schema targetNamespace=&quot;https://Example.org&quot; elementFormDefault=&quot;qualified&quot; &gt;
+            &lt;xsd:element name=&quot;Add&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;a&quot; type=&quot;xsd:int&quot; /&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;b&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;AddResponse&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;result&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;Subtract&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;a&quot; type=&quot;xsd:int&quot; /&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;b&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;SubtractResponse&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;result&quot; type=&quot;xsd:int&quot; /&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+        &lt;/xsd:schema&gt;
+    &lt;/wsdl:types&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Add_InputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:Add&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Add_OutputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:AddResponse&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Subtract_InputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:Subtract&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;ICalculator_Subtract_OutputMessage&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:SubtractResponse&quot; /&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:portType name=&quot;ICalculator&quot;&gt;
+        &lt;wsdl:operation name=&quot;Add&quot;&gt;
+            &lt;wsdl:input wsaw:Action=&quot;https://Example.org/ICalculator/Add&quot; message=&quot;tns:ICalculator_Add_InputMessage&quot; /&gt;
+            &lt;wsdl:output wsaw:Action=&quot;https://Example.org/ICalculator/AddResponse&quot; message=&quot;tns:ICalculator_Add_OutputMessage&quot; /&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;Subtract&quot;&gt;
+            &lt;wsdl:input wsaw:Action=&quot;https://Example.org/ICalculator/Subtract&quot; message=&quot;tns:ICalculator_Subtract_InputMessage&quot; /&gt;
+            &lt;wsdl:output wsaw:Action=&quot;https://Example.org/ICalculator/SubtractResponse&quot; message=&quot;tns:ICalculator_Subtract_OutputMessage&quot; /&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:portType&gt;
+    &lt;wsdl:binding name=&quot;DefaultBinding_ICalculator&quot; type=&quot;tns:ICalculator&quot;&gt;
+        &lt;soap:binding transport=&quot;https://schemas.xmlsoap.org/soap/http&quot; /&gt;
+        &lt;wsp:PolicyReference URI=&quot;#policy1&quot; /&gt;
+        &lt;wsdl:operation name=&quot;Add&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://Example.org/ICalculator/Add&quot; style=&quot;document&quot; /&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;Subtract&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://Example.org/ICalculator/Subtract&quot; style=&quot;document&quot; /&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot; /&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:binding&gt;
+    &lt;wsdl:service name=&quot;CalculatorService&quot;&gt;
+        &lt;wsdl:port name=&quot;ICalculator&quot; binding=&quot;tns:DefaultBinding_ICalculator&quot;&gt;
+            &lt;soap:address location=&quot;https://Example.org/ICalculator&quot; /&gt;
+        &lt;/wsdl:port&gt;
+    &lt;/wsdl:service&gt;
+
+&lt;/wsdl:definitions&gt;
+</code></pre>
+<h2>Makefile</h2>
+<pre lang="syntax"><code>!include &lt;Win32.Mak&gt;
+
+EXTRA_LIBS = WebServices.lib
+
+all: $(OUTDIR) $(OUTDIR)\WsHttpCalculatorWithSslPolicyService.exe
+
+&quot;$(OUTDIR)&quot; :
+    if not exist &quot;$(OUTDIR)/$(NULL)&quot; mkdir &quot;$(OUTDIR)&quot;
+    
+$(OUTDIR)\CalculatorServiceWithPolicy.wsdl.c: CalculatorServiceWithPolicy.wsdl
+     Wsutil.exe /wsdl:CalculatorServiceWithPolicy.wsdl:https://Example.org /string:WS_STRING /out:$(OUTDIR)
+    
+$(OUTDIR)\CalculatorServiceWithPolicy.wsdl.obj: $(OUTDIR)\CalculatorServiceWithPolicy.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; $(OUTDIR)\CalculatorServiceWithPolicy.wsdl.c
+
+$(OUTDIR)\HttpCalculatorWithSslPolicyService.obj: HttpCalculatorWithSslPolicyService.cpp $(OUTDIR)\CalculatorServiceWithPolicy.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; HttpCalculatorWithSslPolicyService.cpp
+
+$(OUTDIR)\WsHttpCalculatorWithSslPolicyService.exe: $(OUTDIR)\HttpCalculatorWithSslPolicyService.obj $(OUTDIR)\CalculatorServiceWithPolicy.wsdl.obj
+    $(link) $(ldebug) $(conlflags) $(conlibsmt) $(EXTRA_LIBS) -out:$(OUTDIR)\WsHttpCalculatorWithSslPolicyService.exe $(OUTDIR)\HttpCalculatorWithSslPolicyService.obj $(OUTDIR)\CalculatorServiceWithPolicy.wsdl.obj /PDB:$(OUTDIR)\WsHttpCalculatorWithSslPolicyService.PDB
+
+clean:
+    $(CLEANUP)
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

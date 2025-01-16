@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Collecting Performance Data</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: After creating a query and adding counters to it, call the PdhCollectQueryData function to retrieve the current raw data for all counters in the query.
+ms.assetid: 2534d387-a280-4716-9a9d-3e42f40e2f92
+title: Collecting Performance Data
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Collecting Performance Data</h1>
+<p>After <a href="creating-a-query.html">creating a query</a> and adding counters to it, call the <a href="/windows/desktop/api/Pdh/nf-pdh-pdhcollectquerydata"><strong>PdhCollectQueryData</strong></a> function to retrieve the current raw data for all counters in the query.</p>
+<p>Many counters, such as rate counters, require two data samples to calculate a formatted data value. PDH maintains data for the current sample and the previously collected sample. The following procedure describes how to collect counter values that require two samples to calculate a displayable value.</p>
+<p><strong>To collect counter values that require two samples to calculate a displayable value</strong></p>
+<ol>
+<li>Call <a href="/windows/desktop/api/Pdh/nf-pdh-pdhcollectquerydata"><strong>PdhCollectQueryData</strong></a> to collect the first sample.</li>
+<li>Call the <a href="/windows/desktop/api/synchapi/nf-synchapi-sleep"><strong>Sleep</strong></a> function to wait a minimum of one second between collections.</li>
+<li>Call <a href="/windows/desktop/api/Pdh/nf-pdh-pdhcollectquerydata"><strong>PdhCollectQueryData</strong></a> again to collect the second sample.</li>
+<li>Call the <a href="/windows/desktop/api/Pdh/nf-pdh-pdhgetformattedcountervalue"><strong>PdhGetFormattedCounterValue</strong></a> function to calculate a displayable value.</li>
+<li>Repeat steps 2 through 4.</li>
+</ol>
+<p>As an alternative to implementing a wait period yourself, you can call the <a href="/windows/desktop/api/Pdh/nf-pdh-pdhcollectquerydataex"><strong>PdhCollectQueryDataEx</strong></a> function, which creates a timing thread that waits a specified amount of time, collects the sample, and then triggers an application-defined event.</p>
+<p>If you want to query performance data from a log file, you can also define a time range. The time range limits the query to those samples that were collected within the time range (each sample contains a time stamp for when it was collected). For more information on how to set and retrieve time ranges, see <a href="setting-a-time-range-for-a-query.html">Setting a Time Range for a Query</a>.</p>
+<p>If you want to collect performance data and write it to a log file, you would call the <a href="/windows/desktop/api/Pdh/nf-pdh-pdhupdateloga"><strong>PdhUpdateLog</strong></a> function instead of calling <a href="/windows/desktop/api/Pdh/nf-pdh-pdhcollectquerydata"><strong>PdhCollectQueryData</strong></a>. For details, see <a href="working-with-log-files.html">Working with Log Files</a> and <a href="writing-performance-data-to-a-log-file.html">Writing Performance Data to a Log File</a>.</p>
+<p>For details on calculating a displayable sample value, see <a href="displaying-performance-data.html">Displaying Performance Data</a>.</p>
+<h2>Understanding Multiple Processor Counters</h2>
+<p>Some performance counters were designed for single processor systems and might not be accurate for multiprocessor computers. For example, a process is limited to 100 percent of a single processor; however, its threads can use several processors, totaling more than 100 percent.</p>
+<p>The &quot;\Processor(_Total)\% Processor Time&quot; counter value is the average usage of all processors. For example, if you have two processors, one at 100 percent and another at 0 percent, this counter will report 50 percent. So the range is from 0 through 100.</p>
+<p>The &quot;\Process(X)\% Processor Time&quot; (where X is the process name), counter value is the sum of the processor usage by all threads of process X. For example, in a computer with two processors, if a process has two threads, one taking up 75 percent of a CPU and the other taking 80 percent of another CPU, this counter will report 155 percent. The range for this counter is from 0 through 100 * ProcessorCount.</p>
+<p>When using the <code>Process</code> counterset,
+you can receive values outside the expected range of values for CPU usage. To calculate the percentage of CPU usage, PDH needs two samples (each with a raw value and a time stamp). Because PDH uses only the instance name to match the processes, it can sometimes mix up samples from different processes. For example, if three processes with the same instance name are being sampled and one of the processes is terminated after the third sample, another process will move to the slot vacated by that terminated process. As a result, a formatted counter will provide an incorrect value when you format the fourth sample because itâ€™s using the third sample from the terminated process and the fourth sample from the process that moved into the terminated process's slot.</p>
+<p>The following table shows how this can occur if a process is terminated while data is being collected. The table shows five counter value samples for three instances of process X. The samples are collected in one second intervals. After the third sample is collected, process X in slot 1 is terminated. When process X in slot 1 is terminated, process X in slot 2 moves to slot 1. When you collect the fourth sample for process X in slot 2, the first value is now 20 instead of 1,000, and the second value is 1,500. When you format the counter value, you get 1,480 milliseconds instead of the expected 500 milliseconds. When you format the fifth sample value, you should get the expected value.</p>
+<table>
+<thead>
+<tr>
+<th>Sample</th>
+<th>Slot 0 for process X</th>
+<th>Slot 1 for process X</th>
+<th>Slot 2 for process X</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sample 1</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Sample 2</td>
+<td>20</td>
+<td>10</td>
+<td>500</td>
+</tr>
+<tr>
+<td>Sample 3</td>
+<td>40</td>
+<td>20</td>
+<td>1,000</td>
+</tr>
+<tr>
+<td>Sample 4</td>
+<td>60</td>
+<td>1,500 (from the former slot 2)</td>
+<td>Not applicable. Now collected in slot 1.</td>
+</tr>
+<tr>
+<td>Sample 5</td>
+<td>80</td>
+<td>2,000</td>
+<td>Not applicable. Now collected in slot 1.</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>[!TIP]
+Starting in Windows 11, you can avoid this issue by using the new <code>Process V2</code> counterset. The <code>Process V2</code> counterset includes the process ID in the instance name. This avoids the inconsistent results that appear with the original <code>Process</code> counterset.</p>
+</blockquote>
+</body>

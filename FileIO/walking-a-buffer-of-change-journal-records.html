@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Walking a Buffer of Change Journal Records</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: How to return change journal records that meet specified criteria.
+ms.assetid: 8946adb5-da47-4711-8800-86f323081c4c
+title: Walking a Buffer of Change Journal Records
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Walking a Buffer of Change Journal Records</h1>
+<p>The control codes that return update sequence number (USN) change journal records, <a href="/windows/win32/api/winioctl/ni-winioctl-fsctl_read_usn_journal"><strong>FSCTL_READ_USN_JOURNAL</strong></a> and <a href="/windows/win32/api/winioctl/ni-winioctl-fsctl_enum_usn_data"><strong>FSCTL_ENUM_USN_DATA</strong></a>, return similar data in the output buffer. Both return a USN followed by zero or more change journal records, each in a <a href="/windows/desktop/api/WinIoCtl/ns-winioctl-usn_record_v2"><strong>USN_RECORD_V2</strong></a> or <a href="/windows/desktop/api/WinIoCtl/ns-winioctl-usn_record_v3"><strong>USN_RECORD_V3</strong></a> structure.</p>
+<p>The target volume for USN operations must be ReFS or NTFS 3.0 or later. To obtain the NTFS version of a volume, open a command prompt with Administrator access rights and execute the following command:</p>
+<p><strong>FSUtil.exe FSInfo NTFSInfo</strong> <em>X</em>**:**</p>
+<p>where <em>X</em> is the drive letter of the volume.</p>
+<p>The following list identifies ways to get change journal records:</p>
+<ul>
+<li>Use <a href="/windows/win32/api/winioctl/ni-winioctl-fsctl_enum_usn_data"><strong>FSCTL_ENUM_USN_DATA</strong></a> to get a listing (enumeration) of all change journal records between two USNs.</li>
+<li>Use <a href="/windows/win32/api/winioctl/ni-winioctl-fsctl_read_usn_journal"><strong>FSCTL_READ_USN_JOURNAL</strong></a> to be more selective, such as selecting specific reasons for changes or returning when a file is closed.</li>
+</ul>
+<blockquote>
+<p>[!Note]<br />
+Both of these operations return only the subset of change journal records that meet the specified criteria.</p>
+</blockquote>
+<p>Â </p>
+<p>The USN returned as the first item in the output buffer is the USN of the next record number to be retrieved. Use this value to continue reading records from the end boundary forward.</p>
+<p>The <strong>FileName</strong> member of <a href="/windows/desktop/api/WinIoCtl/ns-winioctl-usn_record_v2"><strong>USN_RECORD_V2</strong></a> or <a href="/windows/desktop/api/WinIoCtl/ns-winioctl-usn_record_v3"><strong>USN_RECORD_V3</strong></a> contains the name of the file to which the record in question applies. The file name varies in length, so <strong>USN_RECORD_V2</strong> and <strong>USN_RECORD_V3</strong> are variable length structures. Their first member, <strong>RecordLength</strong>, is the length of the structure (including the file name), in bytes.</p>
+<p>When you work with the <strong>FileName</strong> member of <a href="/windows/desktop/api/WinIoCtl/ns-winioctl-usn_record_v2"><strong>USN_RECORD_V2</strong></a> and <a href="/windows/desktop/api/WinIoCtl/ns-winioctl-usn_record_v3"><strong>USN_RECORD_V3</strong></a> structures, do not assume that the file name contains a trailing '\0' delimiter. To determine the length of the file name, use the <strong>FileNameLength</strong> member.</p>
+<p>The following example calls <a href="/windows/win32/api/winioctl/ni-winioctl-fsctl_read_usn_journal"><strong>FSCTL_READ_USN_JOURNAL</strong></a> and walks the buffer of change journal records that the operation returns.</p>
+<pre lang="C++"><code>#include &lt;Windows.h&gt;
+#include &lt;WinIoCtl.h&gt;
+#include &lt;stdio.h&gt;
+
+#define BUF_LEN 4096
+
+void main()
+{
+   HANDLE hVol;
+   CHAR Buffer[BUF_LEN];
+
+   USN_JOURNAL_DATA JournalData;
+   READ_USN_JOURNAL_DATA ReadData = {0, 0xFFFFFFFF, FALSE, 0, 0};
+   PUSN_RECORD UsnRecord;  
+
+   DWORD dwBytes;
+   DWORD dwRetBytes;
+   int I;
+
+   hVol = CreateFile( TEXT(&quot;\\\\.\\c:&quot;), 
+               GENERIC_READ | GENERIC_WRITE, 
+               FILE_SHARE_READ | FILE_SHARE_WRITE,
+               NULL,
+               OPEN_EXISTING,
+               0,
+               NULL);
+
+   if( hVol == INVALID_HANDLE_VALUE )
+   {
+      printf(&quot;CreateFile failed (%d)\n&quot;, GetLastError());
+      return;
+   }
+
+   if( !DeviceIoControl( hVol, 
+          FSCTL_QUERY_USN_JOURNAL, 
+          NULL,
+          0,
+          &amp;JournalData,
+          sizeof(JournalData),
+          &amp;dwBytes,
+          NULL) )
+   {
+      printf( &quot;Query journal failed (%d)\n&quot;, GetLastError());
+      return;
+   }
+
+   ReadData.UsnJournalID = JournalData.UsnJournalID;
+
+   printf( &quot;Journal ID: %I64x\n&quot;, JournalData.UsnJournalID );
+   printf( &quot;FirstUsn: %I64x\n\n&quot;, JournalData.FirstUsn );
+
+   for(I=0; I&lt;=10; I++)
+   {
+      memset( Buffer, 0, BUF_LEN );
+
+      if( !DeviceIoControl( hVol, 
+            FSCTL_READ_USN_JOURNAL, 
+            &amp;ReadData,
+            sizeof(ReadData),
+            &amp;Buffer,
+            BUF_LEN,
+            &amp;dwBytes,
+            NULL) )
+      {
+         printf( &quot;Read journal failed (%d)\n&quot;, GetLastError());
+         return;
+      }
+
+      dwRetBytes = dwBytes - sizeof(USN);
+
+      // Find the first record
+      UsnRecord = (PUSN_RECORD)(((PUCHAR)Buffer) + sizeof(USN));  
+
+      printf( &quot;****************************************\n&quot;);
+
+      // This loop could go on for a long time, given the current buffer size.
+      while( dwRetBytes &gt; 0 )
+      {
+         printf( &quot;USN: %I64x\n&quot;, UsnRecord-&gt;Usn );
+         printf(&quot;File name: %.*S\n&quot;, 
+                  UsnRecord-&gt;FileNameLength/2, 
+                  UsnRecord-&gt;FileName );
+         printf( &quot;Reason: %x\n&quot;, UsnRecord-&gt;Reason );
+         printf( &quot;\n&quot; );
+
+         dwRetBytes -= UsnRecord-&gt;RecordLength;
+
+         // Find the next record
+         UsnRecord = (PUSN_RECORD)(((PCHAR)UsnRecord) + 
+                  UsnRecord-&gt;RecordLength); 
+      }
+      // Update starting USN for next call
+      ReadData.StartUsn = *(USN *)&amp;Buffer; 
+   }
+
+   CloseHandle(hVol);
+
+}
+</code></pre>
+<p>The size in bytes of any record specified by a <a href="/windows/desktop/api/WinIoCtl/ns-winioctl-usn_record_v2"><strong>USN_RECORD_V2</strong></a> or <a href="/windows/desktop/api/WinIoCtl/ns-winioctl-usn_record_v3"><strong>USN_RECORD_V3</strong></a> structure is at most <code>((MaxComponentLength - 1) * Width) + Size</code> where <em>MaxComponentLength</em> is the maximum length in characters of the record file name. The width is the size of a wide character, and the <em>Size</em> is the size of the structure.</p>
+<p>To obtain the maximum length, call the <a href="/windows/desktop/api/FileAPI/nf-fileapi-getvolumeinformationa"><strong>GetVolumeInformation</strong></a> function and examine the value pointed to by the <em>lpMaximumComponentLength</em> parameter. Subtract one from <em>MaxComponentLength</em> to account for the fact that the definition of <a href="/windows/desktop/api/WinIoCtl/ns-winioctl-usn_record_v2"><strong>USN_RECORD</strong></a> and <a href="/windows/desktop/api/WinIoCtl/ns-winioctl-usn_record_v3"><strong>USN_RECORD_V3</strong></a> includes one character of the file name.</p>
+<p>In the C programming language, the largest possible record size is the following:</p>
+<p><code>(MaxComponentLength - 1) * sizeof(WCHAR) + sizeof(USN_RECORD)</code></p>
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AsyncStreamingTcpClientExample</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: AsyncStreamingTcpClientExample
+description: This example shows a TCP client that sends one-way messages in an asynchronous streaming fashion.
+ms.assetid: b0040b3d-d830-421a-bbf1-afb0cac47599
+keywords:</p>
+<ul>
+<li>AsyncStreamingTcpClientExample Native-Web-Services</li>
+<li>WWSAPI</li>
+<li>WWS
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>AsyncStreamingTcpClientExample</h1>
+<p>This example shows a TCP client that sends one-way messages in an asynchronous streaming fashion.</p>
+<ul>
+<li><a href="#asyncstreamingtcpclientcpp">AsyncStreamingTcpClient.cpp</a></li>
+<li><a href="#purchaseorderwsdl">PurchaseOrder.wsdl</a></li>
+<li><a href="#makefile">Makefile</a></li>
+</ul>
+<h2>AsyncStreamingTcpClient.cpp</h2>
+<pre lang="C++"><code>//------------------------------------------------------------
+// Copyright (C) Microsoft.  All rights reserved.
+//------------------------------------------------------------
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;WebServices.h&quot;
+#include &quot;process.h&quot;
+#include &quot;string.h&quot;
+#include &quot;PurchaseOrder.wsdl.h&quot;
+
+// Print out rich error info
+void PrintError(HRESULT errorCode, WS_ERROR* error)
+{
+    wprintf(L&quot;Failure: errorCode=0x%lx\n&quot;, errorCode);
+
+    if (errorCode == E_INVALIDARG || errorCode == WS_E_INVALID_OPERATION)
+    {
+        // Correct use of the APIs should never generate these errors
+        wprintf(L&quot;The error was due to an invalid use of an API.  This is likely due to a bug in the program.\n&quot;);
+        DebugBreak();
+    }
+
+    HRESULT hr = NOERROR;
+    if (error != NULL)
+    {
+        ULONG errorCount;
+        hr = WsGetErrorProperty(error, WS_ERROR_PROPERTY_STRING_COUNT, &amp;errorCount, sizeof(errorCount));
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+        for (ULONG i = 0; i &lt; errorCount; i++)
+        {
+            WS_STRING string;
+            hr = WsGetErrorString(error, i, &amp;string);
+            if (FAILED(hr))
+            {
+                goto Exit;
+            }
+            wprintf(L&quot;%.*s\n&quot;, string.length, string.chars);
+        }
+    }
+Exit:
+    if (FAILED(hr))
+    {
+        wprintf(L&quot;Could not get error string (errorCode=0x%lx)\n&quot;, hr);
+    }
+}
+
+HANDLE serverStartedEvent = NULL;
+
+struct SEND_STATE
+{
+    WS_CHANNEL* channel;
+    WS_MESSAGE* message;
+    ULONG messageCount;
+    ULONG orderCount;
+};
+
+HRESULT CALLBACK Send1(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error);
+
+HRESULT CALLBACK Send2(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error);
+
+HRESULT CALLBACK Send3(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error);
+
+HRESULT CALLBACK Send4(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error);
+
+HRESULT CALLBACK Send5(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error);
+
+HRESULT CALLBACK Send6(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error);
+
+HRESULT CALLBACK Send7(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error);
+
+HRESULT CALLBACK Send8(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error);
+
+HRESULT CALLBACK Send1(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(callbackModel);
+
+    SEND_STATE* sendState = (SEND_STATE*)state;
+
+    next-&gt;function = Send2;
+
+    // Create a TCP duplex session channel
+    hr = WsCreateChannel(
+        WS_CHANNEL_TYPE_DUPLEX_SESSION, 
+        WS_TCP_CHANNEL_BINDING, 
+        NULL, 
+        0, 
+        NULL, 
+        &amp;sendState-&gt;channel, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    // Initialize address of service
+    WS_ENDPOINT_ADDRESS address;
+    address.url.chars = L&quot;net.tcp://localhost/example&quot;;
+    address.url.length = (ULONG)::wcslen(address.url.chars);
+    address.headers = NULL;
+    address.extensions = NULL;
+    address.identity = NULL;
+    
+    // Open channel to address
+    hr = WsOpenChannel(
+        sendState-&gt;channel, 
+        &amp;address, 
+        asyncContext, 
+        error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+Exit:
+    return hr;
+}
+
+HRESULT CALLBACK Send2(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(callbackModel);
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    SEND_STATE* sendState = (SEND_STATE*)state;
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    hr = WsCreateMessageForChannel(sendState-&gt;channel, NULL, 0, &amp;sendState-&gt;message, error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    next-&gt;function = Send3;
+    sendState-&gt;messageCount = 0;
+    return NOERROR;
+}
+
+HRESULT CALLBACK Send3(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(callbackModel);
+
+    SEND_STATE* sendState = (SEND_STATE*)state;
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    if (sendState-&gt;messageCount &gt;= 100)
+    {
+        next-&gt;function = Send8;
+        return NOERROR;
+    }
+
+    // Initialize message headers
+    hr = WsInitializeMessage(sendState-&gt;message, WS_BLANK_MESSAGE, NULL, error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    // Add the action header
+    hr = WsSetHeader(
+        sendState-&gt;message, 
+        WS_ACTION_HEADER, 
+        WS_XML_STRING_TYPE,
+        WS_WRITE_REQUIRED_VALUE,
+        PurchaseOrder_wsdl.messages.PurchaseOrder.action, 
+        sizeof(*PurchaseOrder_wsdl.messages.PurchaseOrder.action),
+        error);
+
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    // Send the message headers
+    sendState-&gt;orderCount = 0;
+    next-&gt;function = Send4;
+    return WsWriteMessageStart(sendState-&gt;channel, sendState-&gt;message, asyncContext, error);
+}
+
+static const WS_STRING pencil = WS_STRING_VALUE(L&quot;Pencil&quot;);
+
+HRESULT CALLBACK Send4(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(callbackModel);
+
+    SEND_STATE* sendState = (SEND_STATE*)state;
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    
+    // Get the writer for the body
+    WS_XML_WRITER* writer;
+    hr = WsGetMessageProperty(sendState-&gt;message, WS_MESSAGE_PROPERTY_BODY_WRITER, &amp;writer, sizeof(writer), error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    if (sendState-&gt;orderCount &gt;= 100)
+    {
+        next-&gt;function = Send6;
+        return NOERROR;
+    }
+
+    // Initialize body data
+    _PurchaseOrderType purchaseOrder;
+    purchaseOrder.quantity = 1;
+    purchaseOrder.productName = pencil;
+
+    // Write body data
+    hr = WsWriteElement(
+        writer, 
+        &amp;PurchaseOrder_wsdl.globalElements.PurchaseOrderType, 
+        WS_WRITE_REQUIRED_VALUE,
+        &amp;purchaseOrder, 
+        sizeof(purchaseOrder), 
+        error);
+
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    next-&gt;function = Send5;
+    return WsFlushWriter(writer, 128, asyncContext, error);
+}
+
+HRESULT CALLBACK Send5(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(callbackModel);
+    UNREFERENCED_PARAMETER(asyncContext);
+    UNREFERENCED_PARAMETER(error);
+
+    SEND_STATE* sendState = (SEND_STATE*)state;
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    sendState-&gt;orderCount++;
+    next-&gt;function = Send4;
+    return NOERROR;
+}
+
+HRESULT CALLBACK Send6(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(callbackModel);
+
+    SEND_STATE* sendState = (SEND_STATE*)state;
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    // Send the end of the message
+    next-&gt;function = Send7;
+    return WsWriteMessageEnd(sendState-&gt;channel, sendState-&gt;message, asyncContext, error);
+}
+
+HRESULT CALLBACK Send7(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(callbackModel);
+    UNREFERENCED_PARAMETER(asyncContext);
+
+    SEND_STATE* sendState = (SEND_STATE*)state;
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    // Reset message so it can be used again
+    hr = WsResetMessage(sendState-&gt;message, error);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    sendState-&gt;messageCount++;
+    next-&gt;function = Send3;
+    return NOERROR;
+}
+
+HRESULT CALLBACK Send8(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state, WS_ASYNC_OPERATION* next, const WS_ASYNC_CONTEXT* asyncContext, WS_ERROR* error)
+{
+    UNREFERENCED_PARAMETER(callbackModel);
+
+    SEND_STATE* sendState = (SEND_STATE*)state;
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    // Close the channel
+    next-&gt;function = NULL;
+    return WsCloseChannel(sendState-&gt;channel, asyncContext, error);
+}
+
+struct THREAD_INFO
+{
+    HRESULT hr;
+    HANDLE handle;
+};
+
+static void CALLBACK OnSendComplete(HRESULT hr, WS_CALLBACK_MODEL callbackModel, void* state)
+{
+    UNREFERENCED_PARAMETER(callbackModel);
+
+    THREAD_INFO* threadInfo = (THREAD_INFO*)state;
+    threadInfo-&gt;hr = hr;
+    SetEvent(threadInfo-&gt;handle);
+}
+
+// Main entry point
+int __cdecl wmain(int argc, __in_ecount(argc) wchar_t **argv)
+{
+    UNREFERENCED_PARAMETER(argc);
+    UNREFERENCED_PARAMETER(argv);
+    
+    HRESULT hr = NOERROR;
+    WS_ERROR* error = NULL;
+    
+    WS_ASYNC_STATE asyncState;
+    SEND_STATE sendState;
+    sendState.channel = NULL;
+    sendState.message = NULL;
+    sendState.messageCount = 0;
+    sendState.orderCount = 0;
+    
+    THREAD_INFO threadInfo;
+    threadInfo.hr = NOERROR;
+    threadInfo.handle = NULL;
+        
+    // Create an event to synchronize the client and server processes.
+    serverStartedEvent = CreateEventW(
+        NULL, 
+        TRUE, 
+        FALSE, 
+        L&quot;WebServicesExampleServerStartedEvent&quot;);
+    if (NULL == serverStartedEvent)
+    {
+        wprintf(
+            L&quot;Failed to create the client-server synchronization event (errorCode=0x%lx).\n&quot;,
+            GetLastError());
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto Exit;
+    }
+    // Wait for the server to startup.
+    DWORD win32Error;
+    win32Error = WaitForSingleObject(serverStartedEvent, 10000);
+    if (WAIT_OBJECT_0 != win32Error)
+    {
+        if (WAIT_FAILED == win32Error)
+        {
+            win32Error = GetLastError();
+        }
+        wprintf(
+            L&quot;Failed to wait for the client-server synchronization event (errorCode=0x%lx).\n&quot;, 
+            win32Error);
+        hr = HRESULT_FROM_WIN32(GetLastError());
+        goto Exit;
+    }
+    
+    // Create an error object for storing rich error information
+    hr = WsCreateError(
+        NULL, 
+        0, 
+        &amp;error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    threadInfo.handle = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (threadInfo.handle == NULL)
+    {
+        goto Exit;
+    }
+    
+    WS_ASYNC_CONTEXT sendComplete;
+    sendComplete.callback = OnSendComplete;
+    sendComplete.callbackState = &amp;threadInfo;
+    
+    hr = WsAsyncExecute(&amp;asyncState, Send1, WS_LONG_CALLBACK, &amp;sendState, &amp;sendComplete, error);
+    if (FAILED(hr))
+    {
+        goto Exit;
+    }
+    
+    if (hr == WS_S_ASYNC)
+    {
+        WaitForSingleObject(threadInfo.handle, INFINITE);
+        hr = threadInfo.hr;
+        if (FAILED(hr))
+        {
+            goto Exit;
+        }
+    }
+        
+Exit:
+    if (FAILED(hr))
+    {
+        // Print out the error
+        PrintError(hr, error);
+    }
+    fflush(
+        stdout);
+    
+    if (threadInfo.handle != NULL)
+    {
+        CloseHandle(threadInfo.handle);
+    }
+        
+    if (sendState.channel != NULL)
+    {
+        // Close the channel
+        WsCloseChannel(sendState.channel, NULL, error);
+    }
+    if (sendState.message != NULL)
+    {
+        WsFreeMessage(sendState.message);
+    }
+    if (sendState.channel != NULL)
+    {
+        WsFreeChannel(sendState.channel);
+    }
+    if (error != NULL)
+    {
+        WsFreeError(error);
+    }
+    
+    if (NULL != serverStartedEvent)
+    {
+        CloseHandle(serverStartedEvent);
+    }
+    
+    fflush(stdout);
+    return SUCCEEDED(hr) ? 0 : -1;
+}
+
+</code></pre>
+<h2>PurchaseOrder.wsdl</h2>
+<pre lang="syntax"><code>&lt;wsdl:definitions 
+    xmlns:soap=&quot;https://schemas.xmlsoap.org/wsdl/soap/&quot; 
+    xmlns:tns=&quot;https://example.org&quot; 
+    xmlns:xsd=&quot;https://www.w3.org/2001/XMLSchema&quot; 
+    xmlns:wsaw=&quot;https://www.w3.org/2006/05/addressing/wsdl&quot; 
+    xmlns:soap12=&quot;https://schemas.xmlsoap.org/wsdl/soap12/&quot; 
+    xmlns:wsdl=&quot;https://schemas.xmlsoap.org/wsdl/&quot; 
+    targetNamespace=&quot;https://example.org&quot;&gt;
+    &lt;wsdl:types&gt;
+        &lt;xsd:schema targetNamespace=&quot;https://example.org&quot; elementFormDefault=&quot;qualified&quot;&gt;
+            &lt;xsd:element name=&quot;PurchaseOrderType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;quantity&quot; type=&quot;xsd:int&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;productName&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;OrderConfirmationType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;expectedShipDate&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;GetOrderStatusType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;GetOrderStatusResponseType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;status&quot; type=&quot;xsd:string&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+            &lt;xsd:element name=&quot;OrderNotFoundFaultType&quot;&gt;
+                &lt;xsd:complexType&gt;
+                    &lt;xsd:sequence&gt;
+                        &lt;xsd:element minOccurs=&quot;0&quot; name=&quot;orderID&quot; type=&quot;xsd:unsignedInt&quot;/&gt;
+                    &lt;/xsd:sequence&gt;
+                &lt;/xsd:complexType&gt;
+            &lt;/xsd:element&gt;
+        &lt;/xsd:schema&gt;
+    &lt;/wsdl:types&gt;
+    &lt;wsdl:message name=&quot;PurchaseOrder&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:PurchaseOrderType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;OrderConfirmation&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:OrderConfirmationType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;GetOrderStatus&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetOrderStatusType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;GetOrderStatusResponse&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:GetOrderStatusResponseType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:message name=&quot;OrderNotFoundFault&quot;&gt;
+        &lt;wsdl:part name=&quot;parameters&quot; element=&quot;tns:OrderNotFoundFaultType&quot;/&gt;
+    &lt;/wsdl:message&gt;
+    &lt;wsdl:portType name=&quot;IPurchaseOrder&quot;&gt;
+        &lt;wsdl:operation name=&quot;Order&quot;&gt;
+            &lt;wsdl:input message=&quot;tns:PurchaseOrder&quot; wsaw:Action=&quot;https://example.org/purchaseorder&quot;/&gt;
+            &lt;wsdl:output message=&quot;tns:OrderConfirmation&quot; wsaw:Action=&quot;https://example.org/orderconfirmation&quot;/&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;OrderStatus&quot;&gt;
+            &lt;wsdl:input message=&quot;tns:GetOrderStatus&quot; wsaw:Action=&quot;https://example.org/getorderstatus&quot;/&gt;
+            &lt;wsdl:output message=&quot;tns:GetOrderStatusResponse&quot; wsaw:Action=&quot;https://example.org/getorderstatusresponse&quot;/&gt;
+            &lt;wsdl:fault name=&quot;OrderNotFound&quot; message=&quot;tns:OrderNotFoundFault&quot; wsaw:Action=&quot;https://example.org/ordernotfound&quot;/&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:portType&gt;
+    &lt;wsdl:binding name=&quot;PurchaseOrderBinding&quot; type=&quot;tns:IPurchaseOrder&quot;&gt;
+        &lt;soap:binding transport=&quot;https://schemas.xmlsoap.org/soap/http&quot;/&gt;
+        &lt;wsdl:operation name=&quot;Order&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://example.org/purchaseorder&quot; style=&quot;document&quot;/&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:output&gt;
+        &lt;/wsdl:operation&gt;
+        &lt;wsdl:operation name=&quot;OrderStatus&quot;&gt;
+            &lt;soap:operation soapAction=&quot;https://example.org/getorderstatus&quot; style=&quot;document&quot;/&gt;
+            &lt;wsdl:input&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:input&gt;
+            &lt;wsdl:output&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:output&gt;
+            &lt;wsdl:fault name=&quot;OrderNotFound&quot;&gt;
+                &lt;soap:body use=&quot;literal&quot;/&gt;
+            &lt;/wsdl:fault&gt;
+        &lt;/wsdl:operation&gt;
+    &lt;/wsdl:binding&gt;
+    &lt;wsdl:service name=&quot;PurchaseOrderService&quot;&gt;
+        &lt;wsdl:port name=&quot;IPurchaseOrder&quot; binding=&quot;tns:PurchaseOrderBinding&quot;&gt;
+            &lt;soap:address location=&quot;https://example.org/IPurchaseOrder&quot;/&gt;
+        &lt;/wsdl:port&gt;
+    &lt;/wsdl:service&gt;
+&lt;/wsdl:definitions&gt;
+</code></pre>
+<h2>Makefile</h2>
+<pre lang="syntax"><code>!include &lt;Win32.Mak&gt;
+
+EXTRA_LIBS = WebServices.lib rpcrt4.lib Iphlpapi.lib
+
+all: $(OUTDIR) $(OUTDIR)\WsAsyncStreamingTcpClient.exe
+
+&quot;$(OUTDIR)&quot; :
+    if not exist &quot;$(OUTDIR)/$(NULL)&quot; mkdir &quot;$(OUTDIR)&quot;
+    
+$(OUTDIR)\PurchaseOrder.wsdl.c: PurchaseOrder.wsdl
+     Wsutil.exe /wsdl:PurchaseOrder.wsdl /string:WS_STRING /out:$(OUTDIR)
+    
+$(OUTDIR)\PurchaseOrder.wsdl.obj: $(OUTDIR)\PurchaseOrder.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; $(OUTDIR)\PurchaseOrder.wsdl.c
+
+$(OUTDIR)\AsyncStreamingTcpClient.obj: AsyncStreamingTcpClient.cpp $(OUTDIR)\PurchaseOrder.wsdl.c
+    $(cc) $(cdebug) $(cflags) $(cvarsmt) /WX -I$(OUTDIR) /Fo&quot;$(OUTDIR)\\&quot; /Fd&quot;$(OUTDIR)\\&quot; AsyncStreamingTcpClient.cpp
+
+$(OUTDIR)\WsAsyncStreamingTcpClient.exe: $(OUTDIR)\AsyncStreamingTcpClient.obj $(OUTDIR)\PurchaseOrder.wsdl.obj
+    $(link) $(ldebug) $(conlflags) $(conlibsmt) $(EXTRA_LIBS) -out:$(OUTDIR)\WsAsyncStreamingTcpClient.exe $(OUTDIR)\AsyncStreamingTcpClient.obj $(OUTDIR)\PurchaseOrder.wsdl.obj /PDB:$(OUTDIR)\WsAsyncStreamingTcpClient.PDB
+
+clean:
+    $(CLEANUP)
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

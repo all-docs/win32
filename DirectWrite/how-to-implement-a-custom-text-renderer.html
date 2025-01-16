@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Render Using a Custom Text Renderer</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Render Using a Custom Text Renderer
+description: A DirectWrite \ 160;text layout can be drawn by a custom text renderer derived from IDWriteTextRenderer.
+ms.assetid: a5b09733-24b2-408e-a1f9-cf7ad20c5c63
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Render Using a Custom Text Renderer</h1>
+<p>A <a href="direct-write-portal.html">DirectWrite</a>Â <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextlayout"><strong>text layout</strong></a> can be drawn by a custom text renderer derived from <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextrenderer"><strong>IDWriteTextRenderer</strong></a>. A custom renderer is required to take advantage of some advanced features of DirectWrite, such as rendering to a bitmap or GDI surface, inline objects, and client drawing effects. This tutorial describes the methods of <strong>IDWriteTextRenderer</strong>, and provides an example implementation that uses <a href="../direct2d/direct2d-portal.html">Direct2D</a> to render text with a bitmap fill.</p>
+<p>This tutorial contains the following parts:</p>
+<ul>
+<li><a href="#the-constructor">The Constructor</a></li>
+<li><a href="#drawglyphrun">DrawGlyphRun()</a></li>
+<li><a href="#drawunderline-and-drawstrikethrough">DrawUnderline() and DrawStrikethrough()</a></li>
+<li><a href="#pixel-snapping-pixels-per-dip-and-transform">Pixel Snapping, Pixels per DIP, and Transform</a>
+<ul>
+<li><a href="#ispixelsnappingdisabled">IsPixelSnappingDisabled()</a></li>
+<li><a href="#getcurrenttransform">GetCurrentTransform()</a></li>
+<li><a href="#getpixelsperdip">GetPixelsPerDip()</a></li>
+</ul>
+</li>
+<li><a href="#drawinlineobject">DrawInlineObject()</a></li>
+<li><a href="#the-destructor">The Destructor</a></li>
+<li><a href="#using-the-custom-text-renderer">Using the Custom Text Renderer</a></li>
+</ul>
+<p>Your custom text renderer must implement the methods inherited from IUnknown in addition to the methods listed on the <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextrenderer"><strong>IDWriteTextRenderer</strong></a> reference page and below.</p>
+<p>For the full source code for the custom text renderer, see the CustomTextRenderer.cpp and CustomTextRenderer.h files of the <a href="/samples/browse/?redirectedfrom=MSDN-samples">DirectWrite Hello World Sample</a>.</p>
+<h2>The Constructor</h2>
+<p>Your custom text renderer will need a constructor. This example uses both solid and bitmap <a href="../direct2d/direct2d-portal.html">Direct2D</a> brushes to render the text.</p>
+<p>Because of this, the constructor takes the parameters found in the table below with descriptions.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>pD2DFactory</em></td>
+<td>A pointer to an <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1factory"><strong>ID2D1Factory</strong></a> object that will be used to create any Direct2D resources that are needed.</td>
+</tr>
+<tr>
+<td><em>pRT</em></td>
+<td>A pointer to the <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1hwndrendertarget"><strong>ID2D1HwndRenderTarget</strong></a> object that the text will be rendered to.</td>
+</tr>
+<tr>
+<td><em>pOutlineBrush</em></td>
+<td>A pointer to the <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1solidcolorbrush"><strong>ID2D1SolidColorBrush</strong></a> that will be use to draw outline of the text</td>
+</tr>
+<tr>
+<td><em>pFillBrush</em></td>
+<td>A pointer to the <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1bitmapbrush"><strong>ID2D1BitmapBrush</strong></a> that will be used to fill the text.</td>
+</tr>
+</tbody>
+</table>
+<p>Â </p>
+<p>These will be stored by the constructor as shown in the following code.</p>
+<pre lang="C++"><code>CustomTextRenderer::CustomTextRenderer(
+    ID2D1Factory* pD2DFactory, 
+    ID2D1HwndRenderTarget* pRT, 
+    ID2D1SolidColorBrush* pOutlineBrush, 
+    ID2D1BitmapBrush* pFillBrush
+    )
+:
+cRefCount_(0), 
+pD2DFactory_(pD2DFactory), 
+pRT_(pRT), 
+pOutlineBrush_(pOutlineBrush), 
+pFillBrush_(pFillBrush)
+{
+    pD2DFactory_-&gt;AddRef();
+    pRT_-&gt;AddRef();
+    pOutlineBrush_-&gt;AddRef();
+    pFillBrush_-&gt;AddRef();
+}
+</code></pre>
+<h2>DrawGlyphRun()</h2>
+<p>The <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawglyphrun"><strong>DrawGlyphRun</strong></a> method is the main callback method of the text renderer. It is passed a run of glyphs to be rendered in addition to information such as the baseline origin and measuring mode. It also passes a client drawing effect object to be applied to the glyph run. For more information, see the <a href="how-to-add-custom-drawing-efffects-to-a-text-layout.html">How to Add Client Drawing Effects to a Text Layout</a> topic.</p>
+<p>This text renderer implementation renders glyph runs by converting them to <a href="rendering-by-using-direct2d.html">Direct2D</a> geometries and then drawing and filling the geometries. This consists of the following steps.</p>
+<ol>
+<li>
+<p>Create an <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1pathgeometry"><strong>ID2D1PathGeometry</strong></a> object, and then retrieve the <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1geometrysink"><strong>ID2D1GeometrySink</strong></a> object by using the <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1pathgeometry-open"><strong>ID2D1PathGeometry::Open</strong></a> method.</p>
+<pre lang="C++"><code>// Create the path geometry.
+ID2D1PathGeometry* pPathGeometry = NULL;
+hr = pD2DFactory_-&gt;CreatePathGeometry(
+        &amp;pPathGeometry
+        );
+
+// Write to the path geometry using the geometry sink.
+ID2D1GeometrySink* pSink = NULL;
+if (SUCCEEDED(hr))
+{
+    hr = pPathGeometry-&gt;Open(
+        &amp;pSink
+        );
+}
+</code></pre>
+</li>
+<li>
+<p>The <a href="/windows/win32/api/dwrite/ns-dwrite-dwrite_glyph_run"><strong>DWRITE_GLYPH_RUN</strong></a> that is passed to <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawglyphrun"><strong>DrawGlyphRun</strong></a> contains a <a href="/windows/win32/api/dwrite/nn-dwrite-idwritefontface"><strong>IDWriteFontFace</strong></a> object, named <em>fontFace</em>, that represents the font face for the whole glyph run. Put the outline of the glyph run into the geometry sink by using the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritefontface-getglyphrunoutline"><strong>IDWriteFontFace:: GetGlyphRunOutline</strong></a> method, as shown in the following code.</p>
+<pre lang="C++"><code>// Get the glyph run outline geometries back from DirectWrite and place them within the
+// geometry sink.
+if (SUCCEEDED(hr))
+{
+    hr = glyphRun-&gt;fontFace-&gt;GetGlyphRunOutline(
+        glyphRun-&gt;fontEmSize,
+        glyphRun-&gt;glyphIndices,
+        glyphRun-&gt;glyphAdvances,
+        glyphRun-&gt;glyphOffsets,
+        glyphRun-&gt;glyphCount,
+        glyphRun-&gt;isSideways,
+        glyphRun-&gt;bidiLevel%2,
+        pSink
+        );
+}
+</code></pre>
+</li>
+<li>
+<p>After filling the geometry sink, close it.</p>
+<pre lang="C++"><code>// Close the geometry sink
+if (SUCCEEDED(hr))
+{
+    hr = pSink-&gt;Close();
+}
+</code></pre>
+</li>
+<li>
+<p>The origin of the glyph run must be translated so that it is rendered from the correct baseline origin, as shown in the following code.</p>
+<pre lang="C++"><code>// Initialize a matrix to translate the origin of the glyph run.
+D2D1::Matrix3x2F const matrix = D2D1::Matrix3x2F(
+    1.0f, 0.0f,
+    0.0f, 1.0f,
+    baselineOriginX, baselineOriginY
+    );
+</code></pre>
+<p>The <em>baselineOriginX</em> and <em>baselineOriginY</em> are passed as parameters to the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawglyphrun"><strong>DrawGlyphRun</strong></a> callback method.</p>
+</li>
+<li>
+<p>Create the transformed geometry by using the <a href="../direct2d/id2d1factory-createtransformedgeometry.html"><strong>ID2D1Factory::CreateTransformedGeometry</strong></a> method and passing the path geometry and the translation matrix.</p>
+<pre lang="C++"><code>// Create the transformed geometry
+ID2D1TransformedGeometry* pTransformedGeometry = NULL;
+if (SUCCEEDED(hr))
+{
+    hr = pD2DFactory_-&gt;CreateTransformedGeometry(
+        pPathGeometry,
+        &amp;matrix,
+        &amp;pTransformedGeometry
+        );
+}
+</code></pre>
+</li>
+<li>
+<p>Finally, draw the outline of the transformed geometry, and fill it by using the <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-drawgeometry"><strong>ID2D1RenderTarget::DrawGeometry</strong></a> and <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-fillgeometry"><strong>ID2D1RenderTarget::FillGeometry</strong></a> methods and the <a href="../direct2d/direct2d-portal.html">Direct2D</a> brushes stored as member variables.</p>
+<pre lang="C++"><code>    // Draw the outline of the glyph run
+    pRT_-&gt;DrawGeometry(
+        pTransformedGeometry,
+        pOutlineBrush_
+        );
+
+    // Fill in the glyph run
+    pRT_-&gt;FillGeometry(
+        pTransformedGeometry,
+        pFillBrush_
+        );
+</code></pre>
+</li>
+<li>
+<p>Now that you are finished drawing, do not forget to clean up the objects that were created in this method.</p>
+<pre lang="C++"><code>SafeRelease(&amp;pPathGeometry);
+SafeRelease(&amp;pSink);
+SafeRelease(&amp;pTransformedGeometry);
+</code></pre>
+</li>
+</ol>
+<h2>DrawUnderline() and DrawStrikethrough()</h2>
+<p><a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextrenderer"><strong>IDWriteTextRenderer</strong></a> also has callbacks for drawing the underline and strikethrough. This example draws a simple rectangle for an underline or strikethrough, but other shapes can be drawn.</p>
+<p>Drawing an underline by using <a href="../direct2d/direct2d-portal.html">Direct2D</a> consists of the following steps.</p>
+<ol>
+<li>
+<p>First, create a <a href="../direct2d/d2d1-rect-f.html"><strong>D2D1_RECT_F</strong></a> structure of the size and shape of the underline. The <a href="/windows/win32/api/dwrite/ns-dwrite-dwrite_underline"><strong>DWRITE_UNDERLINE</strong></a> structure that is passed to the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawunderline"><strong>DrawUnderline</strong></a> callback method provides the offset, width, and thickness of the underline.</p>
+<pre lang="C++"><code>D2D1_RECT_F rect = D2D1::RectF(
+    0,
+    underline-&gt;offset,
+    underline-&gt;width,
+    underline-&gt;offset + underline-&gt;thickness
+    );
+</code></pre>
+</li>
+<li>
+<p>Next, create an <a href="/windows/win32/api/d2d1/nn-d2d1-id2d1rectanglegeometry"><strong>ID2D1RectangleGeometry</strong></a> object by using the <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1factory-createrectanglegeometry(constd2d1_rect_f_id2d1rectanglegeometry)"><strong>ID2D1Factory::CreateRectangleGeometry</strong></a> method and the initialized <a href="../direct2d/d2d1-rect-f.html"><strong>D2D1_RECT_F</strong></a> structure.</p>
+<pre lang="C++"><code>ID2D1RectangleGeometry* pRectangleGeometry = NULL;
+hr = pD2DFactory_-&gt;CreateRectangleGeometry(
+        &amp;rect, 
+        &amp;pRectangleGeometry
+        );
+</code></pre>
+</li>
+<li>
+<p>As with the glyph run, the origin of the underline geometry must be translated, based on the baseline origin values, by using the <a href="../direct2d/id2d1factory-createtransformedgeometry.html"><strong>CreateTransformedGeometry</strong></a> method.</p>
+<pre lang="C++"><code>// Initialize a matrix to translate the origin of the underline
+D2D1::Matrix3x2F const matrix = D2D1::Matrix3x2F(
+    1.0f, 0.0f,
+    0.0f, 1.0f,
+    baselineOriginX, baselineOriginY
+    );
+
+ID2D1TransformedGeometry* pTransformedGeometry = NULL;
+if (SUCCEEDED(hr))
+{
+    hr = pD2DFactory_-&gt;CreateTransformedGeometry(
+        pRectangleGeometry,
+        &amp;matrix,
+        &amp;pTransformedGeometry
+        );
+}
+</code></pre>
+</li>
+<li>
+<p>Finally, draw the outline of the transformed geometry, and fill it by using the <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-drawgeometry"><strong>ID2D1RenderTarget::DrawGeometry</strong></a> and <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-fillgeometry"><strong>ID2D1RenderTarget::FillGeometry</strong></a> methods and the <a href="../direct2d/direct2d-portal.html">Direct2D</a> brushes stored as member variables.</p>
+<pre lang="C++"><code>    // Draw the outline of the glyph run
+    pRT_-&gt;DrawGeometry(
+        pTransformedGeometry,
+        pOutlineBrush_
+        );
+
+    // Fill in the glyph run
+    pRT_-&gt;FillGeometry(
+        pTransformedGeometry,
+        pFillBrush_
+        );
+</code></pre>
+</li>
+<li>
+<p>Now that you are finished drawing, do not forget to clean up the objects that were created in this method.</p>
+<pre lang="C++"><code>SafeRelease(&amp;pRectangleGeometry);
+SafeRelease(&amp;pTransformedGeometry);
+</code></pre>
+</li>
+</ol>
+<p>The process for drawing a strikethrough is the same. However, the strikethrough will have a different offset, and likely a different width and thickness.</p>
+<h2>Pixel Snapping, Pixels per DIP, and Transform</h2>
+<h3>IsPixelSnappingDisabled()</h3>
+<p>This method is called to determine whether pixel snapping is disabled. The recommended default is <strong>FALSE</strong>, and that is the output of this example.</p>
+<pre lang="C++"><code>*isDisabled = FALSE;
+</code></pre>
+<h3>GetCurrentTransform()</h3>
+<p>This example renders to a Direct2D render target, so forward the transform from the render target using <a href="/windows/win32/api/d2d1/nf-d2d1-id2d1rendertarget-gettransform"><strong>ID2D1RenderTarget::GetTransform</strong></a>.</p>
+<pre lang="C++"><code>//forward the render target's transform
+pRT_-&gt;GetTransform(reinterpret_cast&lt;D2D1_MATRIX_3X2_F*&gt;(transform));
+</code></pre>
+<h3>GetPixelsPerDip()</h3>
+<p>This method is called to get the number of pixels per Device Independent Pixel (DIP).</p>
+<pre lang="C++"><code>float x, yUnused;
+
+pRT_-&gt;GetDpi(&amp;x, &amp;yUnused);
+*pixelsPerDip = x / 96;
+</code></pre>
+<h2>DrawInlineObject()</h2>
+<p>A custom text renderer also has a callback for drawing inline objects. In this example, <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawinlineobject"><strong>DrawInlineObject</strong></a> returns E_NOTIMPL. An explanation of how to draw inline objects is beyond the scope of this tutorial. For more information, see the <a href="how-to-add-inline-objects-to-a-text-layout.html">How to Add Inline Objects to a Text Layout</a> topic.</p>
+<h2>The Destructor</h2>
+<p>It is important to release any pointers that were used by the custom text renderer class.</p>
+<pre lang="C++"><code>CustomTextRenderer::~CustomTextRenderer()
+{
+    SafeRelease(&amp;pD2DFactory_);
+    SafeRelease(&amp;pRT_);
+    SafeRelease(&amp;pOutlineBrush_);
+    SafeRelease(&amp;pFillBrush_);
+}
+</code></pre>
+<h2>Using the Custom Text Renderer</h2>
+<p>You render with the custom renderer by using the <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextlayout-draw"><strong>IDWriteTextLayout::Draw</strong></a> method, which takes a callback interface derived from <a href="/windows/win32/api/dwrite/nn-dwrite-idwritetextrenderer"><strong>IDWriteTextRenderer</strong></a> as an argument, as shown in the following code.</p>
+<pre lang="C++"><code>// Draw the text layout using DirectWrite and the CustomTextRenderer class.
+hr = pTextLayout_-&gt;Draw(
+        NULL,
+        pTextRenderer_,  // Custom text renderer.
+        origin.x,
+        origin.y
+        );
+
+</code></pre>
+<p>The <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextlayout-draw"><strong>IDWriteTextLayout::Draw</strong></a> method calls the methods of the custom renderer callback you provide. The <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawglyphrun"><strong>DrawGlyphRun</strong></a>, <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawunderline"><strong>DrawUnderline</strong></a>, <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawinlineobject"><strong>DrawInlineObject</strong></a>, and <a href="/windows/win32/api/dwrite/nf-dwrite-idwritetextrenderer-drawstrikethrough"><strong>DrawStrikethrough</strong></a> methods described above perform the drawing functions.</p>
+<p>Â </p>
+<p>Â </p>
+</body>

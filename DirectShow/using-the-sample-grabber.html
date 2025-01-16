@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Using the Sample Grabber</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The Sample Grabber filter is a transform filter that can be used to grab media samples from a stream as they pass through the filter graph.
+ms.assetid: ec0e367e-9ef9-4de6-9132-b462c233bc98
+title: Using the Sample Grabber
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Using the Sample Grabber</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>[This API is not supported and may be altered or unavailable in the future.]</p>
+<p>The <a href="sample-grabber-filter.html"><strong>Sample Grabber</strong></a> filter is a transform filter that can be used to grab media samples from a stream as they pass through the filter graph.</p>
+<p>If you simply want to grab a bitmap from a video file, it is easier to use the <a href="media-detector--mediadet.html">Media Detector (MediaDet)</a> object. See <a href="grabbing-a-poster-frame.html">Grabbing a Poster Frame</a> for details. The Sample Grabber is more flexible, however, because it works with nearly any media type (see <a href="isamplegrabber-setmediatype.html"><strong>ISampleGrabber::SetMediaType</strong></a> for the few exceptions), and offers more control to the application.</p>
+<ul>
+<li><a href="#create-the-filter-graph-manager">Create the Filter Graph Manager</a></li>
+<li><a href="#add-the-sample-grabber-to-the-filter-graph">Add the Sample Grabber to the Filter Graph</a></li>
+<li><a href="#set-the-media-type">Set the Media Type</a></li>
+<li><a href="#build-the-filter-graph">Build the Filter Graph</a></li>
+<li><a href="#run-the-graph">Run the Graph</a></li>
+<li><a href="#grab-the-sample">Grab the Sample</a></li>
+<li><a href="#example-code">Example Code</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Create the Filter Graph Manager</h2>
+<p>To start, create the <a href="filter-graph-manager.html">Filter Graph Manager</a> and query for the <a href="/windows/desktop/api/Control/nn-control-imediacontrol"><strong>IMediaControl</strong></a> and <a href="/windows/desktop/api/Control/nn-control-imediaeventex"><strong>IMediaEventEx</strong></a> interfaces.</p>
+<pre lang="C++"><code>    IGraphBuilder *pGraph = NULL;
+    IMediaControl *pControl = NULL;
+    IMediaEventEx *pEvent = NULL;
+
+
+    HRESULT hr = CoCreateInstance(CLSID_FilterGraph, NULL, 
+        CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&amp;pGraph));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGraph-&gt;QueryInterface(IID_PPV_ARGS(&amp;pControl));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGraph-&gt;QueryInterface(IID_PPV_ARGS(&amp;pEvent));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+</code></pre>
+<h2>Add the Sample Grabber to the Filter Graph</h2>
+<p>Create an instance of the Sample Grabber filter and addit to the filter graph. Query the Sample Grabber filter for the <a href="isamplegrabber.html"><strong>ISampleGrabber</strong></a> interface.</p>
+<pre lang="C++"><code>    IBaseFilter *pGrabberF = NULL;
+    ISampleGrabber *pGrabber = NULL;
+
+
+    // Create the Sample Grabber filter.
+    hr = CoCreateInstance(CLSID_SampleGrabber, NULL, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&amp;pGrabberF));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGraph-&gt;AddFilter(pGrabberF, L&amp;quot;Sample Grabber&amp;quot;);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGrabberF-&gt;QueryInterface(IID_PPV_ARGS(&amp;pGrabber));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+</code></pre>
+<h2>Set the Media Type</h2>
+<p>When you first create the Sample Grabber, it has no preferred media type. This means you can connect to almost any filter in the graph, but you would have no control over the type of data that it received. Before building the rest of the graph, therefore, you must set a media type for the Sample Grabber, by calling the <a href="isamplegrabber-setmediatype.html"><strong>ISampleGrabber::SetMediaType</strong></a> method.</p>
+<p>When the Sample Grabber connects, it will compare this media type against the media type offered by the other filter. The only fields that it checks are the major type, subtype, and format type. For any of these, the value GUID_NULL means &quot;accept any value.&quot; Most of the time, you will want to set the major type and subtype. For example, the following code specifies uncompressed 24-bit RGB video:</p>
+<pre lang="C++"><code>    AM_MEDIA_TYPE mt;
+    ZeroMemory(&amp;mt, sizeof(mt));
+    mt.majortype = MEDIATYPE_Video;
+    mt.subtype = MEDIASUBTYPE_RGB24;
+
+    hr = pGrabber-&gt;SetMediaType(&amp;mt);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+</code></pre>
+<h2>Build the Filter Graph</h2>
+<p>Now you can build the rest of the filter graph. Because the Sample Grabber will only connect using the media type you have specified, this lets you take advantage of the Filter Graph Manager's <a href="intelligent-connect.html">Intelligent Connect</a> mechanisms when you build the graph.</p>
+<p>For example, if you specified uncompressed video, you can connect a source filter to the Sample Grabber, and the Filter Graph Manager will automatically add the file parser and the decoder. The following example uses the ConnectFilters helper function, which is listed in <a href="connect-two-filters.html">Connect Two Filters</a>:</p>
+<pre lang="C++"><code>    IBaseFilter *pSourceF = NULL;
+    IEnumPins *pEnum = NULL;
+    IPin *pPin = NULL;
+
+
+    hr = pGraph-&gt;AddSourceFilter(pszVideoFile, L&amp;quot;Source&amp;quot;, &amp;pSourceF);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pSourceF-&gt;EnumPins(&amp;pEnum);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    while (S_OK == pEnum-&gt;Next(1, &amp;pPin, NULL))
+    {
+        hr = ConnectFilters(pGraph, pPin, pGrabberF);
+        SafeRelease(&amp;pPin);
+        if (SUCCEEDED(hr))
+        {
+            break;
+        }
+    }
+
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+</code></pre>
+<p>The Sample Grabber is a transform filter, so the output pin must be connected to another filter. Often, you may simply want to discard the samples after you are done with them. In that case, connect the Sample Grabber to the <a href="null-renderer-filter.html"><strong>Null Renderer Filter</strong></a>, which discards the data that it receives.</p>
+<p>The following example connects the Sample Grabber to the Null Renderer filter:</p>
+<pre lang="C++"><code>    IBaseFilter *pNullF = NULL;
+
+
+    hr = CoCreateInstance(CLSID_NullRenderer, NULL, CLSCTX_INPROC_SERVER, 
+        IID_PPV_ARGS(&amp;pNullF));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGraph-&gt;AddFilter(pNullF, L&amp;quot;Null Filter&amp;quot;);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = ConnectFilters(pGraph, pGrabberF, pNullF);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+</code></pre>
+<p>Be aware that placing the Sample Grabber between a video decoder and the video renderer can significantly hurt rendering performance. The Sample Grabber is a trans-in-place filter, which means the output buffer is the same as the input buffer. For video rendering, the output buffer is likely to be located on the graphics card, where read operations are much slower, compared with read operations in main memory.</p>
+<h2>Run the Graph</h2>
+<p>The Sample Grabber operates in one of two modes:</p>
+<ul>
+<li>Buffering mode makes a copy of each sample before delivering the sample downstream.</li>
+<li>Callback mode invokes an application-defined callback function on each sample.</li>
+</ul>
+<p>This article describes buffering mode. (Before using callback mode, be aware that the callback function must be quite limited. Otherwise, it can drastically reduce performance or even cause deadlocks. For more information, see <a href="isamplegrabber-setcallback.html"><strong>ISampleGrabber::SetCallback</strong></a>.) To activate buffering mode, call the <a href="isamplegrabber-setbuffersamples.html"><strong>ISampleGrabber::SetBufferSamples</strong></a> method with the value <strong>TRUE</strong>.</p>
+<p>Optionally, call the <a href="isamplegrabber-setoneshot.html"><strong>ISampleGrabber::SetOneShot</strong></a> method with the value <strong>TRUE</strong>. This causes the Sample Grabber to halt after it receives the first media sample, which is useful if you want to grab a single frame from the stream. Seek to the desired time, run the graph, and wait for the <a href="ec-complete.html"><strong>EC_COMPLETE</strong></a> event. Note that the level of frame accuracy depends on the source. For example, seeking an MPEG file is often not frame accurate.</p>
+<p>To run the graph as fast as possible, turn off the graph clock as described in <a href="setting-the-graph-clock.html">Setting the graph clock</a>.</p>
+<p>The following example enables one-shot mode and buffering mode, runs the filter graph, and waits for completion.</p>
+<pre lang="C++"><code>    hr = pGrabber-&gt;SetOneShot(TRUE);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGrabber-&gt;SetBufferSamples(TRUE);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pControl-&gt;Run();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    long evCode;
+    hr = pEvent-&gt;WaitForCompletion(INFINITE, &amp;evCode);
+</code></pre>
+<h2>Grab the Sample</h2>
+<p>In buffering mode, the Sample Grabber stores a copy of every sample. The <a href="isamplegrabber-getcurrentbuffer.html"><strong>ISampleGrabber::GetCurrentBuffer</strong></a> method copies the buffer into a caller-allocated array. To determine the size of the array that is needed, first call <strong>GetCurrentBuffer</strong> with a <strong>NULL</strong> pointer for the array address. Then allocate the array and call the method a second time to copy the buffer. The following example shows these steps.</p>
+<pre lang="C++"><code>    // Find the required buffer size.
+    long cbBuffer;
+    hr = pGrabber-&gt;GetCurrentBuffer(&amp;cbBuffer, NULL);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    pBuffer = (BYTE*)CoTaskMemAlloc(cbBuffer);
+    if (!pBuffer) 
+    {
+        hr = E_OUTOFMEMORY;
+        goto done;
+    }
+
+    hr = pGrabber-&gt;GetCurrentBuffer(&amp;cbBuffer, (long*)pBuffer);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+</code></pre>
+<p>You will need to know the exact format of the data in the buffer. To get this information, call the <a href="isamplegrabber-getconnectedmediatype.html"><strong>ISampleGrabber::GetConnectedMediaType</strong></a> method. This method fills in an <a href="/windows/win32/api/strmif/ns-strmif-am_media_type"><strong>AM_MEDIA_TYPE</strong></a> structure with the format.</p>
+<p>For an uncompressed video stream, the format information is contained in a <a href="/previous-versions/windows/desktop/api/amvideo/ns-amvideo-videoinfoheader"><strong>VIDEOINFOHEADER</strong></a> structure. The following example shows how to get the format information for an uncompressed video stream.</p>
+<pre lang="C++"><code>    // Examine the format block.
+    if ((mt.formattype == FORMAT_VideoInfo) &amp;&amp; 
+        (mt.cbFormat &gt;= sizeof(VIDEOINFOHEADER)) &amp;&amp;
+        (mt.pbFormat != NULL)) 
+    {
+        VIDEOINFOHEADER *pVih = (VIDEOINFOHEADER*)mt.pbFormat;
+
+        hr = WriteBitmap(pszBitmapFile, &amp;pVih-&gt;bmiHeader, 
+            mt.cbFormat - SIZE_PREHEADER, pBuffer, cbBuffer);
+    }
+    else 
+    {
+        // Invalid format.
+        hr = VFW_E_INVALIDMEDIATYPE; 
+    }
+</code></pre>
+<blockquote>
+<p>[!Note]<br />
+The Sample Grabber does not support <a href="/previous-versions/windows/desktop/api/dvdmedia/ns-dvdmedia-videoinfoheader2"><strong>VIDEOINFOHEADER2</strong></a>.</p>
+</blockquote>
+<p>Â </p>
+<h2>Example Code</h2>
+<p>Here is the complete code for the previous examples.</p>
+<blockquote>
+<p>[!Note]<br />
+This example uses the <a href="../medfound/saferelease.html">SafeRelease</a> function to release interface pointers.</p>
+</blockquote>
+<p>Â </p>
+<pre lang="C++"><code>#include &lt;windows.h&gt;
+#include &lt;dshow.h&gt;
+#include &quot;qedit.h&quot;
+
+template &lt;class T&gt; void SafeRelease(T **ppT)
+{
+    if (*ppT)
+    {
+        (*ppT)-&gt;Release();
+        *ppT = NULL;
+    }
+}
+
+
+
+HRESULT WriteBitmap(PCWSTR, BITMAPINFOHEADER*, size_t, BYTE*, size_t);
+
+HRESULT GrabVideoBitmap(PCWSTR pszVideoFile, PCWSTR pszBitmapFile)
+{
+    IGraphBuilder *pGraph = NULL;
+    IMediaControl *pControl = NULL;
+    IMediaEventEx *pEvent = NULL;
+    IBaseFilter *pGrabberF = NULL;
+    ISampleGrabber *pGrabber = NULL;
+    IBaseFilter *pSourceF = NULL;
+    IEnumPins *pEnum = NULL;
+    IPin *pPin = NULL;
+    IBaseFilter *pNullF = NULL;
+
+    BYTE *pBuffer = NULL;
+
+    HRESULT hr = CoCreateInstance(CLSID_FilterGraph, NULL, 
+        CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&amp;pGraph));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGraph-&gt;QueryInterface(IID_PPV_ARGS(&amp;pControl));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGraph-&gt;QueryInterface(IID_PPV_ARGS(&amp;pEvent));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Create the Sample Grabber filter.
+    hr = CoCreateInstance(CLSID_SampleGrabber, NULL, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&amp;pGrabberF));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGraph-&gt;AddFilter(pGrabberF, L&amp;quot;Sample Grabber&amp;quot;);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGrabberF-&gt;QueryInterface(IID_PPV_ARGS(&amp;pGrabber));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    AM_MEDIA_TYPE mt;
+    ZeroMemory(&amp;mt, sizeof(mt));
+    mt.majortype = MEDIATYPE_Video;
+    mt.subtype = MEDIASUBTYPE_RGB24;
+
+    hr = pGrabber-&gt;SetMediaType(&amp;mt);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGraph-&gt;AddSourceFilter(pszVideoFile, L&amp;quot;Source&amp;quot;, &amp;pSourceF);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pSourceF-&gt;EnumPins(&amp;pEnum);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    while (S_OK == pEnum-&gt;Next(1, &amp;pPin, NULL))
+    {
+        hr = ConnectFilters(pGraph, pPin, pGrabberF);
+        SafeRelease(&amp;pPin);
+        if (SUCCEEDED(hr))
+        {
+            break;
+        }
+    }
+
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = CoCreateInstance(CLSID_NullRenderer, NULL, CLSCTX_INPROC_SERVER, 
+        IID_PPV_ARGS(&amp;pNullF));
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGraph-&gt;AddFilter(pNullF, L&amp;quot;Null Filter&amp;quot;);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = ConnectFilters(pGraph, pGrabberF, pNullF);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGrabber-&gt;SetOneShot(TRUE);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGrabber-&gt;SetBufferSamples(TRUE);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pControl-&gt;Run();
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    long evCode;
+    hr = pEvent-&gt;WaitForCompletion(INFINITE, &amp;evCode);
+
+    // Find the required buffer size.
+    long cbBuffer;
+    hr = pGrabber-&gt;GetCurrentBuffer(&amp;cbBuffer, NULL);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    pBuffer = (BYTE*)CoTaskMemAlloc(cbBuffer);
+    if (!pBuffer) 
+    {
+        hr = E_OUTOFMEMORY;
+        goto done;
+    }
+
+    hr = pGrabber-&gt;GetCurrentBuffer(&amp;cbBuffer, (long*)pBuffer);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    hr = pGrabber-&gt;GetConnectedMediaType(&amp;mt);
+    if (FAILED(hr))
+    {
+        goto done;
+    }
+
+    // Examine the format block.
+    if ((mt.formattype == FORMAT_VideoInfo) &amp;&amp; 
+        (mt.cbFormat &gt;= sizeof(VIDEOINFOHEADER)) &amp;&amp;
+        (mt.pbFormat != NULL)) 
+    {
+        VIDEOINFOHEADER *pVih = (VIDEOINFOHEADER*)mt.pbFormat;
+
+        hr = WriteBitmap(pszBitmapFile, &amp;pVih-&gt;bmiHeader, 
+            mt.cbFormat - SIZE_PREHEADER, pBuffer, cbBuffer);
+    }
+    else 
+    {
+        // Invalid format.
+        hr = VFW_E_INVALIDMEDIATYPE; 
+    }
+
+    FreeMediaType(mt);
+
+done:
+    CoTaskMemFree(pBuffer);
+    SafeRelease(&amp;pPin);
+    SafeRelease(&amp;pEnum);
+    SafeRelease(&amp;pNullF);
+    SafeRelease(&amp;pSourceF);
+    SafeRelease(&amp;pGrabber);
+    SafeRelease(&amp;pGrabberF);
+    SafeRelease(&amp;pControl);
+    SafeRelease(&amp;pEvent);
+    SafeRelease(&amp;pGraph);
+    return hr;
+};
+
+// Writes a bitmap file
+//  pszFileName:  Output file name.
+//  pBMI:         Bitmap format information (including pallete).
+//  cbBMI:        Size of the BITMAPINFOHEADER, including palette, if present.
+//  pData:        Pointer to the bitmap bits.
+//  cbData        Size of the bitmap, in bytes.
+
+HRESULT WriteBitmap(PCWSTR pszFileName, BITMAPINFOHEADER *pBMI, size_t cbBMI,
+    BYTE *pData, size_t cbData)
+{
+    HANDLE hFile = CreateFile(pszFileName, GENERIC_WRITE, 0, NULL, 
+        CREATE_ALWAYS, 0, NULL);
+    if (hFile == NULL)
+    {
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+
+    BITMAPFILEHEADER bmf = { };
+
+    bmf.bfType = &amp;#39;MB&amp;#39;;
+    bmf.bfSize = cbBMI+ cbData + sizeof(bmf); 
+    bmf.bfOffBits = sizeof(bmf) + cbBMI; 
+
+    DWORD cbWritten = 0;
+    BOOL result = WriteFile(hFile, &amp;bmf, sizeof(bmf), &amp;cbWritten, NULL);
+    if (result)
+    {
+        result = WriteFile(hFile, pBMI, cbBMI, &amp;cbWritten, NULL);
+    }
+    if (result)
+    {
+        result = WriteFile(hFile, pData, cbData, &amp;cbWritten, NULL);
+    }
+
+    HRESULT hr = result ? S_OK : HRESULT_FROM_WIN32(GetLastError());
+
+    CloseHandle(hFile);
+
+    return hr;
+}
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="using-directshow-editing-services.html">Using DirectShow Editing Services</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

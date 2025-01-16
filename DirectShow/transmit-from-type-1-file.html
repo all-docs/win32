@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Transmit from Type-1 File</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: Transmit from Type-1 File
+ms.assetid: 5be2248b-7917-4c1b-9ae7-29e06779eac6
+title: Transmit from Type-1 File
+ms.topic: article
+ms.date: 4/26/2023
+ms.custom: UpdateFrequency5</h2>
+<h1>Transmit from Type-1 File</h1>
+<p>[The feature associated with this page, <a href="/windows/win32/directshow/directshow">DirectShow</a>, is a legacy feature. It has been superseded by <a href="/uwp/api/Windows.Media.Playback.MediaPlayer">MediaPlayer</a>, <a href="/windows/win32/api/mfmediaengine/nn-mfmediaengine-imfmediaengine">IMFMediaEngine</a>, and <a href="/windows/win32/medfound/audio-video-capture-in-media-foundation">Audio/Video Capture in Media Foundation</a>. Those features have been optimized for Windows 10 and Windows 11. Microsoft strongly recommends that new code use <strong>MediaPlayer</strong>, <strong>IMFMediaEngine</strong> and <strong>Audio/Video Capture in Media Foundation</strong> instead of <strong>DirectShow</strong>, when possible. Microsoft suggests that existing code that uses the legacy APIs be rewritten to use the new APIs if possible.]</p>
+<p>To transmit a type-1 file while previewing the file, use the filter graph shown in the following diagram.</p>
+<p><img src="images/dv1-transmit.png" alt="type-1 transmit with preview" /></p>
+<p>Filters in this graph include:</p>
+<ul>
+<li>The <a href="avi-splitter-filter.html">AVI Splitter</a> parses the AVI file. For a type-1 DV file, the output pin delivers interleaved DV samples.</li>
+<li>The <a href="infinite-pin-tee-filter.html">Infinite Pin Tee</a> filter splits the interleaved DV into a transmit stream and a preview stream. Both streams contain the same interleaved data. (This graph uses the Infinite Pin Tee instead of the <a href="smart-tee-filter.html">Smart Tee</a>, because there is no danger of dropping frames when reading from a file, as there is with live capture.)</li>
+<li>The <a href="dv-splitter-filter.html">DV Splitter</a> splits the interleaved stream into a DV video stream, which is decoded by the <a href="dv-video-decoder-filter.html">DV Video Decoder</a>, and an audio stream. Both streams are rendererd for preview.</li>
+</ul>
+<p>Build this graph as follows:</p>
+<pre lang="C++"><code>ICaptureGraphBuilder2 *pBuilder;  // Capture graph builder.
+IBaseFilter           *pDV;       // DV capture filter (MSDV)
+
+// Initialize pDV (not shown). 
+// Create and initialize the Capture Graph Builder (not shown).
+
+// Add the Infinite Pin Tee filter to the graph.
+IBaseFilter *pTee;
+hr = CoCreateInstance(CLSID_InfTee, 0, CLSCTX_INPROC_SERVER
+    IID_IBaseFilter, reinterpret_cast&lt;void**&gt;)(&amp;pTee));
+hr = pGraph-&gt;AddFilter(pTee, L&quot;Tee&quot;);
+
+// Add the File Source filter to the graph.
+IBaseFilter *pFileSource;
+hr = pGraph-&gt;AddSourceFilter(
+    L&quot;C:\\YourFileNameHere.avi&quot;,
+    L&quot;Source&quot;, 
+    &amp;pFileSource);
+
+// Add the AVI Splitter filter to the graph.
+IBaseFilter *pAviSplit;
+hr = CoCreateInstance(CLSID_AviSplitter, 0, CLSCTX_INPROC_SERVER
+    IID_IBaseFilter, reinterpret_cast&lt;void**&gt;)(&amp;pAviSplit));
+hr = pGraph-&gt;AddFilter(pAviSplit, L&quot;AVI Splitter&quot;);
+
+// Connect the file source to the AVI Splitter.
+hr = pBuilder-&gt;RenderStream(0, 0, pFileSource, 0, pAviSplit);
+if (FAILED(hr))
+{
+    // This is not an AVI file. 
+}
+
+// Connect the file source to the Infinite Pin Tee.
+hr = pBuilder-&gt;RenderStream(0, &amp;MEDIATYPE_Interleaved, pAviSplit, 0, pTee);
+if (FAILED(hr))
+{
+    // This is not a type-1 DV file.
+}
+
+// Render one stream from the Infinite Pin Tee to MSDV, for transmit.
+hr = pBuilder-&gt;RenderStream(0, 0, pTee, 0, pDV);
+
+// Render another stream from the Infinite Pin Tee for preview.
+hr = pBuilder-&gt;RenderStream(0, 0, pTee, 0, 0);
+</code></pre>
+<ol>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-igraphbuilder-addsourcefilter"><strong>IGraphBuilder::AddSourceFilter</strong></a> to add the source filter to the filter graph.</li>
+<li>Create the AVI Splitter and the Infinite Pin Tee, and add them to the graph.</li>
+<li>Call <a href="/windows/desktop/api/Strmif/nf-strmif-icapturegraphbuilder2-renderstream"><strong>ICaptureGraphBuilder2::RenderStream</strong></a> to connect the source filter to the AVI Splitter. Specifying MEDIATYPE_Interleaved to ensure that the method fails if the source file is not a type-1 DV file. In that case, you can back out and attempt to build a type-2 transmit graph instead.</li>
+<li>Call <strong>RenderStream</strong> again to route the interleaved stream from the AVI Splitter to the Infinite Pin Tee</li>
+<li>Call RenderStream a third time to route one stream from the Infinite Pin Tee to the MSDV filter, for transmit to the device.</li>
+<li>Call <strong>RenderStream</strong> one last time, to build the preview section of the graph.</li>
+</ol>
+<p>If you do not want preview, simply connect the file source to the MSDV filter:</p>
+<pre lang="C++"><code>hr = pBuilder-&gt;RenderStream(0, &amp;MEDIATYPE_Interleaved, pFileSource, 0, pDV);
+</code></pre>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="digital-video-in-directshow.html">Digital Video in DirectShow</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

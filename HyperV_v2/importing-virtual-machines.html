@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Migrating virtual machines</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: The following C# sample demonstrates how to use the MigrateVirtualSystemToHost method to perform a simple migration of a virtual machine.
+ms.assetid: A3E4AAA2-3AE6-4D7D-8D7B-1ED367D398C0
+title: Migrating virtual machines
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Migrating virtual machines</h1>
+<p>The following C# sample demonstrates how to use the <a href="migratevirtualsystemtohost-msvm-virtualsystemmigrationservice.html"><strong>MigrateVirtualSystemToHost</strong></a> method to perform a simple migration of a virtual machine. This example uses resource pools to obtain the correct VHD paths. This code is taken from the <a href="https://github.com/microsoftarchive/msdn-code-gallery-microsoft/tree/master/Official%20Windows%20Platform%20Sample/Hyper-V%20virtual%20machine%20migration%20sample">Hyper-V virtual machine migration sample</a>.</p>
+<p>The command-line syntax to run this sample is:</p>
+<p><strong>MigrationSamples.exe vm-and-storage-simple</strong> <em>SourceHost</em> <em>DestinationHost</em> <em>VmName</em></p>
+<p>where the parameters are as follows:</p>
+<ul>
+<li><em>SourceHost</em> is the name of the current host of the virtual machine.</li>
+<li><em>DestinationHost</em> is the name of the destination host.</li>
+<li><em>VmName</em> is the name of the virtual machine.</li>
+</ul>
+<pre lang="CSharp"><code>/// &lt;summary&gt;
+/// Migrates a VM without any modification, using all defaults.
+/// Resource pools will be used to get correct path for the VHDs.
+/// &lt;/summary&gt;
+/// &lt;param name=&quot;sourceHost&quot;&gt;Migration source hostname&lt;/param&gt;
+/// &lt;param name=&quot;destinationHost&quot;&gt;
+/// Migration destination hostname
+/// &lt;/param&gt;
+/// &lt;param name=&quot;vmName&quot;&gt;VM name.&lt;/param&gt;
+public
+void
+VmAndStorageMigrationSimple(
+    string sourceHost,
+    string destinationHost,
+    string vmName
+    )
+{
+    ManagementScope srcScope = new ManagementScope(
+        @&quot;\\&quot; + sourceHost + @&quot;\root\virtualization\v2&quot;, null);
+
+    using (ManagementObject migrationSettingData = GetMigrationSettingData(srcScope))
+    using (ManagementObject vm = WmiUtilities.GetVirtualMachine(vmName, srcScope))
+    {
+        migrationSettingData[&quot;MigrationType&quot;] = MigrationType.VirtualSystemAndStorage;
+        migrationSettingData[&quot;TransportType&quot;] = TransportType.TCP;
+
+        // Get the VHD SASDs
+        string[] sasds = null;
+        ManagementObject[] vhdList = WmiUtilities.GetVhdSettings(vm);
+        if (vhdList != null)
+        {
+            sasds = new string[vhdList.Length];
+
+            for (uint index = 0; index &lt; vhdList.Length; ++index)
+            {
+                using (ManagementObject vhd = vhdList[index])
+                {
+                    // Change the VHD path to an empty string which will force
+                    // the system to use resource pools to get the right path at
+                    // the destination node.
+                    vhd[&quot;HostResource&quot;] = new string[] { &quot;&quot; };
+
+                    // Create array of embedded instances.
+                    sasds[index] = vhd.GetText(TextFormat.CimDtd20);
+                }
+            }
+        }
+        else
+        {
+            Console.WriteLine(&quot;No VHDs found associated with the VM. Skipping VHDs...&quot;);
+        }
+
+        // Perform migration.
+        Console.WriteLine(&quot;Performing migration...&quot;);
+        Migrate(srcScope,
+            vmName,
+            destinationHost,
+            migrationSettingData.GetText(TextFormat.CimDtd20),
+            null,
+            sasds);
+    }
+}
+</code></pre>
+<p>The following C# code contains the implementation of most of the utility methods called from the example above.</p>
+<pre lang="CSharp"><code>class MigrationCommon
+{
+    ///////////////////////////////////////////////////////////////////////
+    // Common values and methods for all migration types.
+    ///////////////////////////////////////////////////////////////////////
+
+    /// &lt;summary&gt;
+    /// Defines the migration types.
+    /// &lt;/summary&gt;
+    public enum MigrationType
+    {
+        VirtualSystem = 32768,
+        Storage = 32769,
+        Staged = 32770,
+        VirtualSystemAndStorage = 32771
+    };
+
+    /// &lt;summary&gt;
+    /// Defines migration transport types.
+    /// &lt;/summary&gt;
+    public enum TransportType
+    {
+        TCP = 5
+    };
+
+    /// &lt;summary&gt;
+    /// Gets the virtual system migration service.
+    /// &lt;/summary&gt;
+    /// &lt;param name=&quot;scope&quot;&gt;The scope to use when connecting to WMI.&lt;/param&gt;
+    /// &lt;returns&gt;The virtual system migration service.&lt;/returns&gt;
+    public
+    ManagementObject
+    GetVirtualMachineMigrationService(
+        ManagementScope scope)
+    {
+        using (ManagementClass migrationServiceClass = new ManagementClass(&quot;Msvm_VirtualSystemMigrationService&quot;))
+        {
+            migrationServiceClass.Scope = scope;
+
+            ManagementObject migrationService =
+                WmiUtilities.GetFirstObjectFromCollection(migrationServiceClass.GetInstances());
+
+            return migrationService;
+        }
+    }
+
+    /// &lt;summary&gt;
+    /// Returns the instance of
+    /// Msvm_VirtualSystemMigrationServiceSettingData
+    /// associated with the service.
+    /// &lt;/summary&gt;
+    /// &lt;param name=&quot;service&quot;&gt;Migration service instance&lt;/param&gt;
+    /// &lt;returns&gt;
+    /// Instance of Msvm_VirtualSystemMigrationServiceSettingData
+    /// &lt;/returns&gt;
+    public
+    ManagementObject
+    GetMigrationServiceSettings(
+        ManagementObject service
+        )
+    {
+        ManagementObject serviceSetting = null;
+        using (ManagementObjectCollection settingCollection =
+            service.GetRelated(&quot;Msvm_VirtualSystemMigrationServiceSettingData&quot;))
+        {
+            foreach (ManagementObject mgmtObj in settingCollection)
+            {
+                serviceSetting = mgmtObj;
+                break;
+            }
+        }
+
+        return serviceSetting;
+    }
+
+    /// &lt;summary&gt;
+    /// Retuns the migration setting data object to be used for
+    /// migration.
+    /// &lt;/summary&gt;
+    /// &lt;param name=&quot;scope&quot;&gt;The namespace to be used.&lt;/param&gt;
+    /// &lt;returns&gt;Migration setting data object&lt;/returns&gt;
+    public
+    ManagementObject
+    GetMigrationSettingData(
+        ManagementScope scope
+        )
+    {
+        ManagementObject migrationSettingData = null;
+        ManagementPath settingPath =
+            new ManagementPath(&quot;Msvm_VirtualSystemMigrationSettingData&quot;);
+
+        using (ManagementClass migrationSettingDataClass = new ManagementClass(scope, settingPath, null))
+        {
+            migrationSettingData = migrationSettingDataClass.CreateInstance();
+        }
+
+        return migrationSettingData;
+    }
+
+    /// &lt;summary&gt;
+    /// Performs the migration.
+    /// &lt;/summary&gt;
+    /// &lt;param name=&quot;scope&quot;&gt;The namespace to be used.&lt;/param&gt;
+    /// &lt;param name=&quot;vmName&quot;&gt;The virtual machine name.&lt;/param&gt;
+    /// &lt;param name=&quot;destinationHost&quot;&gt;Migration destination host&lt;/param&gt;
+    /// &lt;param name=&quot;migrationSetting&quot;&gt;Embedded instance of
+    /// Msvm_VirtualSystemMigrationSettingData.&lt;/param&gt;
+    /// &lt;param name=&quot;vssd&quot;&gt;Embedded instance of
+    /// Msvm_VirtualSystemSettingData.&lt;/param&gt;
+    /// &lt;param name=&quot;rasds&quot;&gt;Array of embedded instances of
+    /// Msvm_ResourceAllocationSettingData.&lt;/param&gt;
+    public
+    void
+    Migrate(
+        ManagementScope scope,
+        string vmName,
+        string destinationHost,
+        string migrationSetting,
+        string vssd,
+        string[] rasds
+        )
+    {
+        using (ManagementObject service = GetVirtualMachineMigrationService(scope))
+        using (ManagementBaseObject inParams = service.GetMethodParameters(&quot;MigrateVirtualSystemToHost&quot;))
+        using (ManagementObject vm = WmiUtilities.GetVirtualMachine(vmName, scope))
+        {
+            inParams[&quot;ComputerSystem&quot;] = vm.Path.Path;
+            inParams[&quot;DestinationHost&quot;] = destinationHost;
+            inParams[&quot;MigrationSettingData&quot;] = migrationSetting;
+            inParams[&quot;NewSystemSettingData&quot;] = vssd;
+            inParams[&quot;NewResourceSettingData&quot;] = rasds;
+
+            using (ManagementBaseObject outParams =
+                service.InvokeMethod(&quot;MigrateVirtualSystemToHost&quot;, inParams, null))
+            {
+                WmiUtilities.ValidateOutput(outParams, scope);
+            }
+        }
+    }
+
+    /// &lt;summary&gt;
+    /// Performs migratability check.
+    /// &lt;/summary&gt;
+    /// &lt;param name=&quot;scope&quot;&gt;The namespace to be used.&lt;/param&gt;
+    /// &lt;param name=&quot;vmName&quot;&gt;The virtual machine name.&lt;/param&gt;
+    /// &lt;param name=&quot;destinationHost&quot;&gt;Migration destination host&lt;/param&gt;
+    /// &lt;param name=&quot;migrationSetting&quot;&gt;Embedded instance of
+    /// Msvm_VirtualSystemMigrationSettingData.&lt;/param&gt;
+    /// &lt;param name=&quot;vssd&quot;&gt;Embedded instance of
+    /// Msvm_VirtualSystemSettingData.&lt;/param&gt;
+    /// &lt;param name=&quot;rasds&quot;&gt;Array of embedded instances of
+    /// Msvm_ResourceAllocationSettingData.&lt;/param&gt;
+    /// &lt;returns&gt;true if virtual machine is migratable, false otherwise&lt;/returns&gt;
+    public
+    bool
+    CheckMigratability(
+        ManagementScope scope,
+        string vmName,
+        string destinationHost,
+        string migrationSetting,
+        string vssd,
+        string[] rasds
+        )
+    {
+        using (ManagementObject service = GetVirtualMachineMigrationService(scope))
+        using (ManagementBaseObject inParams =
+            service.GetMethodParameters(&quot;MigrateVirtualSystemToHost&quot;))
+        using (ManagementObject vm = WmiUtilities.GetVirtualMachine(vmName, scope))
+        {
+            inParams[&quot;ComputerSystem&quot;] = vm.Path.Path;
+            inParams[&quot;DestinationHost&quot;] = destinationHost;
+            inParams[&quot;MigrationSettingData&quot;] = migrationSetting;
+            inParams[&quot;NewSystemSettingData&quot;] = vssd;
+            inParams[&quot;NewResourceSettingData&quot;] = rasds;
+
+            using (ManagementBaseObject outParams =
+                service.InvokeMethod(&quot;CheckVirtualSystemIsMigratable&quot;, inParams, null))
+            {
+                return WmiUtilities.ValidateOutput(outParams, scope, false, true);
+            }
+        }
+    }
+
+    /// &lt;summary&gt;
+    /// Returns array of IP addresses on which the migration destination
+    /// host is listening for incoming VM migration request.
+    /// &lt;/summary&gt;
+    /// &lt;param name=&quot;destinationHost&quot;&gt;
+    /// Migration destination hostname
+    /// &lt;/param&gt;
+    /// &lt;returns&gt;Listening IP addresses&lt;/returns&gt;
+    public
+    string[]
+    GetMigrationDestinationListenAddresses(
+        string destinationHost
+        )
+    {
+        string[] ipAddresses = null;
+
+        ManagementScope scope = new ManagementScope(
+            @&quot;\\&quot; + destinationHost + @&quot;\root\virtualization\v2&quot;, null);
+
+        using (ManagementObject service = GetVirtualMachineMigrationService(scope))
+        using (ManagementObject serviceSetting = GetMigrationServiceSettings(service))
+        {
+            if (!((bool)serviceSetting[&quot;EnableVirtualSystemMigration&quot;]))
+            {
+                throw new Exception(&quot;Destination host does not &quot; +
+                    &quot;allow VM migration&quot;);
+            }
+
+            ipAddresses =
+                (string[])service[&quot;MigrationServiceListenerIPAddressList&quot;];
+            if (ipAddresses == null)
+            {
+                throw new Exception(&quot;Destination host does not have &quot; +
+                    &quot;networks set for VM migration&quot;);
+            }
+        }
+
+        return ipAddresses;
+    }
+}
+</code></pre>
+<p>Â </p>
+<p>Â </p>
+</body>

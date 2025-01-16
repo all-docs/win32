@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Writing a Custom Surrogate</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Writing a Custom Surrogate
+description: Writing a Custom Surrogate
+ms.assetid: 510e38e5-1965-46f4-b09c-6fa585cff993
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Writing a Custom Surrogate</h1>
+<p>While the system-supplied surrogate will be more than adequate for most situations, there are some cases where writing a custom surrogate could be worthwhile. Following are some examples:</p>
+<ul>
+<li>A custom surrogate could provide some optimizations or semantics not present in the system surrogate.</li>
+<li>If an in-process DLL contains code that depends on being in the same process as the client, the DLL server will not function correctly if it is running in the system surrogate. A custom surrogate could be tailored to a specific DLL to deal with this.</li>
+<li>The system surrogate supports a mixed-threading model so that it can load both free and apartment model DLLs. A custom surrogate might be tailored to load only apartment DLLs for reasons of efficiency or to accept a command-line argument for the type of DLL it is allowed to load.</li>
+<li>A custom surrogate could take extra command-line parameters that the system surrogate does not.</li>
+<li>The system surrogate calls <a href="/windows/desktop/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a> and tells it to use any existing security settings found under the <a href="appid-key.html">AppID</a> key in the registry. A custom surrogate could use another security context.</li>
+<li>Interfaces that aren't remotable (such as those for recent OCXs) will not work with the system surrogate. A custom surrogate could wrap the DLL's interfaces with its own implementation and use proxy/stub DLLs with a remotable IDL definition that would allow the interface to be remoted.</li>
+</ul>
+<p>The main surrogate thread should typically perform the following setup steps:</p>
+<ol>
+<li>Call <a href="/windows/desktop/api/combaseapi/nf-combaseapi-coinitializeex"><strong>CoInitializeEx</strong></a> to initialize the thread and set the threading model.</li>
+<li>If you want the DLL servers that are to run in the server to be able to use the security settings in the <strong>AppID</strong> registry key, call <a href="/windows/desktop/api/combaseapi/nf-combaseapi-coinitializesecurity"><strong>CoInitializeSecurity</strong></a> with the EOAC_APPID capability. Otherwise, legacy security settings will be used.</li>
+<li>Call <a href="/windows/desktop/api/combaseapi/nf-combaseapi-coregistersurrogate"><strong>CoRegisterSurrogate</strong></a> to register the surrogate interface to COM.</li>
+<li>Call <a href="/windows/win32/api/objidlbase/nf-objidlbase-isurrogate-loaddllserver"><strong>ISurrogate::LoadDllServer</strong></a> for the requested CLSID.</li>
+<li>Put main thread in a loop to call <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cofreeunusedlibraries"><strong>CoFreeUnusedLibraries</strong></a> periodically.</li>
+<li>When COM calls <a href="/windows/win32/api/objidlbase/nf-objidlbase-isurrogate-freesurrogate"><strong>ISurrogate::FreeSurrogate</strong></a>, revoke all class factories and exit.</li>
+</ol>
+<p>A surrogate process must implement the <a href="/windows/win32/api/objidlbase/nn-objidlbase-isurrogate"><strong>ISurrogate</strong></a> interface. This interface should be registered when a new surrogate is started and after calling <a href="/windows/desktop/api/combaseapi/nf-combaseapi-coinitializeex"><strong>CoInitializeEx</strong></a>. As indicated in the preceding steps, the <strong>ISurrogate</strong> interface has two methods that COM calls: <a href="/windows/win32/api/objidlbase/nf-objidlbase-isurrogate-loaddllserver"><strong>LoadDllServer</strong></a>, to dynamically load new DLL servers into existing surrogates; and <a href="/windows/win32/api/objidlbase/nf-objidlbase-isurrogate-freesurrogate"><strong>FreeSurrogate</strong></a>, to free the surrogate.</p>
+<p>The implementation of <a href="/windows/win32/api/objidlbase/nf-objidlbase-isurrogate-loaddllserver"><strong>LoadDllServer</strong></a>, which COM calls with a load request, must first create a class factory object that supports <a href="/windows/desktop/api/Unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a>, <a href="/windows/win32/api/unknwn/nn-unknwn-iclassfactory"><strong>IClassFactory</strong></a>, and <a href="/windows/win32/api/objidlbase/nn-objidlbase-imarshal"><strong>IMarshal</strong></a>, and then call <a href="/windows/desktop/api/combaseapi/nf-combaseapi-coregisterclassobject"><strong>CoRegisterClassObject</strong></a> to register the object as the class factory for the requested CLSID.</p>
+<p>The class factory registered by the surrogate process is not the actual class factory implemented by the DLL server but is a generic class factory implemented by the surrogate process that supports <a href="/windows/win32/api/unknwn/nn-unknwn-iclassfactory"><strong>IClassFactory</strong></a> and <a href="/windows/win32/api/objidlbase/nn-objidlbase-imarshal"><strong>IMarshal</strong></a>. Because it is the surrogate's class factory, rather than that of the DLL server that is being registered, the surrogate's class factory will need to use the real class factory to create an instance of the object for the registered CLSID. The surrogate's <a href="/windows/desktop/api/Unknwn/nf-unknwn-iclassfactory-createinstance"><strong>IClassFactory::CreateInstance</strong></a> should look something like the following example:</p>
+<pre lang="C++"><code>STDMETHODIMP CSurrogateFactory::CreateInstance(
+  IUnknown* pUnkOuter, 
+  REFIID iid, 
+  void** ppv)
+{
+    void* pcf;
+    HRESULT hr;
+ 
+    hr = CoGetClassObject(clsid, CLSCTX_INPROC_SERVER, NULL, IID_IClassFactory, &amp;pcf);
+    if ( FAILED(hr) )
+        return hr;
+    hr = ((IClassFactory*)pcf)-&gt;CreateInstance(pUnkOuter, iid, ppv);
+    ((IClassFactory*)pcf)-&gt;Release();
+    return hr;
+}
+ 
+</code></pre>
+<p>The surrogate's class factory must also support <a href="/windows/win32/api/objidlbase/nn-objidlbase-imarshal"><strong>IMarshal</strong></a> because a call to <a href="/windows/desktop/api/combaseapi/nf-combaseapi-cogetclassobject"><strong>CoGetClassObject</strong></a> can request any interface from the registered class factory, not just <a href="/windows/win32/api/unknwn/nn-unknwn-iclassfactory"><strong>IClassFactory</strong></a>. Further, since the generic class factory supports only <a href="/windows/desktop/api/Unknwn/nn-unknwn-iunknown"><strong>IUnknown</strong></a> and <strong>IClassFactory</strong>, requests for other interfaces must be directed to the real object. Thus, there should be a <a href="/windows/win32/api/objidlbase/nf-objidlbase-imarshal-marshalinterface"><strong>MarshalInterface</strong></a> method which should be similar to the following:</p>
+<pre lang="C++"><code>STDMETHODIMP CSurrogateFactory::MarshalInterface(
+  IStream *pStm,  
+  REFIID riid, void *pv, 
+  WORD dwDestContext, 
+  void *pvDestContext, 
+  DWORD mshlflags )
+{   
+    void * pCF = NULL;
+    HRESULT hr;
+ 
+    hr = CoGetClassObject(clsid, CLSCTX_INPROC_SERVER, NULL, riid, &amp;pCF);
+    if ( FAILED(hr) )
+        return hr;   
+    hr = CoMarshalInterface(pStm, riid, (IUnknown*)pCF, dwDestContext, pvDestContext,  mshlflags);
+    ((IUnknown*)pCF)-&gt;Release();
+    return S_OK;
+ 
+</code></pre>
+<p>The surrogate that houses a DLL server must publish the DLL server's class object(s) with a call to <a href="/windows/desktop/api/combaseapi/nf-combaseapi-coregisterclassobject"><strong>CoRegisterClassObject</strong></a>. All class factories for DLL surrogates should be registered as REGCLS_SURROGATE. REGCLS_SINGLUSE and REGCLS_MULTIPLEUSE should not be used for DLL servers loaded into surrogates.</p>
+<p>Following these guidelines for creating a surrogate process when it is necessary to do so should ensure proper behavior.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="dll-surrogates.html">DLL Surrogates</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

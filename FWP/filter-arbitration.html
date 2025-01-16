@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Filter Arbitration</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Filter Arbitration
+description: Filter arbitration is the logic built into the Windows Filtering Platform (WFP) that is used to determine how filters interact with each other when making network traffic filtering decisions.
+ms.assetid: d097f307-113e-4dc3-ad59-ddfb85061583
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Filter Arbitration</h1>
+<p>Filter arbitration is the logic built into the Windows Filtering Platform (WFP) that is used to determine how filters interact with each other when making network traffic filtering decisions.</p>
+<h2>Filter Arbitration Behaviors</h2>
+<p>The following behaviors characterize the filter arbitration system:</p>
+<ul>
+<li>All traffic can be inspected. No traffic can bypass filters at a given layer.</li>
+<li>Traffic can be blocked by a callout filter via a <strong>Veto</strong> even if a higher priority filter has permitted it.</li>
+<li>Multiple providers can inspect traffic at the same layer. For example, firewall followed by intrusion-detection system (IDS) filters, or IPsec followed by Quality of Service (QoS) filters may all examine the traffic at the same layer.</li>
+</ul>
+<h2>Filtering Model</h2>
+<p>Each filter layer is divided into sub-layers ordered by priority (also called weight). Network traffic traverses sub-layers from the highest priority to the lowest priority. Sub-layers are created and managed by the developers using the WFP API.</p>
+<p>Within each sub-layer, filters are ordered by weight. Network traffic is indicated to matching filters from highest weight to lowest weight.</p>
+<p>The filter arbitration algorithm is applied to all sub-layers within a layer and the final filtering decision is made after all sub-layers have been evaluated. This provides for multiple matching capability.</p>
+<p>Within a sub-layer, filter arbitration is performed as follows:</p>
+<ul>
+<li>Compute the list of matching filters ordered by weight from highest to lowest.</li>
+<li>Evaluate matching filters in order until a &quot;Permit&quot; or a &quot;Block&quot; is returned (filters can also return &quot;Continue&quot;) or until the list is exhausted.</li>
+<li>Skip the remaining filters and return the action from the last evaluated filter.</li>
+</ul>
+<p>Within a layer, filter arbitration is performed as follows:</p>
+<ul>
+<li>Perform filter arbitration at every sub-layer in order from highest priority to lowest priority.</li>
+<li>Evaluate all sub-layers even if a higher priority sub-layer has decided to block the traffic.</li>
+<li>Return the resulting action based on the policy rules described in the following section.</li>
+</ul>
+<p>The diagram below illustrates a sample sub-layer configuration. The outer boxes represent layers. The inner boxes represent sub-layers that contain filters. The wildcard (*) in a filter means all traffic matches the filter.</p>
+<p><img src="images/fwp-sub-config2.png" alt="sample sub-layer configuration" /></p>
+<p>The only way for a filter to be bypassed is if a higher weight filter has permitted or blocked the traffic within the same sub-layer. Conversely, one way of ensuring that a filter always sees all traffic within a layer is to add a sub-layer that contains a single filter that matches all traffic.</p>
+<h2>Configurable Override Policy</h2>
+<p>The rules described below govern the arbitration decisions within a layer. These rules are used by the filter engine to decide which one of the sub-layer actions is applied to the network traffic.</p>
+<p>The basic policy is as follows.</p>
+<ul>
+<li>Actions are evaluated in priority order of sub-layers from highest priority to lowest priority.</li>
+<li>&quot;Block&quot; overrides &quot;Permit&quot;.</li>
+<li>&quot;Block&quot; is final (cannot be overridden) and stops the evaluation. The packet is discarded.</li>
+</ul>
+<p>The basic policy does not support the scenario of an exception not overridden by a firewall. Typical examples of this type of scenario are:</p>
+<ul>
+<li>Remote administration port required to be opened even in the presence of a third-party firewall.</li>
+<li>Components that require ports to be opened in order to function (for example, Universal Plug and Play UPnP). If the administrator has explicitly enabled the component, the firewall should not silently block the traffic.</li>
+</ul>
+<p>In order to support the above scenarios, a filtering decision must be made more difficult to override than another filtering decision by managing the action override permission. This permission is implemented as the <strong>FWPS_RIGHT_ACTION_WRITE</strong> flag and it is set on a per-filter basis.</p>
+<p>The evaluation algorithm maintains the current action (&quot;Permit&quot; or &quot;Block&quot;) along with the <strong>FWPS_RIGHT_ACTION_WRITE</strong> flag. The flag controls whether a lower priority sub-layer is allowed to override the action. By setting or resetting the <strong>FWPS_RIGHT_ACTION_WRITE</strong> flag in the <a href="/windows/win32/api/fwpstypes/ns-fwpstypes-fwps_classify_out0">FWPS_CLASSIFY_OUT0</a> structure, a provider governs how actions can or cannot be overridden. If the flag is set, it indicates that the action can be overridden. If the flag is absent, the action cannot be overridden.</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Allow override (FWPS_RIGHT_ACTION_WRITE is set)</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Permit</td>
+<td>Yes</td>
+<td>The traffic can be blocked at another sub-layer. This is called a soft permit.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Permit</td>
+<td>No</td>
+<td>The traffic can be blocked at another sub-layer only by a callout <strong>Veto</strong>. This is called a hard permit.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Block</td>
+<td>Yes</td>
+<td>The traffic can be permitted at another sub-layer. This is called a soft block.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Block</td>
+<td>No</td>
+<td>The traffic cannot be permitted at another sub-layer. This is called a hard block.<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<p>The filter action can be set by setting the <strong>type</strong> member in the structure <a href="/windows/desktop/api/Fwpmtypes/ns-fwpmtypes-fwpm_action0"><strong>FWPM_ACTION0</strong></a> to either <strong>FWP_ACTION_BLOCK</strong> or <strong>FWP_ACTION_PERMIT</strong>. Along with the action type, a filter also exposes the flag <strong>FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT</strong>. If this flag is cleared, then the action type is hard and cannot be overridden except when a hard permit is overridden by a <strong>Veto</strong> as explained later on, else it is soft which can be overridden by high priority action.</p>
+<p>The following table lists the default behavior for filter and callout actions.</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Default Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Filter permit</td>
+<td>Soft permit</td>
+</tr>
+<tr>
+<td>Callout permit</td>
+<td>Soft permit</td>
+</tr>
+<tr>
+<td>Filter block</td>
+<td>Hard block</td>
+</tr>
+<tr>
+<td>Callout block</td>
+<td>Soft block</td>
+</tr>
+</tbody>
+</table>
+<p>A <strong>Veto</strong> is a &quot;Block&quot; action returned by the filter when the <strong>FWPS_RIGHT_ACTION_WRITE</strong> flag was reset prior to calling the filter. A <strong>Veto</strong> will block traffic that was permitted with a hard permit.</p>
+<p>When a <strong>Veto</strong> is issued, it is an indication of conflict in the configuration. The following actions are taken to mitigate the conflict.</p>
+<ul>
+<li>
+<p>The traffic is blocked.</p>
+</li>
+<li>
+<p>An audit event is generated.</p>
+</li>
+<li>
+<p>A notification is generated.</p>
+<blockquote>
+<p>[!Note]<br />
+The notification is received by all entities that have subscribed to it. This will typically include the firewall (in order to detect mis-configurations), or applications (in order to detect if their particular filter is overridden).</p>
+</blockquote>
+<blockquote>
+<p>[!Note]<br />
+There is no mandatory user interface (UI) instantiated when a &quot;Hard Permit&quot; filter is overridden. The notifications of the override are sent to any provider that registered to receive them, which allows firewalls, or the applications that created the &quot;Permit&quot; filters, to show UI asking for user action. There is no value in having a platform UI notification for these override events since firewall ISVs that do not want to silently block can do so by registering at a different place in WFP, or (less preferred) handle all their logic in a call-out driver. ISVs that do think prompting users is a good idea will want to own the user experience and create their own UI.</p>
+</blockquote>
+</li>
+</ul>
+<p>The mitigation behavior described above ensures that a &quot;Hard Permit&quot; filter is not silently overridden by a &quot;Block&quot; filter, and covers the scenario where a remote administration port is not allowed to be blocked by the firewall. In order to silently override &quot;Hard Permit&quot; filters a firewall has to add its filters within a higher priority sub-layer.</p>
+<blockquote>
+<p>[!Note]<br />
+Since there is no cross-layer arbitration, traffic permitted with &quot;Hard Permit&quot; may still be blocked at another layer. It is the responsibility of the policy author to ensure that traffic is permitted at each layer if necessary.</p>
+</blockquote>
+<p>User applications requesting ports to be opened add overridable filters to a low priority sub-layer. The firewall can subscribe to the filter add notification events and add a matching filter after user (or policy) validation.</p>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="filter-weight-assignment.html">Filter Weight Assignment</a></p>
+<!-- raw HTML omitted -->
+</body>

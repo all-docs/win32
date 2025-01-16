@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to Modify the Pixels of a Bitmap Source</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>description: This topic demonstrates how to modify the pixels of a bitmap source using the IWICBitmap and IWICBitmapLock components.
+ms.assetid: a08af015-bc42-4a31-af03-106714b08d08
+title: How to Modify the Pixels of a Bitmap Source
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>How to Modify the Pixels of a Bitmap Source</h1>
+<p>This topic demonstrates how to modify the pixels of a bitmap source using the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmap"><strong>IWICBitmap</strong></a> and <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmaplock"><strong>IWICBitmapLock</strong></a> components.</p>
+<p>To modify the pixels of a bitmap source</p>
+<ol>
+<li>
+<p>Create an <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicimagingfactory"><strong>IWICImagingFactory</strong></a> object to create Windows Imaging Component (WIC) objects.</p>
+<pre lang="C++"><code>// Create WIC factory
+hr = CoCreateInstance(
+    CLSID_WICImagingFactory,
+    NULL,
+    CLSCTX_INPROC_SERVER,
+    IID_PPV_ARGS(&amp;m_pIWICFactory)
+    );
+</code></pre>
+</li>
+<li>
+<p>Use the <a href="/windows/desktop/api/Wincodec/nf-wincodec-iwicimagingfactory-createdecoderfromfilename"><strong>CreateDecoderFromFilename</strong></a> method to create an <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapdecoder"><strong>IWICBitmapDecoder</strong></a> from an image file.</p>
+<pre lang="C++"><code>HRESULT hr = S_OK;
+
+IWICBitmapDecoder *pIDecoder = NULL;
+IWICBitmapFrameDecode *pIDecoderFrame  = NULL;
+
+hr = m_pIWICFactory-&gt;CreateDecoderFromFilename(
+   L&quot;turtle.jpg&quot;,                  // Image to be decoded
+   NULL,                           // Do not prefer a particular vendor
+   GENERIC_READ,                   // Desired read access to the file
+   WICDecodeMetadataCacheOnDemand, // Cache metadata when needed
+   &amp;pIDecoder                      // Pointer to the decoder
+   );
+</code></pre>
+</li>
+<li>
+<p>Get the first <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmapframedecode"><strong>IWICBitmapFrameDecode</strong></a> of the image.</p>
+<pre lang="C++"><code>// Retrieve the first bitmap frame.
+if (SUCCEEDED(hr))
+{
+   hr = pIDecoder-&gt;GetFrame(0, &amp;pIDecoderFrame);
+}
+</code></pre>
+<p>The JPEG file format only supports a single frame. Because the file in this example is a JPEG file, the first frame (<code>0</code>) is used. For image formats that have multiple frames, see <a href="-wic-bitmapsources-howto-retrieveimageframes.html">How to Retrieve the Frames of an Image</a> for accessing each frame of the image.</p>
+</li>
+<li>
+<p>Create an <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmap"><strong>IWICBitmap</strong></a> from the previously obtained image frame.</p>
+<pre lang="C++"><code>IWICBitmap *pIBitmap = NULL;
+IWICBitmapLock *pILock = NULL;
+
+UINT uiWidth = 10;
+UINT uiHeight = 10;
+
+WICRect rcLock = { 0, 0, uiWidth, uiHeight };
+
+// Create the bitmap from the image frame.
+if (SUCCEEDED(hr))
+{
+   hr = m_pIWICFactory-&gt;CreateBitmapFromSource(
+      pIDecoderFrame,          // Create a bitmap from the image frame
+      WICBitmapCacheOnDemand,  // Cache bitmap pixels on first access
+      &amp;pIBitmap);              // Pointer to the bitmap
+}
+</code></pre>
+</li>
+<li>
+<p>Obtain an <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmaplock"><strong>IWICBitmapLock</strong></a> for a specified rectangle of the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmap"><strong>IWICBitmap</strong></a>.</p>
+<pre lang="C++"><code>if (SUCCEEDED(hr))
+{
+   // Obtain a bitmap lock for exclusive write.
+   // The lock is for a 10x10 rectangle starting at the top left of the
+   // bitmap.
+   hr = pIBitmap-&gt;Lock(&amp;rcLock, WICBitmapLockWrite, &amp;pILock);
+</code></pre>
+</li>
+<li>
+<p>Process the pixel data that is now locked by the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmaplock"><strong>IWICBitmapLock</strong></a> object.</p>
+<pre lang="C++"><code>   if (SUCCEEDED(hr))
+   {
+      UINT cbBufferSize = 0;
+      BYTE *pv = NULL;
+
+      // Retrieve a pointer to the pixel data.
+      if (SUCCEEDED(hr))
+      {
+         hr = pILock-&gt;GetDataPointer(&amp;cbBufferSize, &amp;pv);
+      }
+      
+      // Pixel manipulation using the image data pointer pv.
+      // ...
+
+      // Release the bitmap lock.
+      SafeRelease(&amp;pILock);
+   }
+}
+</code></pre>
+<p>To unlock the <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmap"><strong>IWICBitmap</strong></a>, call <a href="/windows/win32/api/unknwn/nf-unknwn-iunknown-release">IUnknown::Release</a> on all <a href="/windows/desktop/api/Wincodec/nn-wincodec-iwicbitmaplock"><strong>IWICBitmapLock</strong></a> objects associated with the <strong>IWICBitmap</strong>.</p>
+</li>
+<li>
+<p>Clean up created objects.</p>
+<pre lang="C++"><code>SafeRelease(&amp;pIBitmap);
+SafeRelease(&amp;pIDecoder);
+SafeRelease(&amp;pIDecoderFrame);
+</code></pre>
+</li>
+</ol>
+<h2>See Also</h2>
+<p><a href="-wic-programming-guide.html">Programming Guide</a></p>
+<p><a href="-wic-codec-reference.html">Reference</a></p>
+<p><a href="-wic-samples.html">Samples</a></p>
+<p>Â </p>
+<p>Â </p>
+</body>

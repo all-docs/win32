@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Windows Touch Scratchpad using the Real-time Stylus Sample (C++)</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Windows Touch Scratchpad using the Real-time Stylus Sample (C++)
+description: Review a Windows Touch Scratchpad C++ sample (MTScratchpadRTStylus), which shows how to use Windows Touch messages to draw traces of the touch points to a window.
+ms.assetid: c72ddc71-48b7-4c26-af2b-10919038eaf8
+keywords:</p>
+<ul>
+<li>Windows Touch,code samples</li>
+<li>Windows Touch,sample code</li>
+<li>Windows Touch,Scratchpad samples</li>
+<li>Scratchpad samples</li>
+<li>Windows Touch,Real-time Stylus (RTS) object
+ms.topic: article
+ms.date: 02/18/2020</li>
+</ul>
+<hr />
+<h1>Windows Touch Scratchpad using the Real-time Stylus Sample (C++)</h1>
+<p>The Windows Touch Scratchpad sample (<a href="https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/Win7Samples/Touch/MTScratchpadRTStylus/cpp">MTScratchpadRTStylus</a>) shows how to use Windows Touch messages to draw traces of the touch points to a window. The trace of the primary finger, the one that was put on the digitizer first, is drawn in black. Secondary fingers are drawn in six other colors: red, green, blue, cyan, magenta, and yellow. The following screen shot shows how the application could look while running.</p>
+<p><img src="images/mtscratchpadrtstylus.png" alt="screen shot showing the windows touch scratchpad sample using the real-time stylus, with a green, a red, three black, and a blue line on the screen" /></p>
+<p>For this sample, the Real-time Stylus (RTS) object is created and support for multiple contact points is enabled. A DynamicRenderer plug-in is added to the RTS to render content. A plug-in, <strong>CSyncEventHandlerRTS</strong>, is implemented to track down the number of fingers and to change the color that the dynamic renderer is drawing. With both plug-ins in the RTS plug-in stack, the Windows Touch Scratchpad application will render the primary contact in black and the rest of the contacts in the various colors.</p>
+<p>The following code shows how the RTS object is created with support for multiple contact points.</p>
+<pre lang="C++"><code>IRealTimeStylus* CreateRealTimeStylus(HWND hWnd)
+{
+    // Check input argument
+    if (hWnd == NULL)
+    {
+        ASSERT(hWnd &amp;&amp; L&quot;CreateRealTimeStylus: invalid argument hWnd&quot;);
+        return NULL;
+    }
+
+    // Create RTS object
+    IRealTimeStylus* pRealTimeStylus = NULL;
+    HRESULT hr = CoCreateInstance(CLSID_RealTimeStylus, NULL, CLSCTX_ALL, IID_PPV_ARGS(&amp;pRealTimeStylus));
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CreateRealTimeStylus: failed to CoCreateInstance of RealTimeStylus&quot;);
+        return NULL;
+    }
+
+    // Attach RTS object to a window
+    hr = pRealTimeStylus-&gt;put_HWND((HANDLE_PTR)hWnd);
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CreateRealTimeStylus: failed to set window handle&quot;);
+        pRealTimeStylus-&gt;Release();
+        return NULL;
+    }
+
+    // Register RTS object for receiving multi-touch input.
+    IRealTimeStylus3* pRealTimeStylus3 = NULL;
+    hr = pRealTimeStylus-&gt;QueryInterface(&amp;pRealTimeStylus3);
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CreateRealTimeStylus: cannot access IRealTimeStylus3&quot;);
+        pRealTimeStylus-&gt;Release();
+        return NULL;
+    }
+    hr = pRealTimeStylus3-&gt;put_MultiTouchEnabled(TRUE);
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CreateRealTimeStylus: failed to enable multi-touch&quot;);
+        pRealTimeStylus-&gt;Release();
+        pRealTimeStylus3-&gt;Release();
+        return NULL;
+    }
+    pRealTimeStylus3-&gt;Release();
+
+    return pRealTimeStylus;
+}
+</code></pre>
+<p>The following code shows how the dynamic renderer plug-in is created and added to the RTS.</p>
+<pre lang="C++"><code>IDynamicRenderer* CreateDynamicRenderer(IRealTimeStylus* pRealTimeStylus)
+{
+    // Check input argument
+    if (pRealTimeStylus == NULL)
+    {
+        ASSERT(pRealTimeStylus &amp;&amp; L&quot;CreateDynamicRenderer: invalid argument RealTimeStylus&quot;);
+        return NULL;
+    }
+
+    // Get window handle from RTS object
+    HWND hWnd = NULL;
+    HRESULT hr = pRealTimeStylus-&gt;get_HWND((HANDLE_PTR*)&amp;hWnd);
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CreateDynamicRenderer: failed to get window handle&quot;);
+        return NULL;
+    }
+
+    // Create DynamicRenderer object
+    IDynamicRenderer* pDynamicRenderer = NULL;
+    hr = CoCreateInstance(CLSID_DynamicRenderer, NULL, CLSCTX_ALL, IID_PPV_ARGS(&amp;pDynamicRenderer));
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CreateDynamicRenderer: failed to CoCreateInstance of DynamicRenderer&quot;);
+        return NULL;
+    }
+
+    // Add DynamicRenderer to the RTS object as a synchronous plugin
+    IStylusSyncPlugin* pSyncDynamicRenderer = NULL;
+    hr = pDynamicRenderer-&gt;QueryInterface(&amp;pSyncDynamicRenderer);
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CreateDynamicRenderer: failed to access IStylusSyncPlugin of DynamicRenderer&quot;);
+        pDynamicRenderer-&gt;Release();
+        return NULL;
+    }
+
+    hr = pRealTimeStylus-&gt;AddStylusSyncPlugin(
+        0,                      // insert plugin at position 0 in the sync plugin list
+        pSyncDynamicRenderer);  // plugin to be inserted - DynamicRenderer
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CreateDynamicRenderer: failed to add DynamicRenderer to the RealTimeStylus plugins&quot;);
+        pDynamicRenderer-&gt;Release();
+        pSyncDynamicRenderer-&gt;Release();
+        return NULL;
+    }
+
+    // Attach DynamicRenderer to the same window RTS object is attached to
+    hr = pDynamicRenderer-&gt;put_HWND((HANDLE_PTR)hWnd);
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CreateDynamicRenderer: failed to set window handle&quot;);
+        pDynamicRenderer-&gt;Release();
+        pSyncDynamicRenderer-&gt;Release();
+        return NULL;
+    }
+
+    pSyncDynamicRenderer-&gt;Release();
+
+    return pDynamicRenderer;
+}
+</code></pre>
+<p>The following code changes the stylus stroke color for the <strong>StylusDown</strong> event handler in the <strong>CSyncEventHandlerRTS</strong>, a custom RTS plug-in.</p>
+<pre lang="C++"><code>HRESULT CSyncEventHandlerRTS::StylusDown(
+    IRealTimeStylus* /* piRtsSrc */,
+    const StylusInfo* /* pStylusInfo */,
+    ULONG /* cPropCountPerPkt */,
+    LONG* /* pPacket */,
+    LONG** /* ppInOutPkt */)
+{
+    // Get DrawingAttributes of DynamicRenderer
+    IInkDrawingAttributes* pDrawingAttributesDynamicRenderer;
+    HRESULT hr = g_pDynamicRenderer-&gt;get_DrawingAttributes(&amp;pDrawingAttributesDynamicRenderer);
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CSyncEventHandlerRTS::StylusDown: failed to get RTS's drawing attributes&quot;);
+        return hr;
+    }
+
+    // Set new stroke color to the DrawingAttributes of the DynamicRenderer
+    // If there are no fingers down, this is a primary contact
+    hr = pDrawingAttributesDynamicRenderer-&gt;put_Color(GetTouchColor(m_nContacts == 0));
+    if (FAILED(hr))
+    {
+        ASSERT(SUCCEEDED(hr) &amp;&amp; L&quot;CSyncEventHandlerRTS::StylusDown: failed to set color&quot;);
+        pDrawingAttributesDynamicRenderer-&gt;Release();
+        return hr;
+    }
+
+    pDrawingAttributesDynamicRenderer-&gt;Release();
+
+    ++m_nContacts;  // Increment finger-down counter
+
+    return S_OK;
+}
+</code></pre>
+<p>When the <em>m_nContacts</em> value is incremented, it will change the color set in the dynamic renderer. Strokes that are not the primary contact will be drawn with different colors.</p>
+<h2>Related topics</h2>
+<p><a href="https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/Win7Samples/Touch/MTScratchpadRTStylus/CS">Multi-touch Scratchpad Application (RTS/C#)</a>, <a href="https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/Win7Samples/Touch/MTScratchpadRTStylus/cpp">Multi-touch Scratchpad Application (RTS/C++)</a>, <a href="windows-touch-samples.html">Windows Touch Samples</a></p>
+</body>

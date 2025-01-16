@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tessellation Stages</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<h2>title: Tessellation Stages
+description: The Direct3D 11 runtime supports three new stages that implement tessellation, which converts low-detail subdivision surfaces into higher-detail primitives on the GPU.
+ms.assetid: 4ad2fd3e-6e1a-4326-8469-3198acf931dc
+ms.topic: article
+ms.date: 05/31/2018</h2>
+<h1>Tessellation Stages</h1>
+<p>The Direct3D 11 runtime supports three new stages that implement tessellation, which converts low-detail subdivision surfaces into higher-detail primitives on the GPU. Tessellation tiles (or breaks up) high-order surfaces into suitable structures for rendering.</p>
+<p>By implementing tessellation in hardware, a graphics pipeline can evaluate lower detail (lower polygon count) models and render in higher detail. While software tessellation can be done, tessellation implemented by hardware can generate an incredible amount of visual detail (including support for displacement mapping) without adding the visual detail to the model sizes and paralyzing refresh rates.</p>
+<ul>
+<li><a href="#tessellation-benefits">Tessellation Benefits</a></li>
+<li><a href="#new-pipeline-stages">New Pipeline Stages</a>
+<ul>
+<li><a href="#hull-shader-stage">Hull-Shader Stage</a></li>
+<li><a href="#tessellator-stage">Tessellator Stage</a></li>
+<li><a href="#domain-shader-stage">Domain-Shader Stage</a></li>
+</ul>
+</li>
+<li><a href="#apis-for-initializing-tessellation-stages">APIs for initializing Tessellation Stages</a></li>
+<li><a href="#how-tos">How to's:</a></li>
+<li><a href="#related-topics">Related topics</a></li>
+</ul>
+<h2>Tessellation Benefits</h2>
+<p>Tessellation:</p>
+<ul>
+<li>Saves lots of memory and bandwidth, which allows an application to render higher detailed surfaces from low-resolution models. The tessellation technique implemented in the Direct3D 11 pipeline also supports displacement mapping, which can produce stunning amounts of surface detail.</li>
+<li>Supports scalable-rendering techniques, such as continuous or view dependent levels-of-detail which can be calculated on the fly.</li>
+<li>Improves performance by performing expensive computations at lower frequency (doing calculations on a lower-detail model). This could include blending calculations using blend shapes or morph targets for realistic animation or physics calculations for collision detection or soft body dynamics.</li>
+</ul>
+<p>The Direct3D 11 pipeline implements tessellation in hardware, which off-loads the work from the CPU to the GPU. This can lead to very large performance improvements if an application implements large numbers of morph targets and/or more sophisticated skinning/deformation models. To access the new tessellation features, you must learn about some new pipeline stages.</p>
+<h2>New Pipeline Stages</h2>
+<p>Tessellation uses the GPU to calculate a more detailed surface from a surface constructed from quad patches, triangle patches or isolines. To approximate the high-ordered surface, each patch is subdivided into triangles, points, or lines using tessellation factors. The Direct3D 11 pipeline implements tessellation using three new pipeline stages:</p>
+<ul>
+<li><a href="#hull-shader-stage">Hull-Shader Stage</a> - A programmable shader stage that produces a geometry patch (and patch constants) that correspond to each input patch (quad, triangle, or line).</li>
+<li><a href="#tessellator-stage">Tessellator Stage</a> - A fixed function pipeline stage that creates a sampling pattern of the domain that represents the geometry patch and generates a set of smaller objects (triangles, points, or lines) that connect these samples.</li>
+<li><a href="#domain-shader-stage">Domain-Shader Stage</a> - A programmable shader stage that calculates the vertex position that corresponds to each domain sample.</li>
+</ul>
+<p>The following diagram highlights the new stages of the Direct3D 11 pipeline.</p>
+<p><img src="images/d3d11-pipeline-stages-tessellation.png" alt="diagram of the direct3d 11 pipeline that highlights the hull-shader, tessellator, and domain-shader stages" /></p>
+<p>The following diagram shows the progression through the tessellation stages. The progression starts with the low-detail subdivision surface. The progression next highlights the input patch with the corresponding geometry patch, domain samples, and triangles that connect these samples. The progression finally highlights the vertices that correspond to these samples.</p>
+<p><img src="images/tess-prog.png" alt="diagram of tessellation progression" /></p>
+<h3>Hull-Shader Stage</h3>
+<p>A hull shader -- which is invoked once per patch -- transforms input control points that define a low-order surface into control points that make up a patch. It also does some per patch calculations to provide data for the tessellation stage and the domain stage. At the simplest black-box level, the hull-shader stage would look something like the following diagram.</p>
+<p><img src="images/d3d11-hull-shader.png" alt="diagram of the hull-shader stage" /></p>
+<p>A hull shader is implemented with an HLSL function, and has the following properties:</p>
+<ul>
+<li>The shader input is between 1 and 32 control points.</li>
+<li>The shader output is between 1 and 32 control points, regardless of the number of tessellation factors. The control-points output from a hull shader can be consumed by the domain-shader stage. Patch constant data can be consumed by a domain shader; tessellation factors can be consumed by the domain shader and the tessellation stage.</li>
+<li>Tessellation factors determine how much to subdivide each patch.</li>
+<li>The shader declares the state required by the tessellator stage. This includes information such as the number of control points, the type of patch face and the type of partitioning to use when tessellating. This information appears as declarations typically at the front of the shader code.</li>
+<li>If the hull-shader stage sets any edge tessellation factor to = 0 or NaN, the patch will be culled. As a result, the tessellator stage may or may not run, the domain shader will not run, and no visible output will be produced for that patch.</li>
+</ul>
+<p>At a deeper level, a hull-shader actually operates in two phases: a control-point phase and a patch-constant phase, which are run in parallel by the hardware. The HLSL compiler extracts the parallelism in a hull shader and encodes it into bytecode that drives the hardware.</p>
+<ul>
+<li>The control-point phase operates once for each control-point, reading the control points for a patch, and generating one output control point (identified by a ControlPointID).</li>
+<li>The patch-constant phase operates once per patch to generate edge tessellation factors and other per-patch constants. Internally, many patch-constant phases may run at the same time. The patch-constant phase has read-only access to all input and output control points.</li>
+</ul>
+<p>Here's an example of a hull shader:</p>
+<pre><code>[patchsize(12)]
+[patchconstantfunc(MyPatchConstantFunc)]
+MyOutPoint main(uint Id : SV_ControlPointID,
+     InputPatch&lt;MyInPoint, 12&gt; InPts)
+{
+     MyOutPoint result;
+     
+     ...
+     
+     result = TransformControlPoint( InPts[Id] );
+
+     return result;
+}
+</code></pre>
+<p>For an example that creates a hull shader, see <a href="direct3d-11-advanced-stages-hull-shader-create.html">How To: Create a Hull Shader</a>.</p>
+<h3>Tessellator Stage</h3>
+<p>The tessellator is a fixed-function stage initialized by binding a hull shader to the pipeline (see <a href="direct3d-11-advanced-stages-tessellator-initialize.html">How To: Initialize the Tessellator Stage</a>). The purpose of the tessellator stage is to subdivide a domain (quad, tri, or line) into many smaller objects (triangles, points or lines). The tessellator tiles a canonical domain in a normalized (zero-to-one) coordinate system. For example, a quad domain is tessellated to a unit square.</p>
+<p>The tessellator operates once per patch using the tessellation factors (which specify how finely the domain will be tessellated) and the type of partitioning (which specifies the algorithm used to slice up a patch) that are passed in from the hull-shader stage. The tessellator outputs uv (and optionally w) coordinates and the surface topology to the domain-shader stage.</p>
+<p>Internally, the tessellator operates in two phases:</p>
+<ul>
+<li>The first phase processes the tessellation factors, fixing rounding problems, handling very small factors, reducing and combining factors, using 32-bit floating-point arithmetic.</li>
+<li>The second phase generates point or topology lists based on the type of partitioning selected. This is the core task of the tessellator stage and uses 16-bit fractions with fixed-point arithmetic. Fixed-point arithmetic allows hardware acceleration while maintaining acceptable precision. For example, given a 64 meter wide patch, this precision can place points at a 2 mm resolution.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Type of Partitioning</th>
+<th>Range</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>fractional_odd</td>
+<td>[1...63]</td>
+</tr>
+<tr>
+<td>fractional_even</td>
+<td>TessFactor range: [2..64]</td>
+</tr>
+<tr>
+<td>integer</td>
+<td>TessFactor range: [1..64]</td>
+</tr>
+<tr>
+<td>pow2</td>
+<td>TessFactor range: [1..64]</td>
+</tr>
+</tbody>
+</table>
+<h3>Domain-Shader Stage</h3>
+<p>A domain shader calculates the vertex position of a subdivided point in the output patch. A domain shader is run once per tessellator stage output point and has read-only access to the tessellator stage output UV coordinates, the hull shader output patch, and the hull shader output patch constants, as the following diagram shows.</p>
+<p><img src="images/d3d11-domain-shader.png" alt="diagram of the domain-shader stage" /></p>
+<p>Properties of the domain shader include:</p>
+<ul>
+<li>A domain shader is invoked once per output coordinate from the tessellator stage.</li>
+<li>A domain shader consumes output control points from the hull-shader stage.</li>
+<li>A domain shader outputs the position of a vertex.</li>
+<li>Inputs are the hull shader outputs including control points, patch constant data and tessellation factors. The tessellation factors can include the values used by the fixed function tessellator as well as the raw values (before rounding by integer tessellation, for example), which facilitates geomorphing, for example.</li>
+</ul>
+<p>After the domain shader completes, tessellation is finished and pipeline data continues to the next pipeline stage (geometry shader, pixel shader etc). A geometry shader that expects primitives with adjacency (for example, 6 vertices per triangle) is not valid when tessellation is active (this results in undefined behavior, which the debug layer will complain about).</p>
+<p>Here is an example of a domain shader:</p>
+<pre><code>void main( out    MyDSOutput result, 
+           float2 myInputUV : SV_DomainPoint, 
+           MyDSInput DSInputs,
+           OutputPatch&lt;MyOutPoint, 12&gt; ControlPts, 
+           MyTessFactors tessFactors)
+{
+     ...
+
+     result.Position = EvaluateSurfaceUV(ControlPoints, myInputUV);
+}
+</code></pre>
+<h2>APIs for initializing Tessellation Stages</h2>
+<p>Tessellation is implemented with two new programmable shader stages: a hull shader and a domain shader. These new shader stages are programmed with HLSL code that is defined in shader model 5. The new shader targets are: hs_5_0 and ds_5_0. Like all programmable shader stages, code for the hardware is extracted from compiled shaders passed into the runtime when shaders are bound to the pipeline using APIs such as <a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-dssetshader"><strong>DSSetShader</strong></a> and <a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-hssetshader"><strong>HSSetShader</strong></a>. But first, the shader must be created using APIs such as <a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11device-createhullshader"><strong>CreateHullShader</strong></a> and <a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11device-createdomainshader"><strong>CreateDomainShader</strong></a>.</p>
+<p>Enable tessellation by creating a hull shader and binding it to the hull-shader stage (this automatically sets up the tessellator stage). To generate the final vertex positions from the tessellated patches, you will also need to create a domain shader and bind it to the domain-shader stage. Once tessellation is enabled, the data input to the input-assembler stage must be patch data. That is, the input assembler topology must be a patch constant topology from <a href="/previous-versions/windows/desktop/legacy/ff476189(v=vs.85)"><strong>D3D11_PRIMITIVE_TOPOLOGY</strong></a> set with <a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-iasetprimitivetopology"><strong>IASetPrimitiveTopology</strong></a>.</p>
+<p>To disable tessellation, set the hull shader and the domain shader to <strong>NULL</strong>. Neither the geometry-shader stage nor the stream-output stage can read hull-shader output-control points or patch data.</p>
+<ul>
+<li>
+<p>New topologies for the input-assembler stage, which are extensions to this enumeration.</p>
+<pre><code>enum D3D11_PRIMITIVE_TOPOLOGY
+</code></pre>
+<p>The topology is set to the input-assembler stage using <a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-iasetprimitivetopology"><strong>IASetPrimitiveTopology</strong></a></p>
+</li>
+<li>
+<p>Of course, the new programmable shader stages require other state to be set, to bind constant buffers, samples, and shader resources to the appropriate pipeline stages. These new ID3D11Device methods are implemented for setting this state.</p>
+<ul>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-dsgetconstantbuffers"><strong>DSGetConstantBuffers</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-dsgetsamplers"><strong>DSGetSamplers</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-dsgetshader"><strong>DSGetShader</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-dsgetshaderresources"><strong>DSGetShaderResources</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-dssetconstantbuffers"><strong>DSSetConstantBuffers</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-dssetsamplers"><strong>DSSetSamplers</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-dssetshader"><strong>DSSetShader</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-dssetshaderresources"><strong>DSSetShaderResources</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-hsgetconstantbuffers"><strong>HSGetConstantBuffers</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-hsgetshaderresources"><strong>HSGetShaderResources</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-hsgetsamplers"><strong>HSGetSamplers</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-hsgetshader"><strong>HSGetShader</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-hssetconstantbuffers"><strong>HSSetConstantBuffers</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-hssetsamplers"><strong>HSSetSamplers</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-hssetshader"><strong>HSSetShader</strong></a></li>
+<li><a href="/windows/desktop/api/D3D11/nf-d3d11-id3d11devicecontext-hssetshaderresources"><strong>HSSetShaderResources</strong></a></li>
+</ul>
+</li>
+</ul>
+<h2>How to's:</h2>
+<p>The documentation also contains examples for initializing the tessellation stages.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="direct3d-11-advanced-stages-hull-shader-create.html">How To: Create a Hull Shader</a><!-- raw HTML omitted --></td>
+<td>Create a hull shader.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="direct3d-11-advanced-stages-hull-shader-design.html">How To: Design a Hull Shader</a><!-- raw HTML omitted --></td>
+<td>Design a hull shader.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="direct3d-11-advanced-stages-tessellator-initialize.html">How To: Initialize the Tessellator Stage</a><!-- raw HTML omitted --></td>
+<td>Initialize the tessellation stage.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="direct3d-11-advanced-stages-domain-shader-create.html">How To: Create a Domain Shader</a><!-- raw HTML omitted --></td>
+<td>Create a domain shader.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><!-- raw HTML omitted --><a href="direct3d-11-advanced-stages-domain-shader-design.html">How To: Design a Domain Shader</a><!-- raw HTML omitted --></td>
+<td>Create a domain shader.<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="overviews-direct3d-11-graphics-pipeline.html">Graphics Pipeline</a></p>
+<!-- raw HTML omitted -->
+</body>

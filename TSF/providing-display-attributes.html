@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Providing Display Attributes</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Providing Display Attributes
+description: Learn how to provide display attributes. Text Services Framework (TSF) enables a text service to provide display attributes for text.
+ms.assetid: 5809f5b8-0396-4abd-b5fe-61ecc8cd0914
+keywords:</p>
+<ul>
+<li>Text Services Framework (TSF),display attributes</li>
+<li>TSF (Text Services Framework),display attributes</li>
+<li>text services,display attributes</li>
+<li>display attributes
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Providing Display Attributes</h1>
+<p>Text Services Framework (TSF) enables a text service to provide display attributes for text. This enables additional visual feedback to be supplied to the user. For example, a spelling checker text service can highlight a misspelled word with a red underline. The display attributes provided are defined by the <a href="/windows/desktop/api/Msctf/ns-msctf-tf_displayattribute">TF_DISPLAYATTRIBUTE</a> structure and include text color, text background color, underline style, underline color, and underline weight.</p>
+<p>Clients that use this display attribute information will most often be applications, but can also include text services. The TSF manager mediates between the display attribute provider and the client and tracks the display attribute provider of the specific display attributes.</p>
+<p>To provide display attributes, a text service must do the following.</p>
+<ol>
+<li>Register the text service as a display attribute provider by calling <a href="/windows/desktop/api/Msctf/nf-msctf-itfcategorymgr-registercategory">ITfCategoryMgr::RegisterCategory</a> with the class identifier of the text service for the first parameter, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER for the second parameter and the class identifier of the text service again for the third parameter.</li>
+<li>Implement <a href="/windows/desktop/api/Msctf/nn-msctf-itfdisplayattributeprovider">ITfDisplayAttributeProvider</a> and make it available from the class factory.</li>
+<li>Implement <a href="/windows/desktop/api/Msctf/nn-msctf-ienumtfdisplayattributeinfo">IEnumTfDisplayAttributeInfo</a> and make it available from <a href="/windows/desktop/api/Msctf/nf-msctf-itfdisplayattributeprovider-enumdisplayattributeinfo">ITfDisplayAttributeProvider::EnumDisplayAttributeInfo</a>.</li>
+<li>Implement an <a href="/windows/desktop/api/Msctf/nn-msctf-itfdisplayattributeinfo">ITfDisplayAttributeInfo</a> object for each type of display attribute that the text service provides.</li>
+</ol>
+<h2>Applying the Display Attributes</h2>
+<p>The text service must apply the display attribute to a range of text. A text service can only modify the property value during a read/write edit session.</p>
+<p>Assuming this is within a read/write edit session, a display attribute is applied in the following manner.</p>
+<ol>
+<li>Obtain an <a href="/windows/desktop/api/Msctf/nn-msctf-itfrange">ITfRange</a> object that covers the text that the display attribute will be applied to.</li>
+<li>Obtain an <a href="/windows/desktop/api/Msctf/nn-msctf-itfproperty">ITfProperty</a> object for the text attributes by calling <a href="/windows/desktop/api/Msctf/nf-msctf-itfcontext-getproperty">ITfContext::GetProperty</a> with GUID_PROP_ATTRIBUTE.</li>
+<li>Create a <a href="tfguidatom.html">TfGuidAtom</a> from the text service-defined display attribute identifier <strong>GUID</strong> by calling <a href="/windows/desktop/api/Msctf/nf-msctf-itfcategorymgr-registerguid">ITfCategoryMgr::RegisterGUID</a>.</li>
+<li>Initialize a VARIANT variable to VT_I4 and set the <strong>lVal</strong> member to the <strong>TfGuidAtom</strong> created in the previous step.</li>
+<li>Apply the display attribute to the range by calling <a href="/windows/desktop/api/Msctf/nf-msctf-itfproperty-setvalue">ITfProperty::SetValue</a> with the read/write edit cookie, the range and the VARIANT initialized in the previous step.</li>
+</ol>
+<pre lang="C++"><code>STDAPI CEditSession::DoEditSession(TfEditCookie ec)
+{
+    HRESULT hr;
+    ITfCategoryMgr *pCategoryMgr;
+    TfGuidAtom  gaDisplayAttribute = TF_INVALID_GUIDATOM;
+
+    //Create a TfGuidAtom for the display attribute identifier. 
+    hr = CoCreateInstance(CLSID_TF_CategoryMgr,
+                         NULL, 
+                         CLSCTX_INPROC_SERVER, 
+                         IID_ITfCategoryMgr, 
+                         (void**)&amp;pCategoryMgr);
+    
+    if(SUCCEEDED(hr))
+    {
+        hr = pCategoryMgr-&gt;RegisterGUID(guidDisplayAttribute, &amp;gaDisplayAttribute);
+
+        pCategoryMgr-&gt;Release();
+    }
+    
+    //Apply the display attribute to the selected text. 
+    if(TF_INVALID_GUIDATOM != gaDisplayAttribute)
+    {
+        TF_SELECTION tfSel;
+        ULONG cFetched;
+
+        //Get the selection. 
+        hr = m_pContext-&gt;GetSelection(ec, TF_DEFAULT_SELECTION, 1, &amp;tfSel, &amp;cFetched);
+        if(SUCCEEDED(hr) &amp;&amp; cFetched)
+        {
+            ITfProperty *pDisplayAttributeProperty;
+
+            //Get the display attribute property. 
+            hr = m_pContext-&gt;GetProperty(GUID_PROP_ATTRIBUTE, &amp;pDisplayAttributeProperty);
+            if(SUCCEEDED(hr))
+            {
+                VARIANT var;
+
+                VariantInit(&amp;var);
+
+                //All display attributes are TfGuidAtoms and TfGuidAtoms are VT_I4. 
+                var.vt = VT_I4; 
+                var.lVal = gaDisplayAttribute;
+
+                //Set the display attribute value over the range. 
+                hr = pDisplayAttributeProperty-&gt;SetValue(ec, tfSel.range, &amp;var);
+
+                pDisplayAttributeProperty-&gt;Release();
+            }
+
+            tfSel.range-&gt;Release();
+        }
+    }
+
+    return S_OK;
+}
+</code></pre>
+<h2>Supplying the Display Attribute Information Object</h2>
+<p>A client obtains an <strong>ITfDisplayAttributeInfo</strong> object in one of two ways.</p>
+<ol>
+<li>
+<p>The client calls <a href="/windows/desktop/api/Msctf/nf-msctf-itfdisplayattributemgr-getdisplayattributeinfo">ITfDisplayAttributeMgr::GetDisplayAttributeInfo</a> with the <strong>GUID</strong> identifier of the display attribute. The first time the client calls <strong>ITfDisplayAttributeMgr::GetDisplayAttributeInfo</strong>, the TSF manager will create an instance of the display attribute provider by calling CoCreateInstance with the class identifier passed as the first parameter to <strong>ITfCategoryMgr::RegisterCategory</strong>. Subsequent calls to <strong>ITfDisplayAttributeMgr::GetDisplayAttributeInfo</strong> will reuse the display attribute provider object.</p>
+<p>The TSF manager then calls <a href="/windows/desktop/api/Msctf/nf-msctf-itfdisplayattributeprovider-getdisplayattributeinfo">ITfDisplayAttributeProvider::GetDisplayAttributeInfo</a> with the display attribute <strong>GUID</strong> to obtain the <strong>ITfDisplayAttributeInfo</strong> object.</p>
+<p>The TSF manager then passes the <strong>ITfDisplayAttributeInfo</strong> object back to the client.</p>
+</li>
+<li>
+<p>The client calls <a href="/windows/desktop/api/Msctf/nf-msctf-itfdisplayattributemgr-enumdisplayattributeinfo">ITfDisplayAttributeMgr::EnumDisplayAttributeInfo</a> to obtain an <strong>IEnumTfDisplayAttributeInfo</strong> object that contains all of the display attributes provided by all of the display attribute providers. The TSF manager enumerates each display attribute provider and creates an instance of each provider by calling CoCreateInstance with the class identifier passed as the third parameter to <strong>ITfCategoryMgr::RegisterCategory</strong>.</p>
+<p>The TSF manager then calls each provider's <strong>ITfDisplayAttributeProvider::EnumDisplayAttributeInfo</strong> to obtain an <strong>IEnumTfDisplayAttributeInfo</strong> object that contains all of the display attributes provided by the provider.</p>
+<p>The TSF manager then calls the provider's <a href="/windows/desktop/api/Msctf/nf-msctf-ienumtfdisplayattributeinfo-next">IEnumTfDisplayAttributeInfo::Next</a> method, adding each <strong>ITfDisplayAttributeInfo</strong> object obtained to the manager's own enumerator, until the end of the provider's enumeration is reached.</p>
+<p>When all of the <strong>ITfDisplayAttributeInfo</strong> objects for all of the display attribute providers are added to the TSF manager's enumerator, the manager returns its enumerator to the client. The client then calls <strong>IEnumTfDisplayAttributeInfo::Next</strong> one or more times to obtain the <strong>ITfDisplayAttributeInfo</strong> objects.</p>
+</li>
+</ol>
+<h2>Related topics</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/ns-msctf-tf_displayattribute">TF_DISPLAYATTRIBUTE</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nf-msctf-itfcategorymgr-registercategory">ITfCategoryMgr::RegisterCategory</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nn-msctf-itfdisplayattributeprovider">ITfDisplayAttributeProvider</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nn-msctf-ienumtfdisplayattributeinfo">IEnumTfDisplayAttributeInfo</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nf-msctf-itfdisplayattributeprovider-enumdisplayattributeinfo">ITfDisplayAttributeProvider::EnumDisplayAttributeInfo</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nn-msctf-itfdisplayattributeinfo">ITfDisplayAttributeInfo</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nn-msctf-itfrange">ITfRange</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nn-msctf-itfproperty">ITfProperty</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nf-msctf-itfcontext-getproperty">ITfContext::GetProperty</a></p>
+<!-- raw HTML omitted -->
+<p><a href="tfguidatom.html">TfGuidAtom</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nf-msctf-itfcategorymgr-registerguid">ITfCategoryMgr::RegisterGUID</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nf-msctf-itfproperty-setvalue">ITfProperty::SetValue</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nf-msctf-itfdisplayattributemgr-getdisplayattributeinfo">ITfDisplayAttributeMgr::GetDisplayAttributeInfo</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nf-msctf-itfdisplayattributeprovider-getdisplayattributeinfo">ITfDisplayAttributeProvider::GetDisplayAttributeInfo</a></p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nf-msctf-itfdisplayattributemgr-enumdisplayattributeinfo">ITfDisplayAttributeMgr::EnumDisplayAttributeInfo</a></p>
+<!-- raw HTML omitted -->
+<p>IEnumTfDisplayAttributeInfo</p>
+<!-- raw HTML omitted -->
+<p>ITfDisplayAttributeProvider::EnumDisplayAttributeInfo</p>
+<!-- raw HTML omitted -->
+<p><a href="/windows/desktop/api/Msctf/nf-msctf-ienumtfdisplayattributeinfo-next">IEnumTfDisplayAttributeInfo::Next</a></p>
+<!-- raw HTML omitted -->
+<p>Â </p>
+<p>Â </p>
+</body>

@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ID2D1Geometry::GetBounds methods</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: ID2D1Geometry GetBounds methods (D2d1_1.h)
+description: Retrieves the bounds of the geometry.
+ms.assetid: 3932189a-7c6b-4144-9d4a-32d2aba70835
+keywords:</p>
+<ul>
+<li>GetBounds methods Direct2D
+topic_type:</li>
+<li>apiref
+api_location:</li>
+<li>D2d1.dll
+api_type:</li>
+<li>DllExport
+ms.date: 07/02/2019
+ms.topic: reference</li>
+</ul>
+<hr />
+<h1>ID2D1Geometry::GetBounds methods</h1>
+<p>Retrieves the bounds of the geometry.</p>
+<h3>Overload list</h3>
+<table>
+<thead>
+<tr>
+<th align="left">Method</th>
+<th align="left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="left"><a href="/windows/win32/api/d2d1/nf-d2d1-id2d1geometry-getbounds(constd2d1_matrix_3x2_f__d2d1_rect_f)"><strong>GetBounds(D2D1_MATRIX_3X2_F&amp;,D2D_RECT_F*)</strong></a></td>
+<td align="left">Retrieves the bounds of the geometry.<!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td align="left"><a href="/windows/win32/api/d2d1/nf-d2d1-id2d1geometry-getbounds(constd2d1_matrix_3x2_f_d2d1_rect_f)"><strong>GetBounds(D2D1_MATRIX_3X2_F*,D2D1_RECT_F*)</strong></a></td>
+<td align="left">Retrieves the bounds of the geometry.<!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<h2>Examples</h2>
+<p>The following code shows how to use <strong>GetBounds</strong> to retrieve the bounds of the geometry.</p>
+<pre lang="C++"><code>HRESULT hr = S_OK;
+
+D2D1_RECT_F bounds;
+D2D1_RECT_F inflatedPixelBounds;
+D2D1_SIZE_U inflatedIntegerPixelSize;
+D2D1_SIZE_U currentRTSize;
+D2D1_MATRIX_3X2_F translateMatrix;
+float dpiX, dpiY;
+float scaleX = 1.0f;
+float scaleY = 1.0f;
+
+ID2D1BitmapRenderTarget *pCompatRT = NULL;
+SafeReplace(&amp;pCompatRT, *ppBitmapRT);
+
+ID2D1SolidColorBrush *pBrush = NULL;
+
+hr = pBaseRT-&gt;CreateSolidColorBrush(
+    D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f),
+    &amp;pBrush
+    );
+if (SUCCEEDED(hr))
+{
+    pBaseRT-&gt;GetDpi(&amp;dpiX, &amp;dpiY);
+    if (fill)
+    {
+        hr = pIGeometry-&gt;GetBounds(
+            pWorldTransform,
+            &amp;bounds
+            );
+    }
+    else
+    {
+        hr = pIGeometry-&gt;GetWidenedBounds(
+            strokeWidth,
+            pStrokeStyle,
+            pWorldTransform,
+            &amp;bounds
+            );
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        //
+        // A rect where left &gt; right is defined to be empty.
+        //
+        // The slightly baroque expression used below is an idiom that also
+        // correctly handles NaNs (i.e., if any of the coordinates of the bounds is
+        // a NaN, we want to treat the bounds as empty)
+        //
+        if (
+            !(bounds.left &lt;= bounds.right) ||
+            !(bounds.top &lt;= bounds.bottom)
+           )
+        {
+            // Bounds are empty or ill-defined.
+
+            // Make up a fake bounds
+            inflatedPixelBounds.top = 0.0f;
+            inflatedPixelBounds.left = 0.0f;
+            inflatedPixelBounds.bottom = 1.0f;
+            inflatedPixelBounds.right = 1.0f;
+        }
+        else
+        {
+            //
+            // We inflate the pixel bounds by 1 in each direction to ensure we have
+            // a border of completely transparent pixels around the geometry.  This
+            // ensures that when the realization is stretched the alpha ramp still
+            // smoothly falls off to 0 rather than being clipped by the rect.
+            //
+            inflatedPixelBounds.top = floorf(bounds.top*dpiY/96)-1.0f;
+            inflatedPixelBounds.left = floorf(bounds.left*dpiX/96)-1.0f;
+            inflatedPixelBounds.bottom = ceilf(bounds.bottom*dpiY/96)+1.0f;
+            inflatedPixelBounds.right = ceilf(bounds.right*dpiX/96)+1.0f;
+        }
+
+
+        //
+        // Compute the width and height of the underlying bitmap we will need.
+        // Note: We round up the width and height to be a multiple of
+        // sc_bitmapChunkSize. We do this primarily to ensure that we aren't
+        // constantly reallocating bitmaps in the case where a realization is being
+        // zoomed in on slowly and updated frequently.
+        //
+
+        inflatedIntegerPixelSize = D2D1::SizeU(
+            static_cast&lt;UINT&gt;(inflatedPixelBounds.right - inflatedPixelBounds.left),
+            static_cast&lt;UINT&gt;(inflatedPixelBounds.bottom - inflatedPixelBounds.top)
+            );
+
+        // Round up
+        inflatedIntegerPixelSize.width =
+            (inflatedIntegerPixelSize.width + sc_bitmapChunkSize - 1)/sc_bitmapChunkSize * sc_bitmapChunkSize;
+
+        // Round up
+        inflatedIntegerPixelSize.height =
+            (inflatedIntegerPixelSize.height + sc_bitmapChunkSize - 1)/sc_bitmapChunkSize * sc_bitmapChunkSize;
+
+        //
+        // Compute the bounds we will pass to FillOpacityMask (which are in Device
+        // Independent Pixels).
+        //
+        // Note: The DIP bounds do *not* use the rounded coordinates, since this
+        // would cause us to render superfluous, fully-transparent pixels, which
+        // would hurt fill rate.
+        //
+        D2D1_RECT_F inflatedDipBounds = D2D1::RectF(
+            inflatedPixelBounds.left * 96/dpiX,
+            inflatedPixelBounds.top * 96/dpiY,
+            inflatedPixelBounds.right * 96/dpiX,
+            inflatedPixelBounds.bottom * 96/dpiY
+            );
+
+        if (pCompatRT)
+        {
+            currentRTSize = pCompatRT-&gt;GetPixelSize();
+        }
+        else
+        {
+            // This will force the creation of a new target
+            currentRTSize = D2D1::SizeU(0,0);
+        }
+
+        //
+        // We need to ensure that our desired render target size isn't larger than
+        // the max allowable bitmap size. If it is, we need to scale the bitmap
+        // down by the appropriate amount.
+        //
+
+        if (inflatedIntegerPixelSize.width &gt; maxRealizationDimension)
+        {
+            scaleX = maxRealizationDimension/static_cast&lt;float&gt;(inflatedIntegerPixelSize.width);
+            inflatedIntegerPixelSize.width = maxRealizationDimension;
+        }
+
+        if (inflatedIntegerPixelSize.height &gt; maxRealizationDimension)
+        {
+            scaleY = maxRealizationDimension/static_cast&lt;float&gt;(inflatedIntegerPixelSize.height);
+            inflatedIntegerPixelSize.height = maxRealizationDimension;
+        }
+
+
+        //
+        // If the necessary pixel dimensions are less than half the existing
+        // bitmap's dimensions (in either direction), force the bitmap to be
+        // reallocated to save memory.
+        //
+        // Note: The fact that we use &gt; rather than &gt;= is important for a subtle
+        // reason: We'd like to have the property that repeated small changes in
+        // geometry size do not cause repeated reallocations of memory. &gt;= does not
+        // ensure this property in the case where the geometry size is close to
+        // sc_bitmapChunkSize, but &gt; does.
+        //
+        // Example:
+        //
+        // Assume sc_bitmapChunkSize is 64 and the initial geometry width is 63
+        // pixels. This will get rounded up to 64, and we will allocate a bitmap
+        // with width 64. Now, say, we zoom in slightly, so the new geometry width
+        // becomes 65 pixels. This will get rounded up to 128 pixels, and a new
+        // bitmap will be allocated. Now, say the geometry drops back down to 63
+        // pixels. This will get rounded up to 64. If we used &gt;=, this would cause
+        // another reallocation.  Since we use &gt;, on the other hand, the 128 pixel
+        // bitmap will be reused.
+        //
+
+        if (currentRTSize.width &gt; 2*inflatedIntegerPixelSize.width ||
+            currentRTSize.height &gt; 2*inflatedIntegerPixelSize.height
+           )
+        {
+            SafeRelease(&amp;pCompatRT);
+            currentRTSize.width = currentRTSize.height = 0;
+        }
+
+        if (inflatedIntegerPixelSize.width &gt; currentRTSize.width ||
+            inflatedIntegerPixelSize.height &gt; currentRTSize.height
+           )
+        {
+            SafeRelease(&amp;pCompatRT);
+        }
+
+        if (!pCompatRT)
+        {
+            //
+            // Make sure our new rendertarget is strictly larger than before.
+            //
+            currentRTSize.width =
+                max(inflatedIntegerPixelSize.width, currentRTSize.width);
+
+            currentRTSize.height =
+                max(inflatedIntegerPixelSize.height, currentRTSize.height);
+
+            D2D1_PIXEL_FORMAT alphaOnlyFormat =
+                D2D1::PixelFormat(
+                    DXGI_FORMAT_A8_UNORM,
+                    D2D1_ALPHA_MODE_PREMULTIPLIED
+                    );
+
+            hr = pBaseRT-&gt;CreateCompatibleRenderTarget(
+                NULL, // desiredSize
+                &amp;currentRTSize,
+                &amp;alphaOnlyFormat,
+                D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS_NONE,
+                &amp;pCompatRT
+                );
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            //
+            // Translate the geometry so it is flush against the left and top
+            // sides of the render target.
+            //
+
+            translateMatrix =
+                D2D1::Matrix3x2F::Translation(
+                    -inflatedDipBounds.left,
+                    -inflatedDipBounds.top
+                    ) *
+                D2D1::Matrix3x2F::Scale(
+                    scaleX,
+                    scaleY
+                    );
+
+            if (pWorldTransform)
+            {
+                pCompatRT-&gt;SetTransform(
+                    *pWorldTransform * translateMatrix
+                    );
+            }
+            else
+            {
+                pCompatRT-&gt;SetTransform(
+                    translateMatrix
+                    );
+            }
+
+            //
+            // Render the geometry.
+            //
+
+            pCompatRT-&gt;BeginDraw();
+
+            pCompatRT-&gt;Clear(
+                D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)
+                );
+
+            if (fill)
+            {
+                pCompatRT-&gt;FillGeometry(
+                    pIGeometry,
+                    pBrush
+                    );
+            }
+            else
+            {
+                pCompatRT-&gt;DrawGeometry(
+                    pIGeometry,
+                    pBrush,
+                    strokeWidth,
+                    pStrokeStyle
+                    );
+            }
+
+            hr = pCompatRT-&gt;EndDraw();
+            if (SUCCEEDED(hr))
+            {
+                //
+                // Report back the source and dest bounds (to be used as input parameters
+                // to FillOpacityMask.
+                //
+                *pMaskDestBounds = inflatedDipBounds;
+
+                *pMaskSourceBounds = D2D1::Rect&lt;float&gt;(
+                    0.0f,
+                    0.0f,
+                    static_cast&lt;float&gt;(inflatedDipBounds.right - inflatedDipBounds.left)*scaleX,
+                    static_cast&lt;float&gt;(inflatedDipBounds.bottom - inflatedDipBounds.top)*scaleY
+                    );
+
+                if (*ppBitmapRT != pCompatRT)
+                {
+                    SafeReplace(ppBitmapRT, pCompatRT);
+                }
+            }
+        }
+    }
+    pBrush-&gt;Release();
+}
+</code></pre>
+<h2>Requirements</h2>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Header<!-- raw HTML omitted --></td>
+<td><!-- raw HTML omitted --> <!-- raw HTML omitted -->D2d1_1.h<!-- raw HTML omitted --> <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>Library<!-- raw HTML omitted --></td>
+<td><!-- raw HTML omitted --> <!-- raw HTML omitted -->D2d1.lib<!-- raw HTML omitted --> <!-- raw HTML omitted --></td>
+</tr>
+<tr>
+<td>DLL<!-- raw HTML omitted --></td>
+<td><!-- raw HTML omitted --> <!-- raw HTML omitted -->D2d1.dll<!-- raw HTML omitted --> <!-- raw HTML omitted --></td>
+</tr>
+</tbody>
+</table>
+<h2>See also</h2>
+<!-- raw HTML omitted -->
+<p><a href="/windows/win32/api/d2d1/nn-d2d1-id2d1geometry"><strong>ID2D1Geometry</strong></a></p>
+<!-- raw HTML omitted -->
+</body>

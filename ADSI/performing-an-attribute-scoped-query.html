@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Performing an Attribute Scope Query</title>
+<style>
+table th { border: 1px solid; }
+table td { border: 1px solid; }
+</style>
+</head>
+<body>
+<hr />
+<p>title: Performing an Attribute Scope Query
+description: The attribute scope query is a search preference that enables a search of an object's distinguished name valued attributes to be performed.
+ms.assetid: 026fbe17-5df7-4007-9d74-5c0abbe793b1
+ms.tgt_platform: multiple
+keywords:</p>
+<ul>
+<li>Performing an Attribute Scope Query ADSI</li>
+<li>ADSI, Searching, IDirectorySearch, Other Search Options, Attribute Scope Query
+ms.topic: article
+ms.date: 05/31/2018</li>
+</ul>
+<hr />
+<h1>Performing an Attribute Scope Query</h1>
+<p>The attribute scope query is a search preference that enables a search of an object's distinguished name valued attributes to be performed. The attribute to search can be either single or multi-valued, but must be of the <strong>ADS_DN_STRING</strong> type. When the search is performed, ADSI will enumerate the distinguished name values of the attribute and perform the search on the objects represented by the distinguished names. For example, if an attribute scoped search is performed of the <a href="/windows/desktop/ADSchema/a-member"><strong>member</strong></a> attribute of a group object, ADSI will enumerate the distinguished names in the <strong>member</strong> attribute and search each of the members of the group for the specified search criteria.</p>
+<p>If an attribute scoped query is performed on an attribute that is not of type <strong>ADS_DN_STRING</strong>, the search will fail. The attribute scoped query also requires that the <strong>ADS_SEARCHPREF_SEARCH_SCOPE</strong> preference be set to <strong>ADS_SCOPE_BASE</strong>. The <strong>ADS_SEARCHPREF_SEARCH_SCOPE</strong> preference will automatically be set to <strong>ADS_SCOPE_BASE</strong>, but if the <strong>ADS_SEARCHPREF_SEARCH_SCOPE</strong> preference is set to any other value, <a href="/windows/desktop/api/Iads/nf-iads-idirectorysearch-setsearchpreference"><strong>IDirectorySearch::SetSearchPreference</strong></a> will fail with <strong>E_ADS_BAD_PARAMETER</strong>.</p>
+<p>The results of an attribute-scope query may span multiple servers and a server may not return all the data requested for the all the rows returned. If this occurs, when the last row is retrieved by calling <a href="/windows/desktop/api/Iads/nf-iads-idirectorysearch-getnextrow"><strong>IDirectorySearch::GetNextRow</strong></a> or <a href="/windows/desktop/api/Iads/nf-iads-idirectorysearch-getfirstrow"><strong>IDirectorySearch::GetFirstRow</strong></a>, ADSI will return <strong>S_ADS_ERRORSOCCURRED</strong> instead of <strong>S_ADS_NOMORE_ROWS</strong>.</p>
+<p>To specify an attribute scope query, set an <strong>ADS_SEARCHPREF_ATTRIBUTE_QUERY</strong> search option with an <strong>ADSTYPE_CASE_IGNORE_STRING</strong> value set to the lDAPDisplayName of the attribute to search in the <a href="/windows/desktop/api/Iads/ns-iads-ads_searchpref_info"><strong>ADS_SEARCHPREF_INFO</strong></a> array passed to the <a href="/windows/desktop/api/Iads/nf-iads-idirectorysearch-setsearchpreference"><strong>IDirectorySearch::SetSearchPreference</strong></a> method. This operation is shown in the following code example.</p>
+<pre lang="C++"><code>ADS_SEARCHPREF_INFO SearchPref;
+SearchPref.dwSearchPref = ADS_SEARCHPREF_ATTRIBUTE_QUERY;
+SearchPref.vValue.dwType = ADSTYPE_CASE_IGNORE_STRING;
+SearchPref.vValue.Boolean = L&quot;member&quot;;
+</code></pre>
+<p>The following code example shows how to use the <strong>ADS_SEARCHPREF_ATTRIBUTE_QUERY</strong> search option.</p>
+<pre lang="C++"><code>/***************************************************************************
+
+    SearchGroupMembers()
+
+    Searches the members of a group that are of type user and prints each 
+    user's cn and distinguishedName values to the console.
+
+    Parameters:
+
+    pwszGroupDN - Contains the distinguished name of the group whose 
+    members will be searched.
+
+***************************************************************************/
+
+HRESULT SearchGroupMembers(LPCWSTR pwszGroupDN)
+{
+    HRESULT hr;
+    CComPtr&lt;IDirectorySearch&gt; spSearch;
+    CComBSTR sbstrADsPath;
+ 
+    // Bind to the group and get the IDirectorySearch interface.
+    sbstrADsPath = &quot;LDAP://&quot;;
+    sbstrADsPath += pwszGroupDN;
+    hr = ADsOpenObject(sbstrADsPath,
+        NULL,
+        NULL,
+        ADS_SECURE_AUTHENTICATION,
+        IID_IDirectorySearch,
+        (void**)&amp;spSearch);
+    if(FAILED(hr))
+    {
+        return hr;
+    }
+ 
+    ADS_SEARCHPREF_INFO SearchPrefs[1];
+
+    // Set the ADS_SEARCHPREF_ATTRIBUTE_QUERY search preference.
+    SearchPrefs[0].dwSearchPref = ADS_SEARCHPREF_ATTRIBUTE_QUERY;
+    SearchPrefs[0].vValue.dwType = ADSTYPE_CASE_IGNORE_STRING;
+    SearchPrefs[0].vValue.CaseIgnoreString = L&quot;member&quot;;
+
+    // Set the search preferences.
+    hr = spSearch-&gt;SetSearchPreference(SearchPrefs, sizeof(SearchPrefs)/sizeof(ADS_SEARCHPREF_INFO));
+    if(FAILED(hr))
+    {
+        return hr;
+    }
+
+    ADS_SEARCH_HANDLE hSearch;
+    
+    // Create the search filter.
+    LPWSTR pwszSearchFilter = L&quot;(&amp;(objectClass=user))&quot;;
+ 
+    // Set attributes to return.
+    LPWSTR rgpwszAttributes[] = {L&quot;cn&quot;, L&quot;distinguishedName&quot;};
+    DWORD dwNumAttributes = sizeof(rgpwszAttributes)/sizeof(LPWSTR);
+ 
+    // Execute the search.
+    hr = spSearch-&gt;ExecuteSearch(pwszSearchFilter,
+        rgpwszAttributes,
+        dwNumAttributes,
+        &amp;hSearch);
+    if(FAILED(hr))
+    {
+        return hr;
+    }
+
+    // Get the first result row.
+    hr = spSearch-&gt;GetFirstRow(hSearch);
+    while(S_OK == hr)
+    {
+        ADS_SEARCH_COLUMN col;
+
+        // Enumerate the retrieved attributes.
+        for(DWORD i = 0; i &lt; dwNumAttributes; i++)
+        {
+            hr = spSearch-&gt;GetColumn(hSearch, rgpwszAttributes[i], &amp;col);
+            if(SUCCEEDED(hr))
+            {
+                switch(col.dwADsType)
+                {
+                case ADSTYPE_DN_STRING:
+                    wprintf(L&quot;%s: %s\n\n&quot;, rgpwszAttributes[i], col.pADsValues[0].DNString);
+                    break;
+
+                case ADSTYPE_CASE_IGNORE_STRING:
+                    wprintf(L&quot;%s: %s\n\n&quot;, rgpwszAttributes[i], col.pADsValues[0].CaseExactString);
+                    break;
+
+                default:
+                    break;
+                }
+                
+                // Free the column.
+                spSearch-&gt;FreeColumn(&amp;col);
+            }
+        }
+        
+        // Get the next row.
+        hr = spSearch-&gt;GetNextRow(hSearch);
+    }
+
+    // Close the search handle to cleanup.
+    hr = spSearch-&gt;CloseSearchHandle(hSearch);
+
+    return hr;
+}
+</code></pre>
+<p>When this search is executed and the results are enumerated, it would return the <strong>name</strong>, <strong>telephone number</strong>, and <strong>office number</strong> of all of the user objects contained in the group's <strong>member</strong> attribute list.</p>
+<p>Error handling: The results of an attribute-scope query may span multiple servers and a server may not return all the data requested for the all the rows returned. If this occurs, when the last row is retrieved by calling <a href="/windows/desktop/api/Iads/nf-iads-idirectorysearch-getnextrow"><strong>GetNextRow</strong></a> or <a href="/windows/desktop/api/Iads/nf-iads-idirectorysearch-getfirstrow"><strong>GetFirstRow</strong></a>, ADSI will return <strong>S_ADS_ERRORSOCCURRED</strong>, instead of <strong>S_ADS_NOMORE_ROWS</strong>.</p>
+<p>Â </p>
+<p>Â </p>
+</body>
